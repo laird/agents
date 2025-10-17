@@ -12,18 +12,18 @@ This repository provides production-validated protocols and agent definitions th
 
 ```
 agents/
-├── 📋 Protocol Documents (GENERIC-*.md, 00-*.md)
+├── 📋 Protocol Documents (9 files)
 │   ├── 00-PROTOCOL-INDEX.md                    # Master navigation hub
+│   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md       # Architecture decisions
 │   ├── GENERIC-AGENT-LOGGING-PROTOCOL.md       # Audit trail & HISTORY.md
 │   ├── GENERIC-AGENT-PROTOCOLS-README.md       # Protocol overview
-│   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md       # Architecture decisions
 │   ├── GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md  # Documentation planning
 │   ├── GENERIC-DOCUMENTATION-PROTOCOL.md       # Unified docs guide
-│   ├── GENERIC-MIGRATION-PLANNING-GUIDE.md     # 5-phase migration framework
 │   ├── GENERIC-TESTING-PROTOCOL.md             # Comprehensive testing
-│   └── INCREMENTAL-DOCUMENTATION-PROTOCOL.md   # Continuous documentation
+│   ├── INCREMENTAL-DOCUMENTATION-PROTOCOL.md   # Continuous documentation
+│   └── VALIDATION-REPORT.md                    # File validation status
 │
-├── 🤖 Agent Definitions (generic-*-agent.yaml)
+├── 🤖 Agent Definitions (6 files)
 │   ├── generic-architect-agent.yaml            # Architecture & tech research
 │   ├── generic-coder-agent.yaml                # Code implementation
 │   ├── generic-documentation-agent.yaml        # Documentation creation
@@ -31,13 +31,14 @@ agents/
 │   ├── generic-security-agent.yaml             # Vulnerability assessment
 │   └── generic-tester-agent.yaml               # Quality assurance
 │
-├── 🔧 Support Files
+├── 🔧 Support Files (2 files)
 │   ├── GENERIC-AGENT-YAML-README.md            # YAML specification guide
-│   ├── VALIDATION-REPORT.md                    # File validation status
-│   └── README.md                               # This file
+│   ├── README.md                               # This file
+│   └── .gitignore                              # Git exclusion rules
 │
-└── 📁 Metadata
-    └── .claude-flow/                           # Claude Flow metrics
+└── 📁 Runtime (excluded from git)
+    ├── .claude-flow/metrics/                   # Claude Flow metrics
+    └── .swarm/                                 # Swarm coordination data
 ```
 
 ---
@@ -63,7 +64,7 @@ agents/
 
 ## File Categories
 
-### 1. Protocol Documents (13 files)
+### 1. Protocol Documents (9 files)
 
 **Purpose**: Define standards, workflows, and best practices for agent behavior
 
@@ -127,7 +128,7 @@ agents/
   - Time savings: 1-2 hours (documenting fresh vs. reconstructing)
   - **Use when**: Throughout entire project lifecycle
 
-#### README/Guide Documents
+#### Guide Documents
 
 - **`GENERIC-AGENT-PROTOCOLS-README.md`** (632 lines)
   - Overview of all agent protocols
@@ -136,11 +137,12 @@ agents/
   - Benefits and version history
   - **Use when**: Understanding protocol ecosystem, onboarding to system
 
-- **`GENERIC-AGENT-YAML-README.md`**
-  - YAML agent specification guide
-  - File structure and field definitions
-  - Best practices for agent creation
-  - **Use when**: Creating new agent definitions
+- **`VALIDATION-REPORT.md`** (293 lines)
+  - Automated validation of all files
+  - 100% validation success rate
+  - Protocol reference matrix
+  - File organization overview
+  - **Use when**: Verifying file integrity, understanding file relationships
 
 ### 2. Agent Definitions (6 YAML files)
 
@@ -197,22 +199,38 @@ agents/
   - **Blocks**: CRITICAL/HIGH vulnerabilities block all progress until resolved
   - **Use when**: Addressing vulnerabilities, updating dependencies, enforcing security practices
 
-### 3. Support Files
+### 3. Support Files (3 files)
+
+- **`GENERIC-AGENT-YAML-README.md`**
+  - YAML agent specification guide
+  - File structure and field definitions
+  - Best practices for agent creation
+  - **Use when**: Creating new agent definitions
 
 - **`VALIDATION-REPORT.md`** (293 lines)
-  - Automated validation of all 20 files (7 YAML + 13 MD)
+  - Automated validation of all files
   - 100% validation success rate
   - Protocol reference matrix
   - File organization overview
   - **Use when**: Verifying file integrity, understanding file relationships
 
-### 4. Metadata Directories
+- **`.gitignore`**
+  - Git exclusion rules for runtime-generated files
+  - Excludes `.claude-flow/metrics/` and `.swarm/`
+  - Excludes common OS and editor files
 
-- **`.claude-flow/`**
+### 4. Runtime Directories (excluded from git)
+
+- **`.claude-flow/metrics/`**
   - Claude Flow coordination metrics
-  - Agent performance data
-  - Task metrics and system metrics
-  - Note: `.claude-flow/metrics/` is runtime-generated and excluded from git
+  - Agent performance data (JSON)
+  - Task metrics and system metrics (JSON)
+  - Auto-generated during agent execution
+
+- **`.swarm/`**
+  - Swarm coordination database
+  - Memory persistence for multi-agent systems
+  - Auto-generated during swarm operations
 
 ---
 
@@ -461,8 +479,8 @@ Tester Agent
 ## Key Features
 
 ### Production-Validated Protocols
-- ✅ **100% file validation** - All 20 files properly formatted and validated
-- ✅ **Comprehensive coverage** - 13 protocols covering all development aspects
+- ✅ **100% file validation** - All 18 files properly formatted and validated
+- ✅ **Comprehensive coverage** - 9 protocols covering all development aspects
 - ✅ **Proven results** - Successfully guided 32/32 project migrations
 - ✅ **Universal applicability** - Works with any software project, not just .NET
 
