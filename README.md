@@ -37,8 +37,7 @@ agents/
 │   └── README.md                               # This file
 │
 └── 📁 Metadata
-    ├── .claude-flow/                           # Claude Flow metrics
-    └── .swarm/                                 # Swarm coordination data
+    └── .claude-flow/                           # Claude Flow metrics
 ```
 
 ---
@@ -213,10 +212,7 @@ agents/
   - Claude Flow coordination metrics
   - Agent performance data
   - Task metrics and system metrics
-
-- **`.swarm/`**
-  - Swarm coordination database
-  - Memory persistence for multi-agent systems
+  - Note: `.claude-flow/metrics/` is runtime-generated and excluded from git
 
 ---
 

@@ -1,9 +1,8 @@
 # Claude Flow metrics (runtime generated)
 .claude-flow/metrics/
 
-# Swarm coordination database (runtime generated)
-.swarm/memory.db
-.swarm/*.db
+# Swarm coordination (runtime generated)
+.swarm/
 
 # OS files
 .DS_Store
