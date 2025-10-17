@@ -31,7 +31,14 @@ agents/
 │   ├── generic-security-agent.yaml             # Vulnerability assessment
 │   └── generic-tester-agent.yaml               # Quality assurance
 │
-├── 🔧 Support Files (2 files)
+├── 🔧 Automation Scripts (5 files)
+│   ├── scripts/analyze-dependencies.sh         # Dependency analysis for parallelization
+│   ├── scripts/append-to-history.sh            # HISTORY.md logging utility
+│   ├── scripts/capture-test-baseline.sh        # Test baseline creation
+│   ├── scripts/run-stage-tests.sh              # Stage-specific test execution
+│   └── scripts/validate-migration-stage.sh     # Quality gate validation
+│
+├── 📄 Support Files (3 files)
 │   ├── GENERIC-AGENT-YAML-README.md            # YAML specification guide
 │   ├── README.md                               # This file
 │   └── .gitignore                              # Git exclusion rules
@@ -199,7 +206,40 @@ agents/
   - **Blocks**: CRITICAL/HIGH vulnerabilities block all progress until resolved
   - **Use when**: Addressing vulnerabilities, updating dependencies, enforcing security practices
 
-### 3. Support Files (3 files)
+### 3. Automation Scripts (5 files)
+
+**Purpose**: Shell scripts that automate protocol workflows and quality gates
+
+- **`scripts/analyze-dependencies.sh`**
+  - Analyzes project dependencies to identify parallelization opportunities
+  - Identifies independent projects that can be migrated concurrently
+  - Outputs dependency graph and parallel execution recommendations
+  - **Use when**: Planning parallel agent execution for multi-project migrations
+
+- **`scripts/append-to-history.sh`**
+  - Universal HISTORY.md logging utility
+  - 4-parameter structure: TITLE, WHAT_CHANGED, WHY_CHANGED, IMPACT
+  - Automatic timestamping and formatting
+  - **Use when**: Logging agent activities, decisions, or significant events
+
+- **`scripts/capture-test-baseline.sh`**
+  - Captures test results as baseline for regression detection
+  - Creates snapshots of test pass rates, execution times, and coverage
+  - **Use when**: Before starting migration stage, establishing quality benchmarks
+
+- **`scripts/run-stage-tests.sh`**
+  - Stage-specific test execution with filtering
+  - Supports strict mode (fail on any test failure)
+  - Integrates with fix-and-retest protocol
+  - **Use when**: Validating migration stages, running continuous tests
+
+- **`scripts/validate-migration-stage.sh`**
+  - Comprehensive quality gate validation
+  - Checks: build success, test pass rate, security scan, documentation updates
+  - Automated pass/fail determination
+  - **Use when**: Before advancing to next migration stage, pre-release validation
+
+### 4. Support Files (3 files)
 
 - **`GENERIC-AGENT-YAML-README.md`**
   - YAML agent specification guide
@@ -219,7 +259,7 @@ agents/
   - Excludes `.claude-flow/metrics/` and `.swarm/`
   - Excludes common OS and editor files
 
-### 4. Runtime Directories (excluded from git)
+### 5. Runtime Directories (excluded from git)
 
 - **`.claude-flow/metrics/`**
   - Claude Flow coordination metrics
@@ -479,8 +519,8 @@ Tester Agent
 ## Key Features
 
 ### Production-Validated Protocols
-- ✅ **100% file validation** - All 18 files properly formatted and validated
-- ✅ **Comprehensive coverage** - 9 protocols covering all development aspects
+- ✅ **100% file validation** - All 23 files properly formatted and validated
+- ✅ **Comprehensive coverage** - 9 protocols + 5 automation scripts
 - ✅ **Proven results** - Successfully guided 32/32 project migrations
 - ✅ **Universal applicability** - Works with any software project, not just .NET
 
@@ -495,6 +535,12 @@ Tester Agent
 - 🧪 **6-phase testing protocol** - Pre-test → Unit → Integration → Component → Performance → Samples
 - 📚 **7-stage ADR lifecycle** - Complete architectural decision documentation
 - 🔁 **Fix-and-retest cycles** - Systematic quality improvement (max 3 iterations)
+
+### Automation & Tooling
+- 🔧 **5 automation scripts** - Dependency analysis, logging, testing, validation
+- 📊 **Quality gate enforcement** - Automated validation before stage progression
+- 📝 **HISTORY.md logging** - Structured audit trail with timestamping
+- 🧪 **Test baseline tracking** - Regression detection and performance monitoring
 
 ### Real-World Results
 - **32/32 projects** migrated successfully (100% success rate)
