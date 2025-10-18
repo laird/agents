@@ -1,6 +1,6 @@
 {
   "name": "agent-protocols-complete",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Complete suite of 9 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development",
   "author": {
     "name": "Agent Protocols Team",

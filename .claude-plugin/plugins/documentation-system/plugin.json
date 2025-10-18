@@ -1,6 +1,6 @@
 {
   "name": "documentation-system",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Complete documentation framework with HISTORY.md logging, ADR lifecycle, incremental documentation, and automated generation",
   "author": {
     "name": "Agent Protocols Team"

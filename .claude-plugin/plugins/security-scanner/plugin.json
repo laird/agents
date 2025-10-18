@@ -1,6 +1,6 @@
 {
   "name": "security-scanner",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "CVE vulnerability scanning, security score calculation, and prioritized remediation with blocking quality gates",
   "author": {
     "name": "Agent Protocols Team"

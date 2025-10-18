@@ -742,7 +742,7 @@ This repository is configured as a **Claude Code Plugin Marketplace**, allowing 
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.1 | 2025-10-18 | Fixed Claude Code plugin schema validation - removed invalid `displayName` fields |
+| 2.1 | 2025-10-18 | Fixed Claude Code plugin marketplace integration: removed invalid `displayName` fields, fixed plugin source paths, corrected agent protocol references |
 | 2.0 | 2025-10-17 | Updated README with comprehensive file explanations and repository structure |
 | 1.0 | 2025-10-10 | Initial release with 13 protocols and 6 agent definitions |
 

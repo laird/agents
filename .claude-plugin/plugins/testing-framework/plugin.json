@@ -1,6 +1,6 @@
 {
   "name": "testing-framework",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)",
   "author": {
     "name": "Agent Protocols Team"
