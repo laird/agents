@@ -13,32 +13,5 @@
     "architecture",
     "testing",
     "methodology"
-  ],
-  "commands": [
-    {
-      "name": "/sparc-modes",
-      "description": "List all available SPARC workflow modes",
-      "handler": "npx claude-flow sparc modes"
-    },
-    {
-      "name": "/sparc-run",
-      "description": "Execute specific SPARC mode",
-      "handler": "npx claude-flow sparc run"
-    },
-    {
-      "name": "/sparc-tdd",
-      "description": "Run complete TDD workflow",
-      "handler": "npx claude-flow sparc tdd"
-    },
-    {
-      "name": "/sparc-batch",
-      "description": "Execute multiple SPARC modes in parallel",
-      "handler": "npx claude-flow sparc batch"
-    },
-    {
-      "name": "/sparc-pipeline",
-      "description": "Run full SPARC pipeline",
-      "handler": "npx claude-flow sparc pipeline"
-    }
   ]
 }

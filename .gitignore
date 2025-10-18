@@ -1,5 +1,6 @@
 # Claude Flow metrics (runtime generated)
-.claude-flow/metrics/
+.claude-flow/
+**/.claude-flow/
 
 # Swarm coordination (runtime generated)
 .swarm/
