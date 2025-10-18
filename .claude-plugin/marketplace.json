@@ -1,7 +1,7 @@
 {
   "name": "laird-agents-protocols-marketplace",
   "version": "2.1.0",
-  "description": "Production-validated agent protocols, definitions, and automation frameworks for systematic AI-assisted software development",
+  "description": "This marketplace defines a set of agents and associated policies that are optimized for upgrading legacy software to be modern, secure, well tested (unit and integration) and efficient (performance tested). Includes production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development.",
   "owner": {
     "name": "Agent Protocols Team",
     "email": "[email protected]",
