@@ -1,6 +1,6 @@
 # Reference common sections
 common_sections: &common
-  source: "docs/agents/common-agent-sections.yaml"
+  source: "common-agent-sections.yaml"
   version: "1.0"
 
 name: documentation-agent
@@ -19,29 +19,29 @@ description: |
 required_protocols:
   mandatory:
     - name: "Documentation Plan Template"
-      file: "docs/agents/GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
+      file: "GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
       enforcement: "MANDATORY - Follow complete documentation plan structure"
       applies_to: "All documentation creation activities"
       deliverables: "CHANGELOG, MIGRATION-GUIDE, Release Notes, Quick-Start, ADRs"
 
     - name: "Agent Logging Protocol"
-      file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+      file: "GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log documentation work via ./scripts/append-to-history.sh"
       applies_to: "After documentation creation"
       template: "Use Template 7: Documentation Creation"
 
     - name: "Documentation Protocol"
-      file: "docs/agents/GENERIC-DOCUMENTATION-PROTOCOL.md"
+      file: "GENERIC-DOCUMENTATION-PROTOCOL.md"
       enforcement: "MANDATORY - Follow documentation standards (HISTORY.md, CHANGELOG.md, README.md, ADRs)"
       applies_to: "All documentation work"
 
     - name: "Incremental Documentation Protocol"
-      file: "docs/agents/INCREMENTAL-DOCUMENTATION-PROTOCOL.md"
+      file: "INCREMENTAL-DOCUMENTATION-PROTOCOL.md"
       enforcement: "MANDATORY - Update docs during migration, not at end"
       applies_to: "All migration documentation (CHANGELOG.md, MIGRATION-GUIDE.md)"
 
     - name: "ADR Lifecycle Protocol"
-      file: "docs/agents/GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
+      file: "GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
       enforcement: "MANDATORY - Follow ADR naming convention and lifecycle"
       applies_to: "All ADR creation and updates"
 
@@ -228,7 +228,7 @@ document_directory_structure:
           purpose: "Release validation checklist"
 
     agents:
-      location: "docs/agents/"
+      location: ""
       purpose: "Agent specifications, protocols, and coordination docs"
       required: false
       note: "Only if using multi-agent coordination"

@@ -1,6 +1,6 @@
 # Reference common sections
 common_sections: &common
-  source: "docs/agents/common-agent-sections.yaml"
+  source: "common-agent-sections.yaml"
   version: "1.0"
 
 name: tester-agent
@@ -20,13 +20,13 @@ description: |
 required_protocols:
   mandatory:
     - name: "Testing Protocol"
-      file: "docs/agents/GENERIC-TESTING-PROTOCOL.md"
+      file: "GENERIC-TESTING-PROTOCOL.md"
       enforcement: "MANDATORY - Follow complete 6-phase testing protocol"
       applies_to: "ALL testing activities"
       phases: "Setup, Unit, Integration, Component, Performance, E2E"
 
     - name: "Agent Logging Protocol"
-      file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+      file: "GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log test results via ./scripts/append-to-history.sh"
       applies_to: "After test execution and fix-and-retest cycles"
       template: "Use Template 6: Test Suite Completion"
@@ -81,7 +81,7 @@ tools:
     - Glob (find test files)
 
 testing_protocol:
-  protocol_reference: "MANDATORY - Follow docs/agents/GENERIC-TESTING-PROTOCOL.md"
+  protocol_reference: "MANDATORY - Follow GENERIC-TESTING-PROTOCOL.md"
 
   phases:
     1_setup:

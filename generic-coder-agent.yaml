@@ -1,6 +1,6 @@
 # Reference common sections
 common_sections: &common
-  source: "docs/agents/common-agent-sections.yaml"
+  source: "common-agent-sections.yaml"
   version: "1.0"
 
 name: coder-agent
@@ -19,23 +19,23 @@ required_protocols:
   mandatory:
     # Use common protocols with agent-specific applies_to
     - name: "Agent Logging Protocol"
-      file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+      file: "GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log all completed migration work via ./scripts/append-to-history.sh"
       applies_to: "All code migration and implementation work"
       templates: "Use Template 1: Stage/Phase Migration or Template 3: Dependency Update"
 
     - name: "Testing Protocol"
-      file: "docs/agents/GENERIC-TESTING-PROTOCOL.md"
+      file: "GENERIC-TESTING-PROTOCOL.md"
       enforcement: "MANDATORY - Validate builds and tests after code changes"
       applies_to: "Post-migration validation"
 
     - name: "Continuous Testing Protocol"
-      file: "docs/agents/CONTINUOUS-TESTING-PROTOCOL.md"
+      file: "CONTINUOUS-TESTING-PROTOCOL.md"
       enforcement: "MANDATORY - Build and validate after every code change"
       applies_to: "All code implementation work"
 
     - name: "Parallel Migration Protocol"
-      file: "docs/agents/PARALLEL-MIGRATION-PROTOCOL.md"
+      file: "PARALLEL-MIGRATION-PROTOCOL.md"
       enforcement: "RECOMMENDED - When spawned in parallel with other coder agents"
       applies_to: "Multi-project migrations with independent projects"
 

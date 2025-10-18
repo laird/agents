@@ -1,6 +1,6 @@
 # Reference common sections
 common_sections: &common
-  source: "docs/agents/common-agent-sections.yaml"
+  source: "common-agent-sections.yaml"
   version: "1.0"
 
 name: security-agent
@@ -19,13 +19,13 @@ description: |
 required_protocols:
   mandatory:
     - name: "Agent Logging Protocol"
-      file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+      file: "GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log all security fixes via ./scripts/append-to-history.sh"
       applies_to: "All security remediation work"
       template: "Use Template 2: Security Fix from logging protocol"
 
     - name: "Testing Protocol"
-      file: "docs/agents/GENERIC-TESTING-PROTOCOL.md"
+      file: "GENERIC-TESTING-PROTOCOL.md"
       enforcement: "MANDATORY - Validate security fixes don't break functionality"
       applies_to: "Post-fix validation phase"
 

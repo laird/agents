@@ -1,6 +1,6 @@
 # Reference common sections
 common_sections: &common
-  source: "docs/agents/common-agent-sections.yaml"
+  source: "common-agent-sections.yaml"
   version: "1.0"
 
 name: architect-agent
@@ -20,19 +20,19 @@ description: |
 required_protocols:
   mandatory:
     - name: "ADR Lifecycle Protocol"
-      file: "docs/agents/GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
+      file: "GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
       enforcement: "MANDATORY - Update ADRs throughout entire decision lifecycle (7 stages)"
       applies_to: "ALL architectural decisions from research through post-implementation review"
       stages: "Problem ID → Research → Evaluation → Decision → Implementation → Review → Superseded"
 
     - name: "Agent Logging Protocol"
-      file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+      file: "GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log all architectural work via ./scripts/append-to-history.sh"
       applies_to: "All architectural decision-making and documentation work"
       template: "Use Template 4: Architectural Decision"
 
     - name: "Documentation Plan Template"
-      file: "docs/agents/GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
+      file: "GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
       enforcement: "MANDATORY - Follow ADR structure and directory organization"
       applies_to: "All ADR creation and maintenance"
 
