@@ -14,7 +14,7 @@
   "plugins": [
     {
       "name": "agent-protocols-complete",
-      "source": "./plugins/agent-protocols",
+      "source": "./",
       "description": "Complete suite of 9 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development",
       "version": "2.0.0",
       "category": "workflow",
@@ -27,7 +27,7 @@
     },
     {
       "name": "sparc-workflow",
-      "source": "./plugins/sparc-workflow",
+      "source": "./",
       "description": "SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology with Test-Driven Development workflow",
       "version": "2.0.0",
       "category": "workflow",
@@ -39,7 +39,7 @@
     },
     {
       "name": "testing-framework",
-      "source": "./plugins/testing-framework",
+      "source": "./",
       "description": "6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)",
       "version": "2.0.0",
       "category": "testing",
@@ -51,7 +51,7 @@
     },
     {
       "name": "documentation-system",
-      "source": "./plugins/documentation-system",
+      "source": "./",
       "description": "Complete documentation framework with HISTORY.md logging, ADR lifecycle, incremental documentation, and automated generation",
       "version": "2.0.0",
       "category": "documentation",
@@ -63,7 +63,7 @@
     },
     {
       "name": "security-scanner",
-      "source": "./plugins/security-scanner",
+      "source": "./",
       "description": "CVE vulnerability scanning, security score calculation, and prioritized remediation with blocking quality gates",
       "version": "2.0.0",
       "category": "security",
@@ -75,7 +75,7 @@
     },
     {
       "name": "architecture-advisor",
-      "source": "./plugins/architecture-advisor",
+      "source": "./",
       "description": "Technology research, architectural pattern selection, trade-off analysis, and ADR creation (MADR 3.0.0 format)",
       "version": "2.0.0",
       "category": "architecture",
