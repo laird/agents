@@ -1,0 +1,53 @@
+{
+  "name": "architecture-advisor",
+  "displayName": "Architecture Decision Advisor",
+  "version": "2.0.0",
+  "description": "Technology research, architectural pattern selection, trade-off analysis, and ADR creation (MADR 3.0.0 format)",
+  "author": {
+    "name": "Agent Protocols Team"
+  },
+  "license": "MIT",
+  "keywords": [
+    "architecture",
+    "adr",
+    "research",
+    "decisions",
+    "patterns",
+    "design"
+  ],
+  "agents": [
+    {
+      "name": "architect-agent",
+      "type": "specialist",
+      "source": "../../generic-architect-agent.yaml",
+      "description": "Architecture design specialist for technology research and decision-making"
+    }
+  ],
+  "protocols": [
+    {
+      "name": "adr-lifecycle-protocol",
+      "source": "../../GENERIC-ADR-LIFECYCLE-PROTOCOL.md",
+      "description": "7-stage ADR lifecycle: Creation → Review → Acceptance → Implementation → Validation → Review → Deprecation"
+    }
+  ],
+  "features": {
+    "capabilities": [
+      "Technology research and evaluation",
+      "Architectural pattern selection",
+      "Trade-off analysis (performance, scalability, maintainability, cost)",
+      "ADR creation and maintenance (MADR 3.0.0 format)",
+      "Decision documentation"
+    ],
+    "decisionProcess": "Problem → Research (3+ alternatives) → Evaluation → Decision → Documentation → HISTORY.md log",
+    "outputs": [
+      "ADR files (docs/ADR/)",
+      "Evaluation matrices",
+      "Architecture diagrams",
+      "Research summaries"
+    ],
+    "incrementalUpdates": "Commit after each alternative researched"
+  },
+  "requirements": {
+    "claudeCode": ">=2.0.0"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "name": "sparc-workflow",
+  "displayName": "SPARC Development Workflow",
+  "version": "2.0.0",
+  "description": "SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology with Test-Driven Development workflow",
+  "author": {
+    "name": "Agent Protocols Team"
+  },
+  "license": "MIT",
+  "keywords": [
+    "sparc",
+    "tdd",
+    "workflow",
+    "architecture",
+    "testing",
+    "methodology"
+  ],
+  "commands": [
+    {
+      "name": "/sparc-modes",
+      "description": "List all available SPARC workflow modes",
+      "handler": "npx claude-flow sparc modes"
+    },
+    {
+      "name": "/sparc-run",
+      "description": "Execute specific SPARC mode",
+      "handler": "npx claude-flow sparc run"
+    },
+    {
+      "name": "/sparc-tdd",
+      "description": "Run complete TDD workflow",
+      "handler": "npx claude-flow sparc tdd"
+    },
+    {
+      "name": "/sparc-batch",
+      "description": "Execute multiple SPARC modes in parallel",
+      "handler": "npx claude-flow sparc batch"
+    },
+    {
+      "name": "/sparc-pipeline",
+      "description": "Run full SPARC pipeline",
+      "handler": "npx claude-flow sparc pipeline"
+    }
+  ],
+  "protocols": [
+    {
+      "name": "sparc-methodology",
+      "description": "5-phase SPARC framework: Specification → Pseudocode → Architecture → Refinement → Completion"
+    }
+  ],
+  "features": {
+    "specification": "Requirements analysis and planning",
+    "pseudocode": "Algorithm design before implementation",
+    "architecture": "System design and structure",
+    "refinement": "TDD implementation and iteration",
+    "completion": "Integration and final validation"
+  },
+  "requirements": {
+    "claudeCode": ">=2.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "claude-flow": "latest"
+  }
+}

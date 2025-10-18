@@ -1,0 +1,57 @@
+{
+  "name": "security-scanner",
+  "displayName": "Security Assessment & Remediation",
+  "version": "2.0.0",
+  "description": "CVE vulnerability scanning, security score calculation, and prioritized remediation with blocking quality gates",
+  "author": {
+    "name": "Agent Protocols Team"
+  },
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "cve",
+    "vulnerability",
+    "scanning",
+    "remediation",
+    "compliance"
+  ],
+  "agents": [
+    {
+      "name": "security-agent",
+      "type": "specialist",
+      "source": "../../generic-security-agent.yaml",
+      "description": "Security specialist for vulnerability assessment and remediation"
+    }
+  ],
+  "protocols": [
+    {
+      "name": "security-scanning",
+      "description": "CVE vulnerability scanning and security score calculation"
+    }
+  ],
+  "features": {
+    "vulnerabilityScanning": {
+      "cveDetection": true,
+      "securityScore": "0-100 scale",
+      "blockingThreshold": "CRITICAL/HIGH vulnerabilities"
+    },
+    "remediation": {
+      "prioritization": "CRITICAL → HIGH → MEDIUM → LOW",
+      "automatedPlans": true,
+      "complianceValidation": true
+    },
+    "qualityGates": {
+      "minimumScore": 45,
+      "blocksMigration": "Until CRITICAL/HIGH resolved"
+    },
+    "outputs": [
+      "Security assessment reports",
+      "CVE vulnerability lists",
+      "Prioritized remediation plans",
+      "Compliance validation results"
+    ]
+  },
+  "requirements": {
+    "claudeCode": ">=2.0.0"
+  }
+}

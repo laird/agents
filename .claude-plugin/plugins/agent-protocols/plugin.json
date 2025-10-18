@@ -1,0 +1,137 @@
+{
+  "name": "agent-protocols-complete",
+  "displayName": "Complete Agent Protocols Suite",
+  "version": "2.0.0",
+  "description": "Complete suite of 9 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development",
+  "author": {
+    "name": "Agent Protocols Team",
+    "email": "[email protected]"
+  },
+  "homepage": "https://github.com/laird/agents",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laird/agents"
+  },
+  "license": "MIT",
+  "keywords": [
+    "protocols",
+    "agents",
+    "automation",
+    "testing",
+    "documentation",
+    "migration",
+    "sparc",
+    "multi-agent"
+  ],
+  "agents": [
+    {
+      "name": "migration-coordinator",
+      "type": "orchestration",
+      "source": "../../generic-migration-coordinator.yaml",
+      "description": "Strategic oversight of multi-stage migration projects with swarm coordination"
+    },
+    {
+      "name": "architect-agent",
+      "type": "specialist",
+      "source": "../../generic-architect-agent.yaml",
+      "description": "Technology research, architectural pattern selection, and ADR creation"
+    },
+    {
+      "name": "coder-agent",
+      "type": "specialist",
+      "source": "../../generic-coder-agent.yaml",
+      "description": "Code migration, API modernization, and build fix implementation"
+    },
+    {
+      "name": "tester-agent",
+      "type": "specialist",
+      "source": "../../generic-tester-agent.yaml",
+      "description": "Comprehensive testing with fix-and-retest cycles (≥95% pass rate)"
+    },
+    {
+      "name": "documentation-agent",
+      "type": "specialist",
+      "source": "../../generic-documentation-agent.yaml",
+      "description": "CHANGELOG creation, migration guides, and comprehensive documentation"
+    },
+    {
+      "name": "security-agent",
+      "type": "specialist",
+      "source": "../../generic-security-agent.yaml",
+      "description": "CVE vulnerability scanning and prioritized remediation"
+    }
+  ],
+  "protocols": [
+    {
+      "name": "protocol-index",
+      "source": "../../00-PROTOCOL-INDEX.md",
+      "description": "Master navigation hub for all protocols with quick reference cards"
+    },
+    {
+      "name": "agent-logging-protocol",
+      "source": "../../GENERIC-AGENT-LOGGING-PROTOCOL.md",
+      "description": "HISTORY.md logging with 7 templates and audit trail"
+    },
+    {
+      "name": "testing-protocol",
+      "source": "../../GENERIC-TESTING-PROTOCOL.md",
+      "description": "6-phase testing framework with quality gates"
+    },
+    {
+      "name": "adr-lifecycle-protocol",
+      "source": "../../GENERIC-ADR-LIFECYCLE-PROTOCOL.md",
+      "description": "7-stage ADR lifecycle with MADR 3.0.0 format"
+    },
+    {
+      "name": "documentation-protocol",
+      "source": "../../GENERIC-DOCUMENTATION-PROTOCOL.md",
+      "description": "Unified documentation guide integrating all pillars"
+    },
+    {
+      "name": "incremental-documentation",
+      "source": "../../INCREMENTAL-DOCUMENTATION-PROTOCOL.md",
+      "description": "Continuous documentation throughout project lifecycle"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "analyze-dependencies",
+      "source": "../../scripts/analyze-dependencies.sh",
+      "description": "Dependency analysis for parallel agent execution"
+    },
+    {
+      "name": "append-to-history",
+      "source": "../../scripts/append-to-history.sh",
+      "description": "Universal HISTORY.md logging utility"
+    },
+    {
+      "name": "capture-test-baseline",
+      "source": "../../scripts/capture-test-baseline.sh",
+      "description": "Test baseline creation for regression detection"
+    },
+    {
+      "name": "run-stage-tests",
+      "source": "../../scripts/run-stage-tests.sh",
+      "description": "Stage-specific test execution with filtering"
+    },
+    {
+      "name": "validate-migration-stage",
+      "source": "../../scripts/validate-migration-stage.sh",
+      "description": "Quality gate validation before stage progression"
+    }
+  ],
+  "commands": [],
+  "hooks": [],
+  "features": {
+    "multiAgentCoordination": true,
+    "parallelExecution": true,
+    "qualityGates": true,
+    "auditTrail": true,
+    "securityScanning": true,
+    "automatedTesting": true,
+    "comprehensiveDocumentation": true
+  },
+  "requirements": {
+    "claudeCode": ">=2.0.0"
+  }
+}
