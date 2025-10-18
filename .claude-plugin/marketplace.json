@@ -1,6 +1,5 @@
 {
   "name": "agent-protocols-marketplace",
-  "displayName": "Agent Protocols & Definitions Marketplace",
   "version": "2.0.0",
   "description": "Production-validated agent protocols, definitions, and automation frameworks for systematic AI-assisted software development",
   "owner": {
@@ -15,7 +14,6 @@
   "plugins": [
     {
       "name": "agent-protocols-complete",
-      "displayName": "Complete Agent Protocols Suite",
       "source": "./plugins/agent-protocols",
       "description": "Complete suite of 9 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development",
       "version": "2.0.0",
@@ -29,7 +27,6 @@
     },
     {
       "name": "sparc-workflow",
-      "displayName": "SPARC Development Workflow",
       "source": "./plugins/sparc-workflow",
       "description": "SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology with Test-Driven Development workflow",
       "version": "2.0.0",
@@ -42,7 +39,6 @@
     },
     {
       "name": "testing-framework",
-      "displayName": "Comprehensive Testing Framework",
       "source": "./plugins/testing-framework",
       "description": "6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)",
       "version": "2.0.0",
@@ -55,7 +51,6 @@
     },
     {
       "name": "documentation-system",
-      "displayName": "Systematic Documentation System",
       "source": "./plugins/documentation-system",
       "description": "Complete documentation framework with HISTORY.md logging, ADR lifecycle, incremental documentation, and automated generation",
       "version": "2.0.0",
@@ -68,7 +63,6 @@
     },
     {
       "name": "security-scanner",
-      "displayName": "Security Assessment & Remediation",
       "source": "./plugins/security-scanner",
       "description": "CVE vulnerability scanning, security score calculation, and prioritized remediation with blocking quality gates",
       "version": "2.0.0",
@@ -81,7 +75,6 @@
     },
     {
       "name": "architecture-advisor",
-      "displayName": "Architecture Decision Advisor",
       "source": "./plugins/architecture-advisor",
       "description": "Technology research, architectural pattern selection, trade-off analysis, and ADR creation (MADR 3.0.0 format)",
       "version": "2.0.0",

@@ -1,6 +1,5 @@
 {
   "name": "testing-framework",
-  "displayName": "Comprehensive Testing Framework",
   "version": "2.0.0",
   "description": "6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)",
   "author": {
@@ -14,58 +13,5 @@
     "automation",
     "quality-gates",
     "fix-and-retest"
-  ],
-  "agents": [
-    {
-      "name": "tester-agent",
-      "type": "specialist",
-      "source": "../../generic-tester-agent.yaml",
-      "description": "Quality assurance specialist with comprehensive testing capabilities"
-    }
-  ],
-  "protocols": [
-    {
-      "name": "testing-protocol",
-      "source": "../../GENERIC-TESTING-PROTOCOL.md",
-      "description": "6-phase testing framework: Pre-test → Unit → Integration → Component → Performance → Samples"
-    }
-  ],
-  "scripts": [
-    {
-      "name": "capture-test-baseline",
-      "source": "../../scripts/capture-test-baseline.sh",
-      "description": "Capture test results as baseline for regression detection"
-    },
-    {
-      "name": "run-stage-tests",
-      "source": "../../scripts/run-stage-tests.sh",
-      "description": "Execute stage-specific tests with filtering and strict mode"
-    },
-    {
-      "name": "validate-migration-stage",
-      "source": "../../scripts/validate-migration-stage.sh",
-      "description": "Comprehensive quality gate validation"
-    }
-  ],
-  "features": {
-    "phases": [
-      "Pre-test validation",
-      "Unit testing",
-      "Integration testing",
-      "Component testing",
-      "Performance testing",
-      "Sample testing"
-    ],
-    "qualityGates": {
-      "unitTestPassRate": "≥95%",
-      "integrationTestPassRate": "≥90%",
-      "buildSuccess": "100%",
-      "maxFixIterations": 3
-    },
-    "fixAndRetest": "Automated cycle with max 3 iterations",
-    "baselineTracking": "Regression detection and performance monitoring"
-  },
-  "requirements": {
-    "claudeCode": ">=2.0.0"
-  }
+  ]
 }

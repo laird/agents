@@ -12,6 +12,17 @@ This repository provides production-validated protocols and agent definitions th
 
 ```
 agents/
+├── 🔌 Claude Code Plugin Marketplace
+│   └── .claude-plugin/
+│       ├── marketplace.json                    # Plugin marketplace definition
+│       └── plugins/
+│           ├── agent-protocols/                # Complete suite plugin
+│           ├── sparc-workflow/                 # SPARC methodology plugin
+│           ├── testing-framework/              # Testing protocol plugin
+│           ├── documentation-system/           # Documentation plugin
+│           ├── security-scanner/               # Security scanning plugin
+│           └── architecture-advisor/           # Architecture ADR plugin
+│
 ├── 📋 Protocol Documents (9 files)
 │   ├── 00-PROTOCOL-INDEX.md                    # Master navigation hub
 │   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md       # Architecture decisions
@@ -52,20 +63,49 @@ agents/
 
 ## Quick Start
 
+### Installation via Claude Code Plugin Marketplace
+
+**Easiest Method**: Install all protocols and agents with a single command:
+
+```bash
+# Add this repository as a Claude Code marketplace
+claude plugin marketplace add agents https://github.com/laird/agents
+
+# Install the complete suite
+claude plugin install agent-protocols-complete@agents
+
+# Or install individual components:
+claude plugin install sparc-workflow@agents
+claude plugin install testing-framework@agents
+claude plugin install documentation-system@agents
+claude plugin install security-scanner@agents
+claude plugin install architecture-advisor@agents
+```
+
+**Available Plugin Packages**:
+- `agent-protocols-complete` - Complete suite (9 protocols + 6 agents + 5 scripts)
+- `sparc-workflow` - SPARC development methodology with TDD
+- `testing-framework` - 6-phase testing protocol with quality gates
+- `documentation-system` - HISTORY.md logging, ADRs, incremental docs
+- `security-scanner` - CVE scanning and remediation
+- `architecture-advisor` - Technology research and ADR creation
+
 ### For New Projects
 
-1. **Read the Index**: Start with `00-PROTOCOL-INDEX.md` for navigation
-2. **Choose Your Protocols**: Select protocols relevant to your project type
-3. **Configure Agents**: Use agent YAML files with claude-flow or similar tools
-4. **Set Up Infrastructure**: Create logging scripts and test environments
-5. **Begin Development**: Follow protocols for systematic, high-quality work
+1. **Install Plugin**: Use Claude Code marketplace installation (above)
+2. **Read the Index**: Start with `00-PROTOCOL-INDEX.md` for navigation
+3. **Choose Your Protocols**: Select protocols relevant to your project type
+4. **Configure Agents**: Use agent YAML files with claude-flow or similar tools
+5. **Set Up Infrastructure**: Create logging scripts and test environments
+6. **Begin Development**: Follow protocols for systematic, high-quality work
 
 ### For Existing Projects
 
-1. **Integrate Protocols**: Reference protocols in your project's `CLAUDE.md` or agent instructions
-2. **Adopt Incrementally**: Start with logging protocol, add testing, then documentation
-3. **Customize**: Adapt protocols to your technology stack and requirements
-4. **Scale**: Use multi-agent coordination patterns as complexity grows
+1. **Install Plugin**: Add as Claude Code marketplace and install desired packages
+2. **Integrate Protocols**: Reference protocols in your project's `CLAUDE.md` or agent instructions
+3. **Adopt Incrementally**: Start with logging protocol, add testing, then documentation
+4. **Customize**: Adapt protocols to your technology stack and requirements
+5. **Scale**: Use multi-agent coordination patterns as complexity grows
 
 ---
 
@@ -652,10 +692,57 @@ These protocols and agent definitions are provided as templates for your use. Cu
 
 ---
 
+## Claude Code Plugin Marketplace
+
+This repository is configured as a **Claude Code Plugin Marketplace**, allowing one-command installation of protocols and agents.
+
+### Schema Compliance
+
+- ✅ **Valid marketplace.json** - Passes Claude Code validation
+- ✅ **Valid plugin manifests** - All 6 plugin.json files validated
+- ✅ **No unrecognized fields** - Complies with official Claude Code schema
+- ✅ **Proper structure** - Uses `strict: false` for flexible plugin definitions
+
+### Schema Fixes (v2.1)
+
+**Issue**: Original marketplace used `displayName` field which is not part of the official Claude Code plugin schema.
+
+**Solution**:
+- Removed all `displayName` fields from marketplace.json and plugin.json files
+- Simplified plugin.json files to only include standard schema fields: `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `commands`
+- Used `description` field for human-readable names
+- All validation now passes successfully
+
+**Standard Fields Only**:
+```json
+{
+  "name": "plugin-name",
+  "version": "2.0.0",
+  "description": "Human-readable plugin description",
+  "author": { "name": "Author Name", "email": "[email protected]" },
+  "homepage": "https://github.com/...",
+  "repository": "https://github.com/...",
+  "license": "MIT",
+  "keywords": ["keyword1", "keyword2"]
+}
+```
+
+### Available Plugins
+
+| Plugin | Category | Description |
+|--------|----------|-------------|
+| `agent-protocols-complete` | workflow | Complete suite of all protocols, agents, and scripts |
+| `sparc-workflow` | workflow | SPARC methodology with TDD workflow commands |
+| `testing-framework` | testing | 6-phase testing protocol with quality gates |
+| `documentation-system` | documentation | HISTORY.md logging, ADR lifecycle, incremental docs |
+| `security-scanner` | security | CVE scanning and remediation workflows |
+| `architecture-advisor` | architecture | Technology research and ADR creation |
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2025-10-18 | Fixed Claude Code plugin schema validation - removed invalid `displayName` fields |
 | 2.0 | 2025-10-17 | Updated README with comprehensive file explanations and repository structure |
 | 1.0 | 2025-10-10 | Initial release with 13 protocols and 6 agent definitions |
 

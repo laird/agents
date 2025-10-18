@@ -1,6 +1,5 @@
 {
   "name": "sparc-workflow",
-  "displayName": "SPARC Development Workflow",
   "version": "2.0.0",
   "description": "SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology with Test-Driven Development workflow",
   "author": {
@@ -41,25 +40,5 @@
       "description": "Run full SPARC pipeline",
       "handler": "npx claude-flow sparc pipeline"
     }
-  ],
-  "protocols": [
-    {
-      "name": "sparc-methodology",
-      "description": "5-phase SPARC framework: Specification → Pseudocode → Architecture → Refinement → Completion"
-    }
-  ],
-  "features": {
-    "specification": "Requirements analysis and planning",
-    "pseudocode": "Algorithm design before implementation",
-    "architecture": "System design and structure",
-    "refinement": "TDD implementation and iteration",
-    "completion": "Integration and final validation"
-  },
-  "requirements": {
-    "claudeCode": ">=2.0.0",
-    "npm": ">=8.0.0"
-  },
-  "dependencies": {
-    "claude-flow": "latest"
-  }
+  ]
 }

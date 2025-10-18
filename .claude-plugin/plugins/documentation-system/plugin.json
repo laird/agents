@@ -1,6 +1,5 @@
 {
   "name": "documentation-system",
-  "displayName": "Systematic Documentation System",
   "version": "2.0.0",
   "description": "Complete documentation framework with HISTORY.md logging, ADR lifecycle, incremental documentation, and automated generation",
   "author": {
@@ -14,73 +13,5 @@
     "audit-trail",
     "changelog",
     "incremental"
-  ],
-  "agents": [
-    {
-      "name": "documentation-agent",
-      "type": "specialist",
-      "source": "../../generic-documentation-agent.yaml",
-      "description": "Documentation specialist for comprehensive user-facing documentation"
-    }
-  ],
-  "protocols": [
-    {
-      "name": "agent-logging-protocol",
-      "source": "../../GENERIC-AGENT-LOGGING-PROTOCOL.md",
-      "description": "HISTORY.md logging with 7 templates and 4-parameter structure"
-    },
-    {
-      "name": "adr-lifecycle-protocol",
-      "source": "../../GENERIC-ADR-LIFECYCLE-PROTOCOL.md",
-      "description": "7-stage ADR lifecycle with MADR 3.0.0 format"
-    },
-    {
-      "name": "documentation-protocol",
-      "source": "../../GENERIC-DOCUMENTATION-PROTOCOL.md",
-      "description": "Unified documentation guide integrating all documentation pillars"
-    },
-    {
-      "name": "incremental-documentation",
-      "source": "../../INCREMENTAL-DOCUMENTATION-PROTOCOL.md",
-      "description": "Continuous documentation throughout project lifecycle"
-    },
-    {
-      "name": "documentation-plan-template",
-      "source": "../../GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md",
-      "description": "Documentation strategy and planning template"
-    }
-  ],
-  "scripts": [
-    {
-      "name": "append-to-history",
-      "source": "../../scripts/append-to-history.sh",
-      "description": "Universal HISTORY.md logging utility with 4-parameter structure"
-    }
-  ],
-  "features": {
-    "historyLogging": {
-      "templates": 7,
-      "structure": "WHAT, WHY, IMPACT, OUTCOME",
-      "autoTimestamp": true
-    },
-    "adrLifecycle": {
-      "stages": 7,
-      "format": "MADR 3.0.0",
-      "namingConvention": "ADR #### Title With Spaces.md"
-    },
-    "incrementalDocumentation": {
-      "timeSavings": "1-2 hours per stage",
-      "frequency": "Throughout project lifecycle"
-    },
-    "outputs": [
-      "CHANGELOG.md",
-      "Migration guides (800+ lines)",
-      "Release notes",
-      "ADRs",
-      "Platform guides"
-    ]
-  },
-  "requirements": {
-    "claudeCode": ">=2.0.0"
-  }
+  ]
 }
