@@ -129,17 +129,17 @@ The marketplace was successfully tested from GitHub:
 ```bash
 # Add marketplace from GitHub
 $ claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/master/.claude-plugin/marketplace.json"
-✔ Successfully added marketplace: agent-protocols-marketplace
+✔ Successfully added marketplace: laird-agents-protocols-marketplace
 
 # List marketplaces
 $ claude plugin marketplace list
 Configured marketplaces:
-  ❯ agent-protocols-marketplace
+  ❯ laird-agents-protocols-marketplace
     Source: URL (https://raw.githubusercontent.com/laird/agents/master/.claude-plugin/marketplace.json)
 
 # Update marketplace
-$ claude plugin marketplace update agent-protocols-marketplace
-✔ Successfully updated marketplace: agent-protocols-marketplace
+$ claude plugin marketplace update laird-agents-protocols-marketplace
+✔ Successfully updated marketplace: laird-agents-protocols-marketplace
 ```
 
 ## Installation Instructions
@@ -151,14 +151,14 @@ Users can now install plugins from this marketplace:
 claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/master/.claude-plugin/marketplace.json"
 
 # Install the complete suite
-claude plugin install agent-protocols-complete@agent-protocols-marketplace
+claude plugin install agent-protocols-complete@laird-agents-protocols-marketplace
 
 # Or install individual components:
-claude plugin install sparc-workflow@agent-protocols-marketplace
-claude plugin install testing-framework@agent-protocols-marketplace
-claude plugin install documentation-system@agent-protocols-marketplace
-claude plugin install security-scanner@agent-protocols-marketplace
-claude plugin install architecture-advisor@agent-protocols-marketplace
+claude plugin install sparc-workflow@laird-agents-protocols-marketplace
+claude plugin install testing-framework@laird-agents-protocols-marketplace
+claude plugin install documentation-system@laird-agents-protocols-marketplace
+claude plugin install security-scanner@laird-agents-protocols-marketplace
+claude plugin install architecture-advisor@laird-agents-protocols-marketplace
 ```
 
 ## Key Takeaways

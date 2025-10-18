@@ -69,17 +69,17 @@ agents/
 
 ```bash
 # Add this repository as a Claude Code marketplace
-claude plugin marketplace add agents https://github.com/laird/agents
+claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/master/.claude-plugin/marketplace.json"
 
 # Install the complete suite
-claude plugin install agent-protocols-complete@agents
+claude plugin install agent-protocols-complete@laird-agents-protocols-marketplace
 
 # Or install individual components:
-claude plugin install sparc-workflow@agents
-claude plugin install testing-framework@agents
-claude plugin install documentation-system@agents
-claude plugin install security-scanner@agents
-claude plugin install architecture-advisor@agents
+claude plugin install sparc-workflow@laird-agents-protocols-marketplace
+claude plugin install testing-framework@laird-agents-protocols-marketplace
+claude plugin install documentation-system@laird-agents-protocols-marketplace
+claude plugin install security-scanner@laird-agents-protocols-marketplace
+claude plugin install architecture-advisor@laird-agents-protocols-marketplace
 ```
 
 **Available Plugin Packages**:
