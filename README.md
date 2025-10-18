@@ -23,18 +23,20 @@ agents/
 │           ├── security-scanner/               # Security scanning plugin
 │           └── architecture-advisor/           # Architecture ADR plugin
 │
-├── 📋 Protocol Documents (9 files)
+├── 📋 Protocol Documents (protocols/ directory - 10 files)
 │   ├── 00-PROTOCOL-INDEX.md                    # Master navigation hub
 │   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md       # Architecture decisions
 │   ├── GENERIC-AGENT-LOGGING-PROTOCOL.md       # Audit trail & HISTORY.md
 │   ├── GENERIC-AGENT-PROTOCOLS-README.md       # Protocol overview
+│   ├── GENERIC-AGENT-YAML-README.md            # YAML specification guide
 │   ├── GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md  # Documentation planning
 │   ├── GENERIC-DOCUMENTATION-PROTOCOL.md       # Unified docs guide
 │   ├── GENERIC-TESTING-PROTOCOL.md             # Comprehensive testing
 │   ├── INCREMENTAL-DOCUMENTATION-PROTOCOL.md   # Continuous documentation
 │   └── VALIDATION-REPORT.md                    # File validation status
 │
-├── 🤖 Agent Definitions (6 files)
+├── 🤖 Agent Definitions (7 files - root directory)
+│   ├── common-agent-sections.yaml              # Shared agent patterns
 │   ├── generic-architect-agent.yaml            # Architecture & tech research
 │   ├── generic-coder-agent.yaml                # Code implementation
 │   ├── generic-documentation-agent.yaml        # Documentation creation
@@ -49,8 +51,7 @@ agents/
 │   ├── scripts/run-stage-tests.sh              # Stage-specific test execution
 │   └── scripts/validate-migration-stage.sh     # Quality gate validation
 │
-├── 📄 Support Files (3 files)
-│   ├── GENERIC-AGENT-YAML-README.md            # YAML specification guide
+├── 📄 Support Files (2 files - root directory)
 │   ├── README.md                               # This file
 │   └── .gitignore                              # Git exclusion rules
 │

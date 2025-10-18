@@ -8,22 +8,22 @@
 # Common Protocol Definitions
 common_logging_protocol: &logging_protocol
   name: "Agent Logging Protocol"
-  file: "docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md"
+  file: "protocols/GENERIC-AGENT-LOGGING-PROTOCOL.md"
   enforcement: "MANDATORY - Log all completed work via ./scripts/append-to-history.sh"
 
 common_testing_protocol: &testing_protocol
   name: "Testing Protocol"
-  file: "docs/agents/GENERIC-TESTING-PROTOCOL.md"
+  file: "protocols/GENERIC-TESTING-PROTOCOL.md"
   enforcement: "MANDATORY - Validate work with testing"
 
 common_migration_planning_protocol: &migration_planning_protocol
   name: "Migration Planning Guide"
-  file: "docs/agents/GENERIC-MIGRATION-PLANNING-GUIDE.md"
+  file: "protocols/GENERIC-MIGRATION-PLANNING-GUIDE.md"
   enforcement: "MANDATORY - Follow 5-phase planning framework"
 
 common_documentation_plan_protocol: &documentation_plan_protocol
   name: "Documentation Plan Template"
-  file: "docs/agents/GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
+  file: "protocols/GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
   enforcement: "MANDATORY - Follow complete documentation plan structure"
 
 # Common Protocol Enforcement Patterns
