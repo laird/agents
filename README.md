@@ -6,6 +6,9 @@ A comprehensive collection of **reusable agent protocols**, **agent definitions*
 
 This repository provides production-validated protocols and agent definitions that enable systematic, high-quality software development through AI coordination. Originally created for .NET framework migrations, these protocols are **universally applicable** to any software project requiring structured agent collaboration.
 
+To use the agents, tell claude 'load agents from ../agents/gen*.yaml'.
+
+Still working on getting them working with /plugin as a marketplace.
 ---
 
 ## Repository Structure
