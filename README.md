@@ -33,12 +33,12 @@ agents/
 │   └── commands/protocol-index.md               # Master navigation hub
 │
 ├── 🤖 Agents (6 specialized agents as markdown)
-│   ├── agents_md/tester.md                      # Quality assurance specialist
-│   ├── agents_md/coder.md                       # Code implementation specialist
-│   ├── agents_md/architect.md                   # Architecture & design specialist
-│   ├── agents_md/security.md                    # Security scanning specialist
-│   ├── agents_md/documentation.md               # Documentation specialist
-│   └── agents_md/migration-coordinator.md       # Multi-stage orchestration
+│   ├── agents/tester.md                         # Quality assurance specialist
+│   ├── agents/coder.md                          # Code implementation specialist
+│   ├── agents/architect.md                      # Architecture & design specialist
+│   ├── agents/security.md                       # Security scanning specialist
+│   ├── agents/documentation.md                  # Documentation specialist
+│   └── agents/migration-coordinator.md          # Multi-stage orchestration
 │
 ├── 📋 Protocol Documents (original YAML/MD - 10 files)
 │   └── protocols/                               # Source protocol files
@@ -66,7 +66,7 @@ agents/
 ```
 
 **Note**: The repository now contains both:
-- **Claude Code plugin format** (`commands/` and `agents_md/` directories) for Claude Code integration
+- **Claude Code plugin format** (`commands/` and `agents/` directories) for Claude Code integration
 - **Original YAML format** (`protocols/` and `generic-*-agent.yaml` files) for manual usage or other tools
 
 ---
@@ -86,10 +86,12 @@ claude plugin install agent-protocols@agent-protocols-marketplace
 ```
 
 **What's Included**:
-- **10 Protocol Commands**: Testing, logging, ADR lifecycle, documentation, and more
-- **6 Specialized Agents**: Tester, coder, architect, security, documentation, and coordinator
+- **10 Protocol Commands**: Testing, logging, ADR lifecycle, documentation, and more (available as `/` slash commands)
+- **6 Specialized Agents**: Tester, coder, architect, security, documentation, and coordinator (markdown files in `agents/` directory)
 - **5 Automation Scripts**: HISTORY.md logging, test baseline capture, validation, and more
 - **Universal Applicability**: Works with any software project, not just .NET
+
+**Note**: The agent files are included in the `agents/` directory but are not yet automatically loaded by the plugin system. You can reference them manually after installation.
 
 ### Alternative: Git Clone Method
 
@@ -756,7 +758,8 @@ This repository is configured as a **Claude Code Plugin Marketplace**, allowing 
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.2.0 | 2025-10-25 | Restructured as single Claude Code plugin: converted protocols to commands/, agents to markdown format, added schema references, proper plugin manifest |
+| 2.2.1 | 2025-10-25 | Fixed plugin manifest validation: removed unsupported `agents` and `$schema` fields, renamed agents_md/ to agents/, simplified plugin.json to only include commands |
+| 2.2.0 | 2025-10-25 | Restructured as single Claude Code plugin: converted protocols to commands/, agents to markdown format, proper plugin manifest |
 | 2.1 | 2025-10-18 | Fixed Claude Code plugin marketplace integration: removed invalid `displayName` fields, fixed plugin source paths, corrected agent protocol references |
 | 2.0 | 2025-10-17 | Updated README with comprehensive file explanations and repository structure |
 | 1.0 | 2025-10-10 | Initial release with 13 protocols and 6 agent definitions |

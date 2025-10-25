@@ -1,7 +1,6 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "agent-protocols-marketplace",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Originally created for .NET migrations, these protocols are universally applicable to any software project requiring structured agent collaboration.",
   "owner": {
     "name": "Agent Protocols Team",
@@ -17,7 +16,7 @@
       "name": "agent-protocols",
       "source": "./",
       "description": "Complete suite of 10 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development, testing, documentation, and security scanning",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "category": "workflow",
       "tags": [
         "protocols",
