@@ -4,95 +4,105 @@ A comprehensive collection of **reusable agent protocols**, **agent definitions*
 
 ## Overview
 
-This repository provides production-validated protocols and agent definitions that enable systematic, high-quality software development through AI coordination. Originally created for .NET framework migrations, these protocols are **universally applicable** to any softw,are project requiring structured agent collaboration.
+This repository provides production-validated protocols and agent definitions that enable systematic, high-quality software development through AI coordination. Originally created for .NET framework migrations, these protocols are **universally applicable** to any software project requiring structured agent collaboration.
 
-To use the agents, use git to pull down the agents repo next to your project, then tell claude 'load agents from ../agents/gen*.yaml'.
-
-Still working on getting them working with /plugin as a marketplace.
+**Installation Methods**:
+1. **Claude Code Plugin** (Recommended): Install as a Claude Code plugin with all protocols and agents
+2. **Git Clone**: Clone the repository and reference agents/protocols manually
 ---
 
 ## Repository Structure
 
 ```
 agents/
-├── 🔌 Claude Code Plugin Marketplace
+├── 🔌 Claude Code Plugin
 │   └── .claude-plugin/
-│       ├── marketplace.json                    # Plugin marketplace definition
-│       └── plugins/
-│           ├── agent-protocols/                # Complete suite plugin
-│           ├── sparc-workflow/                 # SPARC methodology plugin
-│           ├── testing-framework/              # Testing protocol plugin
-│           ├── documentation-system/           # Documentation plugin
-│           ├── security-scanner/               # Security scanning plugin
-│           └── architecture-advisor/           # Architecture ADR plugin
+│       ├── plugin.json                          # Plugin manifest with commands & agents
+│       └── marketplace.json                     # Marketplace definition
 │
-├── 📋 Protocol Documents (protocols/ directory - 10 files)
-│   ├── 00-PROTOCOL-INDEX.md                    # Master navigation hub
-│   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md       # Architecture decisions
-│   ├── GENERIC-AGENT-LOGGING-PROTOCOL.md       # Audit trail & HISTORY.md
-│   ├── GENERIC-AGENT-PROTOCOLS-README.md       # Protocol overview
-│   ├── GENERIC-AGENT-YAML-README.md            # YAML specification guide
-│   ├── GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md  # Documentation planning
-│   ├── GENERIC-DOCUMENTATION-PROTOCOL.md       # Unified docs guide
-│   ├── GENERIC-TESTING-PROTOCOL.md             # Comprehensive testing
-│   ├── INCREMENTAL-DOCUMENTATION-PROTOCOL.md   # Continuous documentation
-│   └── VALIDATION-REPORT.md                    # File validation status
+├── 📋 Commands (10 protocol commands)
+│   ├── commands/testing-protocol.md             # 6-phase testing with quality gates
+│   ├── commands/agent-logging.md                # HISTORY.md audit trail protocol
+│   ├── commands/adr-lifecycle.md                # ADR lifecycle management (MADR 3.0.0)
+│   ├── commands/documentation-protocol.md       # Unified documentation guide
+│   ├── commands/documentation-plan.md           # Documentation strategy template
+│   ├── commands/incremental-documentation.md    # Continuous documentation
+│   ├── commands/protocols-overview.md           # Protocol overview & quick start
+│   ├── commands/agent-yaml-spec.md              # YAML agent specification
+│   ├── commands/validation-report.md            # File validation report
+│   └── commands/protocol-index.md               # Master navigation hub
 │
-├── 🤖 Agent Definitions (7 files - root directory)
-│   ├── common-agent-sections.yaml              # Shared agent patterns
-│   ├── generic-architect-agent.yaml            # Architecture & tech research
-│   ├── generic-coder-agent.yaml                # Code implementation
-│   ├── generic-documentation-agent.yaml        # Documentation creation
-│   ├── generic-migration-coordinator.yaml      # Multi-stage orchestration
-│   ├── generic-security-agent.yaml             # Vulnerability assessment
-│   └── generic-tester-agent.yaml               # Quality assurance
+├── 🤖 Agents (6 specialized agents as markdown)
+│   ├── agents_md/tester.md                      # Quality assurance specialist
+│   ├── agents_md/coder.md                       # Code implementation specialist
+│   ├── agents_md/architect.md                   # Architecture & design specialist
+│   ├── agents_md/security.md                    # Security scanning specialist
+│   ├── agents_md/documentation.md               # Documentation specialist
+│   └── agents_md/migration-coordinator.md       # Multi-stage orchestration
+│
+├── 📋 Protocol Documents (original YAML/MD - 10 files)
+│   └── protocols/                               # Source protocol files
+│
+├── 🤖 Agent Definitions (original YAML - 7 files)
+│   ├── common-agent-sections.yaml               # Shared agent patterns
+│   ├── generic-architect-agent.yaml             # Architecture & tech research
+│   ├── generic-coder-agent.yaml                 # Code implementation
+│   ├── generic-documentation-agent.yaml         # Documentation creation
+│   ├── generic-migration-coordinator.yaml       # Multi-stage orchestration
+│   ├── generic-security-agent.yaml              # Vulnerability assessment
+│   └── generic-tester-agent.yaml                # Quality assurance
 │
 ├── 🔧 Automation Scripts (5 files)
-│   ├── scripts/analyze-dependencies.sh         # Dependency analysis for parallelization
-│   ├── scripts/append-to-history.sh            # HISTORY.md logging utility
-│   ├── scripts/capture-test-baseline.sh        # Test baseline creation
-│   ├── scripts/run-stage-tests.sh              # Stage-specific test execution
-│   └── scripts/validate-migration-stage.sh     # Quality gate validation
+│   ├── scripts/analyze-dependencies.sh          # Dependency analysis
+│   ├── scripts/append-to-history.sh             # HISTORY.md logging utility
+│   ├── scripts/capture-test-baseline.sh         # Test baseline creation
+│   ├── scripts/run-stage-tests.sh               # Test execution
+│   └── scripts/validate-migration-stage.sh      # Quality gate validation
 │
-├── 📄 Support Files (2 files - root directory)
-│   ├── README.md                               # This file
-│   └── .gitignore                              # Git exclusion rules
-│
-└── 📁 Runtime (excluded from git)
-    ├── .claude-flow/metrics/                   # Claude Flow metrics
-    └── .swarm/                                 # Swarm coordination data
+└── 📄 Support Files
+    ├── README.md                                # This file
+    ├── .gitignore                               # Git exclusion rules
+    └── docs/                                    # Additional documentation
 ```
+
+**Note**: The repository now contains both:
+- **Claude Code plugin format** (`commands/` and `agents_md/` directories) for Claude Code integration
+- **Original YAML format** (`protocols/` and `generic-*-agent.yaml` files) for manual usage or other tools
 
 ---
 
 ## Quick Start
 
-### Installation via Claude Code Plugin Marketplace
+### Installation via Claude Code Plugin (Recommended)
 
-**Easiest Method**: Install all protocols and agents with a single command:
+**Install all protocols and agents with a single command**:
 
 ```bash
 # Add this repository as a Claude Code marketplace
-claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/master/.claude-plugin/marketplace.json"
+claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/main/.claude-plugin/marketplace.json"
 
-# Install the complete suite
-claude plugin install agent-protocols-complete@laird-agents-protocols-marketplace
-
-# Or install individual components:
-claude plugin install sparc-workflow@laird-agents-protocols-marketplace
-claude plugin install testing-framework@laird-agents-protocols-marketplace
-claude plugin install documentation-system@laird-agents-protocols-marketplace
-claude plugin install security-scanner@laird-agents-protocols-marketplace
-claude plugin install architecture-advisor@laird-agents-protocols-marketplace
+# Install the complete suite (all 10 protocols + 6 agents + 5 scripts)
+claude plugin install agent-protocols@agent-protocols-marketplace
 ```
 
-**Available Plugin Packages**:
-- `agent-protocols-complete` - Complete suite (9 protocols + 6 agents + 5 scripts)
-- `sparc-workflow` - SPARC development methodology with TDD
-- `testing-framework` - 6-phase testing protocol with quality gates
-- `documentation-system` - HISTORY.md logging, ADRs, incremental docs
-- `security-scanner` - CVE scanning and remediation
-- `architecture-advisor` - Technology research and ADR creation
+**What's Included**:
+- **10 Protocol Commands**: Testing, logging, ADR lifecycle, documentation, and more
+- **6 Specialized Agents**: Tester, coder, architect, security, documentation, and coordinator
+- **5 Automation Scripts**: HISTORY.md logging, test baseline capture, validation, and more
+- **Universal Applicability**: Works with any software project, not just .NET
+
+### Alternative: Git Clone Method
+
+For manual usage or integration with other tools:
+
+```bash
+# Clone the repository next to your project
+cd /path/to/your/projects
+git clone https://github.com/laird/agents.git
+
+# Reference agents in Claude
+# Tell Claude: "load agents from ../agents/generic-*-agent.yaml"
+```
 
 ### For New Projects
 
@@ -731,21 +741,22 @@ This repository is configured as a **Claude Code Plugin Marketplace**, allowing 
 }
 ```
 
-### Available Plugins
+### Available Plugin
 
 | Plugin | Category | Description |
 |--------|----------|-------------|
-| `agent-protocols-complete` | workflow | Complete suite of all protocols, agents, and scripts |
-| `sparc-workflow` | workflow | SPARC methodology with TDD workflow commands |
-| `testing-framework` | testing | 6-phase testing protocol with quality gates |
-| `documentation-system` | documentation | HISTORY.md logging, ADR lifecycle, incremental docs |
-| `security-scanner` | security | CVE scanning and remediation workflows |
-| `architecture-advisor` | architecture | Technology research and ADR creation |
+| `agent-protocols` | workflow | Complete suite of 10 protocols, 6 specialized agents, and 5 automation scripts for systematic software development |
+
+**Components**:
+- **Commands**: 10 protocol commands available as `/` commands in Claude Code
+- **Agents**: 6 specialized agent definitions for different development tasks
+- **Scripts**: 5 automation scripts for testing, logging, and validation
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.2.0 | 2025-10-25 | Restructured as single Claude Code plugin: converted protocols to commands/, agents to markdown format, added schema references, proper plugin manifest |
 | 2.1 | 2025-10-18 | Fixed Claude Code plugin marketplace integration: removed invalid `displayName` fields, fixed plugin source paths, corrected agent protocol references |
 | 2.0 | 2025-10-17 | Updated README with comprehensive file explanations and repository structure |
 | 1.0 | 2025-10-10 | Initial release with 13 protocols and 6 agent definitions |

@@ -1,7 +1,8 @@
 {
-  "name": "laird-agents-protocols-marketplace",
-  "version": "2.1.0",
-  "description": "This marketplace defines a set of agents and associated policies that are optimized for upgrading legacy software to be modern, secure, well tested (unit and integration) and efficient (performance tested). Includes production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development.",
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-protocols-marketplace",
+  "version": "2.2.0",
+  "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Originally created for .NET migrations, these protocols are universally applicable to any software project requiring structured agent collaboration.",
   "owner": {
     "name": "Agent Protocols Team",
     "email": "[email protected]",
@@ -13,75 +14,27 @@
   },
   "plugins": [
     {
-      "name": "agent-protocols-complete",
+      "name": "agent-protocols",
       "source": "./",
-      "description": "Complete suite of 9 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development",
-      "version": "2.0.0",
+      "description": "Complete suite of 10 production-validated protocols, 6 specialized agents, and 5 automation scripts for systematic software development, testing, documentation, and security scanning",
+      "version": "2.2.0",
       "category": "workflow",
-      "tags": ["protocols", "agents", "automation", "testing", "documentation", "migration", "sparc"],
+      "tags": [
+        "protocols",
+        "agents",
+        "automation",
+        "testing",
+        "documentation",
+        "migration",
+        "sparc",
+        "adr",
+        "security",
+        "architecture",
+        "quality-gates"
+      ],
       "author": {
         "name": "Agent Protocols Team",
         "email": "[email protected]"
-      },
-      "strict": false
-    },
-    {
-      "name": "sparc-workflow",
-      "source": "./",
-      "description": "SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology with Test-Driven Development workflow",
-      "version": "2.0.0",
-      "category": "workflow",
-      "tags": ["sparc", "tdd", "workflow", "architecture", "testing"],
-      "author": {
-        "name": "Agent Protocols Team"
-      },
-      "strict": false
-    },
-    {
-      "name": "testing-framework",
-      "source": "./",
-      "description": "6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)",
-      "version": "2.0.0",
-      "category": "testing",
-      "tags": ["testing", "qa", "validation", "automation", "quality-gates"],
-      "author": {
-        "name": "Agent Protocols Team"
-      },
-      "strict": false
-    },
-    {
-      "name": "documentation-system",
-      "source": "./",
-      "description": "Complete documentation framework with HISTORY.md logging, ADR lifecycle, incremental documentation, and automated generation",
-      "version": "2.0.0",
-      "category": "documentation",
-      "tags": ["documentation", "adr", "logging", "audit-trail", "changelog"],
-      "author": {
-        "name": "Agent Protocols Team"
-      },
-      "strict": false
-    },
-    {
-      "name": "security-scanner",
-      "source": "./",
-      "description": "CVE vulnerability scanning, security score calculation, and prioritized remediation with blocking quality gates",
-      "version": "2.0.0",
-      "category": "security",
-      "tags": ["security", "cve", "vulnerability", "scanning", "remediation"],
-      "author": {
-        "name": "Agent Protocols Team"
-      },
-      "strict": false
-    },
-    {
-      "name": "architecture-advisor",
-      "source": "./",
-      "description": "Technology research, architectural pattern selection, trade-off analysis, and ADR creation (MADR 3.0.0 format)",
-      "version": "2.0.0",
-      "category": "architecture",
-      "tags": ["architecture", "adr", "research", "decisions", "patterns"],
-      "author": {
-        "name": "Agent Protocols Team"
       },
       "strict": false
     }
@@ -91,26 +44,6 @@
       "id": "workflow",
       "name": "Workflow & Orchestration",
       "description": "Complete workflows and multi-agent orchestration systems"
-    },
-    {
-      "id": "testing",
-      "name": "Testing & Quality Assurance",
-      "description": "Testing frameworks, validation, and quality gates"
-    },
-    {
-      "id": "documentation",
-      "name": "Documentation Systems",
-      "description": "Documentation automation, logging, and audit trails"
-    },
-    {
-      "id": "security",
-      "name": "Security & Compliance",
-      "description": "Security scanning, vulnerability assessment, and remediation"
-    },
-    {
-      "id": "architecture",
-      "name": "Architecture & Design",
-      "description": "Architectural decisions, research, and pattern selection"
     }
   ],
   "keywords": [
