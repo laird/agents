@@ -1,7 +1,6 @@
 {
-  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "agent-protocols",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Production-validated agent protocols, automation frameworks, and specialized agents for systematic AI-assisted software development. Includes 10 protocols, 6 agents, and 5 automation scripts.",
   "author": {
     "name": "Agent Protocols Team",
@@ -33,13 +32,5 @@
     "./commands/agent-yaml-spec.md",
     "./commands/validation-report.md",
     "./commands/protocol-index.md"
-  ],
-  "agents": [
-    "./agents_md/tester.md",
-    "./agents_md/coder.md",
-    "./agents_md/architect.md",
-    "./agents_md/security.md",
-    "./agents_md/documentation.md",
-    "./agents_md/migration-coordinator.md"
   ]
 }
