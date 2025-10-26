@@ -457,52 +457,13 @@ cd ../..
 
 **External Dependencies** (customize for your project):
 
-```yaml
-# docker-compose.test.yml
-version: '3.8'
+Use docker-compose or equivalent to set up test dependencies:
+- **Database**: PostgreSQL, MySQL, or your database of choice
+- **Message Broker**: RabbitMQ, Kafka, or equivalent
+- **Cache**: Redis or Memcached
+- **Other Services**: API mocks, storage emulators, etc.
 
-services:
-  # Database (example: PostgreSQL)
-  database:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: testpass
-      POSTGRES_DB: testdb
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Message Broker (example: RabbitMQ)
-  messagebroker:
-    image: rabbitmq:3-management
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Cache (example: Redis)
-  cache:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-```
+Ensure all services have proper health checks and are ready before running tests.
 
 ### Setup Script Template
 
@@ -681,56 +642,12 @@ echo "✅ Test environment cleaned"
 
 ### Integration with CI/CD
 
-```yaml
-# Example: GitHub Actions
-name: Comprehensive Testing
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpass
-        ports:
-          - 5432:5432
-
-      rabbitmq:
-        image: rabbitmq:3-management
-        ports:
-          - 5672:5672
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
-
-      - name: Unit Tests
-        run: dotnet test --filter "Category=Unit" --logger "trx" --collect:"XPlat Code Coverage"
-
-      - name: Integration Tests
-        run: dotnet test --filter "Category=Integration" --logger "trx"
-
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: '**/TestResults/*.trx'
-```
+Integrate the testing protocol with your CI/CD pipeline (GitHub Actions, GitLab CI, Jenkins, etc.):
+- Run all test phases on every commit
+- Enforce ≥95% pass rate requirement
+- Upload test results and code coverage reports
+- Block merges if tests fail or coverage drops
+- Set up test infrastructure services (database, cache, etc.)
 
 ---
 

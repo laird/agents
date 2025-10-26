@@ -398,40 +398,11 @@ All agents working on this project MUST follow these protocols:
 
 **Scenario**: Automated validation in pipeline
 
-```yaml
-# .github/workflows/migration-validation.yml
-name: Migration Validation
-
-on: [push, pull_request]
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate HISTORY.md Updated
-        run: |
-          if ! git diff HEAD~1 docs/HISTORY.md | grep -q "^+"; then
-            echo "Error: HISTORY.md not updated"
-            exit 1
-          fi
-
-      - name: Run Test Protocol
-        run: |
-          # Follow GENERIC-TESTING-PROTOCOL.md
-          docker-compose -f docker-compose.test.yml up -d
-          dotnet test --configuration Release
-
-      - name: Validate Test Pass Rate
-        run: |
-          # Ensure ≥95% pass rate per protocol
-          PASS_RATE=$(dotnet test --logger "trx" | grep "Passed" | ...)
-          if [ $PASS_RATE -lt 95 ]; then
-            echo "Error: Pass rate $PASS_RATE% below 95% threshold"
-            exit 1
-          fi
-```
+Use GitHub Actions or your CI/CD platform to automate validation:
+- Validate HISTORY.md is updated on every commit
+- Run test protocol with ≥95% pass rate requirement
+- Validate documentation updates
+- Enforce quality gates before merging
 
 ---
 

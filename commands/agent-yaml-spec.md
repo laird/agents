@@ -1,192 +1,134 @@
 ---
 name: agent-yaml-spec
-description: YAML agent specification guide with structure, fields, and best practices
+description: Agent specification guide with structure, fields, and best practices
 ---
 
-# Generic Agent YAML Specifications
+# Generic Agent Specifications
 
-**Version**: 1.0
-**Last Updated**: 2025-10-10
-**Purpose**: Reusable AI agent specifications for .NET migrations
+**Version**: 2.0
+**Last Updated**: 2025-10-26
+**Purpose**: Reusable AI agent specifications for software modernization
 
 ---
 
 ## Overview
 
-This directory contains **generic YAML specifications** for 5 specialized AI agents designed to execute systematic .NET migrations. These specifications define capabilities, responsibilities, workflows, and success criteria for each agent role.
+This directory contains **markdown specifications** for 6 specialized AI agents designed to execute systematic software modernization. These specifications define capabilities, responsibilities, workflows, and success criteria for each agent role.
+
+**Agent Format**: Markdown files in `agents/` directory
 
 ---
 
 ## Available Agent Specifications
 
-### 1. **generic-migration-coordinator.yaml**
+### 1. **migration-coordinator.md**
 **Role**: Orchestrator/Coordinator
 **Category**: Orchestration
+**Location**: `agents/migration-coordinator.md`
 
 **Responsibilities**:
 - Multi-stage migration planning
-- Agent swarm coordination
+- Agent team coordination
 - Quality gate enforcement
 - Progress tracking and reporting
 - Documentation coordination
 
-**Key Features**:
-- 3 phasing strategies (bottom-up, top-down, risk-based)
-- Customizable stages (4-12 phases)
-- Metrics tracking
-- Parallel agent execution coordination
-
-**When to use**: As the main orchestrator for any .NET migration project
+**When to use**: As the main orchestrator for any modernization project
 
 ---
 
-### 2. **generic-security-agent.yaml**
+### 2. **security.md**
 **Role**: Security Specialist
 **Category**: Security
+**Location**: `agents/security.md`
 
 **Responsibilities**:
 - CVE vulnerability scanning
 - Security score calculation (0-100 scale)
 - Dependency vulnerability assessment
-- Insecure code pattern detection
 - Security fix implementation
+- Security validation
 
-**Key Features**:
-- 4 severity levels (CRITICAL/HIGH/MEDIUM/LOW)
-- Security patterns for common vulnerabilities
-- Remediation workflow (5 phases)
-- CVSS-based scoring
-
-**When to use**: Before and during migration to ensure security posture
+**When to use**: For security assessment and remediation
 
 ---
 
-### 3. **generic-coder-agent.yaml**
-**Role**: Development Specialist
+### 3. **architect.md**
+**Role**: Architecture & Design
+**Category**: Planning
+**Location**: `agents/architect.md`
+
+**Responsibilities**:
+- Architecture decisions (ADRs)
+- Technology research
+- Migration strategy
+- Design patterns
+
+**When to use**: For architectural decisions and planning
+
+---
+
+### 4. **coder.md**
+**Role**: Implementation
 **Category**: Development
+**Location**: `agents/coder.md`
 
 **Responsibilities**:
-- Framework migration (.csproj updates)
-- Dependency version updates
+- Code migration
 - API modernization
-- Breaking change mitigation
-- Build fix implementation
+- Bug fixing
+- Framework updates
 
-**Key Features**:
-- Common API replacement patterns
-- Conditional compilation cleanup
-- Multi-targeting management
-- Breaking change documentation
-
-**When to use**: For actual code migration work in each stage
+**When to use**: For actual code implementation work
 
 ---
 
-### 4. **generic-tester-agent.yaml**
-**Role**: Quality Assurance Specialist
+### 5. **tester.md**
+**Role**: Quality Assurance
 **Category**: Testing
+**Location**: `agents/tester.md`
 
 **Responsibilities**:
-- Comprehensive test execution (6 phases)
-- Test infrastructure setup
-- Failure diagnosis and categorization
-- Fix-and-retest cycle management
-- Test report generation
+- Test execution
+- Quality gate enforcement
+- Fix-and-retest cycles
+- 100% pass rate validation
 
-**Key Features**:
-- Multiple test types (unit, integration, component, performance, e2e)
-- Infrastructure templates (PostgreSQL, SQL Server, RabbitMQ, Kafka, Redis)
-- Fix-and-retest workflow
-- Quality gates (≥95% unit, ≥90% integration)
-
-**When to use**: After each migration stage for validation
+**When to use**: For comprehensive testing and validation
 
 ---
 
-### 5. **generic-documentation-agent.yaml**
-**Role**: Documentation Specialist
-**Category**: Documentation
+### 6. **documentation.md**
+**Role**: Documentation
+**Category**: Knowledge Management
+**Location**: `agents/documentation.md`
 
 **Responsibilities**:
-- CHANGELOG.md creation
-- Migration guide authoring
-- Release notes generation
-- ADR writing
-- Breaking change documentation
+- CHANGELOG creation
+- Migration guides
+- ADR summaries
+- Documentation updates
 
-**Key Features**:
-- 5 documentation types (changelog, migration guide, release notes, quick-start, ADR)
-- Breaking change templates
-- Platform-specific guides
-- Quality checklist
-
-**When to use**: Throughout migration, final documentation phase
+**When to use**: For comprehensive documentation
 
 ---
 
-## Agent YAML Structure
+## Agent Markdown Structure
 
-Each YAML file follows this structure:
+Each agent markdown file contains:
+- **Name and Version**: Agent identification
+- **Role and Category**: Agent specialization
+- **Description**: Purpose and applicability
+- **Capabilities**: What the agent can do
+- **Responsibilities**: What the agent is accountable for
+- **Workflow**: Step-by-step processes
+- **Success Criteria**: Quality gates and completion criteria
+- **Best Practices**: Recommended approaches
+- **Anti-Patterns**: Common mistakes to avoid
+- **Outputs**: Deliverables and artifacts
+- **Integration**: How it coordinates with other agents
 
-```yaml
-name: agent-name
-version: 1.0
-type: specialist | coordinator
-category: orchestration | security | development | quality-assurance | documentation
-
-description: |
-  Detailed description of agent purpose and applicability
-
-capabilities:
-  - Capability 1
-  - Capability 2
-
-responsibilities:
-  - Responsibility 1
-  - Responsibility 2
-
-tools:
-  required:
-    - Tool 1
-    - Tool 2
-  optional:
-    - Tool 3
-
-workflow:
-  1_phase_name:
-    - Step 1
-    - Step 2
-
-success_criteria:
-  - Criterion 1
-  - Criterion 2
-
-best_practices:
-  - Practice 1
-  - Practice 2
-
-anti_patterns:
-  - Anti-pattern 1
-  - Anti-pattern 2
-
-outputs:
-  - Output 1
-  - Output 2
-
-integration:
-  coordinates_with:
-    - agent 1
-    - agent 2
-
-metrics:
-  - Metric 1: description
-  - Metric 2: description
-
-customization:
-  project_specific:
-    - Customization area 1
-    - Customization area 2
-```
+See `agents/*.md` files for complete specifications.
 
 ---
 
@@ -194,132 +136,75 @@ customization:
 
 ### Option 1: Agent Spawn Instructions
 
-When spawning agents with Claude Code's Task tool, reference the YAML:
+When spawning agents with Claude Code's Task tool, reference the agent specification:
 
-```javascript
-Task(
-  "Security Assessment and Remediation",
-  `
-  You are a security-agent following the specification in:
-  docs/agents/generic-security-agent.yaml
+Example: Security Agent
+```
+You are a security-agent following the specification in: agents/security.md
 
-  Your responsibilities:
-  - Scan for vulnerabilities
-  - Categorize by severity
-  - Create remediation plan
-  - Implement fixes
-  - Validate with testing
-  - Document in HISTORY.md
+Your responsibilities:
+- Scan for vulnerabilities
+- Categorize by severity
+- Create remediation plan
+- Implement fixes
+- Validate with testing
+- Document in HISTORY.md
 
-  Success criteria:
-  - All CRITICAL/HIGH CVEs fixed
-  - Security score ≥85/100
-  - Complete security report generated
-  `,
-  "security-manager"
-)
+Success criteria:
+- All CRITICAL/HIGH CVEs fixed
+- Security score ≥45
+- Complete security report generated
 ```
 
-### Option 2: CLAUDE.md Integration
+### Option 2: Project Documentation
 
-Add agent specifications to your project's CLAUDE.md:
+Reference agent specifications in your project documentation:
 
-```markdown
-## Agent Specifications
+Available agents:
+- **Security Agent** (`agents/security.md`): CVE scanning, security fixes, scoring
+- **Coder Agent** (`agents/coder.md`): Code migration, dependency updates
+- **Tester Agent** (`agents/tester.md`): Test execution, 100% pass rate enforcement
+- **Documentation Agent** (`agents/documentation.md`): CHANGELOG, migration guides, ADRs
+- **Architect Agent** (`agents/architect.md`): Architecture decisions, ADRs
+- **Migration Coordinator** (`agents/migration-coordinator.md`): Overall orchestration, quality gates
 
-When spawning specialized agents, follow these specifications:
+### Option 3: Multi-Agent Coordination
 
-### Security Agent
-- **Spec**: docs/agents/generic-security-agent.yaml
-- **Responsibilities**: CVE scanning, security fixes, scoring
-- **Success**: Score ≥85/100, zero CRITICAL/HIGH CVEs
-
-### Coder Agent
-- **Spec**: docs/agents/generic-coder-agent.yaml
-- **Responsibilities**: Framework migration, dependency updates
-- **Success**: 100% build success, <5 warnings per project
-
-### Tester Agent
-- **Spec**: docs/agents/generic-tester-agent.yaml
-- **Responsibilities**: Test execution, fix-and-retest cycles
-- **Success**: ≥95% unit, ≥90% integration pass rates
-
-### Documentation Agent
-- **Spec**: docs/agents/generic-documentation-agent.yaml
-- **Responsibilities**: CHANGELOG, migration guide, ADRs
-- **Success**: All breaking changes documented
-
-### Migration Coordinator
-- **Spec**: docs/agents/generic-migration-coordinator.yaml
-- **Responsibilities**: Overall orchestration, quality gates
-- **Success**: All stages complete, full documentation
-```
-
-### Option 3: Swarm Initialization
-
-Use with MCP tools for swarm coordination:
-
-```bash
-# Initialize swarm with agent specs
-mcp__claude-flow__swarm_init \
-  --topology mesh \
-  --agents security-agent,coder-agent,tester-agent,documentation-agent \
-  --coordinator migration-coordinator
-
-# Reference YAML specs in agent spawn
-Task("Security Agent", "Follow spec: generic-security-agent.yaml", "security-manager")
-Task("Coder Agent", "Follow spec: generic-coder-agent.yaml", "coder")
-Task("Tester Agent", "Follow spec: generic-tester-agent.yaml", "tester")
-```
+Use the `/modernize-project` command which coordinates all agents automatically:
+- Migration Coordinator orchestrates the workflow
+- Security Agent handles vulnerability scanning
+- Architect Agent makes design decisions
+- Coder Agent implements changes
+- Tester Agent validates everything
+- Documentation Agent creates all docs
 
 ---
 
 ## Customization Guide
 
-### 1. Copy and Customize
+### 1. Understand Agent Specifications
 
-```bash
-# Copy generic spec to project-specific
-cp generic-security-agent.yaml my-project-security-agent.yaml
+Read the agent markdown files in the `agents/` directory to understand their capabilities and workflows. Each agent has detailed sections on:
+- Responsibilities
+- Workflows
+- Success criteria
+- Best practices
+- Anti-patterns
 
-# Edit and customize
-# - Add project-specific security patterns
-# - Adjust severity thresholds
-# - Add domain-specific vulnerabilities
-```
+### 2. Use with /modernize Commands
 
-### 2. Extend with Project-Specific Sections
+The agents work together through the modernization commands:
+- `/modernize-assess`: Security + Architect agents assess project
+- `/modernize-plan`: Coordinator + Architect create detailed plan
+- `/modernize-project`: All agents work together through 7 phases
 
-```yaml
-# Add to existing YAML
-customization:
-  my_project:
-    additional_security_patterns:
-      - "HIPAA PHI exposure: pattern..."
-      - "PCI-DSS cardholder data: pattern..."
+### 3. Customize for Your Project
 
-    custom_workflows:
-      healthcare_compliance:
-        - Scan for PHI exposure
-        - Validate encryption
-        - Check access controls
-```
-
-### 3. Adjust for Your Stack
-
-```yaml
-# Customize test infrastructure for your project
-test_infrastructure:
-  database:
-    mongodb:  # Instead of PostgreSQL
-      container_name: "mongo-test"
-      image: "mongo:7"
-      ports: ["27017:27017"]
-
-  message_broker:
-    azure_service_bus:  # Instead of RabbitMQ
-      connection_string: "${AZURE_SERVICE_BUS_CONNECTION}"
-```
+Agents automatically adapt to your technology stack by:
+- Detecting your framework and dependencies
+- Adjusting security scans for your ecosystem
+- Using appropriate testing tools
+- Generating stack-specific documentation
 
 ---
 
@@ -408,45 +293,30 @@ coder-agent → tester-agent (tests)
 
 ---
 
-## Example: Complete Migration Flow
+## Example: Complete Modernization Flow
 
-```yaml
-# 1. Initialize
-coordinator:
-  - Create migration plan (8 stages)
-  - Define quality gates
-  - Spawn agents
+The `/modernize-project` command orchestrates a complete workflow:
 
-# 2. Stage 1: Security
-security-agent:
-  - Scan for CVEs
-  - Fix CRITICAL/HIGH
-  - Achieve score ≥85/100
+**Phase 0: Discovery & Assessment**
+- Coordinator + Security + Architect analyze project
+- Baseline metrics captured
+- Quality gates defined
 
-# 3. Stages 2-7: Code Migration
-coordinator:
-  for each stage:
-    - Spawn coder-agent
-    - Wait for completion
-    - Spawn tester-agent
-    - Enforce quality gate
-    - Continue or block
+**Phase 1: Security Remediation**
+- Security Agent scans and fixes CVEs
+- Must achieve security score ≥45
+- Tester Agent validates no regressions
 
-# 4. Stage 8: Documentation
-documentation-agent:
-  - Create CHANGELOG.md
-  - Write MIGRATION-GUIDE.md
-  - Generate release notes
-  - Write ADRs
-  - Update README.md
+**Phases 2-6: Framework & Code Modernization**
+- Architect creates ADRs
+- Coder Agent(s) implement changes in parallel
+- Tester Agent enforces 100% pass rate after each change
+- Quality gates block progression if criteria not met
 
-# 5. Final Validation
-coordinator:
-  - Verify all stages complete
-  - Check all success criteria met
-  - Generate final report
-  - Approve for release
-```
+**Phase 7: Documentation & Validation**
+- Documentation Agent creates CHANGELOG, migration guide
+- Final testing across all test types
+- Coordinator performs GO/NO-GO decision
 
 ---
 
@@ -454,22 +324,31 @@ coordinator:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2025-10-10 | Initial generic agent specifications |
+| 2.0 | 2025-10-26 | Converted from YAML to markdown, updated for modernization workflow |
+| 1.0 | 2025-10-10 | Initial specifications |
 
 ---
 
-## Related Documentation
+## Related Commands
 
-- **GENERIC-AGENT-PROTOCOLS-README.md** - Protocol documentation (logging, testing, planning)
-- **GENERIC-AGENT-LOGGING-PROTOCOL.md** - Logging requirements
-- **GENERIC-TESTING-PROTOCOL.md** - Testing requirements
-- **GENERIC-MIGRATION-PLANNING-GUIDE.md** - Migration planning framework
-- **GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md** - Documentation strategy
+- `/modernize-assess` - Assess project for modernization readiness
+- `/modernize-plan` - Create detailed modernization plan
+- `/modernize-project` - Execute modernization with agent coordination
+- `/testing-protocol` - Testing requirements and quality gates
+- `/agent-logging` - Logging protocol for all agents
+- `/adr-lifecycle` - Architecture decision record management
 
 ---
 
-## Support
+## Summary
 
-These specifications are templates - customize freely for your project. They represent proven patterns from real-world .NET migrations and are designed to be adapted to your specific needs.
+The agents work together as a coordinated team to modernize software projects. Each agent has a specific role and expertise:
 
-**Remember**: These are guidelines, not rigid constraints. Adapt them to your project's context, team size, timeline, and risk tolerance.
+- **Coordinator**: Orchestrates the entire workflow
+- **Security**: Ensures security vulnerabilities are addressed
+- **Architect**: Makes technology and design decisions
+- **Coder**: Implements changes and migrations
+- **Tester**: Validates quality with comprehensive testing
+- **Documentation**: Captures all decisions and changes
+
+Use the `/modernize-*` commands to leverage these agents for systematic project modernization.
