@@ -20,8 +20,10 @@ agents/
 │       ├── plugin.json                          # Plugin manifest with commands & agents
 │       └── marketplace.json                     # Marketplace definition
 │
-├── 📋 Commands (11 protocol commands)
-│   ├── commands/modernize-project.md            # ⭐ Multi-agent orchestrator for project modernization
+├── 📋 Commands (13 protocol commands)
+│   ├── commands/modernize-assess.md             # ⭐ NEW: Assess project viability for modernization
+│   ├── commands/modernize-plan.md               # ⭐ NEW: Create detailed modernization plan
+│   ├── commands/modernize-project.md            # ⭐ Multi-agent orchestrator for execution
 │   ├── commands/testing-protocol.md             # 6-phase testing with quality gates
 │   ├── commands/agent-logging.md                # HISTORY.md audit trail protocol
 │   ├── commands/adr-lifecycle.md                # ADR lifecycle management (MADR 3.0.0)
@@ -87,12 +89,15 @@ claude plugin install agent-protocols@agent-protocols-marketplace
 ```
 
 **What's Included**:
-- **11 Protocol Commands**: Multi-agent modernization orchestrator, testing, logging, ADR lifecycle, documentation, and more (available as `/` slash commands)
+- **13 Protocol Commands**: Complete modernization workflow (assess → plan → execute), testing, logging, ADR lifecycle, documentation, and more (available as `/` slash commands)
 - **6 Specialized Agents**: Tester, coder, architect, security, documentation, and coordinator (markdown files in `agents/` directory)
 - **5 Automation Scripts**: HISTORY.md logging, test baseline capture, validation, and more
 - **Universal Applicability**: Works with any software project, not just .NET
 
-**Featured**: **`/modernize-project`** - Orchestrates a team of specialist agents to upgrade your project to be modern, secure, well-tested, and performant through a systematic 7-phase approach.
+**Featured Modernization Workflow**:
+1. **`/modernize-assess`** - Assess project viability for modernization (writes `assessment.md`)
+2. **`/modernize-plan`** - Create detailed execution plan (writes `plan.md`)
+3. **`/modernize-project`** - Execute modernization with multi-agent orchestration
 
 **Note**: The agent files are included in the `agents/` directory but are not yet automatically loaded by the plugin system. You can reference them manually after installation.
 
@@ -750,10 +755,10 @@ This repository is configured as a **Claude Code Plugin Marketplace**, allowing 
 
 | Plugin | Category | Description |
 |--------|----------|-------------|
-| `agent-protocols` | workflow | Complete suite of 10 protocols, 6 specialized agents, and 5 automation scripts for systematic software development |
+| `agent-protocols` | workflow | Complete suite of 13 protocols (including assess → plan → execute modernization workflow), 6 specialized agents, and 5 automation scripts for systematic software development |
 
 **Components**:
-- **Commands**: 11 protocol commands available as `/` commands in Claude Code (including `/modernize-project` orchestrator)
+- **Commands**: 13 protocol commands available as `/` commands in Claude Code (including complete modernization workflow)
 - **Agents**: 6 specialized agent definitions for different development tasks
 - **Scripts**: 5 automation scripts for testing, logging, and validation
 
@@ -761,6 +766,7 @@ This repository is configured as a **Claude Code Plugin Marketplace**, allowing 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.4.0 | 2025-10-25 | Added complete modernization workflow: `/modernize-assess` (viability assessment → assessment.md), `/modernize-plan` (execution planning → plan.md), updated `/modernize-project` to use assessment & plan if available. Systematic assess → plan → execute workflow. |
 | 2.3.0 | 2025-10-25 | Added `/modernize-project` command: Multi-agent orchestrator for systematic project modernization through 7 phases (Discovery, Security, Architecture, Framework Upgrade, API Modernization, Performance, Documentation) |
 | 2.2.1 | 2025-10-25 | Fixed plugin manifest validation: removed unsupported `agents` and `$schema` fields, renamed agents_md/ to agents/, simplified plugin.json to only include commands |
 | 2.2.0 | 2025-10-25 | Restructured as single Claude Code plugin: converted protocols to commands/, agents to markdown format, proper plugin manifest |
