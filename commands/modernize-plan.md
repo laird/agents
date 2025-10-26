@@ -11,6 +11,8 @@ description: Create a detailed modernization strategy and execution plan, utiliz
 **Output**: `plan.md` with detailed execution strategy
 **Duration**: 3-6 hours
 
+**Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
+
 ---
 
 ## Overview
@@ -631,7 +633,7 @@ Week 18:    Phase 7 (Validate)  ████
   2. Evaluate rewrite of dependent code
   3. Consider staying on current framework with security patches
 - **Timeline Impact**: +2-4 weeks
-- **Cost Impact**: +$XX,XXX
+- **Effort Impact**: Additional development and testing required
 
 **Scenario 2: Test Pass Rate Drops Below 80%**
 - **Impact**: Quality gate failure
@@ -641,7 +643,7 @@ Week 18:    Phase 7 (Validate)  ████
   3. Dedicate team to fixes
   4. Re-run complete suite
 - **Timeline Impact**: +1-2 weeks
-- **Cost Impact**: +$XX,XXX
+- **Effort Impact**: Dedicated testing and bug fixing resources
 
 **Scenario 3: Performance Regression >20%**
 - **Impact**: Unacceptable for production
@@ -651,7 +653,7 @@ Week 18:    Phase 7 (Validate)  ████
   3. Architect review optimization strategy
   4. Implement targeted fixes
 - **Timeline Impact**: +2-3 weeks
-- **Cost Impact**: +$XX,XXX
+- **Effort Impact**: Performance analysis and optimization work
 
 **Scenario 4: Key Team Member Leaves**
 - **Impact**: Knowledge loss, capacity reduction
@@ -661,7 +663,7 @@ Week 18:    Phase 7 (Validate)  ████
   3. Consider contractor/consultant
   4. Extend timeline if needed
 - **Timeline Impact**: +1-3 weeks
-- **Cost Impact**: +$XX,XXX
+- **Effort Impact**: Onboarding and knowledge transfer overhead
 
 ---
 
@@ -688,11 +690,7 @@ Week 18:    Phase 7 (Validate)  ████
 - **Start Date**: [Date]
 - **End Date**: [Date]
 - **Duration**: XX weeks (YY calendar months)
-
-### Budget
-- **Estimated Cost**: $XXX,XXX - $YYY,YYY
-- **Approved Budget**: $ZZZ,ZZZ
-- **Contingency**: $WWW,WWW (30%)
+- **Contingency Buffer**: 30% additional time
 
 ### Team
 - **Team Size**: X developers
@@ -860,9 +858,9 @@ Phase 1: Security (3-5 days)
 
 Summary:
 - Duration: 24 weeks
-- Cost: $185,000 - $245,000
 - Team: 3 developers
 - Milestones: 8 quality gates
+- Timeline includes 30% contingency buffer
 ```
 
 ### Example 2: Without Assessment

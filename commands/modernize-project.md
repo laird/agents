@@ -696,6 +696,8 @@ Tester Agent re-runs tests
 
 ## Estimated Timeline
 
+**Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
+
 | Phase | Duration | Can Parallelize |
 |-------|----------|-----------------|
 | 0. Discovery & Assessment | 1-2 days | No |

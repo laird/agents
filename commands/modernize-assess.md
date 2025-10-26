@@ -10,6 +10,8 @@ description: Assess a project for modernization readiness and viability, evaluat
 **Output**: `assessment.md` with comprehensive analysis and recommendation
 **Duration**: 2-4 hours
 
+**Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
+
 ---
 
 ## Overview
@@ -154,37 +156,33 @@ git shortlog -sn                            # Contributors
 - **40-59**: Peripheral system, maintenance mode
 - **0-39**: Legacy system, sunset planned
 
-#### 3.2 Cost-Benefit Analysis
+#### 3.2 Effort-Benefit Analysis
 
-**Modernization Costs** (estimated):
+**Modernization Effort** (estimated timeline):
 - Assessment & Planning: X days
 - Security Remediation: Y days
 - Framework Migration: Z days
 - Testing & Validation: W days
 - Documentation: V days
-- **Total Effort**: XX days = $YYY,YYY (at developer rate)
+- **Total Effort**: XX days
 
-**Benefits** (quantified):
-- Security improvements: $X/year (reduced breach risk)
-- Performance improvements: $Y/year (reduced hosting costs)
-- Developer productivity: $Z/year (faster feature development)
-- Maintenance reduction: $W/year (fewer legacy issues)
-- Recruitment: $V/year (easier hiring)
+**Benefits** (expected improvements):
+- Security: Reduced vulnerability risk, compliance improvements
+- Performance: Improved response times, reduced resource usage
+- Developer productivity: Faster feature development, better tooling
+- Maintenance: Reduced legacy issues, better long-term support
+- Recruitment: Easier hiring with modern technology stack
 
-**ROI Calculation**:
-```
-Total Benefits (3 years): $XXX,XXX
-Total Costs: $YYY,YYY
-Net Benefit: $ZZZ,ZZZ
-ROI: ((Benefits - Costs) / Costs) * 100 = XX%
-Payback Period: X.X years
-```
+**Value Assessment**:
+- High value if effort investment provides substantial long-term benefits
+- Consider strategic alignment and business criticality
+- Factor in risk of continuing with outdated technology
 
 **Scoring**:
-- **80-100**: ROI >200%, payback <1 year
-- **60-79**: ROI 100-200%, payback 1-2 years
-- **40-59**: ROI 50-100%, payback 2-3 years
-- **0-39**: ROI <50%, payback >3 years
+- **80-100**: Significant benefits, manageable effort, clear value
+- **60-79**: Good benefits justify moderate effort investment
+- **40-59**: Limited benefits relative to effort required
+- **0-39**: Benefits don't justify the effort investment
 
 ---
 
@@ -410,8 +408,6 @@ Payback Period: X.X years
 - [Finding 3]
 
 **Estimated Effort**: XX-YY days (ZZ-WW calendar weeks)
-**Estimated Cost**: $XXX,XXX - $YYY,YYY
-**Expected ROI**: XX% (payback in X.X years)
 
 ---
 
@@ -457,29 +453,28 @@ Payback Period: X.X years
 - **Strategic Value**: High/Medium/Low
 - **Score**: XX/100
 
-### Cost-Benefit Analysis
+### Effort-Benefit Analysis
 
-**Costs** (conservative estimate):
-- Assessment & Planning: X days ($XX,XXX)
-- Security Remediation: Y days ($YY,YYY)
-- Framework Migration: Z days ($ZZ,ZZZ)
-- Testing & Validation: W days ($WW,WWW)
-- Documentation: V days ($VV,VVV)
-- Contingency (30%): ($CC,CCC)
-- **Total**: **$XXX,XXX**
+**Effort Estimate**:
+- Assessment & Planning: X days
+- Security Remediation: Y days
+- Framework Migration: Z days
+- Testing & Validation: W days
+- Documentation: V days
+- Contingency (30%): Z days
+- **Total Effort**: **XX days**
 
-**Benefits** (3-year projection):
-- Security Risk Reduction: $XX,XXX/year
-- Performance Improvements: $YY,YYY/year
-- Developer Productivity: $ZZ,ZZZ/year
-- Maintenance Reduction: $WW,WWW/year
-- Recruitment/Retention: $VV,VVV/year
-- **Total**: **$XXX,XXX/year** × 3 = **$X,XXX,XXX**
+**Expected Benefits**:
+- Security: Reduced vulnerability risk, improved compliance
+- Performance: Better response times, optimized resource usage
+- Developer Productivity: Faster feature development, modern tooling
+- Maintenance: Reduced legacy issues, improved long-term support
+- Recruitment/Retention: Easier hiring with modern stack
 
-**ROI Analysis**:
-- Net Benefit (3yr): $XXX,XXX - $YYY,YYY = **$ZZZ,ZZZ**
-- ROI: **XXX%**
-- Payback Period: **X.X years**
+**Value Assessment**:
+- Significant benefits justify the effort investment
+- Strategic importance aligns with business goals
+- Long-term value outweighs short-term effort
 - **Score**: XX/100
 
 ---
@@ -528,7 +523,7 @@ Payback Period: X.X years
 ### External Resources
 - **Consultants Needed**: Yes/No
 - **Specialized Skills**: [List if any]
-- **Estimated Cost**: $XX,XXX
+- **Additional Effort**: X days (if consultants needed)
 
 ### Timeline
 **Estimated Duration**: XX-YY weeks (ZZ-WW calendar months)
@@ -672,8 +667,8 @@ Payback Period: X.X years
 
 **Next Steps**:
 1. Run `/modernize-plan` to create detailed migration plan
-2. Secure budget approval ($XXX,XXX)
-3. Allocate team resources (X developers, Y weeks)
+2. Secure resource approval (X developers, Y weeks)
+3. Allocate team resources and timeline
 4. Begin Phase 0 on [Date]
 
 ---
