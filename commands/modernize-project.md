@@ -5,9 +5,43 @@ description: Orchestrate a team of specialist agents to upgrade a project to be 
 
 # Project Modernization & Security Protocol
 
-**Version**: 1.0
+**Version**: 2.0
 **Purpose**: Coordinate multiple specialist agents to systematically upgrade any software project
 **Team**: Migration Coordinator, Security Agent, Architect Agent, Coder Agent, Tester Agent, Documentation Agent
+**Inputs**: Optional `assessment.md` and `plan.md` from `/modernize-assess` and `/modernize-plan`
+
+---
+
+## Prerequisites Check
+
+**Before starting, this command checks for**:
+
+```bash
+# Check for assessment
+if [ -f "assessment.md" ]; then
+    echo "✅ Found assessment.md - will use assessment findings"
+    USE_ASSESSMENT=true
+else
+    echo "⚠️  No assessment.md - recommend running /modernize-assess first"
+    echo "   Continue with basic assessment? (y/n)"
+    USE_ASSESSMENT=false
+fi
+
+# Check for plan
+if [ -f "plan.md" ]; then
+    echo "✅ Found plan.md - will follow existing plan"
+    USE_PLAN=true
+else
+    echo "⚠️  No plan.md - will create plan on-the-fly"
+    echo "   Recommend running /modernize-plan first for better accuracy"
+    USE_PLAN=false
+fi
+```
+
+**Recommendation Workflow**:
+1. **Best**: Run `/modernize-assess` → `/modernize-plan` → `/modernize-project`
+2. **Good**: Run `/modernize-plan` → `/modernize-project`
+3. **Acceptable**: Run `/modernize-project` (will create minimal assessment/plan inline)
 
 ---
 
@@ -65,12 +99,26 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 
 **Active Agents**: Migration Coordinator, Security Agent, Architect Agent
 
+**Input Handling**:
+```
+IF assessment.md EXISTS:
+    ✅ Skip detailed assessment
+    ✅ Use existing scores, risks, estimates
+    ✅ Focus on validation and updates
+    Duration: 0.5-1 day (validation only)
+ELSE:
+    ⚠️  Run full assessment (as described below)
+    Duration: 1-2 days
+```
+
 **Activities**:
 1. **Project Analysis**
-   - Inventory all dependencies and frameworks
+   - **If assessment.md exists**: ✅ Load existing inventory
+   - **If no assessment**: Inventory all dependencies and frameworks
    - Identify current versions vs latest stable
    - Map project structure and architecture
    - Identify technology debt
+   - **Deliverable**: Project assessment (or validate existing)
 
 2. **Security Baseline** (BLOCKING)
    - Run CVE vulnerability scan
@@ -91,11 +139,16 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
    - Identify test gaps
 
 **Outputs**:
-- Project assessment report
+- Project assessment report (or use existing assessment.md)
 - Security vulnerability report
 - Technology upgrade roadmap
 - Test baseline report
 - Initial HISTORY.md entry
+
+**With Existing Assessment**:
+- ✅ Validate assessment still accurate (dependencies haven't changed)
+- ✅ Update if needed (typically minimal)
+- ✅ Faster completion (0.5-1 day vs 1-2 days)
 
 **Quality Gate**: Security score ≥45, all CRITICAL/HIGH vulnerabilities documented
 
@@ -141,6 +194,18 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 
 **Active Agents**: Architect Agent (lead), Migration Coordinator
 
+**Input Handling**:
+```
+IF plan.md EXISTS:
+    ✅ Use existing architecture decisions
+    ✅ Validate ADRs are current
+    ✅ Follow defined strategy
+    Duration: 0.5-1 day (validation only)
+ELSE:
+    ⚠️  Create architecture decisions (as described below)
+    Duration: 2-3 days
+```
+
 **Activities**:
 1. **Framework Upgrade Planning**
    - Research target framework versions
@@ -161,11 +226,17 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
    - Testing strategy updates
 
 **Outputs**:
-- ADRs for all major decisions (MADR 3.0.0 format)
+- ADRs for all major decisions (MADR 3.0.0 format) - or use existing from plan.md
 - Dependency upgrade matrix
 - Migration timeline
 - Risk assessment
 - HISTORY.md entry
+
+**With Existing Plan**:
+- ✅ ADRs already created and approved
+- ✅ Migration strategy defined
+- ✅ Just validate and proceed
+- ✅ Faster completion (0.5-1 day vs 2-3 days)
 
 **Quality Gate**: All major decisions documented in ADRs, migration plan approved
 
@@ -174,6 +245,18 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 ### Phase 3: Framework & Dependency Modernization (5-10 days)
 
 **Active Agents**: Coder Agent (multiple if parallel), Tester Agent, Migration Coordinator
+
+**Input Handling**:
+```
+IF plan.md EXISTS:
+    ✅ Use defined module migration order
+    ✅ Follow parallel execution strategy
+    ✅ Use task breakdown from plan
+    More accurate timeline
+ELSE:
+    ⚠️  Determine migration order on-the-fly
+    More conservative timeline
+```
 
 **Activities**:
 1. **Framework Upgrade**
