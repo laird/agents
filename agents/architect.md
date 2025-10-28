@@ -664,13 +664,13 @@ legacy_modernization_assessment:
       - "Stakeholder approval obtained"
 
     conditional_go_criteria:
-      - "≥95% baseline test pass rate (5% failures documented and understood)"
+      - "100% baseline test pass rate required"
       - "≥60% code coverage with comprehensive manual testing plan"
       - "HIGH CVEs have documented remediation plan"
       - "P1 risks have approved mitigation plans"
 
     no_go_criteria:
-      - "<95% baseline test pass rate"
+      - "<100% baseline test pass rate"
       - "<60% code coverage without manual testing plan"
       - "CRITICAL CVEs unresolved"
       - "P0 risks without mitigation plans"

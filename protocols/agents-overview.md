@@ -251,8 +251,8 @@ coder-agent → tester-agent (tests)
 | Coordinator | Stages complete | 100% | All |
 | Security | Security score | ≥85/100 | CRITICAL/HIGH = 0 |
 | Coder | Build success | 100% | 100% |
-| Tester | Unit pass rate | ≥95% | ≥85% |
-| Tester | Integration pass rate | ≥90% | ≥80% |
+| Tester | Unit pass rate | 100% | 100% |
+| Tester | Integration pass rate | 100% | 100% |
 | Documentation | Docs complete | 100% | All breaking changes |
 
 ---

@@ -333,7 +333,7 @@ All agents working on this project MUST follow these protocols:
 
 ### 4. Testing Protocol
 - **ALWAYS** run complete test suites (not partial)
-- **ALWAYS** fix and retest until pass rate ≥95%
+- **ALWAYS** fix and retest until pass rate = 100%
 - See: docs/agents/GENERIC-TESTING-PROTOCOL.md
 - Required phases: Pre-test Setup, Unit, Integration, Component, Performance, Samples
 
@@ -400,7 +400,7 @@ All agents working on this project MUST follow these protocols:
 
 Use GitHub Actions or your CI/CD platform to automate validation:
 - Validate HISTORY.md is updated on every commit
-- Run test protocol with ≥95% pass rate requirement
+- Run test protocol with 100% pass rate requirement
 - Validate documentation updates
 - Enforce quality gates before merging
 
@@ -573,7 +573,7 @@ These protocols are provided as templates for your use. Customize freely for you
 │ 3. TESTING (MANDATORY)                                       │
 │    Phases: Pre-test → Unit → Integration → Component        │
 │           → Performance → Samples                            │
-│    Target: ≥95% unit, ≥90% integration                      │
+│    Target: 100% (all test types)                            │
 │    Fix-and-retest until criteria met                        │
 │                                                              │
 │ 4. PLANNING (Initial Phase)                                 │
@@ -588,7 +588,7 @@ These protocols are provided as templates for your use. Customize freely for you
 │                                                              │
 │ SUCCESS CRITERIA                                             │
 │    ✅ All builds pass                                        │
-│    ✅ Tests ≥95% pass                                        │
+│    ✅ Tests 100% pass                                        │
 │    ✅ Zero P0 issues                                         │
 │    ✅ HISTORY.md updated                                     │
 │    ✅ ADRs updated at all lifecycle stages                   │

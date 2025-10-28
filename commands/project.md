@@ -179,7 +179,7 @@ ELSE:
 **Outputs**:
 - Security fixes applied
 - Updated security scan report
-- Test results (must maintain ≥95% pass rate)
+- Test results (must maintain 100% pass rate)
 - HISTORY.md entry for security work
 
 **Quality Gate**:
@@ -274,7 +274,7 @@ ELSE:
 3. **Continuous Testing** (BLOCKING)
    - Run tests after each change
    - Fix-and-retest cycles
-   - Maintain ≥95% pass rate
+   - Maintain 100% pass rate
    - No progression until tests pass
 
 **Parallel Execution Strategy**:

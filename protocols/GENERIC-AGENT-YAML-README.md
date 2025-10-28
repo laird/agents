@@ -92,7 +92,7 @@ This directory contains **generic YAML specifications** for 5 specialized AI age
 - Multiple test types (unit, integration, component, performance, e2e)
 - Infrastructure templates (PostgreSQL, SQL Server, RabbitMQ, Kafka, Redis)
 - Fix-and-retest workflow
-- Quality gates (≥95% unit, ≥90% integration)
+- Quality gates (100% all test types)
 
 **When to use**: After each migration stage for validation
 
@@ -237,7 +237,7 @@ When spawning specialized agents, follow these specifications:
 ### Tester Agent
 - **Spec**: docs/agents/generic-tester-agent.yaml
 - **Responsibilities**: Test execution, fix-and-retest cycles
-- **Success**: ≥95% unit, ≥90% integration pass rates
+- **Success**: 100% pass rates (all test types)
 
 ### Documentation Agent
 - **Spec**: docs/agents/generic-documentation-agent.yaml
@@ -361,8 +361,8 @@ coder-agent → tester-agent (tests)
 | Coordinator | Stages complete | 100% | All |
 | Security | Security score | ≥85/100 | CRITICAL/HIGH = 0 |
 | Coder | Build success | 100% | 100% |
-| Tester | Unit pass rate | ≥95% | ≥85% |
-| Tester | Integration pass rate | ≥90% | ≥80% |
+| Tester | Unit pass rate | 100% | 100% |
+| Tester | Integration pass rate | 100% | 100% |
 | Documentation | Docs complete | 100% | All breaking changes |
 
 ---

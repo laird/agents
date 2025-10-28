@@ -66,7 +66,7 @@ fi
 **Primary Objectives** (MUST achieve):
 - [ ] Upgrade to [Target Framework/Version]
 - [ ] Eliminate CRITICAL/HIGH security vulnerabilities
-- [ ] Achieve ≥95% test pass rate
+- [ ] Achieve 100% test pass rate
 - [ ] [Other must-have objective]
 
 **Secondary Objectives** (SHOULD achieve):
@@ -597,7 +597,7 @@ Week 18:    Phase 7 (Validate)  ████
 
 **Gate 4: Post-Framework** (End of Phase 3)
 - **GO if**: 100% tests pass, builds clean
-- **NO-GO if**: <95% pass rate, build issues
+- **NO-GO if**: <100% pass rate, build issues
 - **Decision Maker**: Coordinator + Tester
 
 **Gate 5: Post-API Modernization** (End of Phase 4)

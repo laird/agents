@@ -323,10 +323,10 @@ git shortlog -sn                            # Contributors
 - [ ] Test infrastructure is documented
 
 **Scoring**:
-- **80-100**: >80% coverage, >95% pass rate, comprehensive suite
-- **60-79**: 60-80% coverage, >90% pass rate
-- **40-59**: 40-60% coverage, >80% pass rate
-- **0-39**: <40% coverage or low pass rate
+- **80-100**: >80% coverage, 100% pass rate, comprehensive suite
+- **60-79**: 60-80% coverage, 100% pass rate (but limited coverage)
+- **40-59**: 40-60% coverage, 100% pass rate (but limited coverage)
+- **0-39**: <40% coverage or <100% pass rate
 
 #### 7.2 Production Stability
 

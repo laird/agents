@@ -92,7 +92,7 @@ required_protocols:
 
     testing:
       - "Ensure spawned tester agents follow 6-phase protocol"
-      - "Enforce ≥95% unit test, ≥90% integration test pass rates"
+      - "Enforce 100% test pass rates (unit, integration, component, E2E)"
       - "Complete fix-and-retest cycles before proceeding"
 
     planning:
@@ -156,7 +156,7 @@ workflow:
   3_validation:
     - "PROTOCOL: Follow GENERIC-TESTING-PROTOCOL.md requirements"
     - Build verification (100% success)
-    - Test execution (≥95% unit, ≥90% integration per testing protocol)
+    - Test execution (100% pass rate per testing protocol)
     - Documentation review (per documentation plan template)
     - HISTORY.md updates (per logging protocol - MANDATORY)
 
@@ -170,7 +170,7 @@ workflow:
 success_criteria:
   - All migration stages complete
   - 100% build success rate
-  - Test pass rate ≥95% (unit), ≥90% (integration)
+  - Test pass rate 100% (all test types)
   - Zero P0/P1 blocking issues
   - Complete documentation (CHANGELOG, MIGRATION-GUIDE, ADRs)
   - Full audit trail in HISTORY.md
@@ -267,7 +267,7 @@ anti_patterns:
   - Proceeding with unresolved P0/P1 issues (ALWAYS block)
   - Incomplete testing before next stage
   - Missing documentation updates
-  - Accepting <95% unit test pass rates (updated standard: 100% for production)
+  - Accepting <100% test pass rates (updated standard: 100% for all releases)
   - Changing too much in one stage (keep stages focused)
   - Ignoring build warnings (address before proceeding)
   - Not spawning agents in parallel when work is independent
@@ -323,7 +323,7 @@ customization:
 
     quality_gates:
       - Build: 100% success
-      - Tests: ≥95% pass rate
+      - Tests: 100% pass rate
       - Security: Zero CRITICAL/HIGH CVEs
       - Documentation: Complete
 ```

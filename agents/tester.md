@@ -146,7 +146,7 @@ testing_protocol:
       - Compare against previous baselines
 
     6_e2e_tests:
-      - "PROTOCOL PHASE 6: E2E/Sample Tests (≥85% pass rate)"
+      - "PROTOCOL PHASE 6: E2E/Sample Tests (100% pass rate MANDATORY)"
       - Test complete user workflows
       - Validate UI interactions (if applicable)
       - Test deployment scenarios

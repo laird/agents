@@ -39,7 +39,7 @@ claude plugin install modernize@agent-protocols-marketplace
 
 ### 13 Protocol Documents
 Reference documentation for agents (located in `protocols/`):
-- Testing Protocol (6-phase testing with ≥95% pass rate)
+- Testing Protocol (6-phase testing with 100% pass rate)
 - Agent Logging Protocol (HISTORY.md audit trail)
 - ADR Lifecycle Protocol (MADR 3.0.0 format)
 - Documentation Protocol (unified documentation guide)
@@ -91,7 +91,7 @@ Agents are invoked by Claude Code's Task tool when needed. They work together fo
 - **Architect** makes technology decisions and creates ADRs
 - **Security** scans for vulnerabilities and blocks on CRITICAL/HIGH issues
 - **Coder** implements migrations and fixes
-- **Tester** validates with comprehensive test suites (≥95% pass rate required)
+- **Tester** validates with comprehensive test suites (100% pass rate required)
 - **Documentation** generates user-facing guides and changelogs
 - **Migration Coordinator** orchestrates multi-stage workflows
 
@@ -140,12 +140,12 @@ modernize/
 ### Multi-Agent Coordination
 - 🤖 **6 specialized agents** - Each with defined capabilities and responsibilities
 - 🔄 **Parallel execution** - Multiple agents work independently on separate tasks
-- 📊 **Enforced quality** - ≥95% test pass rate, security score ≥45/100
+- 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
 - 📝 **Systematic workflows** - 5-phase migration, 6-phase testing, 7-stage ADR lifecycle
 
 ### Real-World Results
 - **32/32 projects** migrated successfully (100% success rate)
-- **96.4% test pass rate** (exceeds 95% threshold)
+- **100% test pass rate** (meets requirement)
 - **Security improvement** from 0/100 → 45/100 (CRITICAL CVEs eliminated)
 - **Zero P0/P1** blocking issues in production
 - **1,500+ lines** of documentation auto-generated
@@ -171,7 +171,7 @@ modernize/
 ### Quality Gates to Enforce
 - Security score ≥45 before migration starts
 - Build success 100% before next stage
-- Test pass rate ≥95% before proceeding
+- Test pass rate 100% before proceeding
 - All P0/P1 issues resolved before release
 
 ---

@@ -1,6 +1,6 @@
 ---
 name: testing-protocol
-description: 6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (≥95% pass rate)
+description: 6-phase testing protocol with fix-and-retest cycles, automated validation, and quality gates (100% pass rate)
 ---
 
 # Generic Comprehensive Testing Protocol
@@ -419,9 +419,9 @@ cd ../..
 
 **Requirements**:
 - Unit tests: 100% pass rate (MANDATORY even for beta)
-- Integration tests: ≥95% pass rate (exceptional cases only)
+- Integration tests: 100% pass rate (MANDATORY even for beta)
 - Performance tests: Build successful
-- Sample apps: At least 90% run successfully
+- Sample apps: 100% run successfully
 - Code coverage: ≥75%
 - Zero P0 issues
 - Zero P1 issues
@@ -437,7 +437,7 @@ cd ../..
 
 **Criteria**:
 - Unit tests: <100% pass rate
-- Integration tests: <95% pass rate
+- Integration tests: <100% pass rate
 - Any P0 issues unresolved
 - Any P1 issues unresolved
 - Core functionality broken
@@ -543,7 +543,7 @@ echo "✅ Test environment cleaned"
 
 4. **Accepting Low Pass Rates**:
    - ❌ "80% is good enough for now"
-   - ✅ Target ≥95%, investigate all failures
+   - ✅ Target 100%, investigate all failures
 
 5. **Not Documenting Failures**:
    - ❌ "Some tests failed, moving on"
@@ -644,7 +644,7 @@ echo "✅ Test environment cleaned"
 
 Integrate the testing protocol with your CI/CD pipeline (GitHub Actions, GitLab CI, Jenkins, etc.):
 - Run all test phases on every commit
-- Enforce ≥95% pass rate requirement
+- Enforce 100% pass rate requirement
 - Upload test results and code coverage reports
 - Block merges if tests fail or coverage drops
 - Set up test infrastructure services (database, cache, etc.)

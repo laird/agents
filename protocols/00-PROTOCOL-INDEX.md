@@ -175,7 +175,7 @@ touch "docs/adr/ADR 0004 Your Decision Title.md"
 
 **Quality gates**:
 1. ✅ Build Success (0 errors, 0 warnings)
-2. ✅ Test Pass Rate (≥95% unit, ≥90% integration)
+2. ✅ Test Pass Rate (100% all test types)
 3. ✅ Security Scan (0 CRITICAL/HIGH CVEs)
 4. ✅ Documentation Updates (HISTORY.md, CHANGELOG.md current)
 5. ✅ Code Coverage (≥80% line coverage)
