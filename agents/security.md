@@ -1,12 +1,12 @@
 ---
 name: security
-version: 
+version: 0.1
 type: agent
 ---
 
 # Security-agent Agent
 
-**Version**: 
+**Version**: 0.1
 
 ## Description
 

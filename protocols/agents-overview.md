@@ -1,6 +1,6 @@
 ---
-name: agent-yaml-spec
-description: Agent specification guide with structure, fields, and best practices
+name: agents-overview
+description: Overview of 6 specialized agents for software modernization (markdown-based specifications)
 ---
 
 # Generic Agent Specifications

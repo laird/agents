@@ -1,12 +1,12 @@
 ---
 name: tester
-version: 
+version: 0.1
 type: agent
 ---
 
 # Tester-agent Agent
 
-**Version**: 
+**Version**: 0.1
 
 ## Description
 
