@@ -17,12 +17,20 @@ description: |
 
 required_protocols:
   mandatory:
+    # PRIMARY REFERENCE - Unified documentation guide (MANDATORY for all agents)
+    - name: "Documentation Protocol"
+      file: "protocols/GENERIC-DOCUMENTATION-PROTOCOL.md"
+      enforcement: "MANDATORY - Primary reference for all documentation requirements"
+      applies_to: "All agent activities - unified documentation guide"
+      agent_responsibilities: "Add XML docs to public APIs, code comments for complex logic, update inline docs, log completed work, report implementation challenges for ADRs"
+
     # Use common protocols with agent-specific applies_to
     - name: "Agent Logging Protocol"
       file: "protocols/GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log all completed migration work via ./scripts/append-to-history.sh"
       applies_to: "All code migration and implementation work"
       templates: "Use Template 1: Stage/Phase Migration or Template 3: Dependency Update"
+      integrated_in: "GENERIC-DOCUMENTATION-PROTOCOL.md Part 1"
 
     - name: "Testing Protocol"
       file: "protocols/GENERIC-TESTING-PROTOCOL.md"
@@ -38,6 +46,12 @@ required_protocols:
       file: "PARALLEL-MIGRATION-PROTOCOL.md"
       enforcement: "RECOMMENDED - When spawned in parallel with other coder agents"
       applies_to: "Multi-project migrations with independent projects"
+
+    - name: "ADR Lifecycle Protocol"
+      file: "protocols/GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
+      enforcement: "RECOMMENDED - Reference for ADR-related responsibilities"
+      applies_to: "Reporting implementation challenges, adding ADR implementation notes"
+      integrated_in: "GENERIC-DOCUMENTATION-PROTOCOL.md Part 2"
 
   protocol_enforcement:
     logging:

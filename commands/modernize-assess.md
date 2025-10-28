@@ -1,5 +1,5 @@
 ---
-name: modernize-assess
+name: assess
 description: Assess a project for modernization readiness and viability, evaluating technical debt, risks, and ROI to determine if modernization is recommended
 ---
 

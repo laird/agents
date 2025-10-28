@@ -31,7 +31,7 @@ HISTORY.md provides a **complete chronological record** of all significant chang
 
 ### Protocol Reference
 
-**Full Protocol**: `docs/agents/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md`
+**Full Protocol**: `protocols/GENERIC-AGENT-LOGGING-PROTOCOL.md`
 
 ### When to Log to HISTORY.md
 
@@ -120,7 +120,7 @@ ADRs are **living documents** that track architectural decisions throughout thei
 
 ### Protocol Reference
 
-**Full Protocol**: `docs/agents/ADR-LIFECYCLE-PROTOCOL.md`
+**Full Protocol**: `protocols/GENERIC-ADR-LIFECYCLE-PROTOCOL.md`
 
 ### ADR File Naming Convention (MANDATORY)
 

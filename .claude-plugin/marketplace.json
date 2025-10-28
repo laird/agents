@@ -13,9 +13,9 @@
   },
   "plugins": [
     {
-      "name": "agent-protocols",
+      "name": "modernize",
       "source": "./",
-      "description": "Complete suite of 13 production-validated protocols (including complete modernization workflow: assess viability → create plan → execute with multi-agent orchestration), 6 specialized agents, and 5 automation scripts for systematic software development",
+      "description": "Complete modernization workflow with multi-agent orchestration (assess viability → create plan → execute). Includes 6 specialized agents and comprehensive protocol documentation for systematic software development",
       "version": "2.4.1",
       "category": "workflow",
       "tags": [

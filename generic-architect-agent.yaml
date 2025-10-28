@@ -19,17 +19,26 @@ description: |
 
 required_protocols:
   mandatory:
+    # PRIMARY REFERENCE - Unified documentation guide (MANDATORY for all agents)
+    - name: "Documentation Protocol"
+      file: "protocols/GENERIC-DOCUMENTATION-PROTOCOL.md"
+      enforcement: "MANDATORY - Primary reference for all documentation requirements"
+      applies_to: "All agent activities - unified documentation guide"
+      agent_responsibilities: "Create ADRs, update ADRs through 7-stage lifecycle, log ADR acceptance/reviews, conduct post-implementation reviews, maintain ADR index, create migration guides"
+
     - name: "ADR Lifecycle Protocol"
       file: "protocols/GENERIC-ADR-LIFECYCLE-PROTOCOL.md"
       enforcement: "MANDATORY - Update ADRs throughout entire decision lifecycle (7 stages)"
       applies_to: "ALL architectural decisions from research through post-implementation review"
       stages: "Problem ID → Research → Evaluation → Decision → Implementation → Review → Superseded"
+      integrated_in: "GENERIC-DOCUMENTATION-PROTOCOL.md Part 2"
 
     - name: "Agent Logging Protocol"
       file: "protocols/GENERIC-AGENT-LOGGING-PROTOCOL.md"
       enforcement: "MANDATORY - Log all architectural work via ./scripts/append-to-history.sh"
       applies_to: "All architectural decision-making and documentation work"
       template: "Use Template 4: Architectural Decision"
+      integrated_in: "GENERIC-DOCUMENTATION-PROTOCOL.md Part 1"
 
     - name: "Documentation Plan Template"
       file: "protocols/GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md"
@@ -809,12 +818,13 @@ adr_format_madr_3_0_0:
     - "Notes (implementation details, migration strategy)"
 
   file_naming:
-    pattern: "ADR-XXXX-kebab-case-title.md"
+    pattern: "ADR #### Title With Spaces.md"
+    note: "MANDATORY: Use spaces between words, Title Case. See DOCUMENTATION-PROTOCOL.md lines 125-160"
     examples:
-      - "ADR-0001-adopt-rabbitmq-for-messaging.md"
-      - "ADR-0002-use-postgresql-for-persistence.md"
-      - "ADR-0003-implement-cqrs-pattern.md"
-      - "ADR-0004-migrate-to-dotnet8.md"
+      - "ADR 0001 Adopt RabbitMQ For Messaging.md"
+      - "ADR 0002 Use PostgreSQL For Persistence.md"
+      - "ADR 0003 Implement CQRS Pattern.md"
+      - "ADR 0004 Migrate To Dotnet8.md"
 
 adr_index_maintenance:
   file: "docs/ADR/README.md"
@@ -828,8 +838,8 @@ adr_index_maintenance:
 
     | ADR | Title | Status | Date |
     |-----|-------|--------|------|
-    | [ADR-0001](ADR-0001-example.md) | Title | accepted | 2025-10-11 |
-    | [ADR-0002](ADR-0002-example.md) | Title | proposed | 2025-10-11 |
+    | [ADR 0001](ADR 0001 Example.md) | Title | accepted | 2025-10-11 |
+    | [ADR 0002](ADR 0002 Example.md) | Title | proposed | 2025-10-11 |
 
     ## ADR Statuses
 
@@ -1063,7 +1073,7 @@ example_workflow: |
      - Negative: Requires infrastructure management, clustering complexity
 
   5. Document:
-     - Create docs/ADR/ADR-0008-adopt-rabbitmq-for-messaging.md (next number after existing ADRs)
+     - Create docs/ADR/ADR 0008 Adopt RabbitMQ For Messaging.md (next number after existing ADRs)
      - Update docs/ADR/README.md
      - Log to HISTORY.md
 

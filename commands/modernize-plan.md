@@ -1,5 +1,5 @@
 ---
-name: modernize-plan
+name: plan
 description: Create a detailed modernization strategy and execution plan, utilizing assessment.md if available, with phase breakdown, timeline, and resource allocation
 ---
 

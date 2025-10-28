@@ -1,7 +1,7 @@
 {
-  "name": "agent-protocols",
+  "name": "modernize",
   "version": "2.4.1",
-  "description": "Production-validated agent protocols, automation frameworks, and specialized agents for systematic AI-assisted software development. Includes 13 protocols with complete modernization workflow (assess → plan → execute), 6 agents, and 5 automation scripts.",
+  "description": "Production-validated agent protocols, automation frameworks, and specialized agents for systematic AI-assisted software development. Includes complete modernization workflow (assess → plan → execute), 6 specialized agents, and comprehensive protocol documentation.",
   "author": {
     "name": "Agent Protocols Team",
     "email": "[email protected]"
@@ -24,16 +24,14 @@
   "commands": [
     "./commands/modernize-assess.md",
     "./commands/modernize-plan.md",
-    "./commands/modernize-project.md",
-    "./commands/testing-protocol.md",
-    "./commands/agent-logging.md",
-    "./commands/adr-lifecycle.md",
-    "./commands/documentation-protocol.md",
-    "./commands/documentation-plan.md",
-    "./commands/incremental-documentation.md",
-    "./commands/protocols-overview.md",
-    "./commands/agent-yaml-spec.md",
-    "./commands/validation-report.md",
-    "./commands/protocol-index.md"
+    "./commands/modernize-project.md"
+  ],
+  "agents": [
+    "./agents/architect.md",
+    "./agents/coder.md",
+    "./agents/documentation.md",
+    "./agents/migration-coordinator.md",
+    "./agents/security.md",
+    "./agents/tester.md"
   ]
 }

@@ -144,9 +144,9 @@ document_directory_structure:
       files:
         - name: "README.md"
           purpose: "Index of all ADRs with links and summaries"
-        - name: "ADR-{NNNN}-{title}.md"
+        - name: "ADR #### Title With Spaces.md"
           purpose: "Individual ADR documents"
-          naming: "ADR-0001-dotnet8-migration.md (4-digit sequential)"
+          naming: "ADR 0001 Dotnet8 Migration.md (4-digit with spaces, Title Case)"
 
     security:
       location: "docs/security/"

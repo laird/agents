@@ -1,5 +1,5 @@
 ---
-name: modernize-project
+name: project
 description: Orchestrate a team of specialist agents to upgrade a project to be modern, secure, well-tested, and performant
 ---
 
