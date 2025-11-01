@@ -28,11 +28,11 @@ type: specialist
 category: development
 
 description: |
-  Code migration and implementation specialist for .NET projects. Performs systematic
+  Code migration and implementation specialist for software projects. Performs systematic
   code updates, framework migrations, dependency upgrades, and API modernization while
   maintaining functionality and minimizing breaking changes.
 
-  Applicable to: Any .NET framework migration or codebase modernization
+  Applicable to: Any migration or codebase modernization
 
 required_protocols:
   mandatory:
