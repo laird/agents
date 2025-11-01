@@ -23,11 +23,11 @@ This plugin provides a complete modernization workflow (assess → plan → exec
 
 Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
 
-- **`/assess`** - Assessment protocol with viability evaluation (outputs `assessment.md`)
+- **`/assess`** - Assessment protocol with viability evaluation (outputs `ASSESSMENT.md`)
   - 8 assessment dimensions, scoring methodology, recommendation matrix
   - Do this first to assess software for potential modernization
 
-- **`/plan`** - Planning protocol with detailed execution strategy (outputs `plan.md`)
+- **`/plan`** - Planning protocol with detailed execution strategy (outputs `PLAN.md`)
   - Phase breakdown, timeline estimation, risk management, resource allocation
   - Do this to propose a modernization plan
 
@@ -64,13 +64,13 @@ Every command file includes:
    ```
    /assess
    ```
-   Evaluates technical debt, risks, and ROI. Outputs `assessment.md`.
+   Evaluates technical debt, risks, and ROI. Outputs `ASSESSMENT.md`.
 
 2. **Create Plan**
    ```
    /plan
    ```
-   Develops detailed execution strategy with phases, timeline, and resources. Outputs `plan.md`.
+   Develops detailed execution strategy with phases, timeline, and resources. Outputs `PLAN.md`.
 
 3. **Execute Modernization**
    ```

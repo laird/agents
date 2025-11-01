@@ -8,7 +8,7 @@
 
 **Version**: 1.0
 **Purpose**: Systematically assess whether a project is a good candidate for modernization
-**Output**: `assessment.md` with comprehensive analysis and recommendation
+**Output**: `ASSESSMENT.md` with comprehensive analysis and recommendation
 **Duration**: 2-4 hours
 
 **Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
@@ -384,7 +384,7 @@ git shortlog -sn                            # Contributors
 
 ## Assessment Report Generation
 
-### assessment.md Template
+### ASSESSMENT.md Template
 
 ```markdown
 # Project Modernization Assessment
@@ -817,8 +817,8 @@ Score: 82/100
 **Overall Score: 78/100**
 **Recommendation: ⚠️ PROCEED WITH CAUTION**
 
-Writing assessment.md...
-✅ Assessment complete: assessment.md created
+Writing ASSESSMENT.md...
+✅ Assessment complete: ASSESSMENT.md created
 ```
 
 ### Example 2: Node.js 14 → 22 Assessment
@@ -844,7 +844,7 @@ Conditional Approval:
 2. Address CRITICAL CVEs immediately
 3. Allocate 2 months for migration
 
-✅ assessment.md created
+✅ ASSESSMENT.md created
 ```
 
 ### Example 3: Legacy System - Not Recommended
@@ -873,7 +873,7 @@ Recommended Alternative:
 - Retire monolith over 3 years
 
 ❌ Modernization not recommended
-✅ assessment.md created with alternatives
+✅ ASSESSMENT.md created with alternatives
 ```
 
 ---
@@ -916,7 +916,7 @@ Recommended Alternative:
 2. **Be Conservative** - Underestimate benefits, overestimate costs
 3. **Be Thorough** - Don't skip dimensions
 4. **Be Honest** - Better to defer now than fail midway
-5. **Document Everything** - The assessment.md is your evidence
+5. **Document Everything** - The ASSESSMENT.md is your evidence
 
 ---
 

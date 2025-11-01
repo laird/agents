@@ -9,7 +9,7 @@
 **Version**: 2.0
 **Purpose**: Coordinate multiple specialist agents to systematically upgrade any software project
 **Team**: Migration Coordinator, Security Agent, Architect Agent, Coder Agent, Tester Agent, Documentation Agent
-**Inputs**: Optional `assessment.md` and `plan.md` from `/modernize-assess` and `/modernize-plan`
+**Inputs**: Optional `ASSESSMENT.md` and `PLAN.md` from `/modernize-assess` and `/modernize-plan`
 
 ---
 
@@ -19,21 +19,21 @@
 
 ```bash
 # Check for assessment
-if [ -f "assessment.md" ]; then
-    echo "✅ Found assessment.md - will use assessment findings"
+if [ -f "ASSESSMENT.md" ]; then
+    echo "✅ Found ASSESSMENT.md - will use assessment findings"
     USE_ASSESSMENT=true
 else
-    echo "⚠️  No assessment.md - recommend running /modernize-assess first"
+    echo "⚠️  No ASSESSMENT.md - recommend running /modernize-assess first"
     echo "   Continue with basic assessment? (y/n)"
     USE_ASSESSMENT=false
 fi
 
 # Check for plan
-if [ -f "plan.md" ]; then
-    echo "✅ Found plan.md - will follow existing plan"
+if [ -f "PLAN.md" ]; then
+    echo "✅ Found PLAN.md - will follow existing plan"
     USE_PLAN=true
 else
-    echo "⚠️  No plan.md - will create plan on-the-fly"
+    echo "⚠️  No PLAN.md - will create plan on-the-fly"
     echo "   Recommend running /modernize-plan first for better accuracy"
     USE_PLAN=false
 fi
@@ -102,7 +102,7 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 
 **Input Handling**:
 ```
-IF assessment.md EXISTS:
+IF ASSESSMENT.md EXISTS:
     ✅ Skip detailed assessment
     ✅ Use existing scores, risks, estimates
     ✅ Focus on validation and updates
@@ -114,7 +114,7 @@ ELSE:
 
 **Activities**:
 1. **Project Analysis**
-   - **If assessment.md exists**: ✅ Load existing inventory
+   - **If ASSESSMENT.md exists**: ✅ Load existing inventory
    - **If no assessment**: Inventory all dependencies and frameworks
    - Identify current versions vs latest stable
    - Map project structure and architecture
@@ -140,7 +140,7 @@ ELSE:
    - Identify test gaps
 
 **Outputs**:
-- Project assessment report (or use existing assessment.md)
+- Project assessment report (or use existing ASSESSMENT.md)
 - Security vulnerability report
 - Technology upgrade roadmap
 - Test baseline report
@@ -197,7 +197,7 @@ ELSE:
 
 **Input Handling**:
 ```
-IF plan.md EXISTS:
+IF PLAN.md EXISTS:
     ✅ Use existing architecture decisions
     ✅ Validate ADRs are current
     ✅ Follow defined strategy
@@ -227,7 +227,7 @@ ELSE:
    - Testing strategy updates
 
 **Outputs**:
-- ADRs for all major decisions (MADR 3.0.0 format) - or use existing from plan.md
+- ADRs for all major decisions (MADR 3.0.0 format) - or use existing from PLAN.md
 - Dependency upgrade matrix
 - Migration timeline
 - Risk assessment
@@ -249,7 +249,7 @@ ELSE:
 
 **Input Handling**:
 ```
-IF plan.md EXISTS:
+IF PLAN.md EXISTS:
     ✅ Use defined module migration order
     ✅ Follow parallel execution strategy
     ✅ Use task breakdown from plan

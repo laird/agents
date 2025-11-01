@@ -21,16 +21,16 @@ This plugin provides 5 slash commands that are comprehensive protocol documents:
 ```bash
 # 1. Assessment - Evaluate modernization readiness
 /assess
-# Output: assessment.md with viability analysis across 8 dimensions
+# Output: ASSESSMENT.md with viability analysis across 8 dimensions
 
 # 2. Planning - Create detailed execution strategy
 /plan
-# Output: plan.md with phase breakdown, timeline, resource allocation
+# Output: PLAN.md with phase breakdown, timeline, resource allocation
 
 # 3. Execution - Orchestrate multi-agent modernization
 /modernize
 # Coordinates 6 specialist agents through 7 phases
-# Requires: Optional assessment.md and plan.md for best results
+# Requires: Optional ASSESSMENT.md and PLAN.md for best results
 ```
 
 ### Continuous Improvement Commands
