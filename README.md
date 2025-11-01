@@ -4,54 +4,55 @@ A **Claude Code plugin** providing production-validated protocols, specialized a
 
 ## Overview
 
-This plugin provides a complete modernization workflow (assess → plan → execute) with 6 specialized agents and comprehensive protocol documentation. Originally created for .NET framework migrations, these tools are **universally applicable** to any software project requiring structured agent collaboration.
+This plugin provides a complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents and comprehensive protocol documentation. Features **continuous improvement** through retrospective analysis that learns from agent mistakes and user corrections. Created originally for .NET framework migrations, these tools are **universally applicable** to any software project requiring structured agent collaboration.
 
 ---
 
 ## Installation
 
-**Install from Claude Code marketplace**:
+**Install as Claude Code plugin**:
 
-```bash
-# Add this repository as a Claude Code marketplace
-claude plugin marketplace add "https://raw.githubusercontent.com/laird/agents/main/.claude-plugin/marketplace.json"
-
-# Install the modernize plugin
-claude plugin install modernize@agent-protocols-marketplace
-```
+1. Use the /plugin command in claude code, and add this repo as a marketplace, then add the modernize plugin.
+2. Commands will be available as slash commands in Claude Code
 
 ---
 
 ## What's Included
 
-### 3 Slash Commands
-- **`/modernize:assess`** - Assess project viability for modernization (outputs `assessment.md`)
-- **`/modernize:plan`** - Create detailed execution plan (outputs `plan.md`)
-- **`/modernize:project`** - Orchestrate multi-agent modernization workflow
+### 5 Protocol-Based Commands
 
-### 6 Specialized Agents
-- **`modernize:architect`** - Architecture and design decisions, ADR creation
-- **`modernize:coder`** - Code implementation and migration
-- **`modernize:documentation`** - Documentation management and generation
-- **`modernize:migration-coordinator`** - Multi-stage orchestration
-- **`modernize:security`** - Security scanning and vulnerability fixes
-- **`modernize:tester`** - Testing and validation with quality gates
+Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
 
-### 13 Protocol Documents
-Reference documentation for agents (located in `protocols/`):
-- Testing Protocol (6-phase testing with 100% pass rate)
-- Agent Logging Protocol (HISTORY.md audit trail)
-- ADR Lifecycle Protocol (MADR 3.0.0 format)
-- Documentation Protocol (unified documentation guide)
-- And 9 more...
+- **`/assess`** - Assessment protocol with viability evaluation (outputs `assessment.md`)
+  - 8 assessment dimensions, scoring methodology, recommendation matrix
+  - Do this first to assess software for potential modernization
 
-### 5 Automation Scripts
-Shell utilities for automation (located in `scripts/`):
-- `append-to-history.sh` - HISTORY.md logging utility
-- `capture-test-baseline.sh` - Test baseline creation
-- `run-stage-tests.sh` - Test execution
-- `validate-migration-stage.sh` - Quality gate validation
-- `analyze-dependencies.sh` - Dependency analysis
+- **`/plan`** - Planning protocol with detailed execution strategy (outputs `plan.md`)
+  - Phase breakdown, timeline estimation, risk management, resource allocation
+  - Do this to propose a modernization plan
+
+- **`/modernize`** - Full modernization protocol with 7-phase workflow
+  - Coordinates 6 specialist agents through Discovery → Security → Architecture → Framework → API → Performance → Documentation
+  - Do this to execute the plan. If there is no plan it will generate a plan and then execute it.
+
+- **`/retro`** - Retrospective protocol analyzing project history (outputs `IMPROVEMENTS.md`)
+  - Reviews git history, user corrections, agent mistakes, protocol inefficiencies
+  - Do this after execution to assess how the project went and make improvement recommendations for future projects. This is optional.
+
+- **`/retro-apply`** - Improvement application protocol
+  - Systematically updates commands, protocols, and automation based on retrospective findings
+  - Do this after `/retro` if you agree with the recommendations.
+
+### What's Inside Each Protocol
+
+Every command file includes:
+- **Agent coordination instructions** - How 6 specialist agents work together (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
+- **Phase-by-phase workflows** - Detailed steps with durations, deliverables, and success criteria
+- **Quality gates** - Blocking criteria and validation checkpoints
+- **Examples** - Real-world scenarios and usage patterns
+- **Anti-patterns** - What NOT to do with explanations
+- **Troubleshooting** - Common issues and solutions
+- **Best practices** - Proven approaches and recommendations
 
 ---
 
@@ -61,19 +62,19 @@ Shell utilities for automation (located in `scripts/`):
 
 1. **Assess Viability**
    ```
-   /modernize:assess
+   /assess
    ```
    Evaluates technical debt, risks, and ROI. Outputs `assessment.md`.
 
 2. **Create Plan**
    ```
-   /modernize:plan
+   /plan
    ```
    Develops detailed execution strategy with phases, timeline, and resources. Outputs `plan.md`.
 
 3. **Execute Modernization**
    ```
-   /modernize:project
+   /modernize
    ```
    Orchestrates specialized agents through 7 phases:
    - Discovery & Planning
@@ -83,6 +84,28 @@ Shell utilities for automation (located in `scripts/`):
    - API Modernization
    - Performance Optimization
    - Documentation
+
+4. **Continuous Improvement (Optional)**
+   ```
+   /retro
+   ```
+   After project completion, analyzes history to identify process improvements. Reviews:
+   - User interruptions and corrections
+   - Agent behavioral issues (wrong tools, wasted effort)
+   - Protocol inefficiencies
+   - Automation opportunities
+
+   Outputs `IMPROVEMENTS.md` with 3-5 evidence-based recommendations.
+
+5. **Apply Improvements**
+   ```
+   /retro-apply
+   ```
+   Systematically applies approved recommendations from `IMPROVEMENTS.md`:
+   - Updates command files with better agent behavior guidance
+   - Modifies protocols to prevent recurring issues
+   - Adds automation (scripts, hooks, CI/CD)
+   - Embeds lessons learned into workflow
 
 ### Using Agents
 
@@ -100,32 +123,24 @@ Agents are invoked by Claude Code's Task tool when needed. They work together fo
 ## Repository Structure
 
 ```
-modernize/
-├── .claude-plugin/
-│   ├── plugin.json              # Plugin manifest
-│   └── marketplace.json         # Marketplace definition
-├── commands/                    # Slash commands
-│   ├── modernize-assess.md
-│   ├── modernize-plan.md
-│   └── modernize-project.md
-├── agents/                      # Agent definitions
-│   ├── architect.md
-│   ├── coder.md
-│   ├── documentation.md
-│   ├── migration-coordinator.md
-│   ├── security.md
-│   └── tester.md
-├── protocols/                   # Protocol documentation (13 files)
-│   ├── GENERIC-TESTING-PROTOCOL.md
-│   ├── GENERIC-AGENT-LOGGING-PROTOCOL.md
-│   ├── GENERIC-ADR-LIFECYCLE-PROTOCOL.md
-│   └── ... (10 more)
-├── scripts/                     # Automation utilities (5 files)
-│   ├── append-to-history.sh
-│   ├── capture-test-baseline.sh
-│   └── ... (3 more)
+agents/
+├── commands/                    # Slash commands (5 commands)
+│   ├── assess.md               # Assessment protocol with agent coordination
+│   ├── plan.md                 # Planning protocol with execution strategy
+│   ├── modernize.md            # Full modernization protocol (7 phases, 6 agents)
+│   ├── retro.md                # Retrospective analysis protocol
+│   └── retro-apply.md          # Improvement application protocol
 └── README.md
 ```
+
+**Note**: Each command file IS a comprehensive protocol document containing:
+- Complete phase-by-phase workflows
+- Agent coordination instructions (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
+- Quality gates and success criteria
+- Examples, anti-patterns, and troubleshooting
+- Best practices and implementation guidance
+
+Previous versions had separate `agents/`, `protocols/`, and `scripts/` directories. These have been consolidated into the command files for a streamlined structure.
 
 ---
 
@@ -143,6 +158,13 @@ modernize/
 - 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
 - 📝 **Systematic workflows** - 5-phase migration, 6-phase testing, 7-stage ADR lifecycle
 
+### Continuous Improvement
+- 🔍 **Retrospective analysis** - Analyzes git history, user corrections, agent mistakes
+- 📈 **Evidence-based recommendations** - 3-5 specific improvements with quantified impact
+- 🔧 **Automated application** - Updates commands, protocols, and automation
+- 🎯 **Learning from mistakes** - Identifies wrong tool usage, wasted effort, requirement misunderstandings
+- ♻️ **Self-improving system** - Each project makes the next one better
+
 ### Real-World Results
 - **32/32 projects** migrated successfully (100% success rate)
 - **100% test pass rate** (meets requirement)
@@ -155,18 +177,31 @@ modernize/
 ## Best Practices
 
 ### For New Projects
-1. Install the plugin via Claude Code marketplace
-2. Run `/modernize:assess` to evaluate modernization readiness
-3. Run `/modernize:plan` to create execution strategy
-4. Run `/modernize:project` to orchestrate the work
+1. Install the plugin by copying `commands/` to your project
+2. Run `/assess` to evaluate modernization readiness
+3. Run `/plan` to create execution strategy
+4. Run `/modernize` to orchestrate the work
 5. Monitor HISTORY.md for complete audit trail
+6. Run `/retro` after completion to identify improvements
+7. Run `/retro-apply` to embed lessons learned
+
+### Continuous Improvement Workflow
+1. Complete a modernization project with `/modernize`
+2. Run `/retro` to analyze what happened:
+   - Reviews git history for user corrections
+   - Identifies agent behavioral issues
+   - Finds protocol inefficiencies
+   - Quantifies impact of improvements
+3. Review `IMPROVEMENTS.md` with team
+4. Run `/retro-apply` to implement approved changes
+5. Next project automatically benefits from improvements
 
 ### For Existing Projects
 1. Install the plugin
-2. Start with `/modernize:assess` to understand scope
-3. Adopt protocols incrementally (logging → testing → documentation)
-4. Customize protocols to your technology stack
-5. Scale with multi-agent coordination patterns
+2. Start with `/assess` to understand scope
+3. Use `/plan` to create detailed execution strategy
+4. Leverage multi-agent coordination with `/modernize`
+5. Apply continuous improvement with `/retro` and `/retro-apply`
 
 ### Quality Gates to Enforce
 - Security score ≥45 before migration starts
@@ -193,7 +228,8 @@ modernize/
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.4.2 | 2025-10-28 | Renamed plugin to 'modernize', added agents field, removed YAML files, streamlined for Claude Code |
+| 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
+| 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |
 | 2.4.1 | 2025-10-25 | Removed cost estimates, added time estimate disclaimers |
 | 2.4.0 | 2025-10-25 | Added complete modernization workflow (assess → plan → execute) |
 | 2.3.0 | 2025-10-25 | Added /modernize-project multi-agent orchestrator |

@@ -1,6 +1,7 @@
----
-name: project
-description: Orchestrate a team of specialist agents to upgrade a project to be modern, secure, well-tested, and performant
+# Modernize Command
+
+**Description**: Orchestrate a team of specialist agents to upgrade a project to be modern, secure, well-tested, and performant
+
 ---
 
 # Project Modernization & Security Protocol

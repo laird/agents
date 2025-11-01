@@ -1,6 +1,7 @@
----
-name: assess
-description: Assess a project for modernization readiness and viability, evaluating technical debt, risks, and ROI to determine if modernization is recommended
+# Assess Command
+
+**Description**: Orchestrate a team of specialist agents to assess a project for modernization readiness and viability, evaluating technical debt, risks, and ROI to determine if modernization is recommended
+
 ---
 
 # Project Modernization Assessment Protocol
