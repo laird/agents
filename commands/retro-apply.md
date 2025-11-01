@@ -18,9 +18,20 @@ description: Apply the process improvement recommendations from IMPROVEMENTS.md 
 
 ## Overview
 
-This protocol **systematically implements** the process improvements documented in `IMPROVEMENTS.md`, updating agent protocols, adding automation, and modifying project configuration to embed improvements into the workflow.
+This protocol **systematically implements** the process improvements documented in `IMPROVEMENTS.md`, including:
+- **Agent behavioral changes**: Update command files to guide better agent behavior (tool usage, confirmation patterns, context gathering)
+- **Protocol updates**: Modify process steps, quality gates, workflow sequences
+- **Automation**: Add scripts, hooks, CI/CD to enforce improvements
+- **Documentation**: Update guidelines, examples, anti-patterns
 
-**Core Principle**: **Make improvements permanent by embedding them in protocols and automation.**
+**Core Principle**: **Make improvements permanent by embedding them in protocols, commands, and automation.**
+
+**Change Types**:
+- **Agent Behavior**: Update commands/*.md to teach agents better practices
+- **Protocol**: Modify process flows in protocol documents
+- **Automation**: Add enforcement through scripts/hooks
+- **Tool Usage**: Add examples and guidance for proper tool selection
+- **Confirmation Patterns**: Add user approval checkpoints
 
 ---
 
@@ -108,11 +119,17 @@ Do you want to apply:
 #### 2.1 Categorize Changes
 
 **Change Types**:
-- **Protocol Updates**: Modify command files (`.md` in `commands/`)
-- **Automation**: Add scripts, pre-commit hooks, CI/CD
+- **Agent Behavior**: Update command files to change how agents behave (tool selection, confirmation patterns, read-before-write rules)
+- **Protocol Updates**: Modify process steps, phases, quality gates in protocol documents
+- **Automation**: Add scripts, pre-commit hooks, CI/CD workflows
 - **Configuration**: Update project config files
-- **Documentation**: Update README, guides, templates
+- **Documentation**: Update README, guides, templates, examples
 - **Tool Integration**: Install/configure new tools
+
+**Examples**:
+- Agent Behavior: "Add 'MUST read file before Write/Edit' rule to commands/modernize.md"
+- Protocol: "Add dependency analysis as Phase 0.5 in assessment workflow"
+- Automation: "Add pre-commit hook for security scanning"
 
 #### 2.2 Dependency Analysis
 
@@ -225,6 +242,108 @@ Recommendation 2 and 4 are independent
 **Why This Change**:
 [Link to IMPROVEMENTS.md Recommendation 1]
 Prevents mid-migration dependency conflicts that historically caused 1-2 week delays.
+```
+
+**Example Agent Behavioral Update**:
+
+```markdown
+# In commands/modernize.md
+
+## Agent Best Practices
+
+**NEW - Added from IMPROVEMENTS.md Recommendation 4**:
+
+### MANDATORY: Read Before Write/Edit
+
+**Rule**: ALL agents MUST read a file before using Write or Edit tools.
+
+**Rationale**: Prevents overwriting existing content, conflicts, and user interruptions.
+Historical evidence: 8 instances of conflicts caused by writing without reading first.
+
+**Protocol**:
+1. **Before Write**: ALWAYS use Read tool first
+   ```
+   ❌ WRONG: Use Write without reading
+   ✅ CORRECT: Read → analyze content → Write
+   ```
+
+2. **Before Edit**: File must be read in current conversation
+   ```
+   ❌ WRONG: Edit tool on file never read
+   ✅ CORRECT: Read → identify exact string → Edit
+   ```
+
+3. **Exceptions**: NONE. This rule has no exceptions.
+
+**Enforcement**:
+- Migration Coordinator validates all file operations
+- User should interrupt if agent violates this rule
+- Retrospective will flag violations
+
+**Examples**:
+```
+User: Update the config file
+Agent: [Reads config.json first]
+Agent: I see the current configuration has X, Y, Z settings.
+Agent: I'll update setting Y to the new value.
+Agent: [Uses Edit tool with exact old_string from what was read]
+```
+
+**Why This Change**:
+[Link to IMPROVEMENTS.md Recommendation 4]
+Eliminates 100% of file conflicts and user interruptions caused by not reading files first.
+```
+
+**Example Tool Usage Behavioral Update**:
+
+```markdown
+# In commands/modernize.md
+
+## Tool Selection Guide
+
+**NEW - Added from IMPROVEMENTS.md Recommendation 5**:
+
+### Use Specialized Tools, Not Bash Commands
+
+**Rule**: Use specialized tools for file operations, NOT bash commands.
+
+**Decision Tree**:
+
+**Need to read file?**
+- ✅ Use: `Read` tool
+- ❌ Don't use: `cat`, `head`, `tail`, `less`
+- **Why**: Read provides line numbers, handles large files, integrates with Edit
+
+**Need to find files?**
+- ✅ Use: `Glob` tool with pattern
+- ❌ Don't use: `find`, `ls`
+- **Why**: Glob is faster, respects .gitignore, returns sorted results
+
+**Need to search file contents?**
+- ✅ Use: `Grep` tool
+- ❌ Don't use: `grep`, `rg`, `ag`
+- **Why**: Grep has better permissions, output modes, context options
+
+**Need to create/modify files?**
+- ✅ Use: `Write`, `Edit` tools
+- ❌ Don't use: `echo >`, `cat <<EOF`, `sed`, `awk`
+- **Why**: Write/Edit are tracked, validated, support rollback
+
+**Only use Bash for**:
+- Git operations
+- Build commands (npm, dotnet, make)
+- Test execution
+- System commands that aren't file operations
+
+**Historical Evidence**:
+- 23 instances of `cat` instead of Read
+- 15 instances of `find` instead of Glob
+- 12 instances of `grep` instead of Grep
+- All required user corrections
+
+**Why This Change**:
+[Link to IMPROVEMENTS.md Recommendation 5]
+Reduces wrong tool usage by 95%, improves context handling, eliminates user corrections.
 ```
 
 #### 3.3 Validate Updates

@@ -17,9 +17,17 @@ description: Review project history and coordinate agents to identify 3-5 specif
 
 ## Overview
 
-This protocol orchestrates a **multi-agent retrospective** to analyze project history, identify inefficiencies, bottlenecks, and risks, then produce a unified set of **3-5 specific, actionable recommendations** for process improvement.
+This protocol orchestrates a **multi-agent retrospective** to analyze project history, identify inefficiencies, bottlenecks, risks, and **agent behavioral issues**, then produce a unified set of **3-5 specific, actionable recommendations** for process improvement.
 
-**Core Principle**: **Continuous improvement through systematic reflection and evidence-based recommendations.**
+**Improvements Target**:
+- **Agent Behavior**: Wrong tool usage, wasted effort, requirement misunderstandings, user interruptions
+- **Protocol Updates**: Process changes, new phases, quality gates, workflow reordering
+- **Automation**: Scripts, hooks, CI/CD pipelines to enforce best practices
+- **Commands**: Updates to command files to guide better agent behavior
+
+**Core Principle**: **Continuous improvement through systematic reflection, learning from mistakes, and evidence-based recommendations.**
+
+**CRITICAL**: User interruptions and corrections are the strongest signal that agents need behavioral improvement. Every user correction should be analyzed and potentially trigger a recommendation.
 
 ---
 
@@ -134,6 +142,85 @@ git shortlog -sn
 - [ ] Did documentation lag behind implementation?
 - [ ] Were examples and troubleshooting guides adequate?
 
+#### 1.7 Review User Interactions & Agent Errors (CRITICAL)
+
+**All Agents**:
+```bash
+# Analyze conversation history for agent issues
+- Review git commit messages for user corrections
+- Check HISTORY.md for user interventions
+- Identify cases where user had to interrupt
+- Find instances of wasted effort or wrong approaches
+- Note misunderstandings of requirements
+```
+
+**CRITICAL Signals of Agent Problems**:
+- [ ] **User interruptions**: User had to stop agent mid-task
+- [ ] **Corrections**: User corrected agent's approach or understanding
+- [ ] **Repeated questions**: Agent asked same question multiple times
+- [ ] **Wrong tools**: Agent used wrong tool for task (e.g., Bash instead of Read)
+- [ ] **Wasted effort**: Agent implemented something user didn't ask for
+- [ ] **Misunderstood requirements**: Agent built wrong thing
+- [ ] **Ignored context**: Agent didn't read existing files before acting
+- [ ] **Over-engineering**: Agent added unnecessary complexity
+- [ ] **Under-engineering**: Agent missed critical requirements
+- [ ] **Poor coordination**: Agents duplicated work or conflicted
+
+**Examples of Agent Mistakes to Identify**:
+
+1. **Wrong Tool Usage**:
+   - Agent used `find` command instead of Glob tool
+   - Agent used `grep` instead of Grep tool
+   - Agent used Bash `cat` instead of Read tool
+   - Agent created file without reading existing version first
+
+2. **Wasted Effort**:
+   - Agent implemented feature before confirming requirements
+   - Agent wrote tests that user didn't request
+   - Agent refactored code user didn't ask to change
+   - Agent created documentation before checking if it exists
+
+3. **Context Ignorance**:
+   - Agent didn't read relevant files before making changes
+   - Agent asked questions already answered in codebase
+   - Agent missed existing patterns/conventions
+   - Agent duplicated existing functionality
+
+4. **Requirement Misunderstanding**:
+   - Agent built feature differently than user described
+   - Agent missed critical constraints or requirements
+   - Agent made assumptions without confirming
+   - Agent ignored explicit user guidance
+
+5. **Poor Planning**:
+   - Agent started coding without creating plan
+   - Agent didn't use TodoWrite for multi-step tasks
+   - Agent didn't break down complex tasks
+   - Agent jumped between tasks without finishing
+
+6. **Communication Issues**:
+   - Agent didn't explain what it was doing
+   - Agent didn't report blockers early
+   - Agent didn't ask for clarification when unclear
+   - Agent made decisions without user approval
+
+**Data Sources for Agent Error Analysis**:
+```bash
+# Git commit messages with corrections
+git log --all --grep="fix\|correct\|actually\|oops\|mistake"
+
+# Search HISTORY.md for user interventions
+grep -i "user:\|correction\|fix\|reverted\|undo" HISTORY.md
+
+# Look for reverted commits
+git log --all --oneline | grep -i "revert\|undo"
+
+# Find large time gaps (might indicate stuck agent)
+git log --all --format="%ai %s" | awk '{print $1, $2}' | sort
+```
+
+**IMPORTANT**: User interventions are the strongest signal that agents need behavioral improvement. Every user correction should trigger a recommendation.
+
 ---
 
 ### Phase 2: Agent Insights Gathering (30 minutes)
@@ -179,23 +266,35 @@ git shortlog -sn
 1. **Aggregate all agent observations**
 2. **Identify recurring themes** across multiple agents
 3. **Categorize issues**:
-   - Process inefficiencies
-   - Communication gaps
-   - Tool/automation opportunities
-   - Quality gate improvements
-   - Documentation improvements
-   - Coordination issues
+   - **Agent behavioral issues** (wrong tools, wasted effort, misunderstandings)
+   - **Protocol improvements** (process changes, new steps, reordering)
+   - **Automation opportunities** (scripts, hooks, CI/CD)
+   - **Communication gaps** (coordination, handoffs, user interaction)
+   - **Quality gate improvements** (enforcement, criteria, timing)
+   - **Documentation improvements** (timing, format, completeness)
+   - **Tool usage** (using appropriate tools, avoiding anti-patterns)
 4. **Prioritize by impact**:
    - High impact: Significant time/quality improvement
    - Medium impact: Moderate improvement
    - Low impact: Minor optimization
 
 **Common Pattern Examples**:
+
+**Protocol Issues**:
 - "Testing started too late in multiple phases" (Tester + Coder)
 - "Dependencies analyzed insufficiently upfront" (Architect + Security + Coder)
 - "Documentation created in large batches instead of incrementally" (Documentation + all agents)
 - "Quality gates not enforced consistently" (Coordinator + Tester)
 - "Security scanning not integrated into dev workflow" (Security + Coder)
+
+**Agent Behavioral Issues** (CRITICAL):
+- "Coder Agent used Bash cat instead of Read tool 15 times" (All agents)
+- "Agent implemented feature without confirming requirements, user corrected 3 times" (User + Coder)
+- "Agent didn't read existing config before modifying, caused conflicts" (User + Coder)
+- "Agent asked user for information already in README.md" (User + all agents)
+- "Agent started coding without creating TodoWrite plan for complex task" (Coordinator)
+- "Agent made assumption about architecture without consulting Architect Agent" (Coordinator)
+- "User had to interrupt agent 4 times to correct approach" (User + all agents)
 
 ---
 
@@ -221,13 +320,19 @@ git shortlog -sn
 
 **Evidence**: [Specific examples from project history]
 
-**Proposed Change**: [Exact change to agent protocols or process]
+**Proposed Change**: [Exact change - can be protocol update, agent behavior, or automation]
+
+**Change Type**: [Protocol Update / Agent Behavior / Automation / Tool Usage / Documentation]
 
 **Expected Impact**: [Quantifiable improvement in time, quality, or risk]
 
 **Implementation Complexity**: [Low/Medium/High]
 
-**Affected Agents**: [List of agents that will change their protocol]
+**Affected Components**:
+- **Agents**: [List of agents that will change behavior]
+- **Protocols**: [List of protocol files to update]
+- **Automation**: [Scripts, hooks, CI/CD to add]
+- **Commands**: [Command files to modify]
 ```
 
 #### Selection Process:
@@ -488,6 +593,102 @@ Following completion of [phases/milestones], the agent team conducted a retrospe
 
 ---
 
+### Example 4: Always Read Before Write (Agent Behavior)
+
+**Problem**: Coder Agent frequently modified files without reading them first, causing conflicts and requiring user corrections
+
+**Evidence**:
+- 8 instances where agent used Write tool without prior Read
+- User had to interrupt 5 times to say "read the existing file first"
+- 3 commits reverted due to overwriting existing content
+- Git log shows pattern: "fix\|correct\|actually read"
+
+**Proposed Change**: Enforce "Read before Write" rule for all agents
+- Update all command protocols with explicit "MUST read file first" requirement
+- Coder Agent: Always use Read tool before Write or Edit
+- Documentation Agent: Check for existing docs before creating new ones
+- Add validation reminder in tool descriptions
+
+**Change Type**: Agent Behavior
+
+**Expected Impact**:
+- Eliminate file conflicts and overwrites (100% reduction)
+- Reduce user interruptions by 60%
+- Save 2-3 hours per project in rework
+- Improve agent context awareness
+
+**Affected Components**:
+- **Agents**: Coder, Documentation (primary), all agents (secondary)
+- **Protocols**: All commands/*.md - add "Read first" requirement
+- **Commands**: Update tool usage guidelines in each command
+
+---
+
+### Example 5: Use Appropriate Tools (Agent Behavior)
+
+**Problem**: Agents frequently used Bash commands instead of specialized tools, violating tool usage policy
+
+**Evidence**:
+- Coder Agent used `cat` instead of Read: 23 instances
+- Multiple agents used `find` instead of Glob: 15 instances
+- Agent used `grep` instead of Grep tool: 12 instances
+- User corrected tool usage 18 times total
+- Pattern in git log: "use Read not cat", "use Glob not find"
+
+**Proposed Change**: Strict tool usage enforcement
+- Update all protocols with tool selection decision tree
+- Add pre-flight checklist: "Am I using the right tool?"
+- Migration Coordinator validates tool usage in agent plans
+- Add examples of correct tool usage to each command
+
+**Change Type**: Agent Behavior + Protocol Update
+
+**Expected Impact**:
+- 95% reduction in wrong tool usage
+- Better context handling (Read provides line numbers, Bash cat doesn't)
+- Eliminate user corrections for tool selection
+- Improve agent efficiency (specialized tools are faster)
+
+**Affected Components**:
+- **Agents**: All agents
+- **Protocols**: Add tool selection guide to commands/modernize.md
+- **Commands**: Update all commands/*.md with tool usage examples
+
+---
+
+### Example 6: Confirm Before Implementing (Agent Behavior)
+
+**Problem**: Coder Agent implemented features based on assumptions without confirming requirements with user
+
+**Evidence**:
+- 4 instances where agent built wrong thing, user had to correct
+- Agent added authentication system user didn't request
+- Agent refactored code structure without being asked
+- User: "I didn't ask for that, just wanted simple fix"
+- Wasted 6 hours on unwanted implementations
+
+**Proposed Change**: Require explicit confirmation for significant changes
+- Coder Agent: Present plan and get user approval before implementing
+- Use TodoWrite to show planned tasks, wait for approval
+- Ask clarifying questions when requirements unclear
+- Architect Agent: Confirm architectural decisions before implementation
+- Add "confirm with user" checkpoint to protocols
+
+**Change Type**: Agent Behavior + Protocol Update
+
+**Expected Impact**:
+- Eliminate wasted effort on wrong implementations (100%)
+- Save 4-8 hours per project in rework
+- Improve user satisfaction
+- Reduce user interruptions and corrections
+
+**Affected Components**:
+- **Agents**: Coder (primary), Architect, all agents (secondary)
+- **Protocols**: Add confirmation checkpoints to commands/modernize.md phases
+- **Commands**: Update all commands with "confirm before implement" guidance
+
+---
+
 ## Success Criteria
 
 **The retrospective is successful when**:
@@ -495,8 +696,10 @@ Following completion of [phases/milestones], the agent team conducted a retrospe
 ✅ **Comprehensive Analysis**:
 - All HISTORY.md entries reviewed
 - All agents contributed observations
-- Git history analyzed quantitatively
+- Git history analyzed quantitatively (including user corrections)
+- User interruptions and agent errors identified
 - Patterns identified across multiple data sources
+- Agent behavioral issues surfaced and documented
 
 ✅ **Evidence-Based Recommendations**:
 - Each recommendation supported by specific examples
@@ -557,20 +760,34 @@ Claude: I'll coordinate the agent team to conduct a comprehensive retrospective.
 
 [Each agent provides observations]
 
+[All Agents] Analyzing user interactions and agent errors...
+- Found 18 user corrections in git log
+- Identified 12 instances of wrong tool usage
+- User interrupted agents 7 times to provide guidance
+- 3 commits reverted due to agent mistakes
+- [Detailed findings]
+
 [Migration Coordinator] Synthesizing patterns...
+
+**Protocol Issues**:
 - Pattern 1: Testing started too late (appeared in 3 phases)
 - Pattern 2: Dependency conflicts discovered mid-migration
 - Pattern 3: Documentation created in batches
-- [More patterns]
+
+**Agent Behavioral Issues** (CRITICAL):
+- Pattern 4: Coder Agent used Bash cat instead of Read tool (23 instances)
+- Pattern 5: Agent implemented features without confirming (4 major cases)
+- Pattern 6: Agent didn't read files before modifying (8 instances)
 
 Developing recommendations...
 
-Top 5 recommendations by impact/effort ratio:
-1. Front-load dependency analysis (Impact: 9/10, Effort: 3/10)
-2. Continuous documentation (Impact: 8/10, Effort: 2/10)
-3. Automated security scanning (Impact: 9/10, Effort: 5/10)
-4. Parallel testing workflow (Impact: 7/10, Effort: 4/10)
-5. Quality gate automation (Impact: 6/10, Effort: 3/10)
+Top 6 recommendations by impact/effort ratio:
+1. Always read before write - agent behavior (Impact: 9/10, Effort: 1/10) ← Agent behavior
+2. Front-load dependency analysis - protocol (Impact: 9/10, Effort: 3/10)
+3. Use appropriate tools enforcement - agent behavior (Impact: 8/10, Effort: 2/10) ← Agent behavior
+4. Continuous documentation - protocol (Impact: 8/10, Effort: 2/10)
+5. Confirm before implementing - agent behavior (Impact: 9/10, Effort: 2/10) ← Agent behavior
+6. Automated security scanning - automation (Impact: 9/10, Effort: 5/10)
 
 Creating IMPROVEMENTS.md...
 
