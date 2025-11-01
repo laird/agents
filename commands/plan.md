@@ -1,6 +1,6 @@
 # Plan Command
 
-**Description**: Create a detailed modernization strategy and execution plan, utilizing assessment.md if available, with phase breakdown, timeline, and resource allocation
+**Description**: Create a detailed modernization strategy and execution plan, utilizing ASSESSMENT.md if available, with phase breakdown, timeline, and resource allocation
 
 ---
 
@@ -8,8 +8,8 @@
 
 **Version**: 1.0
 **Purpose**: Create a comprehensive, actionable modernization plan
-**Input**: Optional `assessment.md` from `/modernize-assess`
-**Output**: `plan.md` with detailed execution strategy
+**Input**: Optional `ASSESSMENT.md` from `/modernize-assess`
+**Output**: `PLAN.md` with detailed execution strategy
 **Duration**: 3-6 hours
 
 **Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
@@ -35,12 +35,12 @@ This protocol creates a **detailed modernization execution plan** that serves as
 ### Step 1: Load Assessment (if available)
 
 ```bash
-# Check for assessment.md
-if [ -f "assessment.md" ]; then
-    echo "✅ Found assessment.md - using as input"
+# Check for ASSESSMENT.md
+if [ -f "ASSESSMENT.md" ]; then
+    echo "✅ Found ASSESSMENT.md - using as input"
     # Extract: scores, risks, estimates, recommendations
 else
-    echo "⚠️ No assessment.md found - will create basic assessment"
+    echo "⚠️ No ASSESSMENT.md found - will create basic assessment"
     # Run abbreviated assessment inline
 fi
 ```
@@ -668,7 +668,7 @@ Week 18:    Phase 7 (Validate)  ████
 
 ---
 
-## plan.md Output Template
+## PLAN.md Output Template
 
 ```markdown
 # Project Modernization Plan
@@ -705,7 +705,7 @@ Week 18:    Phase 7 (Validate)  ████
 
 ## Assessment Summary
 
-[If assessment.md exists, summarize key findings]
+[If ASSESSMENT.md exists, summarize key findings]
 
 **Overall Assessment Score**: XX/100
 **Recommendation**: [PROCEED/CAUTION/DEFER/DO NOT]
@@ -831,8 +831,8 @@ Week 18:    Phase 7 (Validate)  ████
 
 ```
 User: /modernize-plan
-Claude: Checking for assessment.md...
-✅ Found assessment.md (score: 78/100, PROCEED WITH CAUTION)
+Claude: Checking for ASSESSMENT.md...
+✅ Found ASSESSMENT.md (score: 78/100, PROCEED WITH CAUTION)
 
 Using assessment findings:
 - Technical Viability: 82/100
@@ -855,7 +855,7 @@ Phase 1: Security (3-5 days)
 
 [Continues through all phases]
 
-✅ plan.md created (47 pages)
+✅ PLAN.md created (47 pages)
 
 Summary:
 - Duration: 24 weeks
@@ -868,7 +868,7 @@ Summary:
 
 ```
 User: /modernize-plan
-Claude: No assessment.md found.
+Claude: No ASSESSMENT.md found.
 Running quick assessment first...
 
 [30-minute abbreviated assessment]
@@ -885,7 +885,7 @@ Creating plan with conservative estimates...
 
 [Generates plan with wider ranges]
 
-✅ plan.md created
+✅ PLAN.md created
 
 Note: This plan has wider time/cost ranges due to limited assessment.
 Consider running /modernize-assess for refined planning.
@@ -911,7 +911,7 @@ The plan created by this command is **automatically used** by `/modernize-projec
 ```
 User: /modernize-project
 Claude: Checking for existing plan...
-✅ Found plan.md
+✅ Found PLAN.md
 
 Using existing plan:
 - 7 phases defined
