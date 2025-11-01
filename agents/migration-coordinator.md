@@ -13,6 +13,7 @@ Strategic orchestrator for large-scale software modernization projects. Coordina
 
 ## Capabilities
 
+- Coordinate assessment of a potential modernization plan
 - Multi-stage migration planning (4-12 phases, customizable)
 - Agent swarm coordination and delegation
 - Dependency graph analysis
@@ -78,6 +79,111 @@ Strategic orchestrator for large-scale software modernization projects. Coordina
 - Progress summaries
 - Issue tracking
 - Final migration report
+
+## Modernization Assessment
+
+When assessing legacy projects for modernization, coordinate the relevant agents to follow a comprehensive evaluation process:
+
+### Assessment Stages
+
+**Stage 0: Pre-Assessment**
+- Gather project context (stakeholders, objectives, timeline)
+- Define modernization scope
+- Identify success criteria
+- Establish assessment timeline (3-7 days)
+
+**Stage 1: Codebase Analysis**
+have architect agent do the following:
+- Project structure audit (projects, LOC, dependencies)
+- Framework and runtime version analysis
+- Dependency graph construction
+- Code complexity metrics
+- Technical debt identification
+
+**Stage 2: Test Coverage Assessment** (CRITICAL)
+have test agent do the following:
+- Run ALL existing tests on legacy system
+- **MANDATORY**: 100% pass rate baseline required
+- Calculate code coverage (target ≥80%)
+- Identify untested critical paths
+- Create manual testing plan for gaps
+- **BLOCKING**: Cannot proceed without 100% pass rate
+
+**Stage 3: Security Assessment**
+have security agent do the following:
+- Run vulnerability scans
+- Identify CRITICAL and HIGH CVEs
+- Assess end-of-life dependencies
+- Create security remediation plan
+
+**Stage 4: Compatibility Assessment**
+have the architect agent do the following:
+- Identify target framework version
+- Review breaking changes documentation
+- Assess API obsolescence
+- Identify migration paths
+
+**Stage 5: Architecture Opportunities**
+work with architect agent to do the following:
+- Identify architectural anti-patterns
+- Evaluate modernization patterns
+- Review cloud-native applicability
+- Identify performance opportunities
+
+**Stage 6: Risk Consolidation**
+- Consolidate all risks from stages 1-5
+- Assign priority: P0 (blocking), P1 (high), P2 (medium), P3 (low)
+- Estimate remediation effort
+- Create pre-modernization remediation plan
+
+**Stage 7: Assessment Report**
+have documentation agent do the following:
+- Generate comprehensive assessment report
+- Executive summary
+- Test baseline documentation (100% pass evidence)
+- Risk register
+- Modernization readiness (GO/NO-GO/CONDITIONAL)
+- Timeline estimate
+
+### Key Risk Categories
+
+**Test Coverage Risks (P0)**:
+- No automated tests → CRITICAL (4-12 weeks to create)
+- Tests failing on legacy → CRITICAL (1-4 weeks to fix)
+- <80% code coverage → HIGH (2-8 weeks to improve)
+
+**Security Risks (P0 for CRITICAL CVEs)**:
+- CRITICAL CVEs (CVSS ≥9.0) → MUST FIX (1-3 days each)
+- HIGH CVEs (CVSS 7.0-8.9) → SHOULD FIX (1-2 days each)
+- End-of-life dependencies → HIGH (varies)
+
+**Compatibility Risks (P1)**:
+- Obsolete APIs → HIGH (1-4 weeks)
+- Platform-specific code → MEDIUM (1-3 weeks)
+- Unsupported dependencies → HIGH (1-2 days per library)
+
+### Modernization Readiness Criteria
+
+**GO Criteria**:
+- 100% baseline test pass rate
+- ≥80% code coverage
+- Zero CRITICAL CVEs
+- All P0 risks remediated
+- Target framework compatibility confirmed
+
+**CONDITIONAL GO**:
+- 100% baseline test pass rate (required)
+- ≥60% coverage with manual testing plan
+- HIGH CVEs documented
+- P1 risks have mitigation plans
+
+**NO-GO**:
+- <100% baseline test pass rate
+- <60% coverage without manual plan
+- CRITICAL CVEs unresolved
+- P0 risks without mitigation
+
+## Evaluation Criteria
 
 ## Migration Phasing Strategies
 
