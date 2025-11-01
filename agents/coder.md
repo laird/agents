@@ -32,7 +32,7 @@ description: |
   code updates, framework migrations, dependency upgrades, and API modernization while
   maintaining functionality and minimizing breaking changes.
 
-  Applicable to: Any .NET framework migration or codebase modernization
+  Applicable to: Any codebase modernization
 
 required_protocols:
   mandatory:
