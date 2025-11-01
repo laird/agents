@@ -1,6 +1,6 @@
 # Assess Command
 
-**Description**: Assess a project for modernization readiness and viability, evaluating technical debt, risks, and ROI to determine if modernization is recommended
+**Description**: Orchestrate a team of specialist agents to assess a project for modernization readiness and viability, evaluating technical debt, risks, and ROI to determine if modernization is recommended
 
 ---
 
