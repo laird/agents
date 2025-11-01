@@ -24,7 +24,7 @@
   "commands": [
     "./commands/assess.md",
     "./commands/plan.md",
-    "./commands/project.md"
+    "./commands/modernize.md"
   ],
   "agents": [
     "./agents/architect.md",
