@@ -20,20 +20,35 @@ This plugin provides a complete modernization workflow (assess → plan → exec
 
 ## What's Included
 
-### 5 Slash Commands
-- **`/assess`** - Assess project viability for modernization (outputs `assessment.md`)
-- **`/plan`** - Create detailed execution plan (outputs `plan.md`)
-- **`/modernize`** - Orchestrate multi-agent modernization workflow
-- **`/retro`** - Retrospective analysis to identify process improvements (outputs `IMPROVEMENTS.md`)
-- **`/retro-apply`** - Apply approved process improvements from retrospective
+### 5 Protocol-Based Commands
 
-### Comprehensive Documentation
-Each command includes detailed protocols with:
-- **Multi-agent coordination** - 6 specialist agents work together (Coordinator, Security, Architect, Coder, Tester, Documentation)
-- **Phase-by-phase workflows** - Step-by-step execution with clear deliverables
-- **Quality gates** - Automated validation and blocking criteria
-- **Best practices** - Anti-patterns, troubleshooting, examples
-- **Continuous improvement** - Retrospective analysis and automated application of lessons learned
+Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
+
+- **`/assess`** - Assessment protocol with viability evaluation (outputs `assessment.md`)
+  - 8 assessment dimensions, scoring methodology, recommendation matrix
+
+- **`/plan`** - Planning protocol with detailed execution strategy (outputs `plan.md`)
+  - Phase breakdown, timeline estimation, risk management, resource allocation
+
+- **`/modernize`** - Full modernization protocol with 7-phase workflow
+  - Coordinates 6 specialist agents through Discovery → Security → Architecture → Framework → API → Performance → Documentation
+
+- **`/retro`** - Retrospective protocol analyzing project history (outputs `IMPROVEMENTS.md`)
+  - Reviews git history, user corrections, agent mistakes, protocol inefficiencies
+
+- **`/retro-apply`** - Improvement application protocol
+  - Systematically updates commands, protocols, and automation based on retrospective findings
+
+### What's Inside Each Protocol
+
+Every command file includes:
+- **Agent coordination instructions** - How 6 specialist agents work together (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
+- **Phase-by-phase workflows** - Detailed steps with durations, deliverables, and success criteria
+- **Quality gates** - Blocking criteria and validation checkpoints
+- **Examples** - Real-world scenarios and usage patterns
+- **Anti-patterns** - What NOT to do with explanations
+- **Troubleshooting** - Common issues and solutions
+- **Best practices** - Proven approaches and recommendations
 
 ---
 
@@ -106,15 +121,22 @@ Agents are invoked by Claude Code's Task tool when needed. They work together fo
 ```
 agents/
 ├── commands/                    # Slash commands (5 commands)
-│   ├── assess.md               # Project assessment
-│   ├── plan.md                 # Execution planning
-│   ├── modernize.md            # Multi-agent orchestration
-│   ├── retro.md                # Retrospective analysis
-│   └── retro-apply.md          # Apply improvements
+│   ├── assess.md               # Assessment protocol with agent coordination
+│   ├── plan.md                 # Planning protocol with execution strategy
+│   ├── modernize.md            # Full modernization protocol (7 phases, 6 agents)
+│   ├── retro.md                # Retrospective analysis protocol
+│   └── retro-apply.md          # Improvement application protocol
 └── README.md
 ```
 
-**Note**: This repository contains only command definitions. Agent definitions, protocols, and scripts have been removed in favor of the streamlined Claude Code plugin structure.
+**Note**: Each command file IS a comprehensive protocol document containing:
+- Complete phase-by-phase workflows
+- Agent coordination instructions (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
+- Quality gates and success criteria
+- Examples, anti-patterns, and troubleshooting
+- Best practices and implementation guidance
+
+Previous versions had separate `agents/`, `protocols/`, and `scripts/` directories. These have been consolidated into the command files for a streamlined structure.
 
 ---
 
