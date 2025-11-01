@@ -4,7 +4,7 @@ A **Claude Code plugin** providing production-validated protocols, specialized a
 
 ## Overview
 
-This plugin provides a complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents and comprehensive protocol documentation. Features **continuous improvement** through retrospective analysis that learns from agent mistakes and user corrections. Originally created for .NET framework migrations, these tools are **universally applicable** to any software project requiring structured agent collaboration.
+This plugin provides a complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents and comprehensive protocol documentation. Features **continuous improvement** through retrospective analysis that learns from agent mistakes and user corrections. Created originally for .NET framework migrations, these tools are **universally applicable** to any software project requiring structured agent collaboration.
 
 ---
 
@@ -12,9 +12,8 @@ This plugin provides a complete modernization workflow (assess → plan → exec
 
 **Install as Claude Code plugin**:
 
-1. Clone this repository or copy the `commands/` directory to your project
+1. Use the /plugin command in claude code, and add this repo as a marketplace, then add the modernize plugin.
 2. Commands will be available as slash commands in Claude Code
-3. Start with `/assess` to evaluate your project
 
 ---
 
@@ -26,18 +25,23 @@ Each command is a comprehensive protocol document (`.md` file) containing agent 
 
 - **`/assess`** - Assessment protocol with viability evaluation (outputs `assessment.md`)
   - 8 assessment dimensions, scoring methodology, recommendation matrix
+  - Do this first to assess software for potential modernization
 
 - **`/plan`** - Planning protocol with detailed execution strategy (outputs `plan.md`)
   - Phase breakdown, timeline estimation, risk management, resource allocation
+  - Do this to propose a modernization plan
 
 - **`/modernize`** - Full modernization protocol with 7-phase workflow
   - Coordinates 6 specialist agents through Discovery → Security → Architecture → Framework → API → Performance → Documentation
+  - Do this to execute the plan. If there is no plan it will generate a plan and then execute it.
 
 - **`/retro`** - Retrospective protocol analyzing project history (outputs `IMPROVEMENTS.md`)
   - Reviews git history, user corrections, agent mistakes, protocol inefficiencies
+  - Do this after execution to assess how the project went and make improvement recommendations for future projects. This is optional.
 
 - **`/retro-apply`** - Improvement application protocol
   - Systematically updates commands, protocols, and automation based on retrospective findings
+  - Do this after `/retro` if you agree with the recommendations.
 
 ### What's Inside Each Protocol
 
