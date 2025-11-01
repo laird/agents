@@ -1,11 +1,6 @@
----
-name: coder
-version: 0.1
-type: agent
----
+# Coder Agent
 
-# Coder-agent Agent
-
+**Type**: agent
 **Version**: 0.1
 
 ## Description

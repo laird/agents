@@ -1,6 +1,7 @@
----
-name: retro
-description: Review project history and coordinate agents to identify 3-5 specific process improvements, outputting recommendations as an ADR in IMPROVEMENTS.md
+# Retro Command
+
+**Description**: Review project history and coordinate agents to identify 3-5 specific process improvements, outputting recommendations as an ADR in IMPROVEMENTS.md
+
 ---
 
 # Retrospective Process Improvement Protocol

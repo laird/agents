@@ -1,11 +1,6 @@
----
-name: documentation
-version: 0.1
-type: agent
----
+# Documentation Agent
 
-# Documentation-agent Agent
-
+**Type**: agent
 **Version**: 0.1
 
 ## Description

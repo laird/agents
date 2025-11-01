@@ -1,11 +1,6 @@
----
-name: architect
-version: 0.1
-type: agent
----
+# Architect Agent
 
-# Architect-agent Agent
-
+**Type**: agent
 **Version**: 0.1
 
 ## Description

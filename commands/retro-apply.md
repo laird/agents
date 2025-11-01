@@ -1,6 +1,7 @@
----
-name: retro-apply
-description: Apply the process improvement recommendations from IMPROVEMENTS.md to agent protocols and project configuration
+# Retro-Apply Command
+
+**Description**: Apply the process improvement recommendations from IMPROVEMENTS.md to agent protocols and project configuration
+
 ---
 
 # Retrospective Application Protocol

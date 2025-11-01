@@ -1,11 +1,6 @@
----
-name: migration-coordinator
-version: 0.1
-type: agent
----
-
 # Migration Coordinator Agent
 
+**Type**: agent
 **Version**: 0.1
 
 ## Description

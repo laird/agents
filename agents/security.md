@@ -1,11 +1,6 @@
----
-name: security
-version: 0.1
-type: agent
----
+# Security Agent
 
-# Security-agent Agent
-
+**Type**: agent
 **Version**: 0.1
 
 ## Description
