@@ -1,6 +1,6 @@
 {
   "name": "agent-protocols-marketplace",
-  "version": "2.4.1",
+  "version": "0.1.0",
   "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Originally created for .NET migrations, these protocols are universally applicable to any software project requiring structured agent collaboration.",
   "owner": {
     "name": "Agent Protocols Team",
@@ -16,7 +16,7 @@
       "name": "modernize",
       "source": "./",
       "description": "Complete modernization workflow with multi-agent orchestration (assess viability → create plan → execute). Includes 6 specialized agents and comprehensive protocol documentation for systematic software development",
-      "version": "2.4.1",
+      "version": "0.1.0",
       "category": "workflow",
       "tags": [
         "protocols",
