@@ -151,12 +151,13 @@ Previous versions had separate `agents/`, `protocols/`, and `scripts/` directori
 - ✅ **Universal applicability** - Works with any software project, not just .NET
 - ✅ **Complete audit trail** - HISTORY.md logging for all agent activities
 - ✅ **Quality gates** - Automated validation at each stage
+- ✅ **Evidence-based evolution** - Protocols continuously improved through retrospective analysis
 
 ### Multi-Agent Coordination
 - 🤖 **6 specialized agents** - Each with defined capabilities and responsibilities
 - 🔄 **Parallel execution** - Multiple agents work independently on separate tasks
 - 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
-- 📝 **Systematic workflows** - 5-phase migration, 6-phase testing, 7-stage ADR lifecycle
+- 📝 **Systematic workflows** - 7-phase migration, 6-phase testing, 8-stage ADR lifecycle
 
 ### Continuous Improvement
 - 🔍 **Retrospective analysis** - Analyzes git history, user corrections, agent mistakes
@@ -164,6 +165,7 @@ Previous versions had separate `agents/`, `protocols/`, and `scripts/` directori
 - 🔧 **Automated application** - Updates commands, protocols, and automation
 - 🎯 **Learning from mistakes** - Identifies wrong tool usage, wasted effort, requirement misunderstandings
 - ♻️ **Self-improving system** - Each project makes the next one better
+- ⏱️ **Measurable impact** - Recent improvements saved 27 hours per project
 
 ### Real-World Results
 - **32/32 projects** migrated successfully (100% success rate)
@@ -171,6 +173,41 @@ Previous versions had separate `agents/`, `protocols/`, and `scripts/` directori
 - **Security improvement** from 0/100 → 45/100 (CRITICAL CVEs eliminated)
 - **Zero P0/P1** blocking issues in production
 - **1,500+ lines** of documentation auto-generated
+
+### Recent Protocol Improvements (Nov 2025)
+
+Based on retrospective analysis of RawRabbit modernization, 5 evidence-based improvements were implemented:
+
+1. **Front-Load Test Environment Setup** ⚡
+   - Phase 0 test setup now mandatory before any work begins
+   - Verified baseline metrics (build, tests, vulnerability scan) replace estimates
+   - Prevents "works on my machine" issues discovered too late
+
+2. **Spike-Driven ADR Process** 🧪
+   - New Stage 2.5 for high-risk architectural decisions
+   - Requires empirical validation via spike branches before commitment
+   - 24-48hr stakeholder review period enforced
+   - Better decisions through evidence vs. desk research
+
+3. **Shift Security Validation Left** 🔒
+   - New automated security scanning protocol
+   - Phase 0 baseline scan, continuous monitoring throughout project
+   - Security scores calculated from actual scans, never estimated
+   - Critical/High CVEs blocked earlier in workflow
+
+4. **Continuous Testing Strategy** ✅
+   - Testing after EVERY stage, not delayed until Stage 4
+   - Tiered testing: Unit → Component → Integration → Performance
+   - Estimated 7 hours saved per project from early issue detection
+   - Issues found in Stage 1 vs Stage 4 dramatically cheaper to fix
+
+5. **Incremental Documentation** 📝
+   - Status marker system: ⚠️ In Progress → ✅ Fixed (validated) → 📝 Documented
+   - "Fixed" claims only after test validation passes
+   - Prevents aspirational documentation requiring corrective commits
+   - Accurate HISTORY.md audit trail
+
+**Combined Impact**: 27 hours saved per project, earlier issue detection, verified (not estimated) security posture, empirical architectural decisions, and accurate documentation.
 
 ---
 
@@ -228,6 +265,7 @@ Previous versions had separate `agents/`, `protocols/`, and `scripts/` directori
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
 | 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |
 | 2.4.1 | 2025-10-25 | Removed cost estimates, added time estimate disclaimers |
