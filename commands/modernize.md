@@ -113,28 +113,44 @@ ELSE:
 ```
 
 **Activities**:
-1. **Project Analysis**
+
+**⚠️ CRITICAL: Test Environment Setup MUST Be First Task**
+
+1. **Test Environment Setup** (MANDATORY FIRST - NEW per Recommendation 1)
+   - **Why First**: Cannot validate anything without working build/test environment
+   - Install required SDKs (.NET, Node.js, Python, etc.)
+   - Install Docker for integration testing
+   - Configure environment variables
+   - **Verify build succeeds**: `dotnet build` (establish baseline)
+   - **Verify tests run**: `dotnet test` (establish pass rate baseline)
+   - **Run vulnerability scan**: `dotnet list package --vulnerable --include-transitive`
+   - Document baseline metrics: test count, pass rate, build warnings, CVE count
+   - **Deliverable**: Working environment with verified baseline metrics
+   - **Duration**: 1-2 hours (BLOCKING - nothing else can proceed without this)
+
+2. **Security Baseline** (BLOCKING - Now uses verified scan from Task 1)
+   - **Use vulnerability scan from Task 1** (already executed)
+   - Calculate security score (0-100): `100 - (CRITICAL×10 + HIGH×5 + MEDIUM×2 + LOW×0.5)`
+   - Categorize vulnerabilities (CRITICAL/HIGH/MEDIUM/LOW)
+   - Document top 10 CVEs in ASSESSMENT.md
+   - **BLOCK**: Must have scan results before proceeding (scores are verified, not estimated)
+
+3. **Project Analysis**
    - **If ASSESSMENT.md exists**: ✅ Load existing inventory
    - **If no assessment**: Inventory all dependencies and frameworks
-   - Identify current versions vs latest stable
+   - Identify current versions vs latest stable (using actual package resolution from Task 1 build)
    - Map project structure and architecture
    - Identify technology debt
    - **Deliverable**: Project assessment (or validate existing)
 
-2. **Security Baseline** (BLOCKING)
-   - Run CVE vulnerability scan
-   - Calculate security score (0-100)
-   - Categorize vulnerabilities (CRITICAL/HIGH/MEDIUM/LOW)
-   - **BLOCK**: Must achieve ≥45 security score before proceeding
-
-3. **Technology Assessment**
+4. **Technology Assessment**
    - Research latest framework versions
    - Identify obsolete APIs and patterns
    - Document breaking changes
    - Create upgrade roadmap
 
-4. **Test Baseline**
-   - Run all existing tests
+5. **Test Baseline Analysis**
+   - **Use test results from Task 1** (already executed)
    - Capture baseline metrics (pass rate, coverage, performance)
    - Document current test infrastructure
    - Identify test gaps
@@ -151,7 +167,13 @@ ELSE:
 - ✅ Update if needed (typically minimal)
 - ✅ Faster completion (0.5-1 day vs 1-2 days)
 
-**Quality Gate**: Security score ≥45, all CRITICAL/HIGH vulnerabilities documented
+**Quality Gate** (UPDATED per Recommendation 1 & 3):
+- ✅ Test environment ready (build succeeds, tests run)
+- ✅ Baseline test metrics documented (pass rate, count, coverage)
+- ✅ Vulnerability scan completed (verified CVE counts, not estimates)
+- ✅ Security score calculated from scan results (≥45 required)
+- ✅ All CRITICAL/HIGH vulnerabilities documented
+- ✅ Docker/external dependencies ready for integration tests
 
 ---
 
@@ -171,11 +193,14 @@ ELSE:
    - Apply security patches
    - Implement security best practices
 
-3. **Validation** (BLOCKING)
-   - Re-run security scan
-   - Verify CVE fixes
-   - Run all tests to ensure no regressions
-   - Update security score
+3. **Post-Update Security Validation** (BLOCKING - NEW per Recommendation 3)
+   - **Re-run vulnerability scan**: `dotnet list package --vulnerable --include-transitive > security-after-phase1.txt`
+   - **Compare before/after**: `diff security-baseline.txt security-after-phase1.txt`
+   - **Verify CRITICAL/HIGH count decreased** (not just assumed)
+   - **Verify no NEW vulnerabilities introduced** by updates
+   - Recalculate security score from scan results (must show improvement)
+   - **Run all tests** to ensure no regressions (Tier 1: Unit tests minimum)
+   - Update HISTORY.md with verified security improvements
 
 **Outputs**:
 - Security fixes applied
@@ -183,11 +208,13 @@ ELSE:
 - Test results (must maintain 100% pass rate)
 - HISTORY.md entry for security work
 
-**Quality Gate**:
-- Security score ≥45
-- Zero CRITICAL vulnerabilities
-- Zero HIGH vulnerabilities (or documented with explicit approval)
-- All tests passing (100%)
+**Quality Gate** (UPDATED per Recommendation 3):
+- ✅ Security scan re-run and results verified (not estimated)
+- ✅ Security score ≥45 (calculated from verified scan results)
+- ✅ Zero CRITICAL vulnerabilities (verified in scan diff)
+- ✅ Zero HIGH vulnerabilities (verified in scan diff, or documented with explicit approval)
+- ✅ No NEW vulnerabilities introduced by updates
+- ✅ All tests passing (100% - Tier 1 Unit tests minimum)
 
 ---
 
@@ -208,23 +235,40 @@ ELSE:
 ```
 
 **Activities**:
+
+**⚠️ NEW: Spike-Driven ADR Process for High-Risk Decisions (per Recommendation 2)**
+
 1. **Framework Upgrade Planning**
    - Research target framework versions
    - Evaluate migration paths
+   - **For high-risk decisions**: Create spike branches (1-2 days)
+     - Test Option A on single project
+     - Test Option B on single project
+     - Document actual compilation errors, API changes, test failures
+   - Create evaluation matrix with empirical data from spikes
    - Document breaking changes
-   - Create ADRs for major decisions
+   - Create ADRs with status "proposed" first (allow 24-48hr review)
+   - Mark ADRs as "accepted" after stakeholder review
 
 2. **Dependency Strategy**
    - Identify dependency upgrade order
-   - Map dependency conflicts
+   - **For major version changes**: Create spike branches
+     - Example: RabbitMQ.Client 5→6 vs 5→7
+     - Run tests on each spike, document pass rates
+     - Compare actual migration effort (file count, errors)
+   - Map dependency conflicts (using spike results)
    - Plan parallel vs sequential updates
-   - Create dependency upgrade matrix
+   - Create dependency upgrade matrix with verified estimates
 
 3. **Architecture Decisions**
    - Obsolete pattern replacements
    - New feature approaches
    - Performance optimization strategies
    - Testing strategy updates
+   - **All ADRs must include**:
+     - Evaluation matrix with weighted criteria
+     - Spike results (for high-risk decisions)
+     - 24-48hr review period before "accepted" status
 
 **Outputs**:
 - ADRs for all major decisions (MADR 3.0.0 format) - or use existing from PLAN.md

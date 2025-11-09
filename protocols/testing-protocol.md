@@ -5,22 +5,75 @@ description: 6-phase testing protocol with fix-and-retest cycles, automated vali
 
 # Generic Comprehensive Testing Protocol
 
-**Version**: 1.0
-**Purpose**: Universal testing requirements for any .NET project
+**Version**: 2.0 (UPDATED per Retrospective Recommendation 4)
+**Purpose**: Universal testing requirements for any .NET project with continuous validation
 **Applicability**: All .NET migrations, releases, and significant changes
 
 ---
 
 ## 1. Overview
 
-This protocol defines **mandatory** testing requirements for all software changes. It ensures:
+This protocol defines **mandatory** testing requirements for all software changes with **continuous testing after every stage**. It ensures:
 - ✅ Complete test execution (not partial)
-- ✅ All test failures investigated and fixed
+- ✅ Testing after every stage (not delayed until Stage 4)
+- ✅ All test failures investigated and fixed immediately
 - ✅ Re-testing after fixes to validate resolution
 - ✅ No test gaps or skipped validation
 - ✅ Production-ready quality
 
-**Core Principle**: **No shortcuts. Complete testing = Production confidence.**
+**Core Principle**: **Test continuously from Phase 0, not delayed. Catch issues immediately, not stages later.**
+
+**Key Change**: Testing is now **tiered** (Unit → Component → Integration → Performance) and executed **progressively after each stage**, not as a single late-stage activity.
+
+---
+
+## 1.5. Tiered Testing Strategy (NEW - Continuous Testing)
+
+**Problem Solved**: Prevents late discovery of critical failures by testing after every stage instead of waiting until Stage 4.
+
+### Testing Tiers
+
+**Tier 1: Unit Tests** (Fast, <2 minutes)
+- **When**: After Stage 0 (baseline), Stage 1 (Security), Stage 2 (Architecture), Stage 3 (Framework)
+- **What**: API compatibility, configuration, basic functionality
+- **Pass Criteria**: 100% of existing unit tests must still pass
+- **Benefit**: Immediate feedback on breaking changes
+
+**Tier 2: Component Tests** (Moderate, 5-10 minutes)
+- **When**: After Stage 3 (Framework), Stage 4 (API Modernization)
+- **What**: Module integration, recovery scenarios, error handling
+- **Pass Criteria**: 100% pass OR new failures documented with fix plan
+- **Benefit**: Validates module interactions work correctly
+
+**Tier 3: Integration Tests** (Slow, 15-30 minutes)
+- **When**: After Stage 4 (API Modernization), Stage 6 (Integration & Testing)
+- **What**: End-to-end workflows, real external dependencies (RabbitMQ, databases)
+- **Pass Criteria**: 100% pass before Stage 7 (Documentation)
+- **Benefit**: Validates complete system behavior
+
+**Tier 4: Performance Tests** (Slowest, 30-60 minutes)
+- **When**: Stage 5 (Performance), Stage 6 (Final Testing)
+- **What**: Throughput, latency, memory usage, no regressions
+- **Pass Criteria**: Performance within ±10% of baseline
+- **Benefit**: Ensures modernization doesn't degrade performance
+
+### Stage-by-Stage Testing Requirements
+
+| Stage | Tests Required | Pass Criteria | Time Budget |
+|-------|----------------|---------------|-------------|
+| Stage 0 (Discovery) | Baseline run (all tiers) | Document pass rate | 10 min |
+| Stage 1 (Security) | Tier 1 (Unit) | 100% of baseline | 5 min |
+| Stage 2 (Architecture) | Tier 1 (Unit) | 100% maintained | 5 min |
+| Stage 3 (Framework) | Tier 1 + Tier 2 | 100% unit, 90% component | 15 min |
+| Stage 4 (API Modernization) | Tier 1 + Tier 2 + Tier 3 | 100% all tiers | 45 min |
+| Stage 5 (Performance) | Tier 1 + Tier 4 | 100% unit, perf ±10% | 60 min |
+| Stage 6 (Integration) | All tiers | 100% all tiers | 90 min |
+| Stage 7 (Documentation) | Tier 1 + Tier 3 (smoke) | 100% pass | 20 min |
+| Stage 8 (Release) | All tiers (final) | 100% all tiers | 90 min |
+
+**Total Testing Time**: ~6 hours distributed across stages (vs. 3+ hours concentrated at end)
+
+**Key Benefit**: Issues discovered in Stage 1 (minutes after change) instead of Stage 4 (days later).
 
 ---
 

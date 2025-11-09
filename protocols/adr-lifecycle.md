@@ -222,6 +222,90 @@ Need to decide which containers to maintain for modern .NET compatibility.
 
 ---
 
+### Stage 2.5: Spike Validation (HIGH-RISK DECISIONS ONLY) → Status: `proposed` (spikes in progress)
+
+**NEW per Retrospective Recommendation 2**
+
+**When**: For high-risk architectural decisions requiring empirical validation
+
+**High-Risk Decision Criteria** (require spikes):
+- Dependency major version changes (e.g., RabbitMQ.Client 5→6, Polly 5→8)
+- Framework migrations (e.g., .NET Standard → .NET 8)
+- Architectural pattern changes (e.g., sync → async)
+- Removal of features (e.g., deprecating a DI container)
+
+**Actions**:
+1. **Create spike branches for top 2-3 alternatives** (1-2 days)
+   - `spike/adr-####-option-1-[name]`
+   - `spike/adr-####-option-2-[name]`
+2. **For each spike**:
+   - Test option on single representative project
+   - Attempt actual implementation (not just research)
+   - Run tests and document pass rates
+   - Count compilation errors, file changes required
+   - Measure performance if relevant
+3. **Document empirical findings in ADR**
+4. **Update evaluation matrix with spike results**
+5. **Allow 24-48hr stakeholder review period** before Stage 4
+
+**ADR Updates**:
+```markdown
+## Spike Validation Results
+
+### Spike 1: Option 2 (RabbitMQ.Client 6.8.1 LTS)
+
+**Branch**: `spike/adr-0002-option-2-rabbitmq-6.8.1`
+**Duration**: 4 hours
+**Files Modified**: 23 files
+**Compilation Errors**: 12 errors (all fixable)
+**Test Results**:
+- Unit tests: 89% passing (17/156 failing)
+- Integration tests: 100% passing (112/112)
+**Issues Found**:
+- `IRecoverable.Recovery` event signature changed
+- Publisher confirms API changed (events → WaitForConfirmsOrDie)
+- `BasicProperties` constructor now protected
+
+**Effort Estimate**: 12-15 hours based on spike
+
+### Spike 2: Option 3 (RabbitMQ.Client 7.x)
+
+**Branch**: `spike/adr-0002-option-3-rabbitmq-7.x`
+**Duration**: 3.5 hours
+**Files Modified**: 18 files
+**Compilation Errors**: 6 errors (all fixable)
+**Test Results**:
+- Unit tests: 94% passing (9/156 failing)
+- Integration tests: 100% passing (112/112)
+**Issues Found**:
+- Simpler async patterns (designed for .NET 6+)
+- Connection pooling simplified
+
+**Effort Estimate**: 8-10 hours based on spike
+
+## Evaluation Matrix (Updated with Spike Data)
+
+| Criterion | Weight | Option 2 (6.8.1 LTS) | Option 3 (7.x) |
+|-----------|--------|----------------------|----------------|
+| API Compatibility (spike) | High | 3/5 (12 errors) | 4/5 (6 errors) |
+| Test Pass Rate (spike) | High | 3/5 (89%) | 4/5 (94%) |
+| Migration Effort (spike) | High | 3/5 (12-15hrs) | 5/5 (8-10hrs) |
+| LTS Support (docs) | High | 5/5 | 3/5 |
+| **Weighted Total** | | **3.5/5** | **4.0/5** ✅
+
+**Spike Conclusion**: Option 3 (7.x) shows better compatibility with .NET 8 despite shorter LTS.
+```
+
+**Commit Message**: `docs: Add ADR #### spike validation results for Options 2 and 3`
+
+**Stakeholder Review Period**:
+- Share ADR with spike results
+- Wait 24-48 hours for feedback
+- Address questions/concerns
+- Do NOT proceed to Stage 4 without review
+
+---
+
 ### Stage 3: Evaluation Complete → Status: `proposed` (evaluation ready)
 
 **When**: All alternatives researched, evaluation matrix complete

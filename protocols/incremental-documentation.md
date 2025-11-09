@@ -5,20 +5,22 @@ description: Incremental documentation protocol for continuous updates throughou
 
 # Incremental Documentation Protocol
 
-**Version**: 1.0
-**Date**: 2025-10-13
-**Purpose**: Document as you go, not at the end
+**Version**: 2.0 (UPDATED per Retrospective Recommendation 5)
+**Date**: 2025-11-09
+**Purpose**: Document as you go with validation-based status markers, not aspirational claims
 **Applicability**: All software projects, especially migrations
 
 ---
 
 ## Overview
 
-This protocol prevents end-of-project documentation marathons by maintaining documentation incrementally throughout development.
+This protocol prevents end-of-project documentation marathons by maintaining documentation incrementally throughout development **with verified status markers** to prevent aspirational claims.
 
-**Core Principle**: Document while context is fresh, not retrospectively.
+**Core Principle**: Document while context is fresh, not retrospectively. Only claim "✅ Fixed" after validation, not before.
 
 **Impact**: Reduces Stage 8 (Documentation) from 2-3 hours to 30-45 minutes (review + polish only).
+
+**NEW**: Status markers reflect reality (validated) not intent (aspirational).
 
 ---
 
@@ -61,11 +63,20 @@ Day 4: Review + polish all docs (30-45 min)
 
 ### 1. CHANGELOG.md
 
+**NEW: Status Marker System (per Recommendation 5)**
+
+**Status Markers** (use these to reflect reality):
+- `⚠️ In Progress` - Work started but NOT validated (tests not passing yet)
+- `✅ Fixed (validated)` - Tests passing, confirmed working (ONLY use after validation)
+- `📝 Documented` - Breaking change documented but migration code pending
+
 **Update Triggers**:
-- [ ] After migrating each major stage
-- [ ] When adding/removing dependencies
-- [ ] When fixing breaking changes
-- [ ] When deprecating features
+- [ ] After migrating each major stage AND tests pass
+- [ ] When adding/removing dependencies AND build succeeds
+- [ ] When fixing breaking changes AND tests validate fix
+- [ ] When deprecating features AND migration path documented
+
+**CRITICAL**: Only mark "✅ Fixed" AFTER tests pass, not before. Aspirational claims erode trust.
 
 #### Stage 2 (Core Library)
 
@@ -84,29 +95,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 #### .NET Framework Migration
-- Migrated from `netstandard1.5`/`net451` multi-targeting to `net9.0` single-target
-- Minimum requirement: .NET 9.0 SDK or later
-- Removed all .NET Framework 4.5.1 support
+- ⚠️ In Progress: Migrating from `netstandard1.5`/`net451` to `net9.0` single-target
+  - Status: 15/28 projects migrated
+  - Build: Passing for migrated projects
+  - Tests: Not yet validated (pending Stage 3)
+- 📝 Documented: Minimum requirement will be .NET 9.0 SDK or later
+- 📝 Documented: Will remove all .NET Framework 4.5.1 support
 
 #### Dependency Updates
-- **RabbitMQ.Client**: `5.0.1` → `6.8.1`
-  - **Breaking**: `BasicProperties` constructor now protected (use `BasicPropertiesHelper.CreateBasicProperties()`)
-  - **Breaking**: `Body` property changed from `byte[]` to `ReadOnlyMemory<byte>` (use `.ToArray()` for conversion)
+- ⚠️ In Progress: **RabbitMQ.Client**: `5.0.1` → `6.8.1`
+  - Dependency updated in .csproj files
+  - Code migration not started (60 files need updates)
+  - **Breaking**: `BasicProperties` constructor now protected
+  - **Breaking**: `Body` property changed from `byte[]` to `ReadOnlyMemory<byte>`
   - **Breaking**: `CreateConnection()` added `clientProvidedName` parameter
 
-- **Newtonsoft.Json**: `10.0.1` → `13.0.3` (security fixes)
+- ✅ Fixed (validated): **Newtonsoft.Json**: `10.0.1` → `13.0.3`
+  - Updated: 2025-11-09 10:15
+  - Tests: 156/156 passing (100%) ✅
+  - Security: CVE-2018-11093 eliminated (verified via scan)
 
 ### Security
 
-- Resolved CVE-2024-43485 in Newtonsoft.Json (HIGH severity)
-- Resolved 8+ HIGH/CRITICAL CVEs in RabbitMQ.Client 5.0.1
-- Achieved 0 CVEs in all production packages
+- ✅ Fixed (validated): CVE-2018-11093 in Newtonsoft.Json (HIGH severity)
+  - Scan Date: 2025-11-09 10:20
+  - Verified: `dotnet list package --vulnerable` shows zero occurrences
+- ⚠️ In Progress: RabbitMQ.Client 5.0.1 CVEs (8+ HIGH/CRITICAL)
+  - Dependency updated, code migration pending
+  - Validation pending: Stage 3 completion
+- 📝 Goal: Achieve 0 CRITICAL/HIGH CVEs (currently: 0 CRITICAL, 0 HIGH ✅)
 
 ### Added
 
-- `BasicPropertiesHelper` utility class for creating BasicProperties instances
-- Nullable reference types enabled across codebase (`<Nullable>enable</Nullable>`)
-- Modern C# language features (`LangVersion=latest`)
+- 📝 Planned: `BasicPropertiesHelper` utility class (implementation pending)
+- ✅ Added (validated): Nullable reference types enabled (`<Nullable>enable</Nullable>`)
+  - Validated: Build succeeds with nullability enabled
+  - Tests: All passing with new annotations
+- ✅ Added (validated): Modern C# language features (`LangVersion=latest`)
+  - Validated: C# 12 features compile correctly
 
 EOF
 
