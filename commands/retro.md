@@ -270,6 +270,7 @@ git log --all --format="%ai %s" | awk '{print $1, $2}' | sort
    - **Agent behavioral issues** (wrong tools, wasted effort, misunderstandings)
    - **Protocol improvements** (process changes, new steps, reordering)
    - **Automation opportunities** (scripts, hooks, CI/CD)
+   - **LLM-to-code opportunities** (replacing LLM calls with scripts/CLI programs)
    - **Communication gaps** (coordination, handoffs, user interaction)
    - **Quality gate improvements** (enforcement, criteria, timing)
    - **Documentation improvements** (timing, format, completeness)
@@ -296,6 +297,12 @@ git log --all --format="%ai %s" | awk '{print $1, $2}' | sort
 - "Agent started coding without creating TodoWrite plan for complex task" (Coordinator)
 - "Agent made assumption about architecture without consulting Architect Agent" (Coordinator)
 - "User had to interrupt agent 4 times to correct approach" (User + all agents)
+
+**LLM-to-Code Opportunities**:
+- "Agent called LLM for simple text transformation that could be bash/awk/sed" (Efficiency + Token usage)
+- "Agent used LLM to parse JSON when jq would be faster and more reliable" (Performance)
+- "Agent repeatedly analyzed same code pattern when script could cache results" (Token waste)
+- "Agent used LLM for file operations that standard CLI tools handle perfectly" (Efficiency)
 
 ---
 
@@ -687,6 +694,105 @@ Following completion of [phases/milestones], the agent team conducted a retrospe
 - **Agents**: Coder (primary), Architect, all agents (secondary)
 - **Protocols**: Add confirmation checkpoints to commands/modernize.md phases
 - **Commands**: Update all commands with "confirm before implement" guidance
+
+---
+
+### Example 7: Replace LLM Calls with Scripts/CLI Programs
+
+**Problem**: Agents used LLM calls for tasks that could be accomplished more efficiently, reliably, and cost-effectively with scripts or CLI programs
+
+**Evidence**:
+- Agent invoked LLM 45 times to parse JSON when `jq` could do it instantly
+- Agent used LLM to count lines of code across 200 files (15 seconds, 50K tokens) when `find + wc -l` does it in 0.2 seconds
+- Agent called LLM to extract dependencies from package.json 20 times instead of caching with simple script
+- Agent used LLM for text transformations (case conversion, trimming) that `awk`/`sed` handle perfectly
+- Token usage: ~150K tokens wasted on tasks that don't require LLM reasoning
+- Time: 3-4 hours cumulative waiting for LLM responses vs <1 minute with scripts
+
+**Proposed Change**: Identify and replace LLM calls with code/scripts where appropriate
+
+**Guidelines for LLM-to-Code Replacement**:
+1. **Quality Rule**: Only replace if script/code quality and performance are **as good or better**
+2. **Safety Rule**: Only replace when task is **safely and completely** accomplished by code
+3. **Efficiency Rule**: Choose the **most time- and token-efficient** solution for the task
+
+**Decision Tree**:
+```
+Is this task:
+├─ Deterministic with clear logic? → Consider script/code
+├─ Simple data transformation? → Consider CLI tools (jq, awk, sed)
+├─ File system operation? → Consider bash/python script
+├─ Repeated analysis of same pattern? → Consider caching script
+└─ Requires reasoning/judgment? → Keep LLM call
+```
+
+**Replacement Candidates**:
+- **JSON parsing**: Use `jq` instead of LLM
+- **Text transformation**: Use `awk`, `sed`, `tr` instead of LLM
+- **Code metrics**: Use CLI tools (`cloc`, `wc`, `grep -c`) instead of LLM
+- **File operations**: Use bash scripts instead of LLM
+- **Dependency extraction**: Use language-specific parsers instead of LLM
+- **Simple validation**: Use regex/scripts instead of LLM
+- **Caching repeated analysis**: Create scripts with memoization
+
+**Recommended Tools by Task**:
+- **JSON operations**: `jq`, `python -m json.tool`
+- **Text processing**: `awk`, `sed`, `grep`, `tr`, `cut`
+- **Code analysis**: `cloc`, `tokei`, `scc` (lines of code counters)
+- **Dependency parsing**: `npm list --json`, `pip freeze`, language-specific CLIs
+- **File manipulation**: bash scripts, Python scripts
+- **Data validation**: regex + bash, Python with pydantic
+- **API calls**: `curl` + `jq`, Python `requests`
+
+**Change Type**: Agent Behavior + Automation
+
+**Expected Impact**:
+- **Token savings**: 60-80% reduction in unnecessary LLM calls (save ~100K tokens/project)
+- **Time savings**: 2-4 hours per project (instant script execution vs LLM wait time)
+- **Cost reduction**: Significant reduction in API costs
+- **Reliability**: Scripts are deterministic, LLM calls can vary
+- **Maintainability**: Scripts can be reused across projects
+
+**Implementation Complexity**: Medium
+
+**Implementation Steps**:
+1. Create `scripts/utilities/` directory with reusable task-specific scripts
+2. Add script library to all agent protocols:
+   - `parse-json.sh` - JSON parsing with jq
+   - `count-code.sh` - Lines of code analysis
+   - `extract-deps.sh` - Dependency extraction
+   - `transform-text.sh` - Common text transformations
+3. Update agent decision-making protocols with "LLM vs Script" decision tree
+4. Add examples to each command showing when to use scripts vs LLM
+5. Migration Coordinator reviews agent plans for inappropriate LLM usage
+
+**Validation**:
+- [ ] Track token usage before/after (expect 60-80% reduction on eligible tasks)
+- [ ] Measure time savings (scripts should be 10-100x faster)
+- [ ] Verify script quality matches or exceeds LLM output
+- [ ] Confirm no functionality regression
+- [ ] Monitor agent adherence to guidelines
+
+**Affected Components**:
+- **Agents**: All agents (especially Coder, Security, Documentation)
+- **Protocols**: Add LLM-vs-script decision guidance to all commands
+- **Tools**: Create reusable script library in `scripts/utilities/`
+- **Commands**: Update all commands/*.md with efficiency guidelines
+
+**Important Caveats**:
+- **Do NOT replace LLM when**:
+  - Task requires reasoning, judgment, or context understanding
+  - Task involves code generation or complex transformations
+  - Script would be more complex than LLM call
+  - Quality or reliability would be worse
+  - Task is one-off and script creation overhead exceeds benefit
+
+- **DO replace LLM when**:
+  - Task is purely mechanical/deterministic
+  - Standard CLI tool exists for the task
+  - Task is repeated frequently (benefit from caching)
+  - Script execution is faster and more reliable
+  - Quality and completeness are guaranteed
 
 ---
 
