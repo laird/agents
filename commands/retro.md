@@ -271,6 +271,7 @@ git log --all --format="%ai %s" | awk '{print $1, $2}' | sort
    - **Protocol improvements** (process changes, new steps, reordering)
    - **Automation opportunities** (scripts, hooks, CI/CD)
    - **LLM-to-code opportunities** (replacing LLM calls with scripts/CLI programs)
+   - **Context window optimization** (minimizing token usage, efficient context loading)
    - **Communication gaps** (coordination, handoffs, user interaction)
    - **Quality gate improvements** (enforcement, criteria, timing)
    - **Documentation improvements** (timing, format, completeness)
@@ -303,6 +304,13 @@ git log --all --format="%ai %s" | awk '{print $1, $2}' | sort
 - "Agent used LLM to parse JSON when jq would be faster and more reliable" (Performance)
 - "Agent repeatedly analyzed same code pattern when script could cache results" (Token waste)
 - "Agent used LLM for file operations that standard CLI tools handle perfectly" (Efficiency)
+
+**Context Window Optimization**:
+- "Agent read entire 5000-line file when only needed lines 100-150" (Token waste)
+- "Agent loaded 20 files into context when Grep could find the answer" (Inefficient search)
+- "Agent read same configuration file 15 times instead of referencing earlier context" (Redundant reads)
+- "Agent loaded full codebase before using Glob to narrow down relevant files" (Poor planning)
+- "Agent used Read without offset/limit on large files repeatedly" (Context bloat)
 
 ---
 
@@ -793,6 +801,211 @@ Is this task:
   - Task is repeated frequently (benefit from caching)
   - Script execution is faster and more reliable
   - Quality and completeness are guaranteed
+
+---
+
+### Example 8: Minimize Context Window Usage and Token Consumption
+
+**Problem**: Agents loaded excessive context into the conversation window and used significantly more tokens than necessary for tasks, leading to slower responses, higher costs, and potential context limit issues
+
+**Evidence**:
+- Agent read entire 5000-line file 8 times when only needed specific functions (total: 40K lines loaded, only ~200 lines relevant)
+- Agent loaded 25 complete files into context before realizing Grep would find the target in 0.5 seconds
+- Agent repeatedly read package.json, tsconfig.json, README.md without referencing earlier context (12 redundant reads)
+- Agent used Read tool without offset/limit parameters on 3000-line files repeatedly (18K lines loaded unnecessarily)
+- Agent performed exploratory reading of 50+ files when Glob pattern + Grep would narrow to 3 relevant files
+- Token usage: ~500K tokens consumed when ~50K would suffice (90% waste)
+- Response times: Slower due to large context windows
+- User had to remind agent "you already read that file earlier in this conversation"
+
+**Proposed Change**: Implement strict context window efficiency and token minimization practices
+
+**Core Principle**: **Use the minimum context necessary to accomplish the task with high quality**
+
+**Guidelines for Context Window Optimization**:
+
+1. **Search Before Reading**: Use Grep/Glob to locate before loading full files
+2. **Read Selectively**: Use offset/limit parameters for large files
+3. **Reference Earlier Context**: Check conversation history before re-reading files
+4. **Plan Before Loading**: Identify specific files/sections needed before reading
+5. **Progressive Loading**: Start narrow, expand only if needed
+
+**Decision Tree for Context Loading**:
+```
+Before reading any file, ask:
+├─ Do I know the exact file and location?
+│  ├─ Yes, specific line range → Use Read with offset/limit
+│  └─ No → Use Grep/Glob to find it first
+├─ Have I already read this file in this conversation?
+│  ├─ Yes → Reference earlier context, don't re-read
+│  └─ No → Proceed with selective read
+├─ Is this a large file (>500 lines)?
+│  ├─ Yes → Use offset/limit to read only relevant sections
+│  └─ No → Read full file if needed
+└─ Can I answer the question without reading the file?
+   ├─ Yes → Don't read it
+   └─ No → Read minimum necessary
+```
+
+**Best Practices**:
+
+**1. Search-First Strategy**:
+```bash
+# ❌ WRONG: Load multiple files hoping to find something
+Read "src/file1.js"
+Read "src/file2.js"
+Read "src/file3.js"
+# ... discover target was in file2.js
+
+# ✅ CORRECT: Find first, then read precisely
+Grep "function targetFunction" --type js --output_mode files_with_matches
+# Result: src/file2.js
+Grep "function targetFunction" --type js --output_mode content -B 2 -A 10
+# Read only the relevant function
+```
+
+**2. Selective Reading with Offset/Limit**:
+```bash
+# ❌ WRONG: Read entire 3000-line file repeatedly
+Read "large-file.ts"  # All 3000 lines loaded
+# ... later in conversation ...
+Read "large-file.ts"  # All 3000 lines loaded AGAIN
+
+# ✅ CORRECT: Read specific sections
+Grep "class UserManager" large-file.ts --output_mode content -n
+# Result: Found at line 1247
+Read "large-file.ts" --offset 1247 --limit 100  # Read only relevant class
+
+# Later: Reference the earlier read instead of re-reading
+"Based on the UserManager class I read earlier at line 1247..."
+```
+
+**3. Progressive Context Loading**:
+```bash
+# ❌ WRONG: Load everything upfront
+Read all package.json files across project
+Read all config files
+Read all source files in directory
+# ... then realize only needed one specific file
+
+# ✅ CORRECT: Start narrow, expand if needed
+Glob "package.json"  # Find all package.json files
+Read "./package.json"  # Read only root package.json
+# Only if that doesn't answer the question:
+Read "packages/*/package.json"  # Expand search
+```
+
+**4. Leverage Earlier Context**:
+```bash
+# ❌ WRONG: Re-read same file multiple times in conversation
+[Turn 5] Read "config.json"
+[Turn 12] Read "config.json"  # Already read at Turn 5!
+[Turn 20] Read "config.json"  # Already read twice!
+
+# ✅ CORRECT: Reference earlier context
+[Turn 5] Read "config.json"
+[Turn 12] "Based on the config.json I read earlier, the API endpoint is..."
+[Turn 20] "As we saw in the config.json earlier..."
+```
+
+**5. Use Grep for Quick Answers**:
+```bash
+# ❌ WRONG: Load entire codebase to count occurrences
+Read all .ts files to find how many times "deprecated" appears
+
+# ✅ CORRECT: Use Grep with count mode
+Grep "deprecated" --type ts --output_mode count
+# Instant answer without loading any files into context
+```
+
+**Token Efficiency Strategies**:
+
+| Task | Inefficient Approach | Efficient Approach | Token Savings |
+|------|---------------------|-------------------|---------------|
+| Find function | Read 20 files (50K tokens) | Grep then Read 1 section (500 tokens) | 99% |
+| Count imports | Read all files (100K tokens) | Grep with count (0 tokens to context) | 100% |
+| Check config value | Read full file 5 times (2500 tokens) | Read once, reference later (500 tokens) | 80% |
+| Find file with pattern | Read 30 files (75K tokens) | Glob + Grep (minimal context) | 95% |
+| Get specific function | Read 3000-line file (15K tokens) | Read with offset/limit (500 tokens) | 97% |
+
+**Change Type**: Agent Behavior + Protocol Update
+
+**Expected Impact**:
+- **Token reduction**: 60-80% reduction in context window usage
+- **Cost savings**: Significant API cost reduction (tokens are expensive)
+- **Speed improvement**: Faster responses with smaller context windows
+- **Context limit protection**: Avoid hitting context window limits on complex tasks
+- **Better focus**: Agents work with only relevant information
+- **Reduced redundancy**: Eliminate repeated file reads
+
+**Implementation Complexity**: Low-Medium
+
+**Implementation Steps**:
+1. Add "Context Efficiency Checklist" to all command protocols
+2. Update tool usage guidelines to emphasize search-before-read
+3. Add examples showing offset/limit usage for Read tool
+4. Create decision tree for "Should I read this file?"
+5. Migration Coordinator validates context efficiency in agent plans
+6. Add token usage tracking to retrospective metrics
+7. Train agents to reference earlier context instead of re-reading
+
+**Context Efficiency Checklist** (add to all protocols):
+- [ ] Used Grep/Glob to locate before reading?
+- [ ] Checked if file was already read in this conversation?
+- [ ] Used offset/limit for files >500 lines?
+- [ ] Loaded only the minimum necessary context?
+- [ ] Avoided redundant file reads?
+- [ ] Referenced earlier context when possible?
+- [ ] Considered if task can be done without reading files?
+
+**Validation**:
+- [ ] Track token usage per task (before/after comparison)
+- [ ] Monitor context window size throughout conversations
+- [ ] Count file reads per conversation (target: minimize redundancy)
+- [ ] Measure time to first response (smaller context = faster)
+- [ ] Verify task quality unchanged with reduced context
+- [ ] Check for "already read that file" user corrections (should be zero)
+
+**Affected Components**:
+- **Agents**: All agents (context efficiency is universal)
+- **Protocols**: Add context efficiency guidelines to all commands
+- **Tools**: Emphasize Grep/Glob usage, Read offset/limit parameters
+- **Commands**: Update all commands/*.md with token minimization best practices
+
+**Metrics to Track**:
+```bash
+# Token usage per conversation
+- Baseline: ~500K tokens per modernization project
+- Target: ~200K tokens per modernization project (60% reduction)
+
+# File read efficiency
+- Baseline: 150 file reads per project, 40% redundant
+- Target: 90 file reads per project, <5% redundant
+
+# Context window size
+- Baseline: Average 80K tokens in context at any time
+- Target: Average 20K tokens in context at any time
+```
+
+**Important Caveats**:
+
+**Do NOT sacrifice quality for token efficiency**:
+- If you need the full file to understand context, read it
+- If offset/limit would cause you to miss important context, read more
+- If you're uncertain, it's better to read and be sure
+- Token efficiency is important, but correctness is paramount
+
+**DO optimize when**:
+- Task has clear, narrow scope
+- Search tools can pinpoint the location
+- File has been read earlier in conversation
+- Large files can be read in sections
+- Exploratory reading can be replaced with targeted search
+
+**Balance**:
+- **Precision**: Use minimum necessary context
+- **Completeness**: Don't miss critical information
+- **Efficiency**: Optimize token usage without sacrificing quality
 
 ---
 
