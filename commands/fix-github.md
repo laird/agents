@@ -43,11 +43,14 @@ Never stop, just keep looking for issues to address.
 Start working on GitHub issues now:
 
 ```bash
-# Ensure priority labels exist (create if missing)
-gh label create "P0" --description "Critical priority issue" --color "d73a4a" 2>/dev/null || true
-gh label create "P1" --description "High priority issue" --color "ff9800" 2>/dev/null || true
-gh label create "P2" --description "Medium priority issue" --color "ffeb3b" 2>/dev/null || true
-gh label create "P3" --description "Low priority issue" --color "4caf50" 2>/dev/null || true
+# Ensure priority labels exist (create only if missing)
+for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50"; do
+  IFS=':' read -r name desc color <<< "$label"
+  if ! gh label list --json name --jq '.[].name' | grep -qx "$name"; then
+    echo "Creating label: $name"
+    gh label create "$name" --description "$desc" --color "$color"
+  fi
+done
 
 # Get highest priority issue (using labels only)
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
