@@ -26,7 +26,8 @@
     "./commands/plan.md",
     "./commands/modernize.md",
     "./commands/retro.md",
-    "./commands/retro-apply.md"
+    "./commands/retro-apply.md",
+    "./commands/fix-github.md"
   ],
   "agents": [
     "./agents/architect.md",

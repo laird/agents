@@ -39,6 +39,28 @@
         "email": "[email protected]"
       },
       "strict": false
+    },
+    {
+      "name": "autofix",
+      "source": "./",
+      "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
+      "version": "1.0.0",
+      "category": "automation",
+      "tags": [
+        "github",
+        "automation",
+        "issue-management",
+        "autonomous-fix",
+        "testing",
+        "regression",
+        "superpowers",
+        "quality-automation"
+      ],
+      "author": {
+        "name": "Agent Protocols Team",
+        "email": "[email protected]"
+      },
+      "strict": false
     }
   ],
   "categories": [
@@ -46,6 +68,11 @@
       "id": "workflow",
       "name": "Workflow & Orchestration",
       "description": "Complete workflows and multi-agent orchestration systems"
+    },
+    {
+      "id": "automation",
+      "name": "Automation & Quality",
+      "description": "Automated issue resolution, testing, and quality improvement systems"
     }
   ],
   "keywords": [
