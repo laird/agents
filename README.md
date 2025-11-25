@@ -202,32 +202,48 @@ Customize the auto-generated configuration in your `CLAUDE.md`:
 ---
 
 agents/
-├── commands/                    # Slash commands (6 commands)
-│   ├── assess.md               # Assessment protocol (modernize)
-│   ├── plan.md                 # Planning protocol (modernize)
-│   ├── modernize.md            # Full modernization protocol (modernize)
-│   ├── retro.md                # Retrospective analysis (modernize)
-│   ├── retro-apply.md          # Improvement application (modernize)
-│   └── fix-github.md           # Autonomous issue resolution (autofix)
-├── agents/                      # Agent definitions (6 agents)
-│   ├── architect.md            # Technology decisions and ADRs
-│   ├── coder.md                # Implementation and fixes
-│   ├── documentation.md        # User-facing guides
-│   ├── migration-coordinator.md # Multi-stage orchestration
-│   ├── security.md             # Vulnerability scanning
-│   └── tester.md               # Comprehensive testing
-├── scripts/                     # Automation scripts
-│   └── regression-test.sh      # Full test suite with GitHub integration
-├── .claude-plugin/             # Plugin marketplace configuration
-│   ├── plugin.json             # Main plugin definition
-│   └── marketplace.json        # Marketplace metadata (2 plugins)
+├── .claude-plugin/                      # Plugin marketplace configuration
+│   ├── marketplace.json                 # Marketplace metadata (2 plugins)
+│   └── plugins/
+│       ├── modernize/
+│       │   └── plugin.json              # Modernize plugin definition
+│       └── autofix/
+│           └── plugin.json              # Autofix plugin definition
+├── plugins/                             # Plugin implementations
+│   ├── modernize/                       # Modernize plugin (5 commands, 6 agents)
+│   │   ├── commands/
+│   │   │   ├── assess.md               # Assessment protocol
+│   │   │   ├── plan.md                 # Planning protocol
+│   │   │   ├── modernize.md            # Full modernization workflow
+│   │   │   ├── retro.md                # Retrospective analysis
+│   │   │   └── retro-apply.md          # Improvement application
+│   │   └── agents/
+│   │       ├── architect.md            # Technology decisions and ADRs
+│   │       ├── coder.md                # Implementation and fixes
+│   │       ├── documentation.md        # User-facing guides
+│   │       ├── migration-coordinator.md # Multi-stage orchestration
+│   │       ├── security.md             # Vulnerability scanning
+│   │       └── tester.md               # Comprehensive testing
+│   └── autofix/                         # Autofix plugin (1 command, 6 agents, 1 script)
+│       ├── commands/
+│       │   └── fix-github.md           # Autonomous issue resolution
+│       ├── agents/
+│       │   ├── architect.md            # Technology decisions and ADRs
+│       │   ├── coder.md                # Implementation and fixes
+│       │   ├── documentation.md        # User-facing guides
+│       │   ├── migration-coordinator.md # Multi-stage orchestration
+│       │   ├── security.md             # Vulnerability scanning
+│       │   └── tester.md               # Comprehensive testing
+│       └── scripts/
+│           └── regression-test.sh      # Full test suite with GitHub integration
 └── README.md
 ```
 
-**Note**:
-- Command files are comprehensive protocol documents with workflows, coordination, and best practices
-- Scripts read configuration from project's `CLAUDE.md` for universal compatibility
-- Both plugins share the same 6 specialized agents
+**Structure Notes**:
+- **Parallel plugin architecture**: Each plugin has its own commands/, agents/, and scripts/
+- **Complete separation**: Plugins are independent and can be installed individually
+- **Shared agent definitions**: Both plugins include the same 6 specialized agents (architecture, coder, documentation, migration-coordinator, security, tester)
+- **Self-contained**: Each plugin can evolve independently without affecting the other
 
 ---
 

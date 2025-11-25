@@ -20,14 +20,14 @@
     "quality-automation"
   ],
   "commands": [
-    "../../../commands/fix-github.md"
+    "../../../plugins/autofix/commands/fix-github.md"
   ],
   "agents": [
-    "../../../agents/architect.md",
-    "../../../agents/coder.md",
-    "../../../agents/documentation.md",
-    "../../../agents/migration-coordinator.md",
-    "../../../agents/security.md",
-    "../../../agents/tester.md"
+    "../../../plugins/autofix/agents/architect.md",
+    "../../../plugins/autofix/agents/coder.md",
+    "../../../plugins/autofix/agents/documentation.md",
+    "../../../plugins/autofix/agents/migration-coordinator.md",
+    "../../../plugins/autofix/agents/security.md",
+    "../../../plugins/autofix/agents/tester.md"
   ]
 }

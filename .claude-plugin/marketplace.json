@@ -17,7 +17,7 @@
   "plugins": [
     {
       "name": "modernize",
-      "source": "./",
+      "source": "./plugins/modernize",
       "description": "Complete modernization workflow with multi-agent orchestration (assess viability → create plan → execute). Includes 6 specialized agents and comprehensive protocol documentation for systematic software development",
       "version": "3.0.0",
       "category": "workflow",
