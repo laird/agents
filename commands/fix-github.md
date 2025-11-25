@@ -43,13 +43,53 @@ Never stop, just keep looking for issues to address.
 Start working on GitHub issues now:
 
 ```bash
-# Load project-specific configuration from CLAUDE-AUTOFIX-CONFIG.md if it exists
-if [ -f "CLAUDE-AUTOFIX-CONFIG.md" ]; then
-  echo "📋 Found project configuration: CLAUDE-AUTOFIX-CONFIG.md"
+# Load project-specific configuration from CLAUDE.md
+if [ -f "CLAUDE.md" ]; then
+  echo "📋 Reading project configuration from CLAUDE.md"
+
+  # Check if autofix configuration exists
+  if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
+    echo "⚠️  No autofix configuration found in CLAUDE.md"
+    echo "📝 Adding autofix configuration section to CLAUDE.md..."
+
+    # Append autofix configuration to CLAUDE.md
+    cat >> CLAUDE.md << 'AUTOFIX_CONFIG'
+
+## Automated Testing & Issue Management
+
+This section configures the `/fix-github` command for autonomous issue resolution.
+
+### Regression Test Suite
+```bash
+npm test
+```
+
+### Build Verification
+```bash
+npm run build
+```
+
+### Test Framework Details
+
+**Unit Tests**:
+- Framework: (Configure your test framework)
+- Location: (Configure test file locations)
+
+**E2E Tests**:
+- Framework: (Configure E2E test framework)
+- Location: (Configure E2E test locations)
+
+**Test Reports**:
+- Location: `docs/test/regression-reports/`
+
+AUTOFIX_CONFIG
+
+    echo "✅ Added autofix configuration to CLAUDE.md - please update with project-specific details"
+  fi
 
   # Extract test command
-  if grep -q "### Regression Test Suite" CLAUDE-AUTOFIX-CONFIG.md; then
-    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE-AUTOFIX-CONFIG.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Regression Test Suite" CLAUDE.md; then
+    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Regression test command: $TEST_COMMAND"
   else
     TEST_COMMAND="npm test"
@@ -57,15 +97,15 @@ if [ -f "CLAUDE-AUTOFIX-CONFIG.md" ]; then
   fi
 
   # Extract build command
-  if grep -q "### Build Verification" CLAUDE-AUTOFIX-CONFIG.md; then
-    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE-AUTOFIX-CONFIG.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Build Verification" CLAUDE.md; then
+    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Build command: $BUILD_COMMAND"
   else
     BUILD_COMMAND="npm run build"
     echo "⚠️  No build command found, using default: $BUILD_COMMAND"
   fi
 else
-  echo "⚠️  No CLAUDE-AUTOFIX-CONFIG.md found, using defaults"
+  echo "⚠️  No CLAUDE.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
 fi

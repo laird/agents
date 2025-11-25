@@ -21,41 +21,41 @@ NC='\033[0m' # No Color
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-# Load configuration from CLAUDE-AUTOFIX-CONFIG.md if it exists
-if [ -f "CLAUDE-AUTOFIX-CONFIG.md" ]; then
-    echo -e "${BLUE}Loading configuration from CLAUDE-AUTOFIX-CONFIG.md${NC}"
+# Load configuration from CLAUDE.md if it exists
+if [ -f "CLAUDE.md" ]; then
+    echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
     # Extract report directory
-    if grep -q "Location: " CLAUDE-AUTOFIX-CONFIG.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE-AUTOFIX-CONFIG.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
+    if grep -q "Location: " CLAUDE.md; then
+        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
     else
         REPORT_DIR="docs/test/regression-reports"
     fi
 
     # Extract unit test configuration
-    if grep -q "Working directory: " CLAUDE-AUTOFIX-CONFIG.md && grep -B5 "Working directory:" CLAUDE-AUTOFIX-CONFIG.md | grep -q "Unit Tests"; then
-        UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE-AUTOFIX-CONFIG.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
-        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE-AUTOFIX-CONFIG.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
+    if grep -q "Working directory: " CLAUDE.md && grep -B5 "Working directory:" CLAUDE.md | grep -q "Unit Tests"; then
+        UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
+        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
         UNIT_TEST_DIR="."
         UNIT_TEST_CMD="npm test"
     fi
 
     # Extract E2E test configuration
-    if grep -q "### E2E Tests Only" CLAUDE-AUTOFIX-CONFIG.md; then
-        E2E_TEST_CMD=$(grep -A5 "### E2E Tests Only" CLAUDE-AUTOFIX-CONFIG.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
+    if grep -q "### E2E Tests Only" CLAUDE.md; then
+        E2E_TEST_CMD=$(grep -A5 "### E2E Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
         E2E_TEST_CMD="npx playwright test --reporter=json"
     fi
 
     # Extract test file patterns
-    if grep -q "Test file pattern:" CLAUDE-AUTOFIX-CONFIG.md; then
-        E2E_TEST_PATTERN=$(grep "Test file pattern:" CLAUDE-AUTOFIX-CONFIG.md | sed 's/.*Test file pattern: *`\([^`]*\)`.*/\1/' | head -1)
+    if grep -q "Test file pattern:" CLAUDE.md; then
+        E2E_TEST_PATTERN=$(grep "Test file pattern:" CLAUDE.md | sed 's/.*Test file pattern: *`\([^`]*\)`.*/\1/' | head -1)
     else
         E2E_TEST_PATTERN="*.spec.ts"
     fi
 else
-    echo -e "${YELLOW}No CLAUDE-AUTOFIX-CONFIG.md found, using defaults${NC}"
+    echo -e "${YELLOW}No CLAUDE.md found, using defaults${NC}"
     REPORT_DIR="docs/test/regression-reports"
     UNIT_TEST_DIR="."
     UNIT_TEST_CMD="npm test"
