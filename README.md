@@ -57,22 +57,7 @@ Each command is a comprehensive protocol document (`.md` file) containing agent 
   - Systematically updates commands, protocols, and automation based on retrospective findings
   - Do this after `/retro` if you agree with the recommendations.
 
-### What's Inside Each Protocol
-
-Every command file includes:
-- **Agent coordination instructions** - How 6 specialist agents work together (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
-- **Phase-by-phase workflows** - Detailed steps with durations, deliverables, and success criteria
-- **Quality gates** - Blocking criteria and validation checkpoints
-- **Examples** - Real-world scenarios and usage patterns
-- **Anti-patterns** - What NOT to do with explanations
-- **Troubleshooting** - Common issues and solutions
-- **Best practices** - Proven approaches and recommendations
-
----
-
-## Quick Start
-
-### Modernization Workflow
+#### Quick Start
 
 1. **Assess Viability**
    ```
@@ -121,9 +106,9 @@ Every command file includes:
    - Adds automation (scripts, hooks, CI/CD)
    - Embeds lessons learned into workflow
 
-#### Using Agents
+#### Specialist Agents
 
-Agents are invoked by Claude Code's Task tool when needed. They work together following established protocols:
+The modernize plugin includes 6 specialized agents invoked by Claude Code's Task tool:
 
 - **Architect** makes technology decisions and creates ADRs
 - **Security** scans for vulnerabilities and blocks on CRITICAL/HIGH issues
@@ -138,60 +123,31 @@ Agents are invoked by Claude Code's Task tool when needed. They work together fo
 
 Autonomous GitHub issue resolution with intelligent testing and quality automation.
 
-#### 1 Command + Scripts
+#### The Command
 
-- **`/fix-github`** - Autonomous issue resolution workflow
-  - Automatically prioritizes GitHub issues (P0-P3 labels)
-  - Intelligent complexity detection (simple vs complex issues)
-  - Uses superpowers skills for complex problems
-  - Runs regression tests when no issues exist
-  - Creates improvement proposals when all tests pass
+**`/fix-github`** - Autonomous issue resolution workflow that:
+- Automatically prioritizes GitHub issues using P0-P3 labels
+- Detects issue complexity (simple vs complex)
+- Uses superpowers skills for complex problems
+- Runs regression tests when no issues exist
+- Creates improvement proposals when all tests pass
+- Self-configures from project's `CLAUDE.md`
 
-#### Features
-
-- **Self-Configuring**: Reads test/build commands from project's `CLAUDE.md`
-- **Auto-Setup**: Creates configuration section if missing
-- **Universal**: Works with any test framework (Jest, Playwright, pytest, etc.)
-- **GitHub Integration**: Creates/updates issues from test failures
-- **Priority-Based**: P0 (Critical) → P1 (High) → P2 (Medium) → P3 (Low)
-- **Continuous Quality**: Never stops improving your codebase
+**Key Features:**
+- Works with any test framework (Jest, Playwright, pytest, etc.)
+- Auto-creates configuration if missing
+- GitHub integration for test failure tracking
+- Priority-based workflow (P0 → P1 → P2 → P3)
+- Continuous quality improvement
 
 #### Quick Start
 
-1. **Run the command**:
-   ```
-   /fix-github
-   ```
+**Usage:**
+```
+/fix-github
+```
 
-2. **First run**: If `CLAUDE.md` doesn't have autofix config, it's automatically added:
-   ```markdown
-   ## Automated Testing & Issue Management
-   ### Regression Test Suite
-   ```bash
-   npm run test:regression
-   ```
-   ### Build Verification
-   ```bash
-   npm run build
-   ```
-   ```
-
-3. **Customize**: Update the commands in `CLAUDE.md` for your project
-
-4. **Let it run**: The command will:
-   - Create priority labels if needed
-   - Find highest priority issue
-   - Fix it (using superpowers for complex issues)
-   - Run tests to verify
-   - Commit and close issue
-   - Move to next issue
-
-5. **No issues?**: Runs full regression test suite and creates issues from failures
-
-#### Configuration
-
-Add this section to your project's `CLAUDE.md`:
-
+**First Run:** Automatically adds this configuration to your `CLAUDE.md`:
 ```markdown
 ## Automated Testing & Issue Management
 
@@ -204,11 +160,25 @@ npm run test:regression
 ```bash
 npm run build
 ```
+```
 
-### Test Framework Details
-**Unit Tests**: Jest in `backend/src/**/*.test.ts`
-**E2E Tests**: Playwright in `tests/e2e/**/*.spec.ts`
-**Reports**: `docs/test/regression-reports/`
+**Workflow:**
+1. Creates priority labels (P0-P3) if needed
+2. Finds highest priority issue
+3. Fixes it (uses superpowers for complex issues)
+4. Runs tests to verify
+5. Commits and closes issue
+6. Moves to next issue
+7. If no issues: runs full regression test suite
+8. Creates GitHub issues from test failures
+
+#### Configuration (Optional)
+
+Customize the auto-generated configuration in your `CLAUDE.md`:
+- Update test commands for your project
+- Specify test framework details
+- Configure report locations
+- Define priority patterns
 
 ---
 ## Repository Structure
@@ -313,38 +283,22 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 ## Best Practices
 
-### For New Projects
-1. Install the plugin by copying `commands/` to your project
-2. Run `/assess` to evaluate modernization readiness
-3. Run `/plan` to create execution strategy
-4. Run `/modernize` to orchestrate the work
-5. Monitor HISTORY.md for complete audit trail
-6. Run `/retro` after completion to identify improvements
-7. Run `/retro-apply` to embed lessons learned
+**Modernization Workflow:**
+1. `/assess` → `/plan` → `/modernize` → `/retro` → `/retro-apply`
+2. Monitor HISTORY.md for complete audit trail
+3. Review `IMPROVEMENTS.md` and apply approved changes
+4. Next project benefits from lessons learned
 
-### Continuous Improvement Workflow
-1. Complete a modernization project with `/modernize`
-2. Run `/retro` to analyze what happened:
-   - Reviews git history for user corrections
-   - Identifies agent behavioral issues
-   - Finds protocol inefficiencies
-   - Quantifies impact of improvements
-3. Review `IMPROVEMENTS.md` with team
-4. Run `/retro-apply` to implement approved changes
-5. Next project automatically benefits from improvements
-
-### For Existing Projects
-1. Install the plugin
-2. Start with `/assess` to understand scope
-3. Use `/plan` to create detailed execution strategy
-4. Leverage multi-agent coordination with `/modernize`
-5. Apply continuous improvement with `/retro` and `/retro-apply`
-
-### Quality Gates to Enforce
+**Quality Gates:**
 - Security score ≥45 before migration starts
 - Build success 100% before next stage
 - Test pass rate 100% before proceeding
 - All P0/P1 issues resolved before release
+
+**Autofix Workflow:**
+1. Run `/fix-github` to start autonomous issue resolution
+2. Customize configuration in `CLAUDE.md` as needed
+3. Let it run continuously for ongoing quality improvement
 
 ---
 
