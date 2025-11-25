@@ -209,13 +209,10 @@ npm run build
 **Unit Tests**: Jest in `backend/src/**/*.test.ts`
 **E2E Tests**: Playwright in `tests/e2e/**/*.spec.ts`
 **Reports**: `docs/test/regression-reports/`
-```
 
 ---
-
 ## Repository Structure
 
-```
 agents/
 ├── commands/                    # Slash commands (6 commands)
 │   ├── assess.md               # Assessment protocol (modernize)
