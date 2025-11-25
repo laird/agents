@@ -15,15 +15,32 @@ Both plugins feature **continuous improvement** through retrospective analysis a
 
 ## Installation
 
-**Install as Claude Code plugin**:
+### Add Marketplace
 
-1. Use the /plugin command in Claude Code
-2. Add this repo as a marketplace
-3. Install the plugin(s) you need:
-   - **modernize** - For software modernization workflows
-   - **autofix** - For autonomous GitHub issue resolution
+```bash
+/plugin add marketplace https://github.com/laird/agents
+```
 
-Commands will be available as slash commands in Claude Code.
+### Install Plugins
+
+**Install modernize plugin** (software modernization workflows):
+```bash
+/plugin install modernize
+```
+
+**Install autofix plugin** (autonomous GitHub issue resolution):
+```bash
+/plugin install autofix
+```
+
+**Install both plugins**:
+```bash
+/plugin install modernize autofix
+```
+
+After installation, commands will be available as slash commands in Claude Code:
+- **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
+- **autofix**: `/fix-github`
 
 ---
 
