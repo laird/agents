@@ -253,6 +253,31 @@ Security vulnerability assessment and remediation specialist for software projec
 - Required security controls missing
 - Security tests failing
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **Novel vulnerability analysis** - Assessing complex or chained attack vectors
+- **Security architecture decisions** - Designing security controls and patterns
+- **Zero-day assessment** - Evaluating impact of newly disclosed vulnerabilities
+- **Compliance mapping** - Mapping security controls to regulatory requirements
+- **Risk prioritization** - Complex risk/impact analysis for remediation planning
+
+### Use Sonnet (model="sonnet")
+- **CVE scanning** - Running and interpreting vulnerability scans
+- **Known pattern remediation** - Fixing well-documented security issues
+- **Dependency upgrades** - Updating vulnerable packages with known fixes
+- **Security score calculation** - Computing and reporting security metrics
+- **Standard security fixes** - Implementing common security controls
+
+### Use Haiku (model="haiku")
+- **Report generation** - Formatting security scan results
+- **Simple configuration fixes** - Updating security headers, TLS settings
+- **Dependency version bumps** - Simple package updates without breaking changes
+
+**Default recommendation**: Use **Sonnet** for most security work. Escalate to **Opus** for novel vulnerabilities, architectural security decisions, or complex risk assessment.
+
 ## Metrics
 
 - Security score: 0-100 (target ≥75)

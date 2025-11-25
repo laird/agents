@@ -311,6 +311,30 @@ Examples:
 - Security-impacting decisions not reviewed
 - Performance-critical decisions lack benchmarking plan
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **ADR creation** - Complex architectural decisions requiring deep trade-off analysis
+- **Technology evaluation** - Researching and comparing 3+ alternatives with nuanced criteria
+- **Pattern selection** - Choosing between architectural patterns (CQRS, event sourcing, etc.)
+- **Risk assessment** - Evaluating migration risks with long-term implications
+- **Stakeholder synthesis** - Balancing competing requirements and constraints
+
+### Use Sonnet (model="sonnet")
+- **Simple dependency decisions** - Straightforward library choices with clear winners
+- **Routine refactoring** - Well-understood pattern applications
+- **ADR updates** - Updating existing ADRs with new information
+- **Documentation review** - Reviewing and improving ADR clarity
+
+### Use Haiku (model="haiku")
+- **ADR formatting** - Fixing markdown, structure, or links
+- **Index updates** - Updating ADR index files
+- **Simple lookups** - Finding existing ADRs or decisions
+
+**Default recommendation**: Start with **Opus** for new architectural decisions, drop to **Sonnet** for routine updates.
+
 ## Metrics
 
 - ADRs created: count

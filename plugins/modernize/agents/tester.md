@@ -263,6 +263,32 @@ Quality assurance specialist focused on comprehensive testing and validation. Ex
 - Test infrastructure broken
 - Performance regressions detected
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **Complex failure diagnosis** - Root cause analysis of intermittent or multi-factor failures
+- **Architecture-impacting test issues** - Failures indicating design problems
+- **GO/NO-GO escalations** - Making progression decisions after iteration 3
+- **Test strategy design** - Planning comprehensive test coverage for complex features
+- **Performance regression analysis** - Diagnosing subtle performance degradations
+
+### Use Sonnet (model="sonnet")
+- **Standard test execution** - Running 6-phase testing protocol
+- **Fix-and-retest cycles** - Coordinating routine fix/verify loops
+- **Test infrastructure setup** - Configuring test environments
+- **Failure categorization** - Classifying failures as P0/P1/P2/P3
+- **Test report generation** - Creating comprehensive test reports
+- **Coverage analysis** - Analyzing and reporting code coverage
+
+### Use Haiku (model="haiku")
+- **Simple test runs** - Executing well-defined test suites
+- **Result formatting** - Structuring test output for reports
+- **Flaky test identification** - Flagging inconsistent test results
+
+**Default recommendation**: Use **Sonnet** for most testing work. Escalate to **Opus** for complex failure diagnosis or GO/NO-GO decisions after multiple failed iterations.
+
 ## Metrics
 
 - Test pass rate: percentage (target 100%)

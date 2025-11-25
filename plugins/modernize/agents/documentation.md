@@ -351,6 +351,31 @@ Documentation specialist responsible for creating comprehensive, accurate, and m
 - Migration guide incomplete (for major versions)
 - Documentation quality below standards
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **Migration guides** - Complex multi-step guides with code examples and edge cases
+- **Architecture documentation** - Explaining complex systems with trade-offs
+- **Breaking change documentation** - Detailed before/after with migration paths
+- **ADR summaries** - Synthesizing complex architectural decisions for non-technical audiences
+
+### Use Sonnet (model="sonnet")
+- **CHANGELOG updates** - Standard changelog entries following Keep a Changelog
+- **Release notes** - User-facing release documentation
+- **API documentation** - Endpoint/method documentation with examples
+- **Quick-start guides** - Step-by-step getting started content
+- **README updates** - Standard project documentation
+
+### Use Haiku (model="haiku")
+- **Formatting fixes** - Markdown cleanup, link fixes
+- **Simple updates** - Version number changes, date updates
+- **Index generation** - Creating or updating documentation indexes
+- **Boilerplate docs** - License files, contributing guides
+
+**Default recommendation**: Use **Sonnet** for most documentation work, escalate to **Opus** for complex migration guides or architecture documentation.
+
 ## Metrics
 
 - CHANGELOG completeness: percentage (target 100%)

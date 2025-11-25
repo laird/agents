@@ -238,6 +238,32 @@ Code implementation and migration specialist. Handles framework migrations, depe
 - Dependencies incompatible
 - Code review rejections
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **Complex refactoring** - Multi-file changes with interdependencies
+- **Breaking change mitigation** - Implementing adapters, compatibility shims, or migration paths
+- **Architecture-impacting changes** - Code changes that affect system design
+- **Novel API migration** - Migrating to APIs with no clear 1:1 mapping
+- **Performance optimization** - Complex algorithmic improvements
+
+### Use Sonnet (model="sonnet")
+- **Standard migrations** - Framework upgrades with documented migration paths
+- **Dependency updates** - Package upgrades with known breaking changes
+- **Routine bug fixes** - Well-understood issues with clear solutions
+- **Code pattern updates** - Applying established patterns across codebase
+- **Build error resolution** - Fixing compilation errors from migrations
+
+### Use Haiku (model="haiku")
+- **Simple find-and-replace** - Namespace changes, renames
+- **Boilerplate generation** - Creating standard project files
+- **Formatting fixes** - Code style, linting issues
+- **Import updates** - Adding/removing using statements
+
+**Default recommendation**: Start with **Sonnet** for most implementation work, escalate to **Opus** for complex multi-file changes or novel problems.
+
 ## Metrics
 
 - Build success rate: percentage (target 100%)

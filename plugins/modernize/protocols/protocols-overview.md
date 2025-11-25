@@ -167,6 +167,60 @@ This directory contains **universal agent protocol templates** designed to work 
 
 ---
 
+## Model Selection Guide (Opus 4.5)
+
+When spawning agents via Claude Code's Task tool, use the `model` parameter to optimize for task complexity and cost:
+
+### Quick Reference
+
+| Agent | Default | Use Opus When | Use Haiku When |
+|-------|---------|---------------|----------------|
+| **Architect** | Opus | ADRs, technology evaluation, risk assessment | Formatting, index updates |
+| **Migration Coordinator** | Opus | Planning, GO/NO-GO, complex coordination | Status updates, simple validations |
+| **Security** | Sonnet | Novel vulnerabilities, architecture decisions | Report formatting, simple configs |
+| **Coder** | Sonnet | Complex refactoring, novel API migrations | Find-and-replace, boilerplate |
+| **Tester** | Sonnet | Complex failure diagnosis, GO/NO-GO escalations | Simple test runs, result formatting |
+| **Documentation** | Sonnet | Migration guides, architecture docs | Formatting, simple updates |
+
+### Model Capabilities
+
+**Opus (model="opus")**
+- Best for: Complex reasoning, architectural decisions, trade-off analysis
+- Use when: Multiple factors, novel problems, strategic decisions
+- Cost: Higher, but worth it for complex tasks
+
+**Sonnet (model="sonnet")**
+- Best for: Standard implementation work, routine operations
+- Use when: Well-understood tasks, documented patterns
+- Cost: Balanced quality and cost for most work
+
+**Haiku (model="haiku")**
+- Best for: Simple transformations, formatting, boilerplate
+- Use when: Mechanical tasks, no judgment required
+- Cost: Lowest, ideal for high-volume simple tasks
+
+### Example Usage
+
+```javascript
+// Complex architectural decision - use Opus
+Task("architect", "Evaluate messaging patterns for event-driven migration...", model="opus")
+
+// Standard implementation - use Sonnet
+Task("coder", "Update package references to .NET 9...", model="sonnet")
+
+// Simple formatting - use Haiku
+Task("documentation", "Fix markdown formatting in README...", model="haiku")
+```
+
+### Cost Optimization Strategy
+
+1. **Start with the default** for each agent type
+2. **Escalate to Opus** when encountering complexity or blockers
+3. **Drop to Haiku** for simple mechanical tasks
+4. **Track patterns** - if an agent type consistently needs Opus, update the default
+
+---
+
 ## Quick Start Guide
 
 ### Step 1: Choose Your Protocols

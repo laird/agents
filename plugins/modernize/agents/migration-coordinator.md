@@ -275,6 +275,32 @@ Start with highest-risk components
 - Documentation incomplete
 - Tests failing
 
+## Model Recommendation
+
+When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+
+### Use Opus (model="opus")
+- **Strategic planning** - Creating comprehensive migration roadmaps
+- **Risk assessment** - Evaluating and prioritizing migration risks
+- **GO/NO-GO decisions** - Complex readiness assessments with multiple factors
+- **Multi-agent coordination** - Orchestrating complex parallel workstreams
+- **Escalation handling** - Resolving blocked work requiring architectural review
+- **Assessment reports** - Comprehensive modernization readiness evaluations
+
+### Use Sonnet (model="sonnet")
+- **Progress tracking** - Monitoring stage completion and metrics
+- **Quality gate checks** - Routine validation of success criteria
+- **Stage transitions** - Moving between well-defined migration phases
+- **Agent spawning** - Delegating to specialized agents with clear instructions
+- **Issue tracking** - Managing P0/P1/P2/P3 issue lists
+
+### Use Haiku (model="haiku")
+- **Status updates** - Generating progress summaries
+- **Simple validations** - Checking build/test pass status
+- **Report formatting** - Structuring output for stakeholders
+
+**Default recommendation**: Use **Opus** for planning, assessment, and complex coordination. Use **Sonnet** for execution and routine coordination tasks.
+
 ## Metrics
 
 - Stages completed: count
