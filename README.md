@@ -212,6 +212,7 @@ npm run build
 
 ---
 ## Repository Structure
+---
 
 agents/
 ├── commands/                    # Slash commands (6 commands)
