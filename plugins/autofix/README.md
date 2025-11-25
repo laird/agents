@@ -42,19 +42,6 @@ To add support for another system, create a new command file (e.g., `commands/fi
 
 The core fix logic (complexity detection, superpowers integration, verification) can be reused across integrations.
 
-## Agents
-
-This plugin includes 6 specialist agents (shared with modernize plugin):
-
-| Agent | Role |
-|-------|------|
-| `migration-coordinator` | Orchestrates multi-stage fixes |
-| `security` | Scans for vulnerabilities |
-| `architect` | Makes technical decisions |
-| `coder` | Implements fixes |
-| `tester` | Validates changes |
-| `documentation` | Updates docs and logs |
-
 ## Configuration
 
 The command reads project-specific configuration from `CLAUDE.md`:
