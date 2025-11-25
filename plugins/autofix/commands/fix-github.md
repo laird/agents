@@ -38,6 +38,74 @@ Never stop, just keep looking for issues to address.
 - New functionality requiring design
 - System integration issues
 
+## Model Selection (Opus 4.5)
+
+When spawning agents or using the Task tool during issue resolution, select the model based on task complexity:
+
+### Issue Complexity → Model Mapping
+
+| Issue Type | Model | Rationale |
+|------------|-------|-----------|
+| Simple (P2/P3, clear fix) | Sonnet | Known patterns, documented solutions |
+| Complex (P0/P1, architectural) | Opus | Deep analysis, trade-off decisions |
+| Regression test analysis | Sonnet | Standard test interpretation |
+| Root cause investigation | Opus | Multi-factor analysis |
+| Improvement proposals | Opus | Creative problem-solving |
+| Labeling & formatting | Haiku | Mechanical operations |
+
+### Escalation Triggers
+
+**Start with Sonnet, escalate to Opus when:**
+- Fix attempt fails after 2 tries with same approach
+- Issue involves 5+ files requiring coordinated changes
+- Root cause is unclear after initial investigation
+- Multiple test failures share non-obvious common cause
+- Issue requires architectural decision (new patterns, dependencies)
+
+**Stay with Sonnet when:**
+- Error messages clearly indicate the fix
+- Issue matches known patterns from previous fixes
+- Single file change with isolated impact
+- Test failures have obvious cause (typo, missing import)
+
+**Drop to Haiku for:**
+- Adding/updating priority labels
+- Posting status comments to GitHub
+- Formatting commit messages
+- Simple file cleanup (delete, rename)
+
+### Model Usage by Workflow Phase
+
+| Phase | Recommended Model |
+|-------|-------------------|
+| Initial complexity assessment | Sonnet |
+| Simple issue: direct fix | Sonnet |
+| Complex issue: systematic-debugging skill | Opus |
+| Complex issue: brainstorming skill | Opus |
+| Complex issue: writing-plans skill | Opus |
+| Complex issue: executing-plans skill | Sonnet |
+| Verification before completion | Sonnet |
+| Regression test execution | Sonnet |
+| Regression test analysis | Sonnet → Opus if patterns unclear |
+| Improvement proposals | Opus |
+| Issue creation from failures | Haiku |
+
+### Example Task Tool Usage
+
+```javascript
+// Initial assessment - start with Sonnet
+Task("analyst", "Assess complexity of issue #${ISSUE_NUM}...", model="sonnet")
+
+// Complex root cause - use Opus
+Task("debugger", "Investigate why 15 tests fail with timeout...", model="opus")
+
+// Standard fix - use Sonnet
+Task("coder", "Update package.json to fix dependency conflict...", model="sonnet")
+
+// Label management - use Haiku
+Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
+```
+
 ## Instructions
 
 Start working on GitHub issues now:
