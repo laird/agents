@@ -1,5 +1,5 @@
 {
-  "name": "agent-protocols-marketplace",
+  "name": "plugin-marketplace",
   "version": "3.0.0",
   "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Includes modernize workflow (assess → plan → execute) and autofix autonomous issue resolution. Originally created for .NET migrations, these protocols are universally applicable to any software project.",
   "metadata": {
