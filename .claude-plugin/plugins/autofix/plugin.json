@@ -1,0 +1,33 @@
+{
+  "name": "autofix",
+  "version": "1.0.0",
+  "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
+  "author": {
+    "name": "Agent Protocols Team",
+    "email": "[email protected]"
+  },
+  "homepage": "https://github.com/laird/agents",
+  "repository": "https://github.com/laird/agents",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "automation",
+    "issue-management",
+    "autonomous-fix",
+    "testing",
+    "regression",
+    "superpowers",
+    "quality-automation"
+  ],
+  "commands": [
+    "../../../commands/fix-github.md"
+  ],
+  "agents": [
+    "../../../agents/architect.md",
+    "../../../agents/coder.md",
+    "../../../agents/documentation.md",
+    "../../../agents/migration-coordinator.md",
+    "../../../agents/security.md",
+    "../../../agents/tester.md"
+  ]
+}

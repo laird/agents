@@ -42,7 +42,7 @@
     },
     {
       "name": "autofix",
-      "source": "./",
+      "source": "./plugins/autofix",
       "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
       "version": "1.0.0",
       "category": "automation",
