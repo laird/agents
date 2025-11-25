@@ -110,14 +110,24 @@ else
   BUILD_COMMAND="npm run build"
 fi
 
-# Ensure priority labels exist (create only if missing)
-for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50"; do
-  IFS=':' read -r name desc color <<< "$label"
-  if ! gh label list --json name --jq '.[].name' | grep -qx "$name"; then
-    echo "Creating label: $name"
-    gh label create "$name" --description "$desc" --color "$color"
-  fi
-done
+# Ensure priority labels exist (one-time setup per project)
+if [ ! -f ".github/.priority-labels-configured" ]; then
+  echo "🏷️  Checking priority labels (one-time setup)..."
+  EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
+
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50"; do
+    IFS=':' read -r name desc color <<< "$label"
+    if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
+      echo "Creating label: $name"
+      gh label create "$name" --description "$desc" --color "$color" 2>/dev/null || true
+    fi
+  done
+
+  # Mark labels as configured
+  mkdir -p .github
+  echo "# Priority labels configured on $(date -I)" > .github/.priority-labels-configured
+  echo "✅ Priority labels configured"
+fi
 
 # Get highest priority issue (using labels only)
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
@@ -509,13 +519,50 @@ gh issue create \
 
 ---
 
-🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now.**
+## MANDATORY: Continuous Loop
 
-**Remember**:
-- Simple issues: Fix directly
-- Complex issues: Use superpowers skills
-- No issues: Run regression tests
-- All passing: Propose improvements
-- Always verify before claiming complete
-- Provide evidence in GitHub comments
-- Never stop improving the codebase!
+**THIS WORKFLOW RUNS FOREVER UNTIL MANUALLY STOPPED.**
+
+After completing ANY of these actions, you MUST immediately continue:
+
+1. **After fixing and closing an issue** → Fetch next priority issue
+2. **After skipping an issue** → Fetch next priority issue
+3. **After running regression tests** → Check for new issues created
+4. **After proposing improvements** → Fetch next priority issue
+5. **If no issues found** → Run regression tests, then check again
+
+### Loop Implementation
+
+After every issue is resolved, skipped, or when checking for work:
+
+```bash
+# Fetch next highest priority issue
+gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
+
+PRIORITY_ISSUES=$(cat /tmp/all-issues.json | jq '[.[] | select(.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))] | length')
+
+if [ "$PRIORITY_ISSUES" -gt 0 ]; then
+  echo "🔄 Found $PRIORITY_ISSUES priority issues. Continuing..."
+  # Process next issue (repeat from "Get highest priority issue" section)
+else
+  echo "✅ No priority issues. Running regression tests..."
+  # Run regression tests, then loop back
+fi
+```
+
+### Never Stop
+
+- **DO NOT** wait for user input between issues
+- **DO NOT** stop after fixing one issue
+- **DO NOT** ask "should I continue?"
+- **DO** keep processing issues until the queue is empty
+- **DO** run regression tests when queue is empty
+- **DO** process any new issues created by regression tests
+- **DO** propose improvements only when everything passes
+- **DO** loop back and check for new issues after proposing improvements
+
+**The only way this workflow stops is if the user manually interrupts it.**
+
+---
+
+🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
