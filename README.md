@@ -1,10 +1,15 @@
-# Modernize - Claude Code Plugin
+# Agent Protocols - Claude Code Plugins
 
-A **Claude Code plugin** providing production-validated protocols, specialized agents, and automation frameworks for systematic AI-assisted software modernization and development.
+A **Claude Code plugin marketplace** providing production-validated protocols, specialized agents, and automation frameworks for systematic AI-assisted software development.
 
 ## Overview
 
-This plugin provides a complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents and comprehensive protocol documentation. Features **continuous improvement** through retrospective analysis that learns from agent mistakes and user corrections. Created originally for .NET framework migrations, these tools are **universally applicable** to any software project requiring structured agent collaboration.
+This marketplace contains **2 plugins** with complementary capabilities:
+
+1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
+2. **Autofix** - Autonomous GitHub issue resolution with intelligent testing and quality automation
+
+Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. Originally created for .NET framework migrations, these tools work with any language or platform.
 
 ---
 
@@ -12,14 +17,23 @@ This plugin provides a complete modernization workflow (assess → plan → exec
 
 **Install as Claude Code plugin**:
 
-1. Use the /plugin command in claude code, and add this repo as a marketplace, then add the modernize plugin.
-2. Commands will be available as slash commands in Claude Code
+1. Use the /plugin command in Claude Code
+2. Add this repo as a marketplace
+3. Install the plugin(s) you need:
+   - **modernize** - For software modernization workflows
+   - **autofix** - For autonomous GitHub issue resolution
+
+Commands will be available as slash commands in Claude Code.
 
 ---
 
-## What's Included
+## Plugins
 
-### 5 Protocol-Based Commands
+### Plugin 1: Modernize
+
+Complete modernization workflow with multi-agent orchestration.
+
+#### 5 Protocol-Based Commands
 
 Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
 
@@ -107,7 +121,7 @@ Every command file includes:
    - Adds automation (scripts, hooks, CI/CD)
    - Embeds lessons learned into workflow
 
-### Using Agents
+#### Using Agents
 
 Agents are invoked by Claude Code's Task tool when needed. They work together following established protocols:
 
@@ -120,27 +134,115 @@ Agents are invoked by Claude Code's Task tool when needed. They work together fo
 
 ---
 
+### Plugin 2: Autofix
+
+Autonomous GitHub issue resolution with intelligent testing and quality automation.
+
+#### 1 Command + Scripts
+
+- **`/fix-github`** - Autonomous issue resolution workflow
+  - Automatically prioritizes GitHub issues (P0-P3 labels)
+  - Intelligent complexity detection (simple vs complex issues)
+  - Uses superpowers skills for complex problems
+  - Runs regression tests when no issues exist
+  - Creates improvement proposals when all tests pass
+
+#### Features
+
+- **Self-Configuring**: Reads test/build commands from project's `CLAUDE.md`
+- **Auto-Setup**: Creates configuration section if missing
+- **Universal**: Works with any test framework (Jest, Playwright, pytest, etc.)
+- **GitHub Integration**: Creates/updates issues from test failures
+- **Priority-Based**: P0 (Critical) → P1 (High) → P2 (Medium) → P3 (Low)
+- **Continuous Quality**: Never stops improving your codebase
+
+#### Quick Start
+
+1. **Run the command**:
+   ```
+   /fix-github
+   ```
+
+2. **First run**: If `CLAUDE.md` doesn't have autofix config, it's automatically added:
+   ```markdown
+   ## Automated Testing & Issue Management
+   ### Regression Test Suite
+   ```bash
+   npm run test:regression
+   ```
+   ### Build Verification
+   ```bash
+   npm run build
+   ```
+   ```
+
+3. **Customize**: Update the commands in `CLAUDE.md` for your project
+
+4. **Let it run**: The command will:
+   - Create priority labels if needed
+   - Find highest priority issue
+   - Fix it (using superpowers for complex issues)
+   - Run tests to verify
+   - Commit and close issue
+   - Move to next issue
+
+5. **No issues?**: Runs full regression test suite and creates issues from failures
+
+#### Configuration
+
+Add this section to your project's `CLAUDE.md`:
+
+```markdown
+## Automated Testing & Issue Management
+
+### Regression Test Suite
+```bash
+npm run test:regression
+```
+
+### Build Verification
+```bash
+npm run build
+```
+
+### Test Framework Details
+**Unit Tests**: Jest in `backend/src/**/*.test.ts`
+**E2E Tests**: Playwright in `tests/e2e/**/*.spec.ts`
+**Reports**: `docs/test/regression-reports/`
+```
+
+---
+
 ## Repository Structure
 
 ```
 agents/
-├── commands/                    # Slash commands (5 commands)
-│   ├── assess.md               # Assessment protocol with agent coordination
-│   ├── plan.md                 # Planning protocol with execution strategy
-│   ├── modernize.md            # Full modernization protocol (7 phases, 6 agents)
-│   ├── retro.md                # Retrospective analysis protocol
-│   └── retro-apply.md          # Improvement application protocol
+├── commands/                    # Slash commands (6 commands)
+│   ├── assess.md               # Assessment protocol (modernize)
+│   ├── plan.md                 # Planning protocol (modernize)
+│   ├── modernize.md            # Full modernization protocol (modernize)
+│   ├── retro.md                # Retrospective analysis (modernize)
+│   ├── retro-apply.md          # Improvement application (modernize)
+│   └── fix-github.md           # Autonomous issue resolution (autofix)
+├── agents/                      # Agent definitions (6 agents)
+│   ├── architect.md            # Technology decisions and ADRs
+│   ├── coder.md                # Implementation and fixes
+│   ├── documentation.md        # User-facing guides
+│   ├── migration-coordinator.md # Multi-stage orchestration
+│   ├── security.md             # Vulnerability scanning
+│   └── tester.md               # Comprehensive testing
+├── scripts/                     # Automation scripts
+│   └── regression-test.sh      # Full test suite with GitHub integration
+├── .claude-plugin/             # Plugin marketplace configuration
+│   ├── plugin.json             # Main plugin definition
+│   └── marketplace.json        # Marketplace metadata (2 plugins)
 └── README.md
 ```
 
-**Note**: Each command file IS a comprehensive protocol document containing:
-- Complete phase-by-phase workflows
-- Agent coordination instructions (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
-- Quality gates and success criteria
-- Examples, anti-patterns, and troubleshooting
-- Best practices and implementation guidance
-
-Previous versions had separate `agents/`, `protocols/`, and `scripts/` directories. These have been consolidated into the command files for a streamlined structure.
+**Note**:
+- Command files are comprehensive protocol documents with workflows, coordination, and best practices
+- Scripts read configuration from project's `CLAUDE.md` for universal compatibility
+- Both plugins share the same 6 specialized agents
 
 ---
 
@@ -265,6 +367,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.0.0 | 2025-11-24 | **Added autofix plugin**: Autonomous GitHub issue resolution with `/fix-github` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autofix) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
 | 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |
