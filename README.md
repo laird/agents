@@ -210,20 +210,31 @@ agents/
 │       └── autofix/
 │           └── plugin.json              # Autofix plugin definition
 ├── plugins/                             # Plugin implementations
-│   ├── modernize/                       # Modernize plugin (5 commands, 6 agents)
+│   ├── modernize/                       # Modernize plugin (5 commands, 6 agents, protocols)
 │   │   ├── commands/
 │   │   │   ├── assess.md               # Assessment protocol
 │   │   │   ├── plan.md                 # Planning protocol
 │   │   │   ├── modernize.md            # Full modernization workflow
 │   │   │   ├── retro.md                # Retrospective analysis
 │   │   │   └── retro-apply.md          # Improvement application
-│   │   └── agents/
-│   │       ├── architect.md            # Technology decisions and ADRs
-│   │       ├── coder.md                # Implementation and fixes
-│   │       ├── documentation.md        # User-facing guides
-│   │       ├── migration-coordinator.md # Multi-stage orchestration
-│   │       ├── security.md             # Vulnerability scanning
-│   │       └── tester.md               # Comprehensive testing
+│   │   ├── agents/
+│   │   │   ├── architect.md            # Technology decisions and ADRs
+│   │   │   ├── coder.md                # Implementation and fixes
+│   │   │   ├── documentation.md        # User-facing guides
+│   │   │   ├── migration-coordinator.md # Multi-stage orchestration
+│   │   │   ├── security.md             # Vulnerability scanning
+│   │   │   └── tester.md               # Comprehensive testing
+│   │   └── protocols/                   # Protocol documentation (10 protocols)
+│   │       ├── 00-PROTOCOL-INDEX.md    # Protocol index
+│   │       ├── adr-lifecycle.md        # ADR lifecycle protocol
+│   │       ├── agent-logging.md        # Agent logging protocol
+│   │       ├── agents-overview.md      # Agents overview
+│   │       ├── documentation-plan.md   # Documentation planning
+│   │       ├── documentation-protocol.md # Documentation protocol
+│   │       ├── incremental-documentation.md # Incremental docs
+│   │       ├── protocols-overview.md   # Protocols overview
+│   │       ├── security-scanning-protocol.md # Security scanning
+│   │       └── testing-protocol.md     # Testing protocol
 │   └── autofix/                         # Autofix plugin (1 command, 6 agents, 1 script)
 │       ├── commands/
 │       │   └── fix-github.md           # Autonomous issue resolution
