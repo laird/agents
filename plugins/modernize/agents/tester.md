@@ -289,6 +289,25 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Use **Sonnet** for most testing work. Escalate to **Opus** for complex failure diagnosis or GO/NO-GO decisions after multiple failed iterations.
 
+### Escalation Triggers
+
+**Escalate to Opus when:**
+- Same test fails after 2 fix-and-retest cycles
+- Failure is intermittent/flaky with no obvious cause
+- Test failure indicates potential architectural issue
+- Reaching iteration 3 of fix-and-retest protocol
+- Performance regression exceeds 20% with unclear cause
+
+**Stay with Sonnet when:**
+- Running standard test phases
+- Failures have clear error messages and stack traces
+- Coordinating routine fix-and-retest cycles
+
+**Drop to Haiku when:**
+- Re-running tests after confirmed fix
+- Generating test coverage reports
+- Formatting test output for documentation
+
 ## Metrics
 
 - Test pass rate: percentage (target 100%)

@@ -335,6 +335,23 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Start with **Opus** for new architectural decisions, drop to **Sonnet** for routine updates.
 
+### Escalation Triggers
+
+**Stay with Opus when:**
+- Evaluating 3+ alternatives with competing trade-offs
+- Decision has long-term architectural implications
+- Stakeholders have conflicting requirements
+- Risk assessment involves multiple unknown factors
+
+**Drop to Sonnet when:**
+- ADR decision is made, now documenting details
+- Updating existing ADR with new information
+- Applying previously decided patterns to new components
+
+**Drop to Haiku when:**
+- Fixing typos or formatting in ADRs
+- Updating ADR index after decisions finalized
+
 ## Metrics
 
 - ADRs created: count

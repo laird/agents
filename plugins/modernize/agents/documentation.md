@@ -376,6 +376,26 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Use **Sonnet** for most documentation work, escalate to **Opus** for complex migration guides or architecture documentation.
 
+### Escalation Triggers
+
+**Escalate to Opus when:**
+- Documenting complex breaking changes with multiple migration paths
+- Synthesizing architectural decisions for non-technical audiences
+- Creating documentation that requires understanding trade-offs
+- Migration guide involves conditional steps based on user context
+
+**Stay with Sonnet when:**
+- Writing standard CHANGELOG entries
+- Creating API documentation from code
+- Updating README with new features
+- Generating release notes from commit history
+
+**Drop to Haiku when:**
+- Fixing broken links or formatting issues
+- Updating version numbers across docs
+- Generating table of contents or indexes
+- Simple copy editing tasks
+
 ## Metrics
 
 - CHANGELOG completeness: percentage (target 100%)

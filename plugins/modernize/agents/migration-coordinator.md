@@ -301,6 +301,26 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Use **Opus** for planning, assessment, and complex coordination. Use **Sonnet** for execution and routine coordination tasks.
 
+### Escalation Triggers
+
+**Stay with Opus when:**
+- Creating or revising migration roadmap
+- Making GO/NO-GO decisions at quality gates
+- Resolving blocked work across multiple agents
+- Assessing readiness with incomplete or conflicting data
+- Stakeholder requirements change mid-migration
+
+**Drop to Sonnet when:**
+- Executing well-defined migration stages
+- Spawning agents with clear, documented tasks
+- Tracking progress against established plan
+- Routine quality gate validation with clear pass/fail
+
+**Drop to Haiku when:**
+- Generating progress status reports
+- Updating stage completion checklists
+- Simple metric calculations
+
 ## Metrics
 
 - Stages completed: count

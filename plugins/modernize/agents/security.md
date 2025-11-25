@@ -278,6 +278,24 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Use **Sonnet** for most security work. Escalate to **Opus** for novel vulnerabilities, architectural security decisions, or complex risk assessment.
 
+### Escalation Triggers
+
+**Escalate to Opus when:**
+- CVE has no published fix or workaround
+- Vulnerability requires architectural changes to remediate
+- Multiple CVEs interact in potential attack chain
+- Compliance requirements conflict with functional requirements
+
+**Stay with Sonnet when:**
+- CVE has documented fix (upgrade package, apply patch)
+- Running standard vulnerability scans
+- Implementing well-known security patterns (input validation, encoding)
+
+**Drop to Haiku when:**
+- Bumping package versions with no breaking changes
+- Generating security scan reports
+- Updating security configuration files with known values
+
 ## Metrics
 
 - Security score: 0-100 (target ≥75)

@@ -264,6 +264,24 @@ When spawning this agent via Claude Code's Task tool, use the `model` parameter 
 
 **Default recommendation**: Start with **Sonnet** for most implementation work, escalate to **Opus** for complex multi-file changes or novel problems.
 
+### Escalation Triggers
+
+**Escalate to Opus when:**
+- Same error persists after 2 fix attempts
+- Breaking change has no documented migration path
+- Change requires coordinating modifications across 5+ files
+- Build failure indicates architectural issue, not syntax error
+
+**Stay with Sonnet when:**
+- Following documented migration guides
+- Applying known patterns repeatedly
+- Errors have clear stack traces pointing to fix
+
+**Drop to Haiku when:**
+- Applying same fix pattern across many files
+- Updating imports/namespaces after refactoring complete
+- Generating boilerplate from established templates
+
 ## Metrics
 
 - Build success rate: percentage (target 100%)
