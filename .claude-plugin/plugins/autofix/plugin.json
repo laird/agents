@@ -1,6 +1,6 @@
 {
   "name": "autofix",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
   "author": {
     "name": "Agent Protocols Team",
