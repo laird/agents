@@ -43,6 +43,33 @@ Never stop, just keep looking for issues to address.
 Start working on GitHub issues now:
 
 ```bash
+# Load project-specific configuration from CLAUDE-AUTOFIX-CONFIG.md if it exists
+if [ -f "CLAUDE-AUTOFIX-CONFIG.md" ]; then
+  echo "📋 Found project configuration: CLAUDE-AUTOFIX-CONFIG.md"
+
+  # Extract test command
+  if grep -q "### Regression Test Suite" CLAUDE-AUTOFIX-CONFIG.md; then
+    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE-AUTOFIX-CONFIG.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+    echo "✅ Regression test command: $TEST_COMMAND"
+  else
+    TEST_COMMAND="npm test"
+    echo "⚠️  No regression test command found, using default: $TEST_COMMAND"
+  fi
+
+  # Extract build command
+  if grep -q "### Build Verification" CLAUDE-AUTOFIX-CONFIG.md; then
+    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE-AUTOFIX-CONFIG.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+    echo "✅ Build command: $BUILD_COMMAND"
+  else
+    BUILD_COMMAND="npm run build"
+    echo "⚠️  No build command found, using default: $BUILD_COMMAND"
+  fi
+else
+  echo "⚠️  No CLAUDE-AUTOFIX-CONFIG.md found, using defaults"
+  TEST_COMMAND="npm test"
+  BUILD_COMMAND="npm run build"
+fi
+
 # Ensure priority labels exist (create only if missing)
 for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50"; do
   IFS=':' read -r name desc color <<< "$label"
@@ -295,7 +322,7 @@ gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 ```
 Issue #240: TypeScript compilation errors in disabled-features
 → Direct fix: Delete broken test files
-→ Verify: npm run build
+→ Verify: $BUILD_COMMAND (from CLAUDE-AUTOFIX-CONFIG.md)
 → Commit and close
 ```
 
@@ -351,13 +378,11 @@ If no issues with P0-P3 labels exist, run full regression testing:
 ### Step 1: Run Regression Test Suite
 
 ```bash
-# Run complete regression test suite
-npm run test:regression
+# Run complete regression test suite (uses command from CLAUDE-AUTOFIX-CONFIG.md)
+$TEST_COMMAND
 
-# This runs:
-# - All backend unit tests
-# - All Playwright E2E tests
-# - Generates timestamped report in docs/test/regression-reports/
+# This command is configured in the project's CLAUDE-AUTOFIX-CONFIG.md
+# It should run all tests and generate a report with GitHub issue integration
 ```
 
 ### Step 2: Analyze Regression Results

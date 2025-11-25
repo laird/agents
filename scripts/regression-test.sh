@@ -20,7 +20,49 @@ NC='\033[0m' # No Color
 
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-REPORT_DIR="docs/test/regression-reports"
+
+# Load configuration from CLAUDE-AUTOFIX-CONFIG.md if it exists
+if [ -f "CLAUDE-AUTOFIX-CONFIG.md" ]; then
+    echo -e "${BLUE}Loading configuration from CLAUDE-AUTOFIX-CONFIG.md${NC}"
+
+    # Extract report directory
+    if grep -q "Location: " CLAUDE-AUTOFIX-CONFIG.md; then
+        REPORT_DIR=$(grep "Location: " CLAUDE-AUTOFIX-CONFIG.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
+    else
+        REPORT_DIR="docs/test/regression-reports"
+    fi
+
+    # Extract unit test configuration
+    if grep -q "Working directory: " CLAUDE-AUTOFIX-CONFIG.md && grep -B5 "Working directory:" CLAUDE-AUTOFIX-CONFIG.md | grep -q "Unit Tests"; then
+        UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE-AUTOFIX-CONFIG.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
+        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE-AUTOFIX-CONFIG.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
+    else
+        UNIT_TEST_DIR="."
+        UNIT_TEST_CMD="npm test"
+    fi
+
+    # Extract E2E test configuration
+    if grep -q "### E2E Tests Only" CLAUDE-AUTOFIX-CONFIG.md; then
+        E2E_TEST_CMD=$(grep -A5 "### E2E Tests Only" CLAUDE-AUTOFIX-CONFIG.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
+    else
+        E2E_TEST_CMD="npx playwright test --reporter=json"
+    fi
+
+    # Extract test file patterns
+    if grep -q "Test file pattern:" CLAUDE-AUTOFIX-CONFIG.md; then
+        E2E_TEST_PATTERN=$(grep "Test file pattern:" CLAUDE-AUTOFIX-CONFIG.md | sed 's/.*Test file pattern: *`\([^`]*\)`.*/\1/' | head -1)
+    else
+        E2E_TEST_PATTERN="*.spec.ts"
+    fi
+else
+    echo -e "${YELLOW}No CLAUDE-AUTOFIX-CONFIG.md found, using defaults${NC}"
+    REPORT_DIR="docs/test/regression-reports"
+    UNIT_TEST_DIR="."
+    UNIT_TEST_CMD="npm test"
+    E2E_TEST_CMD="npx playwright test --reporter=json"
+    E2E_TEST_PATTERN="*.spec.ts"
+fi
+
 REPORT_FILE="$REPORT_DIR/regression-${TIMESTAMP}.md"
 
 # Create report directory if it doesn't exist
@@ -48,15 +90,22 @@ EOF
 echo -e "${YELLOW}[1/2] Running Unit Tests...${NC}"
 UNIT_RESULTS="/tmp/unit-test-results-${TIMESTAMP}.log"
 
-cd backend
-if npm test 2>&1 | tee "$UNIT_RESULTS"; then
+# Run unit tests from configured directory
+if [ "$UNIT_TEST_DIR" != "." ]; then
+    cd "$UNIT_TEST_DIR"
+fi
+
+if $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
     UNIT_STATUS="✅ PASSED"
     UNIT_EXIT=0
 else
     UNIT_STATUS="❌ FAILED"
     UNIT_EXIT=1
 fi
-cd ..
+
+if [ "$UNIT_TEST_DIR" != "." ]; then
+    cd - > /dev/null
+fi
 
 # Extract unit test stats (Jest format: "Tests: X failed, Y skipped, Z passed")
 UNIT_PASSED=$(grep -oP 'Tests:.*?(\d+)\s+passed' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
@@ -83,8 +132,8 @@ echo -e "${YELLOW}[2/2] Running E2E Tests...${NC}"
 E2E_RESULTS="/tmp/e2e-test-results-${TIMESTAMP}.log"
 E2E_JSON="/tmp/e2e-results-${TIMESTAMP}.json"
 
-# Run E2E tests with JSON reporter
-if npx playwright test --reporter=json 2>&1 | tee "$E2E_RESULTS"; then
+# Run E2E tests with configured command
+if $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"; then
     E2E_STATUS="✅ PASSED"
     E2E_EXIT=0
 else
