@@ -2,6 +2,20 @@
 
 Analyze all open GitHub issues, prioritize them, and begin systematically fixing or implementing them starting with the highest priority.
 
+## Usage
+
+```bash
+# Automatic priority-based selection (processes all issues in priority order)
+/fix-github
+
+# Target a specific issue directly (skips priority selection)
+/fix-github 223
+```
+
+**With issue number**: Skips the priority selection process and immediately starts working on the specified issue, regardless of its priority label.
+
+**Without issue number**: Fetches all open issues with priority labels (P0-P3) and processes them in priority order.
+
 ## What This Does
 
 1. Creates priority labels (P0, P1, P2, P3) if they don't exist
@@ -197,34 +211,65 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "✅ Priority labels configured"
 fi
 
-# Get highest priority issue (using labels only)
-gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
+# Check if a specific issue number was provided as argument
+# Usage: /fix-github [issue_number]
+SPECIFIED_ISSUE="${1:-}"
 
-cat /tmp/all-issues.json | jq -r '
-  .[] |
-  select(
-    (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
-  ) |
-  {
-    number: .number,
-    title: .title,
-    body: (.body // ""),
-    priority: (
-      if (.labels | map(.name) | any(. == "P0")) then 0
-      elif (.labels | map(.name) | any(. == "P1")) then 1
-      elif (.labels | map(.name) | any(. == "P2")) then 2
-      elif (.labels | map(.name) | any(. == "P3")) then 3
-      else 4
-      end
-    )
-  }
-' | jq -s 'sort_by(.priority) | .[0]' > /tmp/top-issue.json
+if [ -n "$SPECIFIED_ISSUE" ]; then
+  # Specific issue provided - fetch it directly
+  echo "🎯 Targeting specific issue #$SPECIFIED_ISSUE"
+  gh issue view "$SPECIFIED_ISSUE" --json number,title,body,labels > /tmp/top-issue.json 2>/dev/null
 
-# Display the top issue
-ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
-ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '.priority')
+  if [ $? -ne 0 ] || [ ! -s /tmp/top-issue.json ]; then
+    echo "❌ Error: Issue #$SPECIFIED_ISSUE not found or not accessible"
+    exit 1
+  fi
+
+  # Extract priority from labels (default to P2 if no priority label)
+  ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '
+    if (.labels | map(.name) | any(. == "P0")) then 0
+    elif (.labels | map(.name) | any(. == "P1")) then 1
+    elif (.labels | map(.name) | any(. == "P2")) then 2
+    elif (.labels | map(.name) | any(. == "P3")) then 3
+    else 2
+    end
+  ')
+
+  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
+  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
+  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
+
+  echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
+else
+  # No specific issue - get highest priority issue (using labels only)
+  gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
+
+  cat /tmp/all-issues.json | jq -r '
+    .[] |
+    select(
+      (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
+    ) |
+    {
+      number: .number,
+      title: .title,
+      body: (.body // ""),
+      priority: (
+        if (.labels | map(.name) | any(. == "P0")) then 0
+        elif (.labels | map(.name) | any(. == "P1")) then 1
+        elif (.labels | map(.name) | any(. == "P2")) then 2
+        elif (.labels | map(.name) | any(. == "P3")) then 3
+        else 4
+        end
+      )
+    }
+  ' | jq -s 'sort_by(.priority) | .[0]' > /tmp/top-issue.json
+
+  # Display the top issue
+  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
+  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
+  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
+  ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '.priority')
+fi
 
 echo ""
 echo "🎯 Highest Priority Issue to Fix"

@@ -32,9 +32,22 @@
 
 ## Commands
 
-### `/fix-github`
+### `/fix-github [issue_number]`
 
 Continuous GitHub issue resolver that orchestrates:
+
+**Usage:**
+```bash
+# Automatic mode - processes all priority-labeled issues in order
+/fix-github
+
+# Targeted mode - work on a specific issue immediately
+/fix-github 223
+```
+
+**Modes:**
+- **Automatic**: Fetches all open issues with P0-P3 labels, processes highest priority first
+- **Targeted**: Skips priority selection, immediately starts on the specified issue (useful for debugging a specific problem or working on issues without priority labels)
 
 1. **Setup** - Creates priority labels (P0-P3) on first run
 2. **Fetch** - Gets open issues with priority labels
