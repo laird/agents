@@ -34,15 +34,19 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 
 ### Enhancement Phase (when no bugs)
 11. Check for existing enhancement issues
-12. **If enhancements exist**: Use superpowers to design, plan, and implement
-13. **If no enhancements exist**: Propose new improvements using superpowers:brainstorming
-14. Create enhancement issue with detailed implementation plan
-15. Execute the plan using superpowers:executing-plans
-16. Run tests after implementation
-17. **If tests pass**: Commit, merge, and close enhancement
-18. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
+12. **If enhancements exist**: Use superpowers to design, plan, and implement each one
+13. Run tests after implementation
+14. **If tests pass**: Commit, merge, and close enhancement
+15. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
+16. Repeat until all existing enhancements are implemented
 
-Never stop, just keep looking for issues to address. Bugs always take priority over enhancements.
+### Propose New Enhancements (lowest priority)
+17. **Only when no bugs AND no existing enhancements**: Propose new improvements
+18. Use superpowers:brainstorming to identify valuable enhancements
+19. Create enhancement issue with detailed implementation plan
+20. Loop back to Enhancement Phase to implement
+
+Never stop, just keep looking for issues to address. Priority: Bugs > Existing Enhancements > Proposing New Enhancements.
 
 **Note**: This command uses GitHub labels (P0, P1, P2, P3) exclusively for priority detection. Issues without priority labels will not be processed by this workflow.
 
@@ -911,11 +915,11 @@ After completing ANY of these actions, you MUST immediately continue:
 
 ### Priority Order
 
-The workflow follows this priority order:
+The workflow follows this strict priority order:
 1. **P0-P3 Bug Issues** (highest priority - fix bugs first)
 2. **Regression Test Failures** (creates new bug issues)
-3. **Enhancement Issues** (only when no bugs exist)
-4. **Propose New Enhancements** (only when no enhancements exist)
+3. **Existing Enhancement Issues** (only when no bugs exist)
+4. **Propose New Enhancements** (lowest priority - only when no bugs AND no existing enhancements)
 
 ### Loop Implementation
 

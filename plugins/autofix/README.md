@@ -63,15 +63,20 @@ Continuous GitHub issue resolver that orchestrates:
    - Loops back to bug fixing if failures found
 
 3. **Enhancement Phase** (when no bugs)
-   - Checks for existing enhancement issues
-   - Uses superpowers:brainstorming to propose new enhancements if none exist
+   - Implements existing enhancement issues using superpowers skills
    - Creates detailed implementation plan using superpowers:writing-plans
    - Executes plan using superpowers:executing-plans
    - Runs tests after implementation
    - Creates bug issues for any test failures (returns to bug fixing)
    - Commits and closes enhancement on success
 
-4. **Continuous Loop** - Never stops until manually interrupted
+4. **Propose New Enhancements** (lowest priority)
+   - Only runs when no bugs AND no existing enhancements
+   - Uses superpowers:brainstorming to identify improvements
+   - Creates enhancement issues with implementation plans
+   - Loops back to Enhancement Phase to implement
+
+5. **Continuous Loop** - Never stops until manually interrupted
 
 **Requirements**: GitHub CLI (`gh`) authenticated with repo access.
 
