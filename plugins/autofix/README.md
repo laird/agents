@@ -49,15 +49,29 @@ Continuous GitHub issue resolver that orchestrates:
 - **Automatic**: Fetches all open issues with P0-P3 labels, processes highest priority first
 - **Targeted**: Skips priority selection, immediately starts on the specified issue (useful for debugging a specific problem or working on issues without priority labels)
 
-1. **Setup** - Creates priority labels (P0-P3) on first run
-2. **Fetch** - Gets open issues with priority labels
-3. **Prioritize** - Processes highest priority first (P0 > P1 > P2 > P3)
-4. **Delegate** - Routes to appropriate skill based on complexity:
-   - Simple issues → Direct fix
-   - Complex issues → Superpowers skills
-5. **Complete** - Commits, merges, closes with explanation
-6. **Loop** - Immediately continues to next issue (runs forever)
-7. **Regression** - When queue empty, runs tests and creates issues for failures
+**Workflow Phases:**
+
+1. **Bug Fixing Phase** (highest priority)
+   - Creates priority labels (P0-P3) on first run
+   - Fetches and prioritizes open bug issues
+   - Delegates to appropriate skill based on complexity
+   - Commits, merges, closes with explanation
+
+2. **Regression Testing Phase**
+   - Runs when no priority bugs exist
+   - Creates GitHub issues for test failures
+   - Loops back to bug fixing if failures found
+
+3. **Enhancement Phase** (when no bugs)
+   - Checks for existing enhancement issues
+   - Uses superpowers:brainstorming to propose new enhancements if none exist
+   - Creates detailed implementation plan using superpowers:writing-plans
+   - Executes plan using superpowers:executing-plans
+   - Runs tests after implementation
+   - Creates bug issues for any test failures (returns to bug fixing)
+   - Commits and closes enhancement on success
+
+4. **Continuous Loop** - Never stops until manually interrupted
 
 **Requirements**: GitHub CLI (`gh`) authenticated with repo access.
 

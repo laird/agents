@@ -1,7 +1,7 @@
 {
   "name": "autofix",
-  "version": "1.0.3",
-  "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
+  "version": "1.1.0",
+  "description": "Autonomous GitHub issue resolution system. Fixes bugs by priority, runs regression tests, then implements enhancements using superpowers skills. Creates detailed implementation plans, executes them, and logs any test failures as new issues.",
   "author": {
     "name": "Agent Protocols Team",
     "email": "laird@popk.in"

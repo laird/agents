@@ -18,19 +18,31 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 
 ## What This Does
 
+### Bug Fixing Phase (Priority)
 1. Creates priority labels (P0, P1, P2, P3) if they don't exist
 2. Fetches all open GitHub issues with priority labels
 3. Identifies the highest priority issue (P0 > P1 > P2 > P3)
-4. Displays the issue details and prompt for you to fix
-5. **For simple issues**: Directly troubleshoot and fix
-6. **For complex issues**: Use superpowers skills to plan and execute
-7. After fixing, moves to the next issue
-8. Continues until all issues are resolved
-9. **If there are no priority issues**: Run full regression test suite
-10. Analyze regression test results and create GitHub issues for failures
-11. Propose improvements (test coverage, robustness, simplicity)
+4. **For simple issues**: Directly troubleshoot and fix
+5. **For complex issues**: Use superpowers skills to plan and execute
+6. After fixing, moves to the next issue
+7. Continues until all bug issues are resolved
 
-Never stop, just keep looking for issues to address.
+### Regression Testing Phase
+8. **When no priority bugs exist**: Run full regression test suite
+9. Analyze regression test results and create GitHub issues for failures
+10. Loop back to bug fixing if new issues are created
+
+### Enhancement Phase (when no bugs)
+11. Check for existing enhancement issues
+12. **If enhancements exist**: Use superpowers to design, plan, and implement
+13. **If no enhancements exist**: Propose new improvements using superpowers:brainstorming
+14. Create enhancement issue with detailed implementation plan
+15. Execute the plan using superpowers:executing-plans
+16. Run tests after implementation
+17. **If tests pass**: Commit, merge, and close enhancement
+18. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
+
+Never stop, just keep looking for issues to address. Bugs always take priority over enhancements.
 
 **Note**: This command uses GitHub labels (P0, P1, P2, P3) exclusively for priority detection. Issues without priority labels will not be processed by this workflow.
 
@@ -581,53 +593,304 @@ After regression testing creates new issues, restart the workflow:
 
 The workflow will now pick up the newly created issues and begin fixing them.
 
-### Step 5: If All Tests Pass
+### Step 5: If All Tests Pass - Work on Enhancements
 
-If regression tests pass completely (no issues created):
+If regression tests pass completely (no new bug issues created), shift focus to **enhancements**.
 
-**Propose Improvements**:
-
-1. **Test Coverage Analysis**
-   - Identify untested code paths
-   - Add missing E2E scenarios
-   - Improve edge case coverage
-
-2. **Code Quality Improvements**
-   - Refactor complex functions
-   - Reduce code duplication
-   - Improve type safety
-
-3. **Performance Optimizations**
-   - Identify slow queries
-   - Add caching where needed
-   - Optimize bundle size
-
-4. **Documentation Updates**
-   - Update API docs
-   - Add code examples
-   - Document best practices
-
-**Create Improvement Issues**:
+#### 5A: Check for Existing Enhancement Issues
 
 ```bash
-# Create issues for proposed improvements
-gh issue create \
-  --label "enhancement,proposed" \
-  --title "P3-Improvement: [Brief description]" \
-  --body "## Proposed Improvement
+# Check for open enhancement issues
+gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 20 > /tmp/enhancements.json
 
-[Detailed description]
+ENHANCEMENT_COUNT=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+
+if [ "$ENHANCEMENT_COUNT" -gt 0 ]; then
+  echo "🚀 Found $ENHANCEMENT_COUNT enhancement(s) to implement"
+  # Get first enhancement
+  ENHANCE_NUM=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['number'])")
+  ENHANCE_TITLE=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['title'])")
+  ENHANCE_BODY=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0].get('body',''))")
+  echo "📋 Working on enhancement #$ENHANCE_NUM: $ENHANCE_TITLE"
+else
+  echo "✨ No existing enhancements. Proposing new improvements..."
+  # Continue to Step 5B
+fi
+```
+
+#### 5B: Propose New Enhancements (if none exist)
+
+If no enhancement issues exist, analyze the codebase and propose improvements:
+
+**Use superpowers:brainstorming** to identify valuable enhancements:
+
+```
+Use Skill tool: superpowers:brainstorming
+```
+
+Focus areas for enhancement proposals:
+1. **Test Coverage** - Identify untested code paths, missing E2E scenarios
+2. **Code Quality** - Complex functions to refactor, duplication to reduce
+3. **Performance** - Slow queries, caching opportunities, bundle optimization
+4. **Documentation** - API docs, code examples, best practices
+
+**Create Enhancement Issue with Implementation Plan**:
+
+```bash
+gh issue create \
+  --label "enhancement,proposed,P3" \
+  --title "Enhancement: [Brief description]" \
+  --body "$(cat <<'ENHANCEMENT_BODY'
+## Proposed Enhancement
+
+[Detailed description of what this enhancement accomplishes]
 
 ## Rationale
-[Why this improvement is valuable]
 
-## Implementation
-[How to implement]
+[Why this improvement is valuable - metrics, user impact, maintainability]
 
-## Impact
-[Expected benefits]
+## Implementation Plan
 
-🤖 Proposed by autonomous improvement workflow"
+### Phase 1: [First phase]
+- [ ] Task 1.1
+- [ ] Task 1.2
+
+### Phase 2: [Second phase]
+- [ ] Task 2.1
+- [ ] Task 2.2
+
+### Phase 3: Verification
+- [ ] Run full test suite
+- [ ] Manual verification of feature
+- [ ] Update documentation
+
+## Success Criteria
+
+- [ ] All existing tests pass
+- [ ] New tests added for enhancement
+- [ ] Documentation updated
+- [ ] No performance regression
+
+## Estimated Complexity
+
+[Simple | Medium | Complex]
+
+🤖 Proposed by autonomous improvement workflow
+ENHANCEMENT_BODY
+)"
+
+echo "✅ Created enhancement issue. Continuing to implement..."
+```
+
+#### 5C: Implement Enhancement Using Superpowers
+
+For each enhancement issue, follow this workflow:
+
+**Step 1: Create Feature Branch**
+
+```bash
+git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
+
+gh issue comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**
+
+Starting automated implementation of this enhancement.
+
+**Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\`
+**Started**: $(date)
+
+Implementation in progress..."
+```
+
+**Step 2: Design Solution with Brainstorming**
+
+```
+Use Skill tool: superpowers:brainstorming
+```
+
+This will:
+- Explore design alternatives
+- Clarify requirements
+- Validate assumptions
+- Refine into concrete design
+
+**Step 3: Create Detailed Implementation Plan**
+
+```
+Use Skill tool: superpowers:writing-plans
+```
+
+This will:
+- Break down into bite-sized tasks
+- Specify exact file paths and changes
+- Include verification steps
+- Assume zero prior codebase knowledge
+
+**Update the GitHub issue** with the implementation plan:
+
+```bash
+gh issue comment "$ENHANCE_NUM" --body "📋 **Implementation Plan Created**
+
+## Detailed Implementation Plan
+
+[Paste the implementation plan created by superpowers:writing-plans]
+
+Beginning execution..."
+```
+
+**Step 4: Execute the Plan**
+
+```
+Use Skill tool: superpowers:executing-plans
+```
+
+This will:
+- Load and review the plan critically
+- Execute tasks in batches
+- Report progress for review between batches
+- Track completion systematically
+
+**Step 5: Run Tests and Verify**
+
+```bash
+# Run full test suite
+$TEST_COMMAND
+
+# Capture test results
+TEST_EXIT_CODE=$?
+TEST_OUTPUT=$(cat /tmp/test-output.txt 2>/dev/null || echo "Test output not captured")
+```
+
+#### 5D: Handle Test Results
+
+**If Tests Pass**:
+
+```bash
+if [ $TEST_EXIT_CODE -eq 0 ]; then
+  echo "✅ All tests pass!"
+
+  # Use verification skill before claiming complete
+  # Use Skill tool: superpowers:verification-before-completion
+
+  # Commit changes
+  git add -A
+  git commit -m "Implement enhancement #${ENHANCE_NUM}: ${ENHANCE_TITLE}
+
+Detailed explanation of:
+- What was implemented
+- Design decisions made
+- Tests added/modified
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+
+  # Merge to main
+  git checkout main
+  git merge "enhancement/issue-${ENHANCE_NUM}-auto" --no-edit
+  git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
+
+  # Close enhancement with details
+  gh issue close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
+
+## Summary
+[What was implemented]
+
+## Changes Made
+[List of changes]
+
+## Tests
+- All existing tests pass
+- New tests added: [list new tests]
+
+## Verification
+[Evidence that enhancement works correctly]
+
+**Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\` (merged and deleted)
+
+🤖 Auto-implemented by autonomous enhancement workflow"
+fi
+```
+
+**If Tests Fail - Create Bug Issues**:
+
+```bash
+if [ $TEST_EXIT_CODE -ne 0 ]; then
+  echo "❌ Tests failed during enhancement implementation"
+
+  # Parse test failures and create issues for each
+  # Extract failing test names and create individual issues
+
+  gh issue create \
+    --label "bug,test-failure,P1" \
+    --title "Test failure during enhancement #${ENHANCE_NUM}: [Test name]" \
+    --body "$(cat <<FAILURE_BODY
+## Test Failure
+
+**Related Enhancement**: #${ENHANCE_NUM}
+**Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\`
+
+## Failing Test
+\`\`\`
+[Test name and location]
+\`\`\`
+
+## Error Output
+\`\`\`
+${TEST_OUTPUT}
+\`\`\`
+
+## Context
+This test failure occurred while implementing enhancement #${ENHANCE_NUM}.
+
+## Suggested Investigation
+1. Check if enhancement changes broke existing functionality
+2. Verify test expectations are still valid
+3. Check for missing dependencies or setup
+
+🤖 Created by autonomous enhancement workflow
+FAILURE_BODY
+)"
+
+  # Comment on enhancement issue about the failure
+  gh issue comment "$ENHANCE_NUM" --body "⚠️ **Implementation Blocked by Test Failures**
+
+Test failures occurred during implementation. Bug issues have been created:
+- [List created bug issue numbers]
+
+Enhancement implementation paused. Will resume after bugs are fixed.
+
+🤖 Autonomous enhancement workflow"
+
+  # Do NOT merge - leave branch for investigation
+  echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
+
+  # Switch back to main
+  git checkout main
+fi
+```
+
+#### 5E: Enhancement Skip Criteria
+
+Skip an enhancement and move to the next if:
+- Enhancement requires external services not available
+- Enhancement scope is too large (>50 files affected)
+- Enhancement has unresolved dependencies on other issues
+- Enhancement requires user decisions not documented
+
+```bash
+gh issue comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
+
+This enhancement cannot be automatically implemented because:
+[Reason]
+
+**Recommendation**: [What manual steps are needed]
+
+Moving to next enhancement or proposing new improvements.
+
+🤖 Autonomous enhancement workflow"
+
+# Add 'needs-review' label
+gh issue edit "$ENHANCE_NUM" --add-label "needs-review"
 ```
 
 ---
@@ -638,28 +901,57 @@ gh issue create \
 
 After completing ANY of these actions, you MUST immediately continue:
 
-1. **After fixing and closing an issue** → Fetch next priority issue
+1. **After fixing and closing a bug issue** → Fetch next priority issue
 2. **After skipping an issue** → Fetch next priority issue
 3. **After running regression tests** → Check for new issues created
-4. **After proposing improvements** → Fetch next priority issue
-5. **If no issues found** → Run regression tests, then check again
+4. **After implementing an enhancement** → Check for more enhancements or bugs
+5. **After test failures during enhancement** → Process created bug issues first
+6. **After proposing new enhancements** → Implement the proposed enhancement
+7. **If no issues found** → Run regression tests, then work on enhancements
+
+### Priority Order
+
+The workflow follows this priority order:
+1. **P0-P3 Bug Issues** (highest priority - fix bugs first)
+2. **Regression Test Failures** (creates new bug issues)
+3. **Enhancement Issues** (only when no bugs exist)
+4. **Propose New Enhancements** (only when no enhancements exist)
 
 ### Loop Implementation
 
 After every issue is resolved, skipped, or when checking for work:
 
 ```bash
-# Fetch next highest priority issue
+# Fetch all open issues
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
-PRIORITY_ISSUES=$(cat /tmp/all-issues.json | jq '[.[] | select(.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))] | length')
+# Count priority bug issues (P0-P3)
+PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+priority = [i for i in issues if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))]
+print(len(priority))
+")
+
+# Count enhancement issues
+ENHANCEMENT_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+enhancements = [i for i in issues if any(l['name'] == 'enhancement' for l in i.get('labels',[]))]
+print(len(enhancements))
+")
 
 if [ "$PRIORITY_ISSUES" -gt 0 ]; then
-  echo "🔄 Found $PRIORITY_ISSUES priority issues. Continuing..."
-  # Process next issue (repeat from "Get highest priority issue" section)
+  echo "🐛 Found $PRIORITY_ISSUES priority bug(s). Fixing bugs first..."
+  # Process next bug issue (repeat from "Get highest priority issue" section)
+elif [ "$ENHANCEMENT_ISSUES" -gt 0 ]; then
+  echo "🚀 No bugs! Found $ENHANCEMENT_ISSUES enhancement(s). Implementing..."
+  # Process next enhancement (Step 5C)
 else
-  echo "✅ No priority issues. Running regression tests..."
-  # Run regression tests, then loop back
+  echo "✨ No bugs or enhancements. Running regression tests..."
+  # Run regression tests
+  # If tests pass and no issues created → Propose new enhancements (Step 5B)
+  # Then implement the proposed enhancement (Step 5C)
 fi
 ```
 
@@ -668,11 +960,14 @@ fi
 - **DO NOT** wait for user input between issues
 - **DO NOT** stop after fixing one issue
 - **DO NOT** ask "should I continue?"
-- **DO** keep processing issues until the queue is empty
-- **DO** run regression tests when queue is empty
-- **DO** process any new issues created by regression tests
-- **DO** propose improvements only when everything passes
-- **DO** loop back and check for new issues after proposing improvements
+- **DO** keep processing bug issues until the queue is empty
+- **DO** run regression tests when bug queue is empty
+- **DO** process any new bug issues created by regression tests
+- **DO** work on enhancements only when no bugs exist
+- **DO** propose new enhancements when none exist
+- **DO** implement proposed enhancements immediately after creating them
+- **DO** create bug issues for any test failures during enhancement work
+- **DO** loop back to bug fixing if enhancement work creates failures
 
 **The only way this workflow stops is if the user manually interrupts it.**
 
