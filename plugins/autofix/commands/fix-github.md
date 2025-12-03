@@ -621,14 +621,22 @@ fi
 
 If no enhancement issues exist, analyze the codebase and propose improvements:
 
-**Use superpowers:brainstorming** to identify valuable enhancements:
+**First, check test coverage** using the dedicated command:
+
+```
+/improve-test-coverage --analyze
+```
+
+This will identify coverage gaps and prioritize them. If coverage is below 80%, focus on improving it before other enhancements.
+
+**Then use superpowers:brainstorming** to identify other valuable enhancements:
 
 ```
 Use Skill tool: superpowers:brainstorming
 ```
 
 Focus areas for enhancement proposals:
-1. **Test Coverage** - Identify untested code paths, missing E2E scenarios
+1. **Test Coverage** - Use `/improve-test-coverage` to identify and fix gaps
 2. **Code Quality** - Complex functions to refactor, duplication to reduce
 3. **Performance** - Slow queries, caching opportunities, bundle optimization
 4. **Documentation** - API docs, code examples, best practices

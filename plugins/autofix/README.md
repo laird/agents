@@ -11,6 +11,7 @@
 ├─────────────────────────────────────────────────────┤
 │  • Fetches and prioritizes issues                   │
 │  • Detects issue complexity                         │
+│  • Analyzes and improves test coverage              │
 │  • Delegates work to appropriate skills             │
 │  • Manages git branches and commits                 │
 │  • Updates issue status and comments                │
@@ -53,6 +54,54 @@ Run the complete regression test suite and create GitHub issues for failures:
 - Standalone health check for a project
 - Called by `/fix-github` when no priority bugs exist
 - Pre-release validation
+
+---
+
+### `/improve-test-coverage [path] [--analyze]`
+
+Evaluate and improve test coverage by identifying gaps and creating tests:
+
+```bash
+# Full analysis and improvement
+/improve-test-coverage
+
+# Analysis only (no changes made)
+/improve-test-coverage --analyze
+
+# Target a specific directory
+/improve-test-coverage src/components
+```
+
+**What it does:**
+1. Runs coverage tools and parses reports
+2. Identifies files with low coverage (<80%)
+3. Finds source files without corresponding test files
+4. Prioritizes gaps by importance (critical paths first: auth, security, payments)
+5. Creates GitHub issues for large coverage gaps OR directly implements tests
+6. Verifies improvement by re-running coverage
+
+**Priority assignment:**
+- **P0**: Auth, security, payments, encryption
+- **P1**: Services, handlers, controllers, managers
+- **P2**: Utilities, helpers, hooks, components
+- **P3**: Other files
+
+**Use cases:**
+- Auditing current test coverage
+- Planning testing sprints
+- Called by `/fix-github` during enhancement phase
+- Pre-release coverage validation
+
+**Configuration in CLAUDE.md:**
+```markdown
+### Coverage Command
+```bash
+npm run test:coverage
+```
+
+### Coverage Report
+- Location: `coverage/lcov-report/index.html`
+```
 
 ---
 
