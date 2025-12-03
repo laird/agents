@@ -1,6 +1,6 @@
 {
   "name": "autofix",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Autonomous GitHub issue resolution system. Fixes bugs by priority, runs regression tests, then implements enhancements using superpowers skills. Creates detailed implementation plans, executes them, and logs any test failures as new issues.",
   "author": {
     "name": "Agent Protocols Team",
