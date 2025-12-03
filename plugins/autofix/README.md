@@ -32,6 +32,30 @@
 
 ## Commands
 
+### `/full-regression-test`
+
+Run the complete regression test suite and create GitHub issues for failures:
+
+```bash
+/full-regression-test
+```
+
+**What it does:**
+1. Loads test configuration from CLAUDE.md
+2. Runs build verification
+3. Runs unit tests
+4. Runs E2E tests (if configured)
+5. Analyzes failures and assigns priorities (P0-P3)
+6. Creates/updates GitHub issues for each failure
+7. Generates a detailed markdown report
+
+**Use cases:**
+- Standalone health check for a project
+- Called by `/fix-github` when no priority bugs exist
+- Pre-release validation
+
+---
+
 ### `/fix-github [issue_number]`
 
 Continuous GitHub issue resolver that orchestrates:
@@ -58,7 +82,7 @@ Continuous GitHub issue resolver that orchestrates:
    - Commits, merges, closes with explanation
 
 2. **Regression Testing Phase**
-   - Runs when no priority bugs exist
+   - Runs `/full-regression-test` when no priority bugs exist
    - Creates GitHub issues for test failures
    - Loops back to bug fixing if failures found
 

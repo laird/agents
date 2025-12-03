@@ -554,30 +554,29 @@ Moving to next priority issue.
 
 If no issues with P0-P3 labels exist, run full regression testing:
 
-### Step 1: Run Regression Test Suite
+### Step 1: Run Full Regression Test
 
-```bash
-# Run complete regression test suite (uses command from CLAUDE-AUTOFIX-CONFIG.md)
-$TEST_COMMAND
+Use the `/full-regression-test` command to run the complete test suite:
 
-# This command is configured in the project's CLAUDE-AUTOFIX-CONFIG.md
-# It should run all tests and generate a report with GitHub issue integration
+```
+/full-regression-test
 ```
 
-### Step 2: Analyze Regression Results
+This command will:
+- Load test configuration from CLAUDE.md
+- Run build verification
+- Run unit tests
+- Run E2E tests (if configured)
+- Analyze failures and assign priorities
+- Create/update GitHub issues for each failure
+- Generate a detailed report
 
-The regression test suite automatically:
-- Creates GitHub issues for new test failures
-- Updates existing issues with regression data
-- Applies priority labels (P0-P3) based on severity
+### Step 2: Review Results
 
-**Priority Assignment**:
-- **P0 - Critical**: Auth, security, crashes, data loss
-- **P1 - High**: Major features broken, CRUD operations failing
-- **P2 - Medium**: Filtering, sorting, search, display issues
-- **P3 - Low**: UI issues, validation, edge cases
+After `/full-regression-test` completes:
 
-### Step 3: Review Generated Issues
+- **If failures found**: Issues are created with priority labels (P0-P3)
+- **If all pass**: No new issues created
 
 Check newly created issues:
 
@@ -586,18 +585,14 @@ Check newly created issues:
 gh issue list --label "test-failure" --state open --json number,title,labels --limit 20
 ```
 
-### Step 4: Restart /fix-github Workflow
+### Step 3: Continue Workflow
 
-After regression testing creates new issues, restart the workflow:
+After regression testing:
 
-```bash
-# Refresh issue list and continue
-/fix-github
-```
+- **If issues were created** → Continue fixing (workflow picks them up automatically)
+- **If all tests passed** → Move to Enhancement Phase (Step 5)
 
-The workflow will now pick up the newly created issues and begin fixing them.
-
-### Step 5: If All Tests Pass - Work on Enhancements
+### Step 4: If All Tests Pass - Work on Enhancements
 
 If regression tests pass completely (no new bug issues created), shift focus to **enhancements**.
 
@@ -953,7 +948,7 @@ elif [ "$ENHANCEMENT_ISSUES" -gt 0 ]; then
   # Process next enhancement (Step 5C)
 else
   echo "✨ No bugs or enhancements. Running regression tests..."
-  # Run regression tests
+  # Run /full-regression-test command
   # If tests pass and no issues created → Propose new enhancements (Step 5B)
   # Then implement the proposed enhancement (Step 5C)
 fi
@@ -965,8 +960,8 @@ fi
 - **DO NOT** stop after fixing one issue
 - **DO NOT** ask "should I continue?"
 - **DO** keep processing bug issues until the queue is empty
-- **DO** run regression tests when bug queue is empty
-- **DO** process any new bug issues created by regression tests
+- **DO** run `/full-regression-test` when bug queue is empty
+- **DO** process any new bug issues created by `/full-regression-test`
 - **DO** work on enhancements only when no bugs exist
 - **DO** propose new enhancements when none exist
 - **DO** implement proposed enhancements immediately after creating them
