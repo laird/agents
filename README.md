@@ -24,23 +24,45 @@ Both plugins feature **continuous improvement** through retrospective analysis a
 ### Install Plugins
 
 **Install modernize plugin** (software modernization workflows):
+
 ```bash
 /plugin install modernize
 ```
 
 **Install autofix plugin** (autonomous GitHub issue resolution):
+
 ```bash
 /plugin install autofix
 ```
 
 **Install both plugins**:
+
 ```bash
 /plugin install modernize autofix
 ```
 
 After installation, commands will be available as slash commands in Claude Code:
+
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
 - **autofix**: `/fix-github`
+
+---
+
+## Antigravity Support
+
+This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box.
+
+### Usage in this Repository
+
+No installation is required. You can run workflows immediately using Antigravity commands (e.g., `assess`, `plan`, `modernize`, `retro`, `fix-github`).
+
+### Installation in Other Projects
+
+To "install" these agents into another project:
+
+1. Copy the `.agent/` directory from this repository to the root of your target project.
+2. (Windows Only) Ensure you have a Bash environment (Git Bash or WSL) available for workflows that use shell commands.
+3. Start using the workflows immediately.
 
 ---
 
@@ -77,21 +99,27 @@ Each command is a comprehensive protocol document (`.md` file) containing agent 
 #### Quick Start
 
 1. **Assess Viability**
+
    ```
    /assess
    ```
+
    Evaluates technical debt, risks, and ROI. Outputs `ASSESSMENT.md`.
 
 2. **Create Plan**
+
    ```
    /plan
    ```
+
    Develops detailed execution strategy with phases, timeline, and resources. Outputs `PLAN.md`.
 
 3. **Execute Modernization**
+
    ```
    /modernize
    ```
+
    Orchestrates specialized agents through 7 phases:
    - Discovery & Planning
    - Security Assessment
@@ -102,9 +130,11 @@ Each command is a comprehensive protocol document (`.md` file) containing agent 
    - Documentation
 
 4. **Continuous Improvement (Optional)**
+
    ```
    /retro
    ```
+
    After project completion, analyzes history to identify process improvements. Reviews:
    - User interruptions and corrections
    - Agent behavioral issues (wrong tools, wasted effort)
@@ -114,9 +144,11 @@ Each command is a comprehensive protocol document (`.md` file) containing agent 
    Outputs `IMPROVEMENTS.md` with 3-5 evidence-based recommendations.
 
 5. **Apply Improvements**
+
    ```
    /retro-apply
    ```
+
    Systematically applies approved recommendations from `IMPROVEMENTS.md`:
    - Updates command files with better agent behavior guidance
    - Modifies protocols to prevent recurring issues
@@ -143,6 +175,7 @@ Autonomous GitHub issue resolution with intelligent testing and quality automati
 #### The Command
 
 **`/fix-github`** - Autonomous issue resolution workflow that:
+
 - Automatically prioritizes GitHub issues using P0-P3 labels
 - Detects issue complexity (simple vs complex)
 - Uses superpowers skills for complex problems
@@ -151,6 +184,7 @@ Autonomous GitHub issue resolution with intelligent testing and quality automati
 - Self-configures from project's `CLAUDE.md`
 
 **Key Features:**
+
 - Works with any test framework (Jest, Playwright, pytest, etc.)
 - Auto-creates configuration if missing
 - GitHub integration for test failure tracking
@@ -160,11 +194,13 @@ Autonomous GitHub issue resolution with intelligent testing and quality automati
 #### Quick Start
 
 **Usage:**
+
 ```
 /fix-github
 ```
 
 **First Run:** Automatically adds this configuration to your `CLAUDE.md`:
+
 ```markdown
 ## Automated Testing & Issue Management
 
@@ -174,9 +210,11 @@ npm run test:regression
 ```
 
 ### Build Verification
+
 ```bash
 npm run build
 ```
+
 ```
 
 **Workflow:**
@@ -251,6 +289,7 @@ agents/
 ```
 
 **Structure Notes**:
+
 - **Parallel plugin architecture**: Each plugin has its own commands/, agents/, and scripts/
 - **Complete separation**: Plugins are independent and can be installed individually
 - **Shared agent definitions**: Both plugins include the same 6 specialized agents (architecture, coder, documentation, migration-coordinator, security, tester)
@@ -261,6 +300,7 @@ agents/
 ## Key Features
 
 ### Production-Validated Protocols
+
 - ✅ **Proven results** - Successfully guided 32/32 project migrations
 - ✅ **Universal applicability** - Works with any software project, not just .NET
 - ✅ **Complete audit trail** - HISTORY.md logging for all agent activities
@@ -268,12 +308,14 @@ agents/
 - ✅ **Evidence-based evolution** - Protocols continuously improved through retrospective analysis
 
 ### Multi-Agent Coordination
+
 - 🤖 **6 specialized agents** - Each with defined capabilities and responsibilities
 - 🔄 **Parallel execution** - Multiple agents work independently on separate tasks
 - 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
 - 📝 **Systematic workflows** - 7-phase migration, 6-phase testing, 8-stage ADR lifecycle
 
 ### Continuous Improvement
+
 - 🔍 **Retrospective analysis** - Analyzes git history, user corrections, agent mistakes
 - 📈 **Evidence-based recommendations** - 3-5 specific improvements with quantified impact
 - 🔧 **Automated application** - Updates commands, protocols, and automation
@@ -282,6 +324,7 @@ agents/
 - ⏱️ **Measurable impact** - Recent improvements saved 27 hours per project
 
 ### Real-World Results
+
 - **32/32 projects** migrated successfully (100% success rate)
 - **100% test pass rate** (meets requirement)
 - **Security improvement** from 0/100 → 45/100 (CRITICAL CVEs eliminated)
@@ -328,18 +371,21 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 ## Best Practices
 
 **Modernization Workflow:**
+
 1. `/assess` → `/plan` → `/modernize` → `/retro` → `/retro-apply`
 2. Monitor HISTORY.md for complete audit trail
 3. Review `IMPROVEMENTS.md` and apply approved changes
 4. Next project benefits from lessons learned
 
 **Quality Gates:**
+
 - Security score ≥45 before migration starts
 - Build success 100% before next stage
 - Test pass rate 100% before proceeding
 - All P0/P1 issues resolved before release
 
 **Autofix Workflow:**
+
 1. Run `/fix-github` to start autonomous issue resolution
 2. Customize configuration in `CLAUDE.md` as needed
 3. Let it run continuously for ongoing quality improvement
@@ -377,10 +423,10 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 ## References
 
-- **Repository**: https://github.com/laird/agents
-- **MADR 3.0.0**: https://adr.github.io/madr/ - ADR format specification
-- **Keep a Changelog**: https://keepachangelog.com/ - CHANGELOG format
-- **Claude Code Docs**: https://docs.claude.com/en/docs/claude-code/
+- **Repository**: <https://github.com/laird/agents>
+- **MADR 3.0.0**: <https://adr.github.io/madr/> - ADR format specification
+- **Keep a Changelog**: <https://keepachangelog.com/> - CHANGELOG format
+- **Claude Code Docs**: <https://docs.claude.com/en/docs/claude-code/>
 
 ---
 
