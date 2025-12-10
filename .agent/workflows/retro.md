@@ -2,43 +2,143 @@
 description: Run a retrospective to identify process improvements
 ---
 
-# Retrospective Analysis Workflow
+# Retrospective Process Improvement Protocol
 
-This workflow orchestrates a team retrospective to identify improvements, creating `IMPROVEMENTS.md`.
+**Version**: 1.0
+**Purpose**: Coordinate agents to review project history and identify process improvements
+**Output**: `IMPROVEMENTS.md` (ADR format with 3-5 specific recommendations)
+**Duration**: 2-4 hours
 
-1. **Historical Analysis**
-    - **Migration Coordinator**: Analyze `HISTORY.md` for timeline deviations and blockers.
-    - **Architect**: Review ADRs for decision outcomes.
-    - **Tester**: Analyze test pass rates and flaky tests.
-    - **Security**: Review vulnerability trends.
-    - **Coder**: Analyze git history for churn and large commits.
-    - **Documentation**: specific check: is documentation up to date?
+---
 
-2. **Agent Behavior Analysis**
-    - Search git logs for "fix", "oops", "correct" to identify agent errors.
-    Run the following analysis commands:
+## Overview
 
-    ```bash
-    bash -c 'git log --all --grep="fix\|correct\|actually\|oops\|mistake"'
-    bash -c 'grep -i "user:\|correction\|fix\|reverted\|undo" HISTORY.md'
-    bash -c 'git log --all --oneline | grep -i "revert\|undo"'
-    bash -c 'git log --all --format="%ai %s" | awk "{print \$1, \$2}" | sort'
-    bash -c 'git log --all --oneline --graph'
-    bash -c 'git log --all --numstat --pretty="%H" | awk "NF==3 {plus+=\$1; minus+=\$2} END {printf(\"+%d, -%d\n\", plus, minus)}"'
-    bash -c 'git shortlog -sn'
-    ```
+This protocol orchestrates a **multi-agent retrospective** to analyze project history, identify inefficiencies, bottlenecks, risks, and **agent behavioral issues**, then produce a unified set of **3-5 specific, actionable recommendations** for process improvement.
 
-    - Identify instances of:
-        - Wrong tool usage (search logs).
-        - User interruptions (history check).
-        - Wasted effort.
+**Improvements Target**:
 
-3. **Synthesis**
-    Switch to **Migration Coordinator**:
-    - Synthesize findings into 3-5 high-impact recommendations.
-    - Focus on: Protocol updates, Automation (scripts), and Agent behavior.
+- **Agent Behavior**: Wrong tool usage, wasted effort, requirement misunderstandings.
+- **Protocol Updates**: Process changes, new phases, quality gates.
+- **Automation**: Scripts, hook, CI/CD.
+- **Commands**: Updates to command files.
 
-4. **Generate Report**
-    Switch to **Documentation**:
-    - Create `IMPROVEMENTS.md` (MADR format).
-    - Include: Problem, Evidence, Proposed Change, and Expected Impact for each recommendation.
+**CRITICAL**: User interruptions and corrections are the strongest signal that agents need behavioral improvement.
+
+---
+
+## Retrospective Process
+
+### Phase 1: Historical Analysis (60 minutes)
+
+**1.1 Review Project History (Migration Coordinator)**
+
+- Analyze `HISTORY.md` for patterns, blockers, delays, and quality gate failures.
+
+**1.2 Review ADRs (Architect Agent)**
+
+- Analyze `docs/ADR/` for decision outcomes, rework, and alternatives.
+
+**1.3 Review Test History (Tester Agent)**
+
+- Analyze test pass rates, flaky tests, and coverage evolution.
+
+**1.4 Review Security History (Security Agent)**
+
+- Analyze vulnerability remediation timelines and scanning frequency.
+
+**1.5 Review Code Changes (Coder Agent)**
+
+- Analyze git history for churn, large commits, and reverts.
+
+```bash
+git log --all --oneline --graph
+git shortlog -sn
+```
+
+**1.6 Review Documentation (Documentation Agent)**
+
+- Analyze completeness of CHANGELOG, Migration Guide, and README.
+
+**1.7 Review User Interactions & Agent Errors (CRITICAL - All Agents)**
+Search for user interruptions and corrections:
+
+```bash
+# Git commit messages with corrections
+bash -c 'git log --all --grep="fix\|correct\|actually\|oops\|mistake"'
+
+# History for user interventions
+bash -c 'grep -i "user:\|correction\|fix\|reverted\|undo" HISTORY.md'
+
+# Reverted commits
+bash -c 'git log --all --oneline | grep -i "revert\|undo"'
+```
+
+**Identify Agent Mistakes**:
+
+- **Wrong Tool Usage**: Using `bash cat` instead of `Read`, `find` instead of `Glob`.
+- **Wasted Effort**: Building unrequested features.
+- **Context Ignorance**: Not reading files before editing.
+- **Requirement Misunderstanding**: User corrections needed.
+
+---
+
+### Phase 2: Agent Insights Gathering (30 minutes)
+
+**Objective**: Each agent identifies problems and opportunities from their perspective.
+
+**Template**:
+
+- **What Went Well**: Positive observations.
+- **What Could Be Improved**: Inefficiencies/problems.
+- **Specific Recommendations**: Actionable items.
+
+---
+
+### Phase 3: Pattern Identification (30 minutes)
+
+**Active Agent**: Migration Coordinator
+
+Synthesize findings into themes:
+
+- **Agent Behavioral Issues** (CRITICAL): Wrong tools, misunderstood requirements.
+- **Protocol Improvements**: Timing of tests, gates, validation.
+- **LLM-to-Code Opportunities**: Replace LLM calls with scripts (jq, awk, sed).
+- **Context Window Optimization**: Reduce token waste.
+
+---
+
+### Phase 4: Recommendation Development (45 minutes)
+
+**Active Agent**: All Agents (Collaborative)
+
+Develop 3-5 specific, actionable recommendations.
+
+**Criteria**: Specific, Actionable, Measurable, Evidence-based, High-impact.
+
+**Example Recommendations**:
+
+1. **Front-load Dependency Analysis**: To prevent mid-migration blockers.
+2. **Continuous Documentation**: Update docs daily, not in batches.
+3. **Automated Security Scanning**: Add to git hooks.
+4. **"Read before Write" Enforcement**: Prevent file overwrites.
+5. **Replace LLM with Scripts**: Use `jq`/`awk` for deterministic tasks.
+
+---
+
+### Phase 5: ADR Generation (30 minutes)
+
+**Active Agent**: Documentation Agent
+
+Create `IMPROVEMENTS.md` in MADR 3.0.0 format.
+
+**Structure**:
+
+1. **Context**: Analysis sources, key metrics.
+2. **Decision Drivers**: Efficiency, Quality, Risk.
+3. **Recommendations**:
+   - **Problem**: Description and Evidence.
+   - **Proposed Change**: Protocol, Behavior, or Automation update.
+   - **Expected Impact**: Efficiency/Quality gains.
+   - **Implementation**: Steps and Effort.
+4. **Summary**: Priority table.
+5. **Implementation Plan**: Immediate vs Long-term.

@@ -12,13 +12,13 @@
 
 ## Guidelines
 1.  **Identify Problems**: Clearly define the architectural need or problem.
-2.  **Research Alternatives**: Identify at least 3 viable options. Use `Search` to find latest practices.
+2.  **Research Alternatives**: Identify at least 3 viable options. Use Search to find latest practices.
 3.  **Evaluate**: Compare options against non-functional requirements (Security, Performance, etc.). Create an evaluation matrix.
 4.  **Decide**: Select the best option based on evidence and context.
-5.  **Document**: Create an ADR file in `docs/ADR/` using the MADR 3.0.0 format.
+5.  **Document**: Create an ADR file in docs/ADR/ using the MADR 3.0.0 format.
 
 ## ADR Format (MADR 3.0.0)
-```markdown
+`markdown
 # ADR-XXXX: [Title]
 
 ## Status
@@ -42,7 +42,7 @@ Chosen option: "[option]", because [justification].
 ### [option 1]
 * Good, because...
 * Bad, because...
-```
+`
 
 ## Anti-Patterns
 - Making decisions without research.
@@ -52,4 +52,6 @@ Chosen option: "[option]", because [justification].
 ## Logging & Protocols
 - **MANDATORY**: Use the ./scripts/append-to-history.sh script to log all significant actions to HISTORY.md upon completion.
 - **Reference**: See .agent/protocols/agent-logging.md for detailed logging standards.
-- **Protocols**: Adhere to protocols defined in .agent/protocols/.
+- **Protocols**: Adhere to protocols defined in .agent/protocols/, specifically:
+  - **ADR Lifecycle**: .agent/protocols/adr-lifecycle.md
+  - **Review**: .agent/protocols/documentation-protocol.md

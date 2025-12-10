@@ -14,6 +14,7 @@ description: Agent logging protocol with HISTORY.md audit trail, 7 templates, an
 ## Why Logging is Required
 
 The HISTORY.md file provides:
+
 - **Audit Trail**: Complete record of all activities
 - **Accountability**: Who did what, when, and why
 - **Knowledge Transfer**: Future maintainers understand evolution
@@ -28,6 +29,7 @@ The HISTORY.md file provides:
 ### When to Log
 
 **ALWAYS log after**:
+
 - ✅ Completing a migration stage/phase
 - ✅ Migrating project(s) to new .NET version
 - ✅ Fixing security vulnerabilities
@@ -40,6 +42,7 @@ The HISTORY.md file provides:
 - ✅ Refactoring major components
 
 **NEVER log for**:
+
 - ❌ Reading files (research activities)
 - ❌ Intermediate build attempts
 - ❌ Work-in-progress changes
@@ -51,6 +54,7 @@ The HISTORY.md file provides:
 **Use the script**: `./scripts/append-to-history.sh`
 
 **Script Usage**:
+
 ```bash
 ./scripts/append-to-history.sh \
   "STAGE_TITLE" \
@@ -60,6 +64,7 @@ The HISTORY.md file provides:
 ```
 
 **Parameters**:
+
 1. **STAGE_TITLE** (required): Short, descriptive title
    - Format: "Stage N: Component - Action"
    - Examples:
@@ -102,6 +107,7 @@ The HISTORY.md file provides:
 ```
 
 **Example**:
+
 ```bash
 ./scripts/append-to-history.sh \
   "Stage 3: Data Access Layer Migration" \
@@ -123,6 +129,7 @@ The HISTORY.md file provides:
 ```
 
 **Example**:
+
 ```bash
 ./scripts/append-to-history.sh \
   "Security: CVE-2024-12345 Fixed" \
@@ -144,6 +151,7 @@ The HISTORY.md file provides:
 ```
 
 **Example**:
+
 ```bash
 ./scripts/append-to-history.sh \
   "Dependency: Newtonsoft.Json Replaced" \
@@ -165,6 +173,7 @@ The HISTORY.md file provides:
 ```
 
 **Example**:
+
 ```bash
 ./scripts/append-to-history.sh \
   "Architecture: CQRS Pattern Implemented" \
@@ -214,18 +223,21 @@ The HISTORY.md file provides:
 ## Agent Responsibilities
 
 ### Before Starting Work
+
 1. Review previous HISTORY.md entries
 2. Understand logging format and expectations
 3. Plan what will be logged at completion
 4. Note starting state for before/after comparison
 
 ### During Work
+
 1. Track all changes being made
 2. Note build results, warnings, errors
 3. Document issues encountered and resolutions
 4. Keep running notes for logging parameters
 
 ### After Completing Work
+
 1. **IMMEDIATELY** log to HISTORY.md using script
 2. Include all 4 required parameters (detailed)
 3. Verify entry was added successfully
@@ -253,6 +265,7 @@ Before reporting "COMPLETE":
 ## Common Mistakes to Avoid
 
 ❌ **DON'T**:
+
 - Use vague descriptions ("Updated some files", "Fixed stuff")
 - Skip logging because "it's small"
 - Manually edit HISTORY.md (use script)
@@ -262,6 +275,7 @@ Before reporting "COMPLETE":
 - Use generic package names without versions
 
 ✅ **DO**:
+
 - Log completed stages/milestones
 - Include specific project/file names and versions
 - Mention build status, warning counts, error counts
@@ -277,7 +291,9 @@ Before reporting "COMPLETE":
 ## Verification
 
 ### Agent Self-Check
+
 After logging, verify:
+
 ```bash
 # Check last entry
 tail -20 docs/HISTORY.md
@@ -287,7 +303,9 @@ tail -20 docs/HISTORY.md
 ```
 
 ### Coordinator Check
+
 Project coordinator verifies:
+
 - All stages logged
 - Entries are complete and accurate
 - Timeline is visible
@@ -301,6 +319,7 @@ Project coordinator verifies:
 **Path**: `./scripts/append-to-history.sh`
 
 **Features**:
+
 - Automatic timestamp (YYYY-MM-DD HH:MM:SS)
 - Structured format
 - Validation of parameters
@@ -308,6 +327,7 @@ Project coordinator verifies:
 - Creates HISTORY.md if missing
 
 **Execution**:
+
 ```bash
 # From project root
 ./scripts/append-to-history.sh "Title" "What" "Why" "Impact"
@@ -316,6 +336,7 @@ Project coordinator verifies:
 ```
 
 **Script Template** (create if missing):
+
 ```bash
 #!/bin/bash
 # append-to-history.sh - Universal history logging for .NET projects
@@ -364,15 +385,18 @@ echo "✅ Entry added to $HISTORY_FILE"
 **This is MANDATORY, not optional.**
 
 ### Success Criteria
+
 All agents MUST log to HISTORY.md as their **final step** before reporting completion.
 
 ### Consequences of Non-Compliance
+
 - Work considered incomplete
 - Agent must return and log properly
 - Blocking issue for stage progression
 - Cannot proceed to next stage/task
 
 ### Coordinator Responsibility
+
 Project coordinator verifies all logs are present, accurate, and detailed.
 
 ---
@@ -397,12 +421,14 @@ Project coordinator verifies all logs are present, accurate, and detailed.
 ### Required Setup
 
 1. **Create logging script**:
+
    ```bash
    cp docs/agents/GENERIC-AGENT-LOGGING-PROTOCOL.md docs/agents/AGENT-LOGGING-PROTOCOL.md
    # Customize for your project
    ```
 
 2. **Create HISTORY.md**:
+
    ```bash
    mkdir -p docs
    cat > docs/HISTORY.md << 'EOF'

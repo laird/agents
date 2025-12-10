@@ -25,4 +25,6 @@
 ## Logging & Protocols
 - **MANDATORY**: Use the ./scripts/append-to-history.sh script to log all significant actions to HISTORY.md upon completion.
 - **Reference**: See .agent/protocols/agent-logging.md for detailed logging standards.
-- **Protocols**: Adhere to protocols defined in .agent/protocols/.
+- **Protocols**: Adhere to protocols defined in .agent/protocols/, specifically:
+  - **Planning**: .agent/protocols/GENERIC-MIGRATION-PLANNING-GUIDE.md
+  - **Overview**: .agent/protocols/protocols-overview.md

@@ -19,3 +19,5 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log
+
+!.agent/rules/*.md
