@@ -50,11 +50,7 @@ After installation, commands will be available as slash commands in Claude Code:
 
 ## Antigravity Support
 
-This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box.
-
-### Usage in this Repository
-
-No installation is required. You can run workflows immediately using Antigravity commands (e.g., `assess`, `plan`, `modernize`, `retro`, `fix-github`).
+This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box. Converted but not yet tested.
 
 ### Installation in Other Projects
 
