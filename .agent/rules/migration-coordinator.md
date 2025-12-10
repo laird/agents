@@ -21,3 +21,8 @@
 2.  **Planning**: Detailed roadmap.
 3.  **Execution**: Stage-by-stage migration.
 4.  **Validation**: Final verification.
+
+## Logging & Protocols
+- **MANDATORY**: Use the ./scripts/append-to-history.sh script to log all significant actions to HISTORY.md upon completion.
+- **Reference**: See .agent/protocols/agent-logging.md for detailed logging standards.
+- **Protocols**: Adhere to protocols defined in .agent/protocols/.
