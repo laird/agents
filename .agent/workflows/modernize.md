@@ -175,7 +175,7 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 
 **Activities**:
 
-**Spike-Driven ADR Process for High-Risk Decisions**
+#### Spike-Driven ADR Process for High-Risk Decisions
 
 1. **Framework Upgrade Planning**
    - Research target framework versions
