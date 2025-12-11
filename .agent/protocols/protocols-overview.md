@@ -20,9 +20,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ## Available Protocols
 
 ### 1. **GENERIC-AGENT-LOGGING-PROTOCOL.md**
+
 **Purpose**: Universal logging protocol for AI agents
 
 **What it provides**:
+
 - Mandatory logging requirements for all agent activities
 - Structured logging format with 4 required parameters
 - Templates for common scenarios (migrations, security fixes, dependency updates)
@@ -30,6 +32,7 @@ This directory contains **universal agent protocol templates** designed to work 
 - Enforcement guidelines and validation procedures
 
 **When to use**:
+
 - Any project requiring audit trail of AI agent work
 - Migration projects needing historical documentation
 - Enterprise projects with compliance requirements
@@ -40,9 +43,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ---
 
 ### 2. **GENERIC-TESTING-PROTOCOL.md**
+
 **Purpose**: Comprehensive testing requirements for any .NET project
 
 **What it provides**:
+
 - 6 mandatory testing phases (Pre-test, Unit, Integration, Component, Performance, Samples)
 - Fix-and-retest cycle procedures
 - Success criteria (Green/Yellow/Red go/no-go decisions)
@@ -51,12 +56,14 @@ This directory contains **universal agent protocol templates** designed to work 
 - Common mistakes and best practices
 
 **When to use**:
+
 - Any .NET project migration or modernization
 - Release validation
 - Quality gate enforcement
 - CI/CD pipeline testing
 
 **Customization needed**:
+
 - Replace external dependency examples (RabbitMQ, PostgreSQL, Redis) with your stack
 - Adjust pass rate thresholds for your context
 - Add project-specific test categories
@@ -64,9 +71,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ---
 
 ### 3. **GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md**
+
 **Purpose**: Documentation strategy template for migrations
 
 **What it provides**:
+
 - Complete documentation plan structure
 - CHANGELOG.md template
 - MIGRATION-GUIDE.md template
@@ -77,12 +86,14 @@ This directory contains **universal agent protocol templates** designed to work 
 - Quality validation checklists
 
 **When to use**:
+
 - Planning documentation for version migrations
 - Major refactoring or architectural changes
 - Open source projects needing user migration paths
 - Enterprise projects with documentation requirements
 
 **Customization needed**:
+
 - Fill in project-specific details throughout
 - Adjust ADR topics for your architectural decisions
 - Customize effort estimates for project size
@@ -91,9 +102,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ---
 
 ### 4. **GENERIC-MIGRATION-PLANNING-GUIDE.md**
+
 **Purpose**: Systematic framework for planning .NET migrations
 
 **What it provides**:
+
 - 5 planning phases (Discovery, Strategy, Execution Planning, Execution, Validation)
 - Current state analysis procedures
 - Dependency analysis templates
@@ -104,12 +117,14 @@ This directory contains **universal agent protocol templates** designed to work 
 - Completion criteria
 
 **When to use**:
+
 - Planning any .NET framework migration
 - Initial project assessment
 - Creating migration roadmap
 - Risk analysis and mitigation planning
 
 **Customization needed**:
+
 - Run discovery phase for your specific project
 - Choose phasing strategy appropriate for your architecture
 - Adjust timeline estimates for team size
@@ -118,9 +133,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ---
 
 ### 5. **ADR-LIFECYCLE-PROTOCOL.md**
+
 **Purpose**: Living document lifecycle management for Architecture Decision Records
 
 **What it provides**:
+
 - 7-stage ADR lifecycle (Problem → Research → Evaluation → Decision → Implementation → Review → Superseded)
 - Incremental update requirements (commit after each alternative researched)
 - Mandatory HISTORY.md logging when decisions accepted
@@ -130,6 +147,7 @@ This directory contains **universal agent protocol templates** designed to work 
 - Quality gates for ADR completeness
 
 **When to use**:
+
 - **BEFORE** researching architectural alternatives (not after implementation)
 - When evaluating technology choices
 - During architectural refactoring
@@ -137,6 +155,7 @@ This directory contains **universal agent protocol templates** designed to work 
 - When architectural patterns change
 
 **Customization needed**:
+
 - Adjust post-implementation review timeframe (default: 1-3 months)
 - Define project-specific evaluation criteria weights
 - Customize commit message prefixes
@@ -144,9 +163,11 @@ This directory contains **universal agent protocol templates** designed to work 
 ---
 
 ### 6. **DOCUMENTATION-PROTOCOL.md**
+
 **Purpose**: Comprehensive unified documentation guide integrating all documentation pillars
 
 **What it provides**:
+
 - **Part 1: HISTORY.md** - Chronological audit trail requirements (integrates GENERIC-AGENT-LOGGING-PROTOCOL.md)
 - **Part 2: ADRs** - Complete 7-stage lifecycle (integrates ADR-LIFECYCLE-PROTOCOL.md)
 - **Part 3: Inline Documentation** - Code comments, README files, migration guides, API docs
@@ -156,6 +177,7 @@ This directory contains **universal agent protocol templates** designed to work 
 - Integration with development workflow (planning → execution → review → maintenance)
 
 **When to use**:
+
 - **MANDATORY for all agents** - Single authoritative source for documentation requirements
 - Throughout entire development lifecycle
 - When onboarding new agents to project
@@ -185,16 +207,19 @@ When spawning agents via Claude Code's Task tool, use the `model` parameter to o
 ### Model Capabilities
 
 **Opus (model="opus")**
+
 - Best for: Complex reasoning, architectural decisions, trade-off analysis
 - Use when: Multiple factors, novel problems, strategic decisions
 - Cost: Higher, but worth it for complex tasks
 
 **Sonnet (model="sonnet")**
+
 - Best for: Standard implementation work, routine operations
 - Use when: Well-understood tasks, documented patterns
 - Cost: Balanced quality and cost for most work
 
 **Haiku (model="haiku")**
+
 - Best for: Simple transformations, formatting, boilerplate
 - Use when: Mechanical tasks, no judgment required
 - Cost: Lowest, ideal for high-volume simple tasks
@@ -253,7 +278,7 @@ GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md   # Plan documentation work
 # Copy to your project
 cp GENERIC-AGENT-LOGGING-PROTOCOL.md ../AGENT-LOGGING-PROTOCOL.md
 cp GENERIC-TESTING-PROTOCOL.md ../TESTING-PROTOCOL.md
-cp GENERIC-MIGRATION-PLANNING-GUIDE.md ../MIGRATION-PLAN.md
+cp GENERIC-MIGRATION-PLANNING-GUIDE.md ../docs/modernization-plan.md
 cp GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md ../DOCUMENTATION-PLAN.md
 
 # Edit and customize
@@ -263,6 +288,7 @@ cp GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md ../DOCUMENTATION-PLAN.md
 #### Option B: Reference Directly
 
 Add to your `CLAUDE.md` or agent instructions:
+
 ```markdown
 ## Agent Protocols
 
@@ -453,6 +479,7 @@ All agents working on this project MUST follow these protocols:
 **Scenario**: Automated validation in pipeline
 
 Use GitHub Actions or your CI/CD platform to automate validation:
+
 - Validate HISTORY.md is updated on every commit
 - Run test protocol with 100% pass rate requirement
 - Validate documentation updates
@@ -524,26 +551,31 @@ Use GitHub Actions or your CI/CD platform to automate validation:
 ## Benefits of Using These Protocols
 
 ### 1. Consistency
+
 - All agents follow same standards
 - Predictable outcomes
 - Easier coordination
 
 ### 2. Quality Assurance
+
 - Mandatory testing catches issues early
 - Fix-and-retest cycle prevents defect accumulation
 - Clear success criteria
 
 ### 3. Auditability
+
 - Complete history of all changes
 - Traceable decisions
 - Compliance-ready documentation
 
 ### 4. Reusability
+
 - Templates save planning time
 - Proven patterns reduce risk
 - Learn from past migrations
 
 ### 5. Scalability
+
 - Works for small and large projects
 - Supports solo agents or swarms
 - Integrates with existing workflows
@@ -555,6 +587,7 @@ Use GitHub Actions or your CI/CD platform to automate validation:
 ### Reporting Issues
 
 If you find issues with these protocols:
+
 1. Document the problem clearly
 2. Suggest improvements
 3. Share your customizations that worked well
@@ -562,6 +595,7 @@ If you find issues with these protocols:
 ### Contributing Improvements
 
 These protocols improve through use. Consider contributing:
+
 - Additional templates for specific scenarios
 - Lessons learned from your migrations
 - Tool integrations and automations
@@ -580,16 +614,19 @@ These protocols improve through use. Consider contributing:
 ## Related Resources
 
 ### Microsoft Documentation
+
 - [.NET Migration Guides](https://docs.microsoft.com/en-us/dotnet/core/porting/)
 - [Breaking Changes](https://docs.microsoft.com/en-us/dotnet/core/compatibility/)
 - [What's New in .NET](https://docs.microsoft.com/en-us/dotnet/core/whats-new/)
 
 ### Tools
+
 - [.NET Upgrade Assistant](https://dotnet.microsoft.com/en-us/platform/upgrade-assistant)
 - [API Portability Analyzer](https://github.com/microsoft/dotnet-apiport)
 - [BenchmarkDotNet](https://benchmarkdotnet.org/)
 
 ### Best Practices
+
 - [Keep a Changelog](https://keepachangelog.com/)
 - [Semantic Versioning](https://semver.org/)
 - [Architecture Decision Records](https://adr.github.io/)

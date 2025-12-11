@@ -2,8 +2,8 @@
 
 **Version**: 1.0
 **Purpose**: Create a comprehensive, actionable modernization plan
-**Input**: Optional `ASSESSMENT.md` from `/modernize-assess`
-**Output**: `PLAN.md` with detailed execution strategy
+**Input**: Optional `docs/modernization-assessment.md` from `/modernize-assess`
+**Output**: `docs/modernization-plan.md` with detailed execution strategy
 **Duration**: 3-6 hours
 
 **Note**: Time estimates are based on typical human execution times and may vary significantly based on project complexity, team experience, and AI assistance capabilities.
@@ -30,12 +30,12 @@ This protocol creates a **detailed modernization execution plan** that serves as
 ### Step 1: Load Assessment (if available)
 
 ```bash
-# Check for ASSESSMENT.md
-if [ -f "ASSESSMENT.md" ]; then
-    echo "✅ Found ASSESSMENT.md - using as input"
+# Check for docs/modernization-assessment.md
+if [ -f "docs/modernization-assessment.md" ]; then
+    echo "✅ Found docs/modernization-assessment.md - using as input"
     # Extract: scores, risks, estimates, recommendations
 else
-    echo "⚠️ No ASSESSMENT.md found - will create basic assessment"
+    echo "⚠️ No docs/modernization-assessment.md found - will create basic assessment"
     # Run abbreviated assessment inline
 fi
 ```
@@ -128,8 +128,8 @@ For each of the 7 phases, define:
    - **Deliverable**: Security baseline report
 
 3. **Test Baseline** (4 hours)
-   - Run all existing tests
-   - Capture pass rates and coverage
+   - Run all existing tests using the originalSDK and dependencies as appropriate for the project. Do not worry about security issues, the only goal is to get the legacy software compiled and tests run for the assessment of the legacy softare, unchanged.
+   - Capture pass rates and coverage and run times.
    - Document test infrastructure
    - **Deliverable**: Test baseline report
 
@@ -703,7 +703,7 @@ Week 18:    Phase 7 (Validate)  ████
 
 ---
 
-## PLAN.md Output Template
+## docs/modernization-plan.md Output Template
 
 ```markdown
 # Project Modernization Plan
@@ -740,7 +740,7 @@ Week 18:    Phase 7 (Validate)  ████
 
 ## Assessment Summary
 
-[If ASSESSMENT.md exists, summarize key findings]
+[If docs/modernization-assessment.md exists, summarize key findings]
 
 **Overall Assessment Score**: XX/100
 **Recommendation**: [PROCEED/CAUTION/DEFER/DO NOT]

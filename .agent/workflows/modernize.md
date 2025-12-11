@@ -7,7 +7,7 @@ description: Orchestrate a team of specialist agents to upgrade a project to be 
 **Version**: 2.0
 **Purpose**: Coordinate multiple specialist agents to systematically upgrade any software project
 **Team**: Migration Coordinator, Security Agent, Architect Agent, Coder Agent, Tester Agent, Documentation Agent
-**Inputs**: Optional `ASSESSMENT.md` and `PLAN.md` from `/assess` and `/plan`
+**Inputs**: Optional `docs/modernization-assessment.md` and `docs/modernization-plan.md` from `/assess` and `/plan`
 
 ---
 
@@ -21,7 +21,7 @@ description: Orchestrate a team of specialist agents to upgrade a project to be 
    - Run vulnerability scan: `dotnet list package --vulnerable --include-transitive`
 
 2. **Assessment & Plan**
-   - Check if `ASSESSMENT.md` exists. If not, consider running `/assess`.
+   - Check if `docs/modernization-assessment.md` exists. If not, consider running `/assess`.
    - Check if `PLAN.md` exists. If not, consider running `/plan`.
 
 ---
@@ -353,6 +353,7 @@ Spawn multiple Coder agents for different modules if applicable, summarized by M
 - ✅ All documentation complete
 - ✅ Performance validated
 
+After modernization is complete, offer to /retro to improve the agents for future modernization projects
 ---
 
 ## Logging Protocol

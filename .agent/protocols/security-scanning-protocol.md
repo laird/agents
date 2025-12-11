@@ -23,6 +23,7 @@ This protocol ensures security work is **verified** not **estimated** by requiri
 ## Problem Solved
 
 **Anti-Pattern**: Security work without verification ❌
+
 ```
 Phase 1: Update packages (assume CVEs fixed)
 Result: Security score "~52/100 (estimated)" ⚠️
@@ -31,6 +32,7 @@ Risk: Unknown actual security posture
 ```
 
 **Best Practice**: Automated scanning with verification ✅
+
 ```
 Phase 0: Scan shows 63 CVEs (4 CRITICAL, 11 HIGH)
 Phase 1: Update packages, re-scan
@@ -50,6 +52,7 @@ Quality Gate: PASS (zero CRITICAL/HIGH confirmed)
 **Why First**: Cannot plan security work without knowing actual CVE count
 
 **Command**:
+
 ```bash
 # Run vulnerability scan and save baseline
 dotnet list package --vulnerable --include-transitive | tee security-baseline.txt
@@ -59,6 +62,7 @@ dotnet list package --vulnerable --include-transitive --format json > security-b
 ```
 
 **Parse Results**:
+
 ```bash
 # Count vulnerabilities by severity
 CRITICAL=$(grep "Critical" security-baseline.txt | wc -l)
@@ -70,6 +74,7 @@ echo "Baseline: $CRITICAL CRITICAL, $HIGH HIGH, $MEDIUM MEDIUM, $LOW LOW"
 ```
 
 **Calculate Security Score**:
+
 ```
 Formula: 100 - (CRITICAL×10 + HIGH×5 + MEDIUM×2 + LOW×0.5)
 
@@ -83,7 +88,8 @@ Example:
  Baseline Security Score: 0/100 (CRITICAL RISK)
 ```
 
-**Document in ASSESSMENT.md**:
+**Document in docs/modernization-assessment.md**:
+
 ```markdown
 ## Security Baseline
 
@@ -117,6 +123,7 @@ Example:
 **Why**: Verify updates actually fixed CVEs (not assumed)
 
 **Command**:
+
 ```bash
 # Re-run scan after updates
 dotnet list package --vulnerable --include-transitive | tee security-after-phase1.txt
@@ -134,6 +141,7 @@ diff security-baseline.txt security-after-phase1.txt >> security-diff.txt
 ```
 
 **Validation Checks**:
+
 ```bash
 # Verify CRITICAL/HIGH eliminated
 CRITICAL_AFTER=$(grep "Critical" security-after-phase1.txt | wc -l)
@@ -148,6 +156,7 @@ echo "✅ Quality Gate PASSED: Zero CRITICAL/HIGH CVEs"
 ```
 
 **Recalculate Security Score**:
+
 ```
 After Phase 1:
   0 CRITICAL × 10 = 0
@@ -160,6 +169,7 @@ After Phase 1:
 ```
 
 **Update CHANGELOG.md** (verified, not estimated):
+
 ```markdown
 ### Security
 
@@ -177,6 +187,7 @@ After Phase 1:
 ```
 
 **Quality Gate**:
+
 - ✅ CRITICAL count: 0 (verified in scan)
 - ✅ HIGH count: 0 (verified in scan)
 - ✅ Security score ≥45 (calculated from scan: 73/100)
@@ -192,6 +203,7 @@ After Phase 1:
 **Why**: Catch regressions immediately
 
 **Command**:
+
 ```bash
 # Quick scan after dependency changes
 dotnet list package --vulnerable --include-transitive > security-phase-$PHASE.txt
@@ -218,6 +230,7 @@ fi
 **Why**: Final verification before production release
 
 **Command**:
+
 ```bash
 # Final comprehensive scan
 dotnet list package --vulnerable --include-transitive | tee security-final.txt
@@ -232,6 +245,7 @@ echo "IMPROVEMENT: $(( 63 - $(grep -E 'Critical|High|Moderate|Low' security-fina
 ```
 
 **Final Quality Gate**:
+
 - ✅ Zero CRITICAL vulnerabilities (verified)
 - ✅ Zero HIGH vulnerabilities (verified)
 - ✅ Security score ≥75 (production target)
@@ -319,6 +333,7 @@ echo "📄 Scan saved: $CURRENT"
 ```
 
 **Usage**:
+
 ```bash
 # Phase 0: Create baseline
 .build/security-scan.sh baseline
@@ -335,6 +350,7 @@ echo "📄 Scan saved: $CURRENT"
 ## Integration with CI/CD (Future)
 
 **Pre-commit Hook** (prevent CRITICAL/HIGH commits):
+
 ```bash
 #!/bin/bash
 # .git/hooks/pre-commit
@@ -349,6 +365,7 @@ fi
 ```
 
 **GitHub Actions** (scheduled scans):
+
 ```yaml
 name: Security Scan
 on:
@@ -386,6 +403,7 @@ jobs:
 **Problem**: Scan shows vulnerabilities in transitive dependencies
 
 **Solution**:
+
 ```bash
 # Identify which package brings in the vulnerable transitive dependency
 dotnet list package --include-transitive | grep <vulnerable-package>
@@ -397,6 +415,7 @@ dotnet add package <direct-dependency> --version <newer-version>
 **Problem**: No vulnerabilities shown but security concerns remain
 
 **Solution**:
+
 - Scan may only show known CVEs (NVD database)
 - Use additional tools: Snyk, Dependabot, OWASP Dependency Check
 - Check for abandoned packages (last update >2 years)
@@ -404,6 +423,7 @@ dotnet add package <direct-dependency> --version <newer-version>
 **Problem**: Vulnerable package has no secure version available
 
 **Solution**:
+
 1. Check for alternative packages
 2. Document as accepted risk with mitigation plan
 3. Consider forking and patching (last resort)

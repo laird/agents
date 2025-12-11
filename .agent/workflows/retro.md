@@ -131,6 +131,8 @@ Develop 3-5 specific, actionable recommendations.
 
 Create `IMPROVEMENTS.md` in MADR 3.0.0 format.
 
+After retro is complete, suggest reviewing the suggested IMPROVEMENTS.md and then /retro-apply .
+
 **Structure**:
 
 1. **Context**: Analysis sources, key metrics.

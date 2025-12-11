@@ -6,8 +6,8 @@ description: Create a detailed modernization plan
 
 **Version**: 1.0
 **Purpose**: Create a comprehensive, actionable modernization plan
-**Input**: Optional `ASSESSMENT.md` from `/assess`
-**Output**: `PLAN.md` with detailed execution strategy
+**Input**: Optional `docs/modernization-assessment.md` from `/assess`
+**Output**: `docs/modernization-plan.md` with detailed execution strategy
 **Duration**: 3-6 hours
 
 ---
@@ -33,7 +33,7 @@ This protocol creates a **detailed modernization execution plan** that serves as
 
 **Active Agent**: Migration Coordinator
 
-- Check for `ASSESSMENT.md`.
+- Check for `docs/modernization-assessment.md`.
 - If exists: Extract scores, risks, estimates, and recommendations.
 - If missing: Run abbreviated assessment (see `/assess`) to gather basic info.
 
@@ -77,7 +77,7 @@ For each of the 7 phases, define tasks, duration, team, deliverables, exit crite
    - Benchmarks, Bottleneck ID, Optimization, Validation.
 
 7. **Phase 6: Comprehensive Documentation**
-   - CHANGELOG, Migration Guide, Update Docs, ADR Summaries.
+   - CHANGELOG, Migration Guide, Update Docs, ADR Summaries. MUST document all architecture recommendations in ADRs.
 
 8. **Phase 7: Final Validation & Release**
    - Complete Test Execution, Final Security Scan, Release Prep, GO/NO-GO.
@@ -122,11 +122,11 @@ Define scenarios:
 
 ---
 
-## PLAN.md Output Generation
+## `docs/modernization-plan.md` Output Generation
 
 **Active Agent**: Documentation Agent
 
-Create `PLAN.md` using the collected data. The document MUST follow this structure:
+Create `docs/modernization-plan.md` using the collected data. The document MUST follow this structure:
 
 1. **Executive Summary**: Objectives, Timeline, Team, Success Criteria.
 2. **Assessment Summary**: Score, Risks, Mitigation.

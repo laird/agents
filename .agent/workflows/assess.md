@@ -6,7 +6,7 @@ description: Analyze project for modernization readiness
 
 **Version**: 1.0
 **Purpose**: Systematically assess whether a project is a good candidate for modernization
-**Output**: `ASSESSMENT.md` with comprehensive analysis and recommendation
+**Output**: `docs/modernization-assessment.md` with comprehensive analysis and recommendation
 **Duration**: 2-4 hours
 
 ---
@@ -148,7 +148,7 @@ git shortlog -sn | head -10                 # Contributors
 
 **Active Agent**: Documentation Agent
 
-Create `ASSESSMENT.md` using the collected data. The report MUST include:
+Create `docs/modernization-assessment.md` using the collected data. The report MUST include:
 
 1. **Executive Summary**: Recommendation (PROCEED / CAUTION / DEFER / STOP), Overall Score.
 2. **Technical Viability**: Score, framework analysis, dependency health.
@@ -166,3 +166,5 @@ Create `ASSESSMENT.md` using the collected data. The report MUST include:
 - **60-79**: ⚠️ **PROCEED WITH CAUTION**
 - **40-59**: ❌ **DEFER**
 - **0-39**: 🛑 **DO NOT PROCEED**
+
+To proceed, issue /plan command
