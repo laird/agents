@@ -62,6 +62,9 @@ After installation, commands will be available as slash commands in Claude Code:
 
 This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box. Converted but not yet tested.
 
+> [!WARNING]
+> The watchdog scripts located in `.agent/scripts/` are currently experimental and known to be non-functional. Work is in progress to fix them.
+
 ### Installation in Other Projects
 
 To "install" these agents into another project:
