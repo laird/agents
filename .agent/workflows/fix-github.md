@@ -112,3 +112,10 @@ If no priority issues exist:
 1. **Run Full Regression Test**: Create issues for any hidden failures.
 2. **Check Enhancements**: Switch to implementing enhancements.
 3. **Propose Improvements**: Analyze codebase for coverage gaps or tech debt and propose new issues.
+
+## Continuous Loop
+
+This workflow is designed to run forever.
+
+1.  **Restart**: When all steps are completed, or if no issues are found, immediately restart from **Step 1: Issue Selection**.
+2.  **Persistent**: Do not exit. Keep checking for new issues or running regression tests.

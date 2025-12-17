@@ -13,6 +13,16 @@ Both plugins feature **continuous improvement** through retrospective analysis a
 
 ---
 
+## Directory Guide
+
+This repository supports multiple agentic platforms. Please refer to the corresponding directory for your platform:
+
+- **`.claude-plugin/`**: Configuration and plugins for **Claude Code**.
+- **`.agent/`**: Configuration, rules, and workflows for **Antigravity**.
+- **`agents/`**: Agent definitions and prompts for **OpenCode**.
+
+---
+
 ## Installation
 
 ### Add Marketplace
@@ -236,7 +246,8 @@ Customize the auto-generated configuration in your `CLAUDE.md`:
 ---
 
 agents/
-├── .claude-plugin/                      # Plugin marketplace configuration
+├── .agent/                              # Antigravity agent configuration (rules, workflows)
+├── .claude-plugin/                      # Claude Code plugin configuration
 │   ├── marketplace.json                 # Marketplace metadata (2 plugins)
 │   └── plugins/
 │       ├── modernize/
