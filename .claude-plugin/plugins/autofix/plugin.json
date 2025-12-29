@@ -1,7 +1,7 @@
 {
   "name": "autofix",
-  "version": "1.4.0",
-  "description": "Autonomous GitHub issue resolution system. Fixes bugs by priority, runs regression tests, analyzes and improves test coverage, then implements enhancements using superpowers skills. Creates detailed implementation plans, executes them, and logs any test failures as new issues.",
+  "version": "1.5.0",
+  "description": "Autonomous GitHub issue resolution system. Triages unprioritized issues, fixes bugs by priority, runs regression tests, and creates enhancement proposals for human approval. Uses superpowers skills for complex problems. Proposals require explicit approval before implementation.",
   "author": {
     "name": "Agent Protocols Team",
     "email": "laird@popk.in"
@@ -19,11 +19,14 @@
     "coverage",
     "test-coverage",
     "superpowers",
-    "quality-automation"
+    "quality-automation",
+    "proposals",
+    "triage"
   ],
   "commands": [
     "../../../plugins/autofix/commands/fix-github.md",
     "../../../plugins/autofix/commands/full-regression-test.md",
-    "../../../plugins/autofix/commands/improve-test-coverage.md"
+    "../../../plugins/autofix/commands/improve-test-coverage.md",
+    "../../../plugins/autofix/commands/list-proposals.md"
   ]
 }

@@ -15,11 +15,15 @@ Both plugins feature **continuous improvement** through retrospective analysis a
 
 ## Directory Guide
 
-This repository supports multiple agentic platforms. Please refer to the corresponding directory for your platform:
+This repository supports multiple agentic platforms. Please refer to the corresponding directory and documentation for your platform:
 
-- **`.claude-plugin/`**: Configuration and plugins for **Claude Code**.
-- **`.agent/`**: Configuration, rules, and workflows for **Antigravity**.
-- **`agents/`**: Agent definitions and prompts for **OpenCode**.
+| Platform | Directory | Documentation |
+|----------|-----------|---------------|
+| **Claude Code** | `.claude-plugin/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
+| **Antigravity** | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
+| **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
+
+Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
 
 ---
 
@@ -54,7 +58,7 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 After installation, commands will be available as slash commands in Claude Code:
 
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
-- **autofix**: `/fix-github`
+- **autofix**: `/fix-github`, `/list-proposals`, `/full-regression-test`, `/improve-test-coverage`
 
 ---
 
@@ -179,25 +183,43 @@ The modernize plugin includes 6 specialized agents invoked by Claude Code's Task
 
 ### Plugin 2: Autofix
 
-Autonomous GitHub issue resolution with intelligent testing and quality automation.
+Autonomous GitHub issue resolution with intelligent testing, quality automation, and human-in-the-loop proposal system.
 
-#### The Command
+#### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/fix-github` | Autonomous issue resolution (triage → fix → test → propose) |
+| `/list-proposals` | View pending AI-generated proposals awaiting approval |
+| `/full-regression-test` | Run comprehensive test suite |
+| `/improve-test-coverage` | Analyze and improve test coverage |
 
 **`/fix-github`** - Autonomous issue resolution workflow that:
 
-- Automatically prioritizes GitHub issues using P0-P3 labels
+- **Triages unprioritized issues** by assigning P0-P3 labels
+- Automatically prioritizes GitHub issues (P0 → P1 → P2 → P3)
 - Detects issue complexity (simple vs complex)
 - Uses superpowers skills for complex problems
 - Runs regression tests when no issues exist
-- Creates improvement proposals when all tests pass
+- **Creates proposals for human approval** (not auto-implemented)
 - Self-configures from project's `CLAUDE.md`
+
+**Proposal System (New in v1.5.0):**
+
+- AI-generated enhancements are tagged with `proposal` label
+- Proposals are **NOT automatically implemented**
+- Use `/list-proposals` to review pending proposals
+- Approve by removing the `proposal` label
+- Provide feedback via issue comments
+- Reject by closing the issue
 
 **Key Features:**
 
 - Works with any test framework (Jest, Playwright, pytest, etc.)
 - Auto-creates configuration if missing
 - GitHub integration for test failure tracking
-- Priority-based workflow (P0 → P1 → P2 → P3)
+- Priority-based workflow (Triage → P0 → P1 → P2 → P3)
+- Human-in-the-loop for enhancement approval
 - Continuous quality improvement
 
 #### Quick Start
@@ -419,6 +441,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
 | 3.0.0 | 2025-11-24 | **Added autofix plugin**: Autonomous GitHub issue resolution with `/fix-github` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autofix) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |

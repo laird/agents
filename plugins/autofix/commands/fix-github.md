@@ -46,9 +46,64 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 19. Create enhancement issue with detailed implementation plan
 20. Loop back to Enhancement Phase to implement
 
-Never stop, just keep looking for issues to address. Priority: Bugs > Existing Enhancements > Proposing New Enhancements.
+Never stop, just keep looking for issues to address. Priority: Triage Unprioritized > Bugs > Existing Enhancements > Proposing New Enhancements.
 
-**Note**: This command uses GitHub labels (P0, P1, P2, P3) exclusively for priority detection. Issues without priority labels will not be processed by this workflow.
+**Note**: This command automatically reviews and prioritizes any open issues that lack priority labels (P0-P3) before processing the issue queue.
+
+## Unprioritized Issue Triage
+
+When unprioritized issues are detected, review each one and assign an appropriate priority label before continuing with the fix workflow.
+
+### Triage Process
+
+For each unprioritized issue:
+
+1. **Read the issue** - Understand the title, description, and any labels
+2. **Assess severity and impact**:
+   - **P0 (Critical)**: System down, data loss, security vulnerability, blocks all users
+   - **P1 (High)**: Major feature broken, significant user impact, no workaround
+   - **P2 (Medium)**: Feature partially broken, workaround exists, moderate impact
+   - **P3 (Low)**: Minor issue, cosmetic, nice-to-have, minimal user impact
+3. **Assign the priority label**:
+
+```bash
+# Assign priority to an issue
+gh issue edit <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
+```
+
+4. **Add a triage comment** explaining the priority decision:
+
+```bash
+gh issue comment <ISSUE_NUMBER> --body "🏷️ **Triage Complete**
+
+**Priority Assigned**: P2 (Medium)
+
+**Rationale**: [Brief explanation of why this priority was chosen]
+
+🤖 Triaged by autonomous fix workflow"
+```
+
+### Triage Decision Matrix
+
+| Indicator | P0 | P1 | P2 | P3 |
+|-----------|----|----|----|----|
+| Production impact | Critical/Down | Major degradation | Partial impact | Minimal |
+| User scope | All users | Many users | Some users | Few users |
+| Workaround | None | Difficult | Available | Easy |
+| Data risk | Loss/corruption | Possible | Unlikely | None |
+| Security | Active exploit | Vulnerability | Potential | None |
+| Keywords | "crash", "down", "urgent", "security" | "broken", "fails", "blocking" | "issue", "bug", "incorrect" | "minor", "cosmetic", "enhancement" |
+
+### Triage Instructions
+
+When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
+
+1. Parse the `UNPRIORITIZED_DATA` to get issue numbers, titles, and descriptions
+2. For each issue, use the decision matrix to determine priority
+3. Assign the label and post a triage comment
+4. Continue to the main fix workflow after all issues are triaged
+
+**Model Selection for Triage**: Use **Haiku** for straightforward triage decisions, escalate to **Sonnet** if the issue description is ambiguous or requires deeper analysis.
 
 ## Issue Complexity Detection
 
@@ -213,7 +268,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -225,6 +280,31 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   mkdir -p .github
   echo "# Priority labels configured on $(date -I)" > .github/.priority-labels-configured
   echo "✅ Priority labels configured"
+fi
+
+# Step 0: Review and prioritize any unprioritized issues
+echo "🔍 Checking for unprioritized issues..."
+gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-open-issues.json
+
+# Find issues without any priority label (P0-P3)
+UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+unprioritized = [i for i in issues if not any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))]
+for issue in unprioritized:
+    print(f\"{issue['number']}|{issue['title']}|{issue.get('body', '')[:500]}\")
+")
+
+if [ -n "$UNPRIORITIZED" ]; then
+  UNPRIORITIZED_COUNT=$(echo "$UNPRIORITIZED" | grep -c "^" || echo "0")
+  echo "⚠️  Found $UNPRIORITIZED_COUNT unprioritized issue(s). Reviewing and assigning priorities..."
+  echo ""
+  echo "UNPRIORITIZED_ISSUES_FOUND=true"
+  echo "UNPRIORITIZED_DATA<<EOF"
+  echo "$UNPRIORITIZED"
+  echo "EOF"
+else
+  echo "✅ All open issues have priority labels assigned"
 fi
 
 # Check if a specific issue number was provided as argument
@@ -596,23 +676,47 @@ After regression testing:
 
 If regression tests pass completely (no new bug issues created), shift focus to **enhancements**.
 
-#### 5A: Check for Existing Enhancement Issues
+#### 5A: Check for Approved Enhancement Issues
+
+**IMPORTANT**: Only implement enhancements that have been **approved by a human** (i.e., do NOT have the `proposal` label). AI-generated proposals require human review before implementation.
 
 ```bash
-# Check for open enhancement issues
-gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 20 > /tmp/enhancements.json
+# Check for open enhancement issues that are NOT proposals (approved for implementation)
+gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 50 > /tmp/all-enhancements.json
 
-ENHANCEMENT_COUNT=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+# Filter out proposals - only get approved enhancements
+APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+approved = [i for i in issues if not any(l['name'] == 'proposal' for l in i.get('labels', []))]
+print(json.dumps(approved))
+")
+
+ENHANCEMENT_COUNT=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 
 if [ "$ENHANCEMENT_COUNT" -gt 0 ]; then
-  echo "🚀 Found $ENHANCEMENT_COUNT enhancement(s) to implement"
-  # Get first enhancement
-  ENHANCE_NUM=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['number'])")
-  ENHANCE_TITLE=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['title'])")
-  ENHANCE_BODY=$(cat /tmp/enhancements.json | python3 -c "import json,sys; print(json.load(sys.stdin)[0].get('body',''))")
-  echo "📋 Working on enhancement #$ENHANCE_NUM: $ENHANCE_TITLE"
+  echo "🚀 Found $ENHANCEMENT_COUNT approved enhancement(s) to implement"
+  # Get first approved enhancement
+  ENHANCE_NUM=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['number'])")
+  ENHANCE_TITLE=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['title'])")
+  ENHANCE_BODY=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(json.load(sys.stdin)[0].get('body',''))")
+  echo "📋 Working on approved enhancement #$ENHANCE_NUM: $ENHANCE_TITLE"
 else
-  echo "✨ No existing enhancements. Proposing new improvements..."
+  # Check if there are pending proposals
+  PROPOSAL_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+proposals = [i for i in issues if any(l['name'] == 'proposal' for l in i.get('labels', []))]
+print(len(proposals))
+")
+
+  if [ "$PROPOSAL_COUNT" -gt 0 ]; then
+    echo "📋 Found $PROPOSAL_COUNT proposal(s) awaiting human approval"
+    echo "💡 Use '/list-proposals' to review pending proposals"
+    echo "✨ No approved enhancements to implement. Creating new proposals..."
+  else
+    echo "✨ No enhancements or proposals. Creating new proposals..."
+  fi
   # Continue to Step 5B
 fi
 ```
@@ -641,12 +745,12 @@ Focus areas for enhancement proposals:
 3. **Performance** - Slow queries, caching opportunities, bundle optimization
 4. **Documentation** - API docs, code examples, best practices
 
-**Create Enhancement Issue with Implementation Plan**:
+**Create Enhancement Proposal** (tagged with `proposal` label for human review):
 
 ```bash
 gh issue create \
-  --label "enhancement,proposed,P3" \
-  --title "Enhancement: [Brief description]" \
+  --label "enhancement,proposal,P3" \
+  --title "Proposal: [Brief description]" \
   --body "$(cat <<'ENHANCEMENT_BODY'
 ## Proposed Enhancement
 
@@ -682,16 +786,46 @@ gh issue create \
 
 [Simple | Medium | Complex]
 
+---
+
+## 📋 Proposal Status
+
+**Status**: ⏳ Awaiting Human Approval
+
+### How to Approve This Proposal
+
+To approve and allow automated implementation:
+```bash
+gh issue edit <issue_number> --remove-label "proposal"
+```
+
+### How to Provide Feedback
+
+Comment on this issue with your feedback. The AI will incorporate your suggestions when you run `/refine-proposal <issue_number>`.
+
+### How to Reject This Proposal
+
+```bash
+gh issue close <issue_number> --comment "Rejected: [reason]"
+```
+
+---
+
 🤖 Proposed by autonomous improvement workflow
 ENHANCEMENT_BODY
 )"
 
-echo "✅ Created enhancement issue. Continuing to implement..."
+echo "✅ Created proposal issue. Awaiting human approval before implementation."
+echo "💡 Use '/list-proposals' to view all pending proposals"
 ```
 
-#### 5C: Implement Enhancement Using Superpowers
+**IMPORTANT**: After creating a proposal, do NOT automatically implement it. The workflow should continue looking for other work (bugs, approved enhancements) or create additional proposals. Proposals require explicit human approval (removal of the `proposal` label) before implementation.
 
-For each enhancement issue, follow this workflow:
+#### 5C: Implement Approved Enhancement Using Superpowers
+
+**IMPORTANT**: Only implement enhancements that do NOT have the `proposal` label. If an enhancement has the `proposal` label, it is awaiting human approval and must NOT be implemented.
+
+For each **approved** enhancement issue (no `proposal` label), follow this workflow:
 
 **Step 1: Create Feature Branch**
 
@@ -908,21 +1042,25 @@ gh issue edit "$ENHANCE_NUM" --add-label "needs-review"
 
 After completing ANY of these actions, you MUST immediately continue:
 
-1. **After fixing and closing a bug issue** → Fetch next priority issue
-2. **After skipping an issue** → Fetch next priority issue
-3. **After running regression tests** → Check for new issues created
-4. **After implementing an enhancement** → Check for more enhancements or bugs
-5. **After test failures during enhancement** → Process created bug issues first
-6. **After proposing new enhancements** → Implement the proposed enhancement
-7. **If no issues found** → Run regression tests, then work on enhancements
+1. **After triaging unprioritized issues** → Fetch next priority issue
+2. **After fixing and closing a bug issue** → Fetch next priority issue
+3. **After skipping an issue** → Fetch next priority issue
+4. **After running regression tests** → Check for new issues created
+5. **After implementing an approved enhancement** → Check for more approved enhancements or bugs
+6. **After test failures during enhancement** → Process created bug issues first
+7. **After creating a proposal** → Continue looking for other work (do NOT implement the proposal)
+8. **If no bugs or approved enhancements** → Create proposals, then wait for human approval
 
 ### Priority Order
 
 The workflow follows this strict priority order:
-1. **P0-P3 Bug Issues** (highest priority - fix bugs first)
-2. **Regression Test Failures** (creates new bug issues)
-3. **Existing Enhancement Issues** (only when no bugs exist)
-4. **Propose New Enhancements** (lowest priority - only when no bugs AND no existing enhancements)
+1. **Triage Unprioritized Issues** (assign P0-P3 labels first)
+2. **P0-P3 Bug Issues** (fix bugs first)
+3. **Regression Test Failures** (creates new bug issues)
+4. **Approved Enhancement Issues** (only enhancements WITHOUT the `proposal` label)
+5. **Create New Proposals** (lowest priority - only when no bugs AND no approved enhancements)
+
+**⚠️ NEVER automatically implement proposals.** Proposals (issues with `proposal` label) require human approval before implementation.
 
 ### Loop Implementation
 
@@ -932,33 +1070,49 @@ After every issue is resolved, skipped, or when checking for work:
 # Fetch all open issues
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
-# Count priority bug issues (P0-P3)
+# Count priority bug issues (P0-P3, excluding proposals)
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-priority = [i for i in issues if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))]
+priority = [i for i in issues
+            if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
+            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))]
 print(len(priority))
 ")
 
-# Count enhancement issues
-ENHANCEMENT_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
+# Count APPROVED enhancement issues (enhancement label but NOT proposal label)
+APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-enhancements = [i for i in issues if any(l['name'] == 'enhancement' for l in i.get('labels',[]))]
-print(len(enhancements))
+approved = [i for i in issues
+            if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
+            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))]
+print(len(approved))
+")
+
+# Count pending proposals
+PENDING_PROPOSALS=$(cat /tmp/all-issues.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+proposals = [i for i in issues if any(l['name'] == 'proposal' for l in i.get('labels',[]))]
+print(len(proposals))
 ")
 
 if [ "$PRIORITY_ISSUES" -gt 0 ]; then
   echo "🐛 Found $PRIORITY_ISSUES priority bug(s). Fixing bugs first..."
   # Process next bug issue (repeat from "Get highest priority issue" section)
-elif [ "$ENHANCEMENT_ISSUES" -gt 0 ]; then
-  echo "🚀 No bugs! Found $ENHANCEMENT_ISSUES enhancement(s). Implementing..."
-  # Process next enhancement (Step 5C)
+elif [ "$APPROVED_ENHANCEMENTS" -gt 0 ]; then
+  echo "🚀 No bugs! Found $APPROVED_ENHANCEMENTS approved enhancement(s). Implementing..."
+  # Process next approved enhancement (Step 5C)
+elif [ "$PENDING_PROPOSALS" -gt 0 ]; then
+  echo "📋 Found $PENDING_PROPOSALS proposal(s) awaiting human approval"
+  echo "💡 Use '/list-proposals' to review and approve proposals"
+  echo "✨ Creating additional proposals while waiting for approval..."
+  # Create new proposals (Step 5B) - do NOT implement existing proposals
 else
-  echo "✨ No bugs or enhancements. Running regression tests..."
+  echo "✨ No bugs, approved enhancements, or proposals. Running regression tests..."
   # Run /full-regression-test command
-  # If tests pass and no issues created → Propose new enhancements (Step 5B)
-  # Then implement the proposed enhancement (Step 5C)
+  # If tests pass and no issues created → Create new proposals (Step 5B)
 fi
 ```
 
@@ -967,16 +1121,67 @@ fi
 - **DO NOT** wait for user input between issues
 - **DO NOT** stop after fixing one issue
 - **DO NOT** ask "should I continue?"
+- **DO NOT** implement issues with the `proposal` label (they require human approval)
+- **DO** triage unprioritized issues first
 - **DO** keep processing bug issues until the queue is empty
 - **DO** run `/full-regression-test` when bug queue is empty
 - **DO** process any new bug issues created by `/full-regression-test`
-- **DO** work on enhancements only when no bugs exist
-- **DO** propose new enhancements when none exist
-- **DO** implement proposed enhancements immediately after creating them
+- **DO** work on **approved** enhancements only when no bugs exist
+- **DO** create new proposals when no bugs or approved enhancements exist
+- **DO** inform users about pending proposals via `/list-proposals`
 - **DO** create bug issues for any test failures during enhancement work
 - **DO** loop back to bug fixing if enhancement work creates failures
 
 **The only way this workflow stops is if the user manually interrupts it.**
+
+---
+
+## Proposal Management
+
+### What is a Proposal?
+
+A **proposal** is an AI-generated enhancement suggestion that requires human review before implementation. Proposals are tagged with the `proposal` label and will NOT be automatically implemented.
+
+### How to Review Proposals
+
+Use the `/list-proposals` command to see all pending proposals:
+
+```bash
+/list-proposals
+```
+
+### How to Approve a Proposal
+
+To approve a proposal for automated implementation, remove the `proposal` label:
+
+```bash
+gh issue edit <issue_number> --remove-label "proposal"
+```
+
+Once the `proposal` label is removed, the `/fix-github` workflow will automatically implement the enhancement on its next iteration.
+
+### How to Provide Feedback on a Proposal
+
+1. **Comment on the issue** with your feedback, questions, or requested changes
+2. Run `/refine-proposal <issue_number>` to have the AI incorporate your feedback
+3. Review the updated proposal
+4. Approve or provide additional feedback
+
+### How to Reject a Proposal
+
+```bash
+gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
+```
+
+### Proposal Labels
+
+| Label | Meaning |
+|-------|---------|
+| `proposal` | AI-generated, awaiting human approval |
+| `enhancement` | Describes a feature improvement |
+| `P0`-`P3` | Priority level (assigned during triage) |
+
+**Note**: An issue can have both `proposal` and `enhancement` labels. The `proposal` label is what prevents automatic implementation.
 
 ---
 

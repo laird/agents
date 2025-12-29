@@ -1,6 +1,6 @@
 {
   "name": "plugin-marketplace",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Includes modernize workflow (assess → plan → execute) and autofix autonomous issue resolution. Originally created for .NET migrations, these protocols are universally applicable to any software project.",
   "metadata": {
     "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Originally created for .NET migrations, these protocols are universally applicable to any software project requiring structured agent collaboration."
@@ -43,8 +43,8 @@
     {
       "name": "autofix",
       "source": "./plugins/autofix",
-      "description": "Autonomous GitHub issue resolution system. Automatically prioritizes, analyzes, and fixes open issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
-      "version": "1.3.0",
+      "description": "Autonomous GitHub issue resolution system. Automatically triages unprioritized issues, then fixes prioritized issues with intelligent complexity detection. Uses superpowers for complex problems, runs regression tests when no issues exist, and creates improvement proposals.",
+      "version": "1.5.0",
       "category": "automation",
       "tags": [
         "github",
@@ -54,7 +54,9 @@
         "testing",
         "regression",
         "superpowers",
-        "quality-automation"
+        "quality-automation",
+        "proposals",
+        "triage"
       ],
       "author": {
         "name": "Agent Protocols Team",
