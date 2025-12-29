@@ -1,13 +1,42 @@
 # Enhancement Implementation Workflow
 
-**Purpose**: Implement feature enhancements when no priority bugs exist
+**Version**: 1.5.0
+**Purpose**: Implement **approved** feature enhancements when no priority bugs exist
+
+## Important: Proposal System
+
+**ONLY implement enhancements that do NOT have the `proposal` label.**
+
+- Enhancements with `proposal` label are AI-generated suggestions awaiting human approval
+- Do NOT automatically implement proposals
+- See `proposals.md` for proposal management
 
 ## Process
 
 ### 1. Enhancement Selection
-- Fetch open enhancement issues (non-bug labels)
+
+**IMPORTANT**: Filter out proposals before selection!
+
+```bash
+# Fetch enhancements that are NOT proposals
+gh issue list --state open --label "enhancement" --json number,title,body,labels > /tmp/enhancements.json
+
+# Filter out proposals (only get approved enhancements)
+python3 -c "
+import json
+issues = json.load(open('/tmp/enhancements.json'))
+approved = [i for i in issues if not any(
+    l['name'] == 'proposal' for l in i.get('labels', [])
+)]
+for i in approved:
+    print(f\"{i['number']}|{i['title']}\")
+"
+```
+
+- Fetch open enhancement issues WITHOUT `proposal` label
 - Prioritize by complexity and business value
-- Select highest priority enhancement
+- Select highest priority approved enhancement
+- **If no approved enhancements exist**: See `proposals.md` to create new proposals
 
 ### 2. Implementation Planning
 

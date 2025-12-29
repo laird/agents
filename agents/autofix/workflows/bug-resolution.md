@@ -1,16 +1,35 @@
 # Bug Resolution Workflow
 
+**Version**: 1.5.0
 **Purpose**: Systematic resolution of GitHub issues by priority (P0-P3)
+
+## Prerequisites
+
+1. **Run Triage First**: See `triage.md` - all issues must have P0-P3 labels
+2. **Exclude Proposals**: Do not process issues with `proposal` label
 
 ## Process
 
 ### 1. Issue Fetching & Prioritization
-```bash
-# Fetch all open issues
-gh issue list --state open --json number,title,labels,body --limit 100
 
-# Sort by priority (P0 → P1 → P2 → P3)
-# Create priority labels if missing
+```bash
+# Fetch all open issues with priority labels (excluding proposals)
+gh issue list --state open --json number,title,labels,body --limit 100 > /tmp/issues.json
+
+# Filter: has priority label AND no proposal label
+python3 -c "
+import json
+issues = json.load(open('/tmp/issues.json'))
+bugs = [i for i in issues
+        if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
+        and not any(l['name'] == 'proposal' for l in i.get('labels',[]))]
+# Sort by priority
+priority_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3}
+bugs.sort(key=lambda x: min(priority_order.get(l['name'], 99) for l in x.get('labels',[])))
+for b in bugs:
+    priority = next((l['name'] for l in b['labels'] if l['name'] in priority_order), 'P?')
+    print(f\"{priority}|#{b['number']}|{b['title']}\")
+"
 ```
 
 ### 2. Priority Assignment Rules
