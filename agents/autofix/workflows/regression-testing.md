@@ -1,121 +1,91 @@
 # Regression Testing Workflow
 
-**Purpose**: Execute comprehensive test suite and analyze failures
+**Purpose**: Execute test suite and analyze failures
 
-## Process
+## Configuration
 
-### 1. Test Configuration Loading
-Read `CLAUDE.md` for project-specific settings:
-- Unit test commands and directories
-- E2E test commands and patterns
-- Build verification commands
-- Coverage report locations
+Read test commands from project guidance file (e.g., `CLAUDE.md`, `gemini.md`).
 
-### 2. Test Execution Sequence
+## Test Execution
 
-#### A. Build Verification
+### 1. Build Verification
+
 ```bash
-# Run build command from CLAUDE.md or default
-npm run build  # or configured command
+# JavaScript/TypeScript
+npm run build
+
+# Java
+mvn compile
+
+# C#/.NET
+dotnet build
 ```
 
-#### B. Unit Tests
+### 2. Unit Tests
+
 ```bash
-# Run from configured directory
-cd {unit-test-dir}
-npm test  # or configured command
+# JavaScript/TypeScript
+npm test
+
+# Java
+mvn test
+
+# C#/.NET
+dotnet test --filter "Category=Unit"
 ```
 
-#### C. E2E Tests
+### 3. Integration/E2E Tests
+
 ```bash
-# Run with configured reporter
-npx playwright test --reporter=json
+# JavaScript/TypeScript
+npm run test:e2e
+# or: npx playwright test --reporter=json
+
+# Java
+mvn verify -P integration
+
+# C#/.NET
+dotnet test --filter "Category=Integration"
 ```
 
-### 3. Result Analysis
+## Failure Analysis
 
-#### A. Parse Test Results
-- Extract pass/fail counts from unit tests
-- Parse JSON output from E2E tests
-- Identify syntax errors and runtime failures
-
-#### B. Failure Categorization
-For each failure:
-- Extract test file and description
-- Determine failure type (syntax, logic, integration)
+### Parse Results
+- Extract pass/fail counts
+- Identify syntax vs logic vs integration failures
 - Assign priority based on impact
 
-### 4. GitHub Issue Creation
+### Priority Assignment
 
-#### A. Priority Assignment
-```python
-def determine_priority(test_file, test_desc):
-    if "auth|security|crash|data loss" in test_desc.lower():
-        return "P0"
-    elif "create|delete|update|crud|save" in test_desc.lower():
-        return "P1"
-    elif "filter|sort|search|display|show" in test_desc.lower():
-        return "P2"
-    else:
-        return "P3"
-```
+| Pattern in test description | Priority |
+|-----------------------------|----------|
+| auth, security, crash, data loss | P0 |
+| create, delete, update, save | P1 |
+| filter, sort, search, display | P2 |
+| other | P3 |
 
-#### B. Issue Creation
+### Create Issue for Each Failure
+
 ```bash
 gh issue create \
-  --title "{PRIORITY}-{test_desc:0:80}" \
+  --title "{priority}: {test_description}" \
   --body "## Test Failure
-**Test File**: `{test_file}`
-**Test Description**: {test_desc}
-**Priority**: {PRIORITY}
+**File**: \`{test_file}\`
+**Description**: {test_desc}
 **Detected**: {timestamp}
 
-This test failure was detected during automated regression testing.
-
-**Test Report**: See `{report_file}`
-**Next Steps**:
-1. Reproduce the failure locally
-2. Identify root cause
-3. Implement fix
-4. Verify with test command" \
-  --label "bug,automated-test-failure,{PRIORITY}"
+Detected during regression testing." \
+  --label "bug,automated-test-failure,{priority}"
 ```
 
-### 5. Report Generation
+## Status Determination
 
-Create detailed markdown report:
-```markdown
-# Regression Test Report
-**Date**: {timestamp}
-**Timestamp**: {run_id}
+- **Success** (all pass): Proceed to enhancement phase
+- **Failure** (any fail): Return to bug fixing phase
 
-## Test Summary
-### Unit Tests
-- **Status**: {PASSED/FAILED}
-- **Total**: {total}
-- **Passed**: {passed}
-- **Failed**: {failed}
+## Defaults
 
-### E2E Tests
-- **Status**: {PASSED/FAILED}
-- **Total**: {total}
-- **Passed**: {passed}
-- **Failed**: {failed}
-- **Skipped**: {skipped}
-
-## Test Failures
-{detailed_failure_analysis}
-```
-
-### 6. Status Determination
-- **Success**: All tests pass → proceed to enhancement phase
-- **Failure**: Any test fails → return to bug fixing phase
-
-## Configuration Defaults
-
-If `CLAUDE.md` not found or incomplete:
-- Unit tests: `npm test` in current directory
-- E2E tests: `npx playwright test --reporter=json`
-- Build: `npm run build`
-- Test pattern: `*.spec.ts`
-- Report directory: `docs/test/regression-reports`
+If project guidance file not found:
+- Build: `npm run build` / `mvn compile` / `dotnet build`
+- Unit tests: `npm test` / `mvn test` / `dotnet test`
+- E2E: `npx playwright test` / `mvn verify` / `dotnet test`

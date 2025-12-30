@@ -1,169 +1,79 @@
 # Proposal Management Workflow
 
-**Version**: 1.5.0
-**Purpose**: Create and manage AI-generated enhancement proposals for human approval
+**Purpose**: Create AI-generated enhancement proposals for human approval
 
 ## Overview
 
-AI-generated enhancements are NOT automatically implemented. Instead, they are created as **proposals** with a `proposal` label, requiring human review and approval before implementation.
+AI-generated enhancements are NOT auto-implemented. They're created as **proposals** with a `proposal` label, requiring human review before implementation.
 
-## Proposal Creation
+## When to Create Proposals
 
-### When to Create Proposals
-
-Create proposals when:
-- All priority bugs (P0-P3) are resolved
-- All approved enhancements are implemented
-- No existing proposals need work
+- All P0-P3 bugs resolved
+- All approved enhancements implemented
 - Regression tests pass
 
-### Create Enhancement Proposal
+## Create Proposal
 
 ```bash
 gh issue create \
   --label "enhancement,proposal,P3" \
-  --title "Proposal: [Brief description]" \
+  --title "Proposal: {description}" \
   --body "$(cat <<'EOF'
 ## Proposed Enhancement
-
-[Detailed description of what this enhancement accomplishes]
+{what this accomplishes}
 
 ## Rationale
-
-[Why this improvement is valuable - metrics, user impact, maintainability]
+{why valuable - metrics, user impact, maintainability}
 
 ## Implementation Plan
-
-### Phase 1: [First phase]
-- [ ] Task 1.1
-- [ ] Task 1.2
-
-### Phase 2: [Second phase]
-- [ ] Task 2.1
-- [ ] Task 2.2
-
-### Phase 3: Verification
-- [ ] Run full test suite
-- [ ] Manual verification of feature
-- [ ] Update documentation
+- [ ] Phase 1: {tasks}
+- [ ] Phase 2: {tasks}
+- [ ] Verification: tests, docs
 
 ## Success Criteria
-
-- [ ] All existing tests pass
-- [ ] New tests added for enhancement
-- [ ] Documentation updated
+- [ ] Existing tests pass
+- [ ] New tests added
 - [ ] No performance regression
 
-## Estimated Complexity
-
-[Simple | Medium | Complex]
-
----
-
-## 📋 Proposal Status
-
-**Status**: ⏳ Awaiting Human Approval
-
-### How to Approve This Proposal
-
-```bash
-gh issue edit <issue_number> --remove-label "proposal"
-```
-
-### How to Provide Feedback
-
-Comment on this issue with your feedback.
-
-### How to Reject This Proposal
-
-```bash
-gh issue close <issue_number> --comment "Rejected: [reason]"
-```
+## Complexity
+{Simple | Medium | Complex}
 
 ---
+**Status**: Awaiting Human Approval
 
-🤖 Proposed by autofix agent
+**Approve**: `gh issue edit {number} --remove-label "proposal"`
+**Reject**: `gh issue close {number} --comment "Rejected: {reason}"`
+
+Proposed by autofix agent
 EOF
 )"
 ```
 
-## Proposal Lifecycle
+## Lifecycle
 
 ```
-┌─────────────────┐
-│  AI Creates     │
-│  Proposal       │
-│  (proposal tag) │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Human Reviews  │◄──────────────────┐
-└────────┬────────┘                   │
-         │                            │
-    ┌────┴────┐                       │
-    │         │                       │
-    ▼         ▼                       │
-┌───────┐ ┌───────┐ ┌───────┐        │
-│Approve│ │Feedback│ │Reject │        │
-└───┬───┘ └───┬───┘ └───┬───┘        │
-    │         │         │             │
-    ▼         │         ▼             │
-┌───────┐     │     ┌───────┐        │
-│Remove │     │     │Close  │        │
-│label  │     │     │Issue  │        │
-└───┬───┘     │     └───────┘        │
-    │         │                       │
-    ▼         └───────────────────────┘
-┌─────────────────┐
-│  Enhancement    │
-│  Workflow       │
-│  Implements     │
-└─────────────────┘
+AI Creates Proposal (with proposal tag)
+         ↓
+Human Reviews → Approve (remove label) → Enhancement Workflow
+             → Feedback → AI Revises
+             → Reject → Close Issue
 ```
 
-## Listing Proposals
+## Commands
 
 ```bash
-# List all pending proposals
-gh issue list --state open --label "proposal" --json number,title,createdAt
+# List pending proposals
+gh issue list --state open --label "proposal"
 
-# View proposal details
-gh issue view <number>
+# Approve
+gh issue edit {number} --remove-label "proposal"
+
+# Reject
+gh issue close {number} --comment "Rejected: {reason}"
 ```
 
-## Human Actions
+## Rules
 
-### Approve a Proposal
-
-To approve and allow automated implementation:
-
-```bash
-gh issue edit <issue_number> --remove-label "proposal"
-```
-
-Once the `proposal` label is removed, the enhancement workflow will pick it up.
-
-### Provide Feedback
-
-Comment on the issue with feedback:
-
-```bash
-gh issue comment <issue_number> --body "Please consider:
-- [Feedback point 1]
-- [Feedback point 2]"
-```
-
-### Reject a Proposal
-
-```bash
-gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
-```
-
-## Important Rules
-
-1. **NEVER auto-implement proposals** - They require human approval
-2. **Check for proposal label** before implementing any enhancement
-3. **Inform users** about pending proposals
-4. **Continue working** on bugs while proposals await approval
-5. **Create new proposals** only when no other work exists
+1. NEVER auto-implement proposals
+2. Check for `proposal` label before implementing any enhancement
+3. Continue working on bugs while proposals await approval
