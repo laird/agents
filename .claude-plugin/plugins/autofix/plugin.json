@@ -1,6 +1,6 @@
 {
   "name": "autofix",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work. Proposals require human approval before implementation.",
   "author": {
     "name": "Agent Protocols Team",
@@ -28,6 +28,7 @@
   "commands": [
     "../../../plugins/autofix/commands/fix-github.md",
     "../../../plugins/autofix/commands/fix-github-loop.md",
+    "../../../plugins/autofix/commands/install-stop-hook.md",
     "../../../plugins/autofix/commands/full-regression-test.md",
     "../../../plugins/autofix/commands/improve-test-coverage.md",
     "../../../plugins/autofix/commands/list-proposals.md"

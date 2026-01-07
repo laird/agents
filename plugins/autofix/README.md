@@ -6,8 +6,6 @@ Autonomous GitHub issue resolution system with infinite loop support.
 
 ### Step 1: Install the Plugin
 
-Use the Claude Code `/plugin` command to add the marketplace and install:
-
 ```bash
 # Add the plugin marketplace (one-time setup)
 /plugin add-registry https://github.com/laird/agents
@@ -18,24 +16,9 @@ Use the Claude Code `/plugin` command to add the marketplace and install:
 
 ### Step 2: Configure the Stop Hook
 
-Add to your project's `.claude/settings.json` to enable infinite loop:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+# Run in your project directory - configures .claude/settings.json automatically
+/install-stop-hook
 ```
 
 ### Step 3: Start the Loop
@@ -78,6 +61,7 @@ Proposals are tagged with `proposal` label and never auto-implemented. When a hu
 |---------|-------------|
 | `/fix-github` | Fix the highest priority GitHub issue |
 | `/fix-github-loop` | Start infinite loop that runs `/fix-github` forever |
+| `/install-stop-hook` | Configure stop hook in project (one-time setup) |
 | `/full-regression-test` | Run complete test suite and create issues for failures |
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/list-proposals` | List pending enhancement proposals |
