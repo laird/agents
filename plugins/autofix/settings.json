@@ -1,0 +1,16 @@
+{
+  "$schema": "https://claude.ai/schemas/plugin-settings.json",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash plugins/autofix/hooks/stop-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

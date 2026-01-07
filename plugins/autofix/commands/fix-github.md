@@ -1048,8 +1048,8 @@ After completing ANY of these actions, you MUST immediately continue:
 4. **After running regression tests** → Check for new issues created
 5. **After implementing an approved enhancement** → Check for more approved enhancements or bugs
 6. **After test failures during enhancement** → Process created bug issues first
-7. **After creating a proposal** → Continue looking for other work (do NOT implement the proposal)
-8. **If no bugs or approved enhancements** → Create proposals, then wait for human approval
+7. **After creating a proposal** → Continue generating more proposals if useful ideas remain
+8. **If truly idle** → Output `IDLE_NO_WORK_AVAILABLE` to trigger sleep cycle
 
 ### Priority Order
 
@@ -1104,15 +1104,12 @@ if [ "$PRIORITY_ISSUES" -gt 0 ]; then
 elif [ "$APPROVED_ENHANCEMENTS" -gt 0 ]; then
   echo "🚀 No bugs! Found $APPROVED_ENHANCEMENTS approved enhancement(s). Implementing..."
   # Process next approved enhancement (Step 5C)
-elif [ "$PENDING_PROPOSALS" -gt 0 ]; then
-  echo "📋 Found $PENDING_PROPOSALS proposal(s) awaiting human approval"
-  echo "💡 Use '/list-proposals' to review and approve proposals"
-  echo "✨ Creating additional proposals while waiting for approval..."
-  # Create new proposals (Step 5B) - do NOT implement existing proposals
 else
-  echo "✨ No bugs, approved enhancements, or proposals. Running regression tests..."
-  # Run /full-regression-test command
-  # If tests pass and no issues created → Create new proposals (Step 5B)
+  echo "✨ No bugs or approved enhancements. Checking for useful proposals to create..."
+  # Run /full-regression-test first if not recently run
+  # Then brainstorm proposals using superpowers:brainstorming
+  # Create proposals for genuinely useful improvements
+  # If nothing useful to propose → Output IDLE signal for sleep cycle
 fi
 ```
 
@@ -1127,10 +1124,22 @@ fi
 - **DO** run `/full-regression-test` when bug queue is empty
 - **DO** process any new bug issues created by `/full-regression-test`
 - **DO** work on **approved** enhancements only when no bugs exist
-- **DO** create new proposals when no bugs or approved enhancements exist
-- **DO** inform users about pending proposals via `/list-proposals`
+- **DO** keep generating proposals until you genuinely have no useful ideas
 - **DO** create bug issues for any test failures during enhancement work
 - **DO** loop back to bug fixing if enhancement work creates failures
+
+### Idle State
+
+When truly idle (no bugs, no approved enhancements, no useful proposals to create, tests passing), output:
+
+```
+IDLE_NO_WORK_AVAILABLE
+```
+
+This signals the stop hook to sleep (default 60 minutes) before checking again for:
+- New human-created issues
+- Comments on existing issues
+- Approved proposals ready for implementation
 
 **The only way this workflow stops is if the user manually interrupts it.**
 
