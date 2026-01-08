@@ -4,28 +4,18 @@ Autonomous GitHub issue resolution system with infinite loop support.
 
 ## Installation
 
-### Step 1: Install the Plugin
-
 ```bash
 # Add the plugin marketplace (one-time setup)
 /plugin add-registry https://github.com/laird/agents
 
 # Install the autofix plugin
 /plugin install autofix
-```
 
-### Step 2: Configure the Stop Hook
-
-```bash
-# Run in your project directory - configures .claude/settings.json automatically
-/install-stop-hook
-```
-
-### Step 3: Start the Loop
-
-```bash
+# Start the infinite loop (auto-installs stop hook)
 /fix-github-loop
 ```
+
+That's it! The `/fix-github-loop` command automatically configures the stop hook in your project's `.claude/settings.json` if not already present.
 
 ## Required Labels
 

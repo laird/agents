@@ -63,6 +63,86 @@ done
 mkdir -p .claude
 
 # ============================================================
+# STEP 0: Auto-install stop hook if not configured
+# ============================================================
+echo "🔧 Checking stop hook configuration..."
+
+HOOK_INSTALLED=false
+
+if [ -f ".claude/settings.json" ]; then
+  if grep -q "stop-hook.sh" .claude/settings.json 2>/dev/null; then
+    HOOK_INSTALLED=true
+    echo "✅ Stop hook already configured"
+  fi
+fi
+
+if [ "$HOOK_INSTALLED" = "false" ]; then
+  echo "📝 Installing stop hook..."
+
+  if [ -f ".claude/settings.json" ]; then
+    # Merge with existing settings
+    python3 << 'PYTHON_SCRIPT'
+import json
+
+settings_path = ".claude/settings.json"
+
+with open(settings_path, 'r') as f:
+    settings = json.load(f)
+
+stop_hook = {
+    "matcher": "",
+    "hooks": [
+        {
+            "type": "command",
+            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
+        }
+    ]
+}
+
+if "hooks" not in settings:
+    settings["hooks"] = {}
+if "Stop" not in settings["hooks"]:
+    settings["hooks"]["Stop"] = []
+
+already_present = any(
+    "stop-hook.sh" in str(h.get("hooks", []))
+    for h in settings["hooks"]["Stop"]
+)
+
+if not already_present:
+    settings["hooks"]["Stop"].append(stop_hook)
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f, indent=2)
+    print("  Added to existing settings.json")
+PYTHON_SCRIPT
+  else
+    # Create new settings file
+    cat > .claude/settings.json << 'SETTINGS_JSON'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGS_JSON
+    echo "  Created .claude/settings.json"
+  fi
+
+  echo "✅ Stop hook installed"
+fi
+
+echo ""
+
+# ============================================================
 # STEP 1: Ensure all required labels exist
 # ============================================================
 echo "🏷️  Ensuring required GitHub labels exist..."
