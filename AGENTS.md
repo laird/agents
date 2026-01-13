@@ -3,7 +3,7 @@
 ## Build/Lint/Test Commands
 
 ### Testing
-- **Run all tests**: `bash plugins/autofix/scripts/regression-test.sh`
+- **Run all tests**: `bash plugins/autocoder/scripts/regression-test.sh`
 - **Unit tests only**: `npm test` (from project root or configured directory)
 - **E2E tests only**: `npx playwright test --reporter=json`
 - **Single test**: `npx playwright test <test-file.spec.ts>`

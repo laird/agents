@@ -39,7 +39,7 @@ for i in unprioritized:
 gh issue edit {number} --add-label "P2"
 gh issue comment {number} --body "**Triage**: P2 (Medium)
 **Rationale**: {explanation}
-Triaged by autofix agent"
+Triaged by autocoder agent"
 ```
 
 ## Integration

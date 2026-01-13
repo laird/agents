@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Autofix Stop Hook
+# Autocoder Stop Hook
 # Prevents session exit when fix-github loop is active
 # Feeds the /fix-github prompt back to continue the loop
 

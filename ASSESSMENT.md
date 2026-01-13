@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The project is a repository of Claude Code plugins ("Modernize" and "Autofix") being migrated to Antigravity. It consists primarily of Markdown (protocols, rules, workflows) and Shell scripts. There is no traditional application code (Java, C#, Python, Node.js) at the root level.
+The project is a repository of Claude Code plugins ("Modernize" and "Autocoder") being migrated to Antigravity. It consists primarily of Markdown (protocols, rules, workflows) and Shell scripts. There is no traditional application code (Java, C#, Python, Node.js) at the root level.
 
 ## 1. Technical Viability (Score: 100/100)
 

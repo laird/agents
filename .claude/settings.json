@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash plugins/autofix/hooks/stop-hook.sh"
+            "command": "bash plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }

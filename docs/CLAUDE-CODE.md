@@ -6,7 +6,7 @@
 
 ## Overview
 
-Claude Code is Anthropic's official CLI for Claude. This repository provides a plugin marketplace with two plugins (**modernize** and **autofix**) that extend Claude Code with specialized workflows for software development.
+Claude Code is Anthropic's official CLI for Claude. This repository provides a plugin marketplace with two plugins (**modernize** and **autocoder**) that extend Claude Code with specialized workflows for software development.
 
 ## Directory Structure
 
@@ -16,8 +16,8 @@ Claude Code is Anthropic's official CLI for Claude. This repository provides a p
 └── plugins/
     ├── modernize/
     │   └── plugin.json           # Modernize plugin definition (v3.1.0)
-    └── autofix/
-        └── plugin.json           # Autofix plugin definition (v1.5.0)
+    └── autocoder/
+        └── plugin.json           # Autocoder plugin definition (v1.5.0)
 ```
 
 ### Key Files
@@ -37,7 +37,7 @@ plugins/
 │   ├── commands/          # 5 slash commands (.md protocol files)
 │   ├── agents/            # 6 specialist agent definitions
 │   └── protocols/         # 10 supporting protocol documents
-└── autofix/
+└── autocoder/
     ├── commands/          # 4 slash commands
     └── scripts/           # Automation scripts
 ```
@@ -56,11 +56,11 @@ plugins/
 # Install modernize plugin
 /plugin install modernize
 
-# Install autofix plugin
-/plugin install autofix
+# Install autocoder plugin
+/plugin install autocoder
 
 # Install both
-/plugin install modernize autofix
+/plugin install modernize autocoder
 ```
 
 ### Verify Installation
@@ -81,7 +81,7 @@ plugins/
 | `/retro` | Analyze project history for improvements (outputs IMPROVEMENTS.md) |
 | `/retro-apply` | Apply retrospective recommendations |
 
-### Autofix Plugin (v1.5.0)
+### Autocoder Plugin (v1.5.0)
 
 | Command | Description |
 |---------|-------------|
@@ -92,7 +92,7 @@ plugins/
 
 ## Configuration
 
-Claude Code reads project-specific settings from `CLAUDE.md` in your project root. The autofix plugin auto-generates configuration on first run:
+Claude Code reads project-specific settings from `CLAUDE.md` in your project root. The autocoder plugin auto-generates configuration on first run:
 
 ```markdown
 ## Automated Testing & Issue Management
@@ -125,7 +125,7 @@ npm run build
 |---------|---------|
 | 3.3.0 | Added proposal system, issue triage, `/list-proposals` command |
 | 3.2.0 | Added `/improve-test-coverage` command |
-| 3.0.0 | Added autofix plugin with `/fix-github` |
+| 3.0.0 | Added autocoder plugin with `/fix-github` |
 | 2.6.0 | Applied 5 retrospective improvements |
 | 2.5.0 | Added `/retro` and `/retro-apply` commands |
 

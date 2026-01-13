@@ -44,7 +44,7 @@ gh issue create \
 **Approve**: `gh issue edit {number} --remove-label "proposal"`
 **Reject**: `gh issue close {number} --comment "Rejected: {reason}"`
 
-Proposed by autofix agent
+Proposed by autocoder agent
 EOF
 )"
 ```

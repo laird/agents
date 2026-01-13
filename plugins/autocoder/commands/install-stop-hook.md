@@ -1,4 +1,4 @@
-# Install Autofix Stop Hook
+# Install Autocoder Stop Hook
 
 Configures the stop hook in your project's `.claude/settings.json` to enable the infinite `/fix-github-loop`.
 
@@ -10,7 +10,7 @@ Configures the stop hook in your project's `.claude/settings.json` to enable the
 
 This command automatically:
 1. Creates `.claude/settings.json` if it doesn't exist
-2. Adds the stop hook configuration for the autofix plugin
+2. Adds the stop hook configuration for the autocoder plugin
 3. Preserves any existing hooks or settings
 
 ## Instructions
@@ -47,7 +47,7 @@ stop_hook = {
     "hooks": [
         {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
+            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
         }
     ]
 }
@@ -92,7 +92,7 @@ else
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
+            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }

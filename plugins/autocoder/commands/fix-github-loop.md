@@ -65,7 +65,7 @@ else
 import json
 with open(".claude/settings.json", 'r') as f:
     settings = json.load(f)
-stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"}]}
+stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"}]}
 if "hooks" not in settings:
     settings["hooks"] = {}
 if "Stop" not in settings["hooks"]:
@@ -85,7 +85,7 @@ PYTHON_SCRIPT
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autofix/hooks/stop-hook.sh"
+            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }

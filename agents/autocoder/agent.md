@@ -1,11 +1,11 @@
 ---
-name: autofix
+name: autocoder
 version: 1.6.0
 type: agent
 category: automation
 ---
 
-# Autofix Agent
+# Autocoder Agent
 
 **Category**: Automation & Quality | **Type**: Orchestrator
 

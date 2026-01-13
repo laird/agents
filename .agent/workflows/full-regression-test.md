@@ -7,13 +7,13 @@ description: Run full regression test suite
 This workflow runs the comprehensive regression suite and manages GitHub issues for failures.
 
 1. **Preparation**
-    - Ensure `plugins/autofix/scripts/regression-test.sh` is executable. (If not found, create it from the reference implementation).
+    - Ensure `plugins/autocoder/scripts/regression-test.sh` is executable. (If not found, create it from the reference implementation).
 
 2. **Execution**
     Run the regression test script:
 
     ```bash
-    bash plugins/autofix/scripts/regression-test.sh
+    bash plugins/autocoder/scripts/regression-test.sh
     ```
 
 3. **Analysis**

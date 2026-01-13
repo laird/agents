@@ -1,4 +1,4 @@
-# Autofix Plugin (Claude Code)
+# Autocoder Plugin (Claude Code)
 
 Autonomous GitHub issue resolution system with infinite loop support.
 
@@ -8,8 +8,8 @@ Autonomous GitHub issue resolution system with infinite loop support.
 # Add the plugin marketplace (one-time setup)
 /plugin add-registry https://github.com/laird/agents
 
-# Install the autofix plugin
-/plugin install autofix
+# Install the autocoder plugin
+/plugin install autocoder
 
 # Start the infinite loop (auto-installs stop hook)
 /fix-github-loop

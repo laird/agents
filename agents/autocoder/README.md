@@ -1,12 +1,12 @@
-# Autofix Agent (OpenCode)
+# Autocoder Agent (OpenCode)
 
 **Version**: 1.5.0
 
-This directory contains the definition for the **Autofix** agent on the OpenCode platform.
+This directory contains the definition for the **Autocoder** agent on the OpenCode platform.
 
 ## Overview
 
-The Autofix agent is responsible for autonomously resolving GitHub issues with:
+The Autocoder agent is responsible for autonomously resolving GitHub issues with:
 - **Issue Triage**: Assigns P0-P3 priority labels to unprioritized issues
 - **Bug Resolution**: Fixes prioritized bugs in order (P0 → P1 → P2 → P3)
 - **Regression Testing**: Runs comprehensive test suites

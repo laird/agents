@@ -6,17 +6,17 @@
 
 ## Overview
 
-OpenCode uses an `agents/` directory structure to define agent configurations, workflows, and specialist definitions. This repository provides two agent configurations: **modernize** and **autofix**.
+OpenCode uses an `agents/` directory structure to define agent configurations, workflows, and specialist definitions. This repository provides two agent configurations: **modernize** and **autocoder**.
 
 ## Directory Structure
 
 ```
 agents/
 ├── README.md                     # OpenCode agents overview
-├── autofix/                      # Autofix agent configuration
-│   ├── README.md                # Autofix agent overview
+├── autocoder/                      # Autocoder agent configuration
+│   ├── README.md                # Autocoder agent overview
 │   ├── agent.md                 # Main agent definition (v1.5.0)
-│   └── workflows/               # Autofix workflows
+│   └── workflows/               # Autocoder workflows
 │       ├── bug-resolution.md    # Bug fixing workflow
 │       ├── regression-testing.md # Test suite workflow
 │       └── enhancement.md       # Enhancement workflow
@@ -37,7 +37,7 @@ agents/
 
 | Directory | Purpose |
 |-----------|---------|
-| `autofix/` | Autonomous GitHub issue resolution agent |
+| `autocoder/` | Autonomous GitHub issue resolution agent |
 | `modernize/` | Multi-agent modernization orchestration |
 | `*/workflows/` | Workflow definitions for each agent |
 | `modernize/specialists/` | Individual specialist agent definitions |
@@ -58,11 +58,11 @@ Configure OpenCode to reference this repository's `agents/` directory.
 
 ## Available Agents
 
-### Autofix Agent (v1.5.0)
+### Autocoder Agent (v1.5.0)
 
 Autonomous GitHub issue resolution with intelligent testing and quality automation.
 
-**File**: `agents/autofix/agent.md`
+**File**: `agents/autocoder/agent.md`
 
 **Capabilities**:
 - Issue triage (assigns P0-P3 priority labels)
@@ -110,7 +110,7 @@ Each agent is defined in a Markdown file with YAML frontmatter:
 
 ```yaml
 ---
-name: autofix
+name: autocoder
 version: 1.5.0
 type: agent
 category: automation
@@ -142,7 +142,7 @@ category: automation
 ...
 ```
 
-## Autofix Agent Details (v1.5.0)
+## Autocoder Agent Details (v1.5.0)
 
 ### Workflow Phases
 
@@ -155,7 +155,7 @@ category: automation
 
 ### Proposal System
 
-The autofix agent creates enhancement proposals that require human approval:
+The autocoder agent creates enhancement proposals that require human approval:
 
 - **Proposals** are tagged with `proposal` label
 - **NOT auto-implemented** - requires human review

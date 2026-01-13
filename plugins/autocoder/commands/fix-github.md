@@ -200,12 +200,12 @@ Start working on GitHub issues now:
 if [ -f "CLAUDE.md" ]; then
   echo "📋 Reading project configuration from CLAUDE.md"
 
-  # Check if autofix configuration exists
+  # Check if autocoder configuration exists
   if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
-    echo "⚠️  No autofix configuration found in CLAUDE.md"
-    echo "📝 Adding autofix configuration section to CLAUDE.md..."
+    echo "⚠️  No autocoder configuration found in CLAUDE.md"
+    echo "📝 Adding autocoder configuration section to CLAUDE.md..."
 
-    # Append autofix configuration to CLAUDE.md
+    # Append autocoder configuration to CLAUDE.md
     cat >> CLAUDE.md << 'AUTOFIX_CONFIG'
 
 ## Automated Testing & Issue Management
@@ -237,7 +237,7 @@ npm run build
 
 AUTOFIX_CONFIG
 
-    echo "✅ Added autofix configuration to CLAUDE.md - please update with project-specific details"
+    echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
   fi
 
   # Extract test command

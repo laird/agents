@@ -7,7 +7,7 @@ A **Claude Code plugin marketplace** providing production-validated protocols, s
 This marketplace contains **2 plugins** with complementary capabilities:
 
 1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
-2. **Autofix** - Autonomous GitHub issue resolution with intelligent testing and quality automation
+2. **Autocoder** - Autonomous GitHub issue resolution with intelligent testing and quality automation
 
 Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. Originally created for .NET framework migrations, these tools work with any language or platform.
 
@@ -43,22 +43,22 @@ Each platform has its own directory structure and installation method. See the p
 /plugin install modernize
 ```
 
-**Install autofix plugin** (autonomous GitHub issue resolution):
+**Install autocoder plugin** (autonomous GitHub issue resolution):
 
 ```bash
-/plugin install autofix
+/plugin install autocoder
 ```
 
 **Install both plugins**:
 
 ```bash
-/plugin install modernize autofix
+/plugin install modernize autocoder
 ```
 
 After installation, commands will be available as slash commands in Claude Code:
 
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
-- **autofix**: `/fix-github`, `/list-proposals`, `/full-regression-test`, `/improve-test-coverage`
+- **autocoder**: `/fix-github`, `/list-proposals`, `/full-regression-test`, `/improve-test-coverage`
 
 ---
 
@@ -181,7 +181,7 @@ The modernize plugin includes 6 specialized agents invoked by Claude Code's Task
 
 ---
 
-### Plugin 2: Autofix
+### Plugin 2: Autocoder
 
 Autonomous GitHub issue resolution with intelligent testing, quality automation, and human-in-the-loop proposal system.
 
@@ -277,8 +277,8 @@ agents/
 │   └── plugins/
 │       ├── modernize/
 │       │   └── plugin.json              # Modernize plugin definition
-│       └── autofix/
-│           └── plugin.json              # Autofix plugin definition
+│       └── autocoder/
+│           └── plugin.json              # Autocoder plugin definition
 ├── plugins/                             # Plugin implementations
 │   ├── modernize/                       # Modernize plugin (5 commands, 6 agents, protocols)
 │   │   ├── commands/
@@ -305,7 +305,7 @@ agents/
 │   │       ├── protocols-overview.md   # Protocols overview
 │   │       ├── security-scanning-protocol.md # Security scanning
 │   │       └── testing-protocol.md     # Testing protocol
-│   └── autofix/                         # Autofix plugin (1 command, 6 agents, 1 script)
+│   └── autocoder/                         # Autocoder plugin (1 command, 6 agents, 1 script)
 │       ├── commands/
 │       │   └── fix-github.md           # Autonomous issue resolution
 │       ├── agents/
@@ -416,7 +416,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 - Test pass rate 100% before proceeding
 - All P0/P1 issues resolved before release
 
-**Autofix Workflow:**
+**Autocoder Workflow:**
 
 1. Run `/fix-github` to start autonomous issue resolution
 2. Customize configuration in `CLAUDE.md` as needed
@@ -442,7 +442,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 | Version | Date | Changes |
 |---------|------|---------|
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
-| 3.0.0 | 2025-11-24 | **Added autofix plugin**: Autonomous GitHub issue resolution with `/fix-github` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autofix) |
+| 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix-github` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
 | 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |

@@ -4,5 +4,5 @@ This directory contains the source code and implementation for **Claude Code** p
 
 ## Structure
 
-- **`autofix/`**: Implementation of the Autofix plugin capabilities.
+- **`autocoder/`**: Implementation of the Autocoder plugin capabilities.
 - **`modernize/`**: Implementation of the Modernize plugin capabilities.

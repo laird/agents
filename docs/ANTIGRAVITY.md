@@ -90,7 +90,7 @@ ln -s /path/to/agents/.agent /your/project/.agent
 | `retro.md` | Analyze project for improvements |
 | `retro-apply.md` | Apply retrospective findings |
 
-### Autofix Workflows (v1.5.0)
+### Autocoder Workflows (v1.5.0)
 
 | Workflow | Description |
 |----------|-------------|
