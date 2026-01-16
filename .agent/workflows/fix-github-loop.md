@@ -1,3 +1,7 @@
+---
+description: Start infinite fix-github loop with stop hook
+---
+
 # Start Infinite Fix-GitHub Loop
 
 Wrapper around `/fix-github` that installs a stop hook to keep it running forever.

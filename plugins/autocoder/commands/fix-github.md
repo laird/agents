@@ -191,6 +191,12 @@ Task("coder", "Update package.json to fix dependency conflict...", model="sonnet
 Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
 ```
 
+## Context Management (CRITICAL)
+
+**Before starting work on ANY new issue, run `/compact` to compress conversation history.** This prevents context overflow when working through multiple issues in a loop.
+
+Each issue should start with a fresh, compacted context. Never carry over detailed investigation notes from a previous issue - the compact summary is sufficient.
+
 ## Instructions
 
 Start working on GitHub issues now:
@@ -1039,6 +1045,10 @@ gh issue edit "$ENHANCE_NUM" --add-label "needs-review"
 ## MANDATORY: Continuous Loop
 
 **THIS WORKFLOW RUNS FOREVER UNTIL MANUALLY STOPPED.**
+
+### Context Compaction (CRITICAL)
+
+**Run `/compact` BEFORE starting each new issue.** This compresses conversation history and prevents context overflow when working through multiple issues.
 
 After completing ANY of these actions, you MUST immediately continue:
 
