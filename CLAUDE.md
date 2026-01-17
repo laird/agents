@@ -150,6 +150,30 @@ Located in `scripts/` directory:
 
 ## Development Patterns
 
+### Parallel Maintenance Requirement
+
+**CRITICAL**: This repository maintains two parallel implementations that MUST stay in sync:
+
+| Platform | Directory | Guidance File |
+|----------|-----------|---------------|
+| **Claude Code** | `plugins/` | `CLAUDE.md` (this file) |
+| **Antigravity** | `.agent/` | `GEMINI.md` |
+
+**When modifying any workflow, command, or protocol:**
+
+1. **Always update BOTH versions** - Changes to one must be mirrored to the other
+2. **Check the mapping**:
+   - `plugins/autocoder/commands/*.md` ↔ `.agent/workflows/*.md`
+   - `plugins/modernize/commands/*.md` ↔ `.agent/workflows/*.md`
+   - `plugins/modernize/agents/*.md` ↔ `.agent/rules/*.md`
+3. **Verify parity** after changes: Both should have identical functionality
+4. **Test both platforms** if possible before committing
+
+**Key parallel files:**
+- `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
+- `/fix-github`: `plugins/autocoder/commands/fix-github.md` ↔ `.agent/workflows/fix-github.md`
+- `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
+
 ### Agent Invocation Pattern
 
 When working with this repository:

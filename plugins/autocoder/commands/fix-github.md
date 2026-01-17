@@ -731,13 +731,28 @@ fi
 
 If no enhancement issues exist, analyze the codebase and propose improvements:
 
-**First, check test coverage** using the dedicated command:
+**First, check test coverage** using the persistent coverage report:
 
-```
-/improve-test-coverage --analyze
+```bash
+# Fast path: Read existing report if available
+if [ -f "test-coverage.md" ]; then
+  echo "📊 Reading test-coverage.md (fast path)"
+  # Parse coverage from report header
+  OVERALL_COV=$(grep "Overall Coverage" test-coverage.md | grep -oE '[0-9]+' | head -1)
+  echo "Current coverage: ${OVERALL_COV}%"
+
+  # Show lowest coverage areas from report
+  echo ""
+  echo "Areas needing coverage:"
+  grep -E "<!-- COVERAGE: [0-9]+%" test-coverage.md | head -5
+else
+  # No report exists - run full analysis to create it
+  echo "📊 No test-coverage.md found, running full analysis..."
+  /improve-test-coverage --analyze
+fi
 ```
 
-This will identify coverage gaps and prioritize them. If coverage is below 80%, focus on improving it before other enhancements.
+If coverage is below 80%, use `/improve-test-coverage` to improve it (this uses the fast path when test-coverage.md exists).
 
 **Then use superpowers:brainstorming** to identify other valuable enhancements:
 
@@ -746,7 +761,7 @@ Use Skill tool: superpowers:brainstorming
 ```
 
 Focus areas for enhancement proposals:
-1. **Test Coverage** - Use `/improve-test-coverage` to identify and fix gaps
+1. **Test Coverage** - Use `/improve-test-coverage` to improve gaps (reads from test-coverage.md)
 2. **Code Quality** - Complex functions to refactor, duplication to reduce
 3. **Performance** - Slow queries, caching opportunities, bundle optimization
 4. **Documentation** - API docs, code examples, best practices

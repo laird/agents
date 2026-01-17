@@ -1,6 +1,6 @@
 # Antigravity Integration
 
-**Version**: 1.5.0
+**Version**: 2.1.0
 **Platform**: Antigravity Agent Engine
 **Directory**: `.agent/`
 
@@ -10,7 +10,7 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 
 ## Directory Structure
 
-```
+```text
 .agent/
 ├── README.md                     # Configuration overview
 ├── protocols/                    # Agent behavior protocols
@@ -38,10 +38,12 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 │   ├── modernize.md             # Modernization workflow
 │   ├── retro.md                 # Retrospective workflow
 │   ├── retro-apply.md           # Apply improvements workflow
-│   ├── fix-github.md            # Autonomous issue resolution (v1.5.0)
-│   ├── list-proposals.md        # List pending proposals (v1.5.0)
-│   ├── full-regression-test.md  # Regression testing
-│   ├── improve-test-coverage.md # Coverage improvement
+│   ├── fix-github.md            # Autonomous issue resolution (v2.0.0)
+│   ├── fix-github-loop.md       # Infinite loop with stop hook (v2.0.0)
+│   ├── install-stop-hook.md     # Stop hook installation (v2.0.0)
+│   ├── list-proposals.md        # List pending proposals (v2.0.0)
+│   ├── full-regression-test.md  # Regression testing (v2.0.0)
+│   ├── improve-test-coverage.md # Coverage improvement (v2.0.0)
 │   └── debug-atomic.md          # Atomic debugging
 └── scripts/
     ├── append-to-history.sh     # Log to HISTORY.md
@@ -90,11 +92,13 @@ ln -s /path/to/agents/.agent /your/project/.agent
 | `retro.md` | Analyze project for improvements |
 | `retro-apply.md` | Apply retrospective findings |
 
-### Autocoder Workflows (v1.5.0)
+### Autocoder Workflows (v2.0.0)
 
 | Workflow | Description |
 |----------|-------------|
 | `fix-github.md` | Autonomous issue resolution with triage and proposals |
+| `fix-github-loop.md` | Infinite loop wrapper with stop hook |
+| `install-stop-hook.md` | Install stop hook for continuous execution |
 | `list-proposals.md` | Display pending AI-generated proposals |
 | `full-regression-test.md` | Comprehensive test suite execution |
 | `improve-test-coverage.md` | Coverage analysis and improvement |
@@ -148,6 +152,7 @@ Protocols define standardized methodologies:
 
 | Version | Changes |
 |---------|---------|
+| 2.0.0 | Full Claude Code parity: expanded fix-github (~1200 lines), added fix-github-loop, install-stop-hook |
 | 1.5.0 | Added proposal system, issue triage, list-proposals workflow |
 | 1.0 | Initial Antigravity support |
 

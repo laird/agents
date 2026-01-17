@@ -1,6 +1,6 @@
 # Claude Code Plugin Integration
 
-**Version**: 3.3.0
+**Version**: 3.4.0
 **Platform**: [Claude Code](https://claude.ai/code)
 **Directory**: `.claude-plugin/`
 
@@ -17,7 +17,7 @@ Claude Code is Anthropic's official CLI for Claude. This repository provides a p
     ├── modernize/
     │   └── plugin.json           # Modernize plugin definition (v3.1.0)
     └── autocoder/
-        └── plugin.json           # Autocoder plugin definition (v1.5.0)
+        └── plugin.json           # Autocoder plugin definition (v2.1.0)
 ```
 
 ### Key Files
