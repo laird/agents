@@ -60,22 +60,83 @@ After installation, commands will be available as slash commands in Claude Code:
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
 - **autocoder**: `/fix-github`, `/list-proposals`, `/full-regression-test`, `/improve-test-coverage`
 
+### Recommended Companion Plugins
+
+These plugins enhance the capabilities of modernize and autocoder:
+
+| Plugin | Purpose | When to Install |
+|--------|---------|-----------------|
+| **superpowers** | Structured problem-solving skills (debugging, planning, verification) | Recommended for complex issues requiring systematic approaches |
+| **quint** | Structured reasoning for human-guided decision making | Recommended for ultra-complex decisions requiring human judgment |
+
+**Install recommended plugins:**
+
+```bash
+# superpowers - for complex problem-solving
+/plugin install superpowers
+
+# quint - for ultra-complex decisions (https://quint.codes/)
+/plugin install quint
+```
+
+**How they're used:**
+
+- **superpowers**: Automatically invoked by `/fix-github` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
+
+- **quint**: Automatically invoked for ultra-complex issues that exceed autonomous resolution capabilities (>100 test failures, major architecture decisions, irreversible consequences). Guides structured reasoning with human collaboration.
+
+If these plugins are not installed, the workflows use direct problem-solving approaches instead.
+
 ---
 
 ## Antigravity Support
 
-This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box. Converted but not yet tested.
+This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box.
+
+### Quick Install (One-Liner)
+
+Run this command from your project's root directory:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/laird/agents/main/scripts/install.sh | bash
+```
+
+This fetches only the `.agent/` directory and installs it into your project.
+
+> [!NOTE]
+> **Cross-Platform Compatibility**
+>
+> - **Linux/macOS**: Works natively
+> - **Windows**: Requires [Git Bash](https://gitforwindows.org/) or WSL
+
+### Manual Installation
+
+Alternatively, copy or symlink the `.agent/` directory:
+
+```bash
+# Option 1: Copy
+cp -r /path/to/agents/.agent /your/project/
+
+# Option 2: Symlink (for development)
+ln -s /path/to/agents/.agent /your/project/.agent
+```
+
+### Available Workflows
+
+After installation, these workflows are available:
+
+| Workflow | Description |
+|----------|-------------|
+| `/assess` | Evaluate modernization viability |
+| `/plan` | Create execution strategy |
+| `/modernize` | Execute multi-phase modernization |
+| `/fix-github` | Autonomous issue resolution |
+| `/list-proposals` | View pending AI-generated proposals |
+| `/retro` | Analyze project for improvements |
+| `/retro-apply` | Apply retrospective findings |
 
 > [!WARNING]
-> The watchdog scripts located in `.agent/scripts/` are currently experimental and known to be non-functional. Work is in progress to fix them.
-
-### Installation in Other Projects
-
-To "install" these agents into another project:
-
-1. Copy the `.agent/` directory from this repository to the root of your target project.
-2. (Windows Only) Ensure you have a Bash environment (Git Bash or WSL) available for workflows that use shell commands.
-3. Start using the workflows immediately.
+> The watchdog scripts in `.agent/scripts/` are experimental. See [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) for details.
 
 ---
 

@@ -124,7 +124,7 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - Test timeout adjustments
 - Removing deprecated code
 
-**Complex Issues** (use superpowers):
+**Complex Issues** (use superpowers if available):
 
 - Multiple failing tests (>10 failures)
 - Feature implementations
@@ -132,6 +132,15 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - Multi-file refactoring
 - New functionality requiring design
 - System integration issues
+
+**Ultra-Complex Issues** (use quint if available):
+
+- Major architecture decisions with significant trade-offs
+- Issues requiring human judgment on business/product direction
+- Problems too large for autonomous resolution (>100 test failures)
+- Cross-cutting concerns affecting multiple systems
+- Decisions with irreversible consequences
+- When superpowers approaches have failed twice
 
 ## Model Selection (Opus 4.5)
 
@@ -286,6 +295,27 @@ else
   echo "⚠️  No CLAUDE.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
+fi
+
+# Detect available plugins for enhanced capabilities
+echo "🔌 Detecting available plugins..."
+
+# Check for superpowers plugin (structured problem-solving skills)
+SUPERPOWERS_AVAILABLE=false
+if claude plugins list 2>/dev/null | grep -q "superpowers"; then
+  SUPERPOWERS_AVAILABLE=true
+  echo "✅ superpowers plugin detected - will use for complex issues"
+else
+  echo "ℹ️  superpowers plugin not installed - will use direct problem-solving"
+fi
+
+# Check for quint plugin (structured reasoning for ultra-complex decisions)
+QUINT_AVAILABLE=false
+if claude plugins list 2>/dev/null | grep -q "quint"; then
+  QUINT_AVAILABLE=true
+  echo "✅ quint plugin detected - will use for ultra-complex decisions requiring human guidance"
+else
+  echo "ℹ️  quint plugin not installed - will escalate ultra-complex issues for manual review"
 fi
 
 # Ensure priority labels exist (one-time setup per project)
@@ -496,16 +526,23 @@ gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 🤖 Auto-resolved by autonomous fix workflow"
 ```
 
-### Step 2B: Complex Issue - Use Superpowers
+### Step 2B: Complex Issue - Use Superpowers (if available)
 
-For complex issues requiring design and planning:
+For complex issues requiring design and planning. If `SUPERPOWERS_AVAILABLE=true`, use superpowers skills. Otherwise, use direct problem-solving approaches.
 
 **1. Systematic Debugging (if bugs)**
 
-If the issue involves bugs or test failures, use the systematic-debugging skill:
+If the issue involves bugs or test failures:
 
 ```
+# If superpowers available:
 Use Skill tool: superpowers:systematic-debugging
+
+# If superpowers NOT available:
+# - Reproduce the issue and capture error output
+# - Trace through code to identify root cause
+# - Form and test hypotheses
+# - Document findings before implementing fix
 ```
 
 This will:
@@ -520,7 +557,14 @@ This will:
 If the issue requires new feature design:
 
 ```
+# If superpowers available:
 Use Skill tool: superpowers:brainstorming
+
+# If superpowers NOT available:
+# - Explore 2-3 design alternatives
+# - List pros/cons for each approach
+# - Identify open questions and assumptions
+# - Select approach with clear rationale
 ```
 
 This will:
@@ -535,7 +579,14 @@ This will:
 After design is complete, create implementation plan:
 
 ```
+# If superpowers available:
 Use Skill tool: superpowers:writing-plans
+
+# If superpowers NOT available:
+# - Break work into numbered tasks (5-15 tasks)
+# - Specify exact file paths and changes for each
+# - Include verification command for each task
+# - Order tasks by dependency
 ```
 
 This will:
@@ -550,7 +601,14 @@ This will:
 Execute the plan in controlled batches:
 
 ```
+# If superpowers available:
 Use Skill tool: superpowers:executing-plans
+
+# If superpowers NOT available:
+# - Execute 3-5 tasks at a time
+# - Run verification after each batch
+# - Stop and reassess if verification fails
+# - Track completed vs remaining tasks
 ```
 
 This will:
@@ -565,7 +623,14 @@ This will:
 Before claiming complete, verify the fix:
 
 ```
+# If superpowers available:
 Use Skill tool: superpowers:verification-before-completion
+
+# If superpowers NOT available:
+# - Run all verification commands
+# - Capture and review output
+# - Confirm success criteria are met
+# - Run full test suite before committing
 ```
 
 This will:
@@ -662,7 +727,23 @@ Skip to next issue if:
 - Issue requires external dependencies (API keys, services)
 - Issue is blocked by another issue
 - Issue requires user input/decision
-- Issue is too large even for superpowers (>100 test failures, major architecture change)
+
+### Ultra-Complex Issues - Use Quint (if available)
+
+For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions):
+
+```
+# If QUINT_AVAILABLE=true:
+Use Skill tool: quint:structured-reasoning
+
+# Quint will:
+# - Guide a structured reasoning process with the human
+# - Break down complex decisions into manageable components
+# - Facilitate trade-off analysis
+# - Build consensus on approach before implementation
+```
+
+If `QUINT_AVAILABLE=false`, skip the issue with a recommendation:
 
 Post a comment explaining why skipped:
 
