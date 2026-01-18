@@ -1,6 +1,6 @@
 {
   "name": "autocoder",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work. Proposals require human approval before implementation.",
   "author": {
     "name": "Agent Protocols Team",
@@ -32,6 +32,7 @@
     "../../../plugins/autocoder/commands/install-stop-hook.md",
     "../../../plugins/autocoder/commands/full-regression-test.md",
     "../../../plugins/autocoder/commands/improve-test-coverage.md",
-    "../../../plugins/autocoder/commands/list-proposals.md"
+    "../../../plugins/autocoder/commands/list-proposals.md",
+    "../../../plugins/autocoder/commands/approve-proposal.md"
   ]
 }

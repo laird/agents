@@ -1,6 +1,6 @@
 {
   "name": "plugin-marketplace",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Includes modernize workflow (assess → plan → execute) and autocoder autonomous issue resolution. Originally created for .NET migrations, these protocols are universally applicable to any software project.",
   "metadata": {
     "description": "Production-validated protocols, agent definitions, and automation frameworks for systematic AI-assisted software development. Originally created for .NET migrations, these protocols are universally applicable to any software project requiring structured agent collaboration."
@@ -44,7 +44,7 @@
       "name": "autocoder",
       "source": "./plugins/autocoder",
       "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work.",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "category": "automation",
       "tags": [
         "github",
