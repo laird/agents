@@ -6,10 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash plugins/autocoder/hooks/stop-hook.sh"
+            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "firebase@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
   }
 }
