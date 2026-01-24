@@ -303,7 +303,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -321,11 +321,13 @@ fi
 echo "🔍 Checking for unprioritized issues..."
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-open-issues.json
 
-# Find issues without any priority label (P0-P3)
+# Find issues without any priority label (P0-P3), excluding issues already being worked on
 UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-unprioritized = [i for i in issues if not any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))]
+unprioritized = [i for i in issues
+                 if not any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
+                 and not any(l['name'] == 'working' for l in i.get('labels',[]))]
 for issue in unprioritized:
     print(f\"{issue['number']}|{issue['title']}|{issue.get('body', '')[:500]}\")
 ")
@@ -356,6 +358,14 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  # Check if issue already has 'working' label (being worked on by another agent)
+  IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
+  if [ "$IS_WORKING" = "true" ]; then
+    echo "⚠️  Issue #$SPECIFIED_ISSUE has 'working' label - another agent is working on it"
+    echo "Use 'gh issue edit $SPECIFIED_ISSUE --remove-label working' to force release"
+    exit 1
+  fi
+
   # Extract priority from labels (default to P2 if no priority label)
   ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '
     if (.labels | map(.name) | any(. == "P0")) then 0
@@ -375,10 +385,12 @@ else
   # No specific issue - get highest priority issue (using labels only)
   gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
+  # Filter out issues with 'working' label (being worked on by another agent)
   cat /tmp/all-issues.json | jq -r '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
+      and (.labels | map(.name) | any(. == "working") | not)
     ) |
     {
       number: .number,
@@ -400,6 +412,13 @@ else
   ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
   ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
   ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '.priority')
+
+  # Check if any issue was found (after filtering out 'working' issues)
+  if [ "$ISSUE_NUM" = "null" ] || [ -z "$ISSUE_NUM" ]; then
+    echo "ℹ️  No available priority issues found (all may be claimed by other agents)"
+    echo "IDLE_NO_WORK_AVAILABLE"
+    exit 0
+  fi
 fi
 
 echo ""
@@ -420,6 +439,9 @@ echo ""
 # Create fix branch
 git checkout -b "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || git checkout "fix/issue-${ISSUE_NUM}-auto"
 
+# Add 'working' label to claim the issue (prevents other agents from picking it up)
+gh issue edit "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+
 # Post comment that work started
 gh issue comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
 
@@ -431,6 +453,7 @@ Starting automated fix for this issue.
 Fix in progress..." 2>/dev/null || true
 
 echo "✅ Created branch: fix/issue-${ISSUE_NUM}-auto"
+echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
 ```
@@ -481,7 +504,8 @@ git checkout main
 git merge "fix/issue-${ISSUE_NUM}-auto" --no-edit
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
 
-# Close issue
+# Remove 'working' label and close issue
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 [Detailed explanation of fix]
@@ -624,7 +648,8 @@ git checkout main
 git merge "fix/issue-${ISSUE_NUM}-auto" --no-edit
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
 
-# Close issue with detailed explanation
+# Remove 'working' label and close issue with detailed explanation
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ## Root Cause
@@ -702,9 +727,12 @@ Use Skill tool: quint:structured-reasoning
 
 If `QUINT_AVAILABLE=false`, skip the issue with a recommendation:
 
-Post a comment explaining why skipped:
+Post a comment explaining why skipped and release the lock:
 
 ```bash
+# Remove 'working' label to release the issue for others
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+
 gh issue comment "$ISSUE_NUM" --body "⏭️ **Skipped for Manual Review**
 
 This issue requires [reason] and cannot be automatically resolved.
@@ -770,11 +798,13 @@ If regression tests pass completely (no new bug issues created), shift focus to 
 # Check for open enhancement issues that are NOT proposals (approved for implementation)
 gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 50 > /tmp/all-enhancements.json
 
-# Filter out proposals - only get approved enhancements
+# Filter out proposals and issues being worked on - only get available approved enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-approved = [i for i in issues if not any(l['name'] == 'proposal' for l in i.get('labels', []))]
+approved = [i for i in issues
+            if not any(l['name'] == 'proposal' for l in i.get('labels', []))
+            and not any(l['name'] == 'working' for l in i.get('labels', []))]
 print(json.dumps(approved))
 ")
 
@@ -935,6 +965,9 @@ For each **approved** enhancement issue (no `proposal` label), follow this workf
 ```bash
 git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
 
+# Add 'working' label to claim the enhancement (prevents other agents from picking it up)
+gh issue edit "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
+
 gh issue comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**
 
 Starting automated implementation of this enhancement.
@@ -1033,7 +1066,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   git merge "enhancement/issue-${ENHANCE_NUM}-auto" --no-edit
   git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
 
-  # Close enhancement with details
+  # Remove 'working' label and close enhancement with details
+  gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
   gh issue close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
 
 ## Summary
@@ -1122,6 +1156,9 @@ Skip an enhancement and move to the next if:
 - Enhancement requires user decisions not documented
 
 ```bash
+# Remove 'working' label to release the enhancement for others
+gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+
 gh issue comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
 
 This enhancement cannot be automatically implemented because:
@@ -1177,23 +1214,25 @@ After every issue is resolved, skipped, or when checking for work:
 # Fetch all open issues
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
-# Count priority bug issues (P0-P3, excluding proposals)
+# Count priority bug issues (P0-P3, excluding proposals and issues being worked on)
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
-            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))]
+            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
+            and not any(l['name'] == 'working' for l in i.get('labels',[]))]
 print(len(priority))
 ")
 
-# Count APPROVED enhancement issues (enhancement label but NOT proposal label)
+# Count APPROVED enhancement issues (enhancement label but NOT proposal or working label)
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
-            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))]
+            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
+            and not any(l['name'] == 'working' for l in i.get('labels',[]))]
 print(len(approved))
 ")
 

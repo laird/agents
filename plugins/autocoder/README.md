@@ -33,6 +33,7 @@ The plugin automatically creates these labels on first run:
 | `test-failure` | Light Red | Regression test failure |
 | `needs-review` | Yellow | Requires human review |
 | `in-progress` | Green | Currently being worked on |
+| `working` | Blue | **Concurrency lock** - issue claimed by an agent |
 
 ## Workflow Priority
 
@@ -44,6 +45,43 @@ The plugin automatically creates these labels on first run:
 6. **Idle Sleep** - Sleep 60 min (configurable), then check for new work
 
 Proposals are tagged with `proposal` label and never auto-implemented. When a human removes the label, the workflow will implement it.
+
+## Parallel Agent Support
+
+The `working` label provides concurrency control when multiple agents run in parallel:
+
+### How It Works
+
+1. **Claim**: When an agent starts work on an issue, it adds the `working` label
+2. **Filter**: All issue queries exclude issues with the `working` label
+3. **Release**: When work completes (success, skip, or failure), the label is removed
+
+### Benefits
+
+- **No duplicate work**: Multiple agents won't pick up the same issue
+- **Visible status**: GitHub UI shows which issues are actively being worked on
+- **Automatic cleanup**: Label is removed on completion, skip, or when an issue is closed
+
+### Manual Override
+
+If an agent crashes or disconnects without releasing the lock:
+
+```bash
+# Remove the working label manually
+gh issue edit <issue_number> --remove-label "working"
+```
+
+### Example: Running Multiple Agents
+
+```bash
+# Terminal 1: Start first agent
+/fix-loop
+
+# Terminal 2: Start second agent (different working directory or repo clone)
+/fix-loop
+
+# Both agents will work on different issues without conflict
+```
 
 ## Commands
 
