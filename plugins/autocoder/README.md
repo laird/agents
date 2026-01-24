@@ -12,10 +12,10 @@ Autonomous GitHub issue resolution system with infinite loop support.
 /plugin install autocoder
 
 # Start the infinite loop (auto-installs stop hook)
-/fix-github-loop
+/fix-loop
 ```
 
-That's it! The `/fix-github-loop` command automatically configures the stop hook in your project's `.claude/settings.json` if not already present.
+That's it! The `/fix-loop` command automatically configures the stop hook in your project's `.claude/settings.json` if not already present.
 
 ## Required Labels
 
@@ -49,8 +49,8 @@ Proposals are tagged with `proposal` label and never auto-implemented. When a hu
 
 | Command | Description |
 |---------|-------------|
-| `/fix-github` | Fix the highest priority GitHub issue |
-| `/fix-github-loop` | Start infinite loop that runs `/fix-github` forever |
+| `/fix` | Fix the highest priority GitHub issue |
+| `/fix-loop` | Start infinite loop that runs `/fix` forever |
 | `/install-stop-hook` | Configure stop hook in project (one-time setup) |
 | `/full-regression-test` | Run complete test suite and create issues for failures |
 | `/improve-test-coverage` | Analyze and improve test coverage |
@@ -58,26 +58,26 @@ Proposals are tagged with `proposal` label and never auto-implemented. When a hu
 
 ## Infinite Loop Setup
 
-The `/fix-github-loop` command uses Claude Code's stop hook mechanism to run forever.
+The `/fix-loop` command uses Claude Code's stop hook mechanism to run forever.
 
 ### How It Works
 
-1. Creates state file: `.claude/fix-github-loop.local.md`
+1. Creates state file: `.claude/fix-loop.local.md`
 2. Stop hook intercepts session exit
-3. If state file exists, feeds `/fix-github` back as input
+3. If state file exists, feeds `/fix` back as input
 4. Loop continues until manually stopped
 
 ### Usage
 
 ```bash
 # Start infinite loop
-/fix-github-loop
+/fix-loop
 
 # Limit to 100 iterations
-/fix-github-loop 100
+/fix-loop 100
 
 # Custom idle sleep time (default 60 min)
-/fix-github-loop --sleep 120
+/fix-loop --sleep 120
 ```
 
 ### Stopping the Loop
@@ -85,7 +85,7 @@ The `/fix-github-loop` command uses Claude Code's stop hook mechanism to run for
 1. **Ctrl+C** - Manual interrupt
 2. **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 3. **Max iterations** - If configured, stops when reached
-4. **Delete state file** - `rm .claude/fix-github-loop.local.md`
+4. **Delete state file** - `rm .claude/fix-loop.local.md`
 5. **Critical errors** - Auto-pauses on auth/rate limit issues
 
 ### Idle Behavior
@@ -97,7 +97,7 @@ When no work is available (no bugs, no approved enhancements, nothing useful to 
 
 ### State File
 
-The loop state is stored in `.claude/fix-github-loop.local.md`:
+The loop state is stored in `.claude/fix-loop.local.md`:
 
 ```markdown
 ---
@@ -107,7 +107,7 @@ idle_sleep_minutes: 60
 started: 2024-01-15T10:30:00-05:00
 ---
 
-/fix-github
+/fix
 ```
 
 The `.local.md` suffix ensures it's gitignored.

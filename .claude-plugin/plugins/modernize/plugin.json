@@ -1,6 +1,6 @@
 {
   "name": "modernize",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Not Production-validated agent protocols, automation frameworks, and specialized agents for systematic AI-assisted software development. Includes complete modernization workflow (assess → plan → execute), 6 specialized agents, and comprehensive protocol documentation.",
   "author": {
     "name": "Agent Protocols Team",
@@ -22,6 +22,7 @@
     "multi-agent"
   ],
   "commands": [
+    "../../../plugins/modernize/commands/modernize-help.md",
     "../../../plugins/modernize/commands/assess.md",
     "../../../plugins/modernize/commands/plan.md",
     "../../../plugins/modernize/commands/modernize.md",

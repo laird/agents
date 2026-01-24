@@ -31,7 +31,7 @@ if [ "$PROPOSAL_COUNT" -eq 0 ]; then
   echo "✅ No pending proposals!"
   echo ""
   echo "All AI-generated proposals have been reviewed."
-  echo "Run '/fix-github' to generate new proposals if needed."
+  echo "Run '/fix' to generate new proposals if needed."
   exit 0
 fi
 
@@ -66,7 +66,7 @@ for p in proposals:
     print(f'│  {body}...')
     print(f'│')
     print(f'│  Actions:')
-    print(f'│    Approve:  gh issue edit {num} --remove-label \"proposal\"')
+    print(f'│    Approve:  /approve-proposal {num}')
     print(f'│    Feedback: gh issue comment {num} --body \"Your feedback here\"')
     print(f'│    Reject:   gh issue close {num} --comment \"Rejected: reason\"')
     print(f'│    View:     gh issue view {num}')
@@ -79,7 +79,7 @@ echo ""
 echo "📖 Quick Reference:"
 echo ""
 echo "  Approve a proposal (allow implementation):"
-echo "    gh issue edit <number> --remove-label \"proposal\""
+echo "    /approve-proposal <number>"
 echo ""
 echo "  Provide feedback (AI will refine):"
 echo "    gh issue comment <number> --body \"Your feedback\""
@@ -124,12 +124,13 @@ echo "════════════════════════�
     │         │                       │
     ▼         └───────────────────────┘
 ┌─────────────────┐
-│  /fix-github    │
+│  /fix    │
 │  Implements     │
 └─────────────────┘
 ```
 
 ## See Also
 
-- `/fix-github` - Autonomous issue resolution (creates proposals)
+- `/approve-proposal` - Approve a proposal for implementation
+- `/fix` - Autonomous issue resolution (creates proposals)
 - `/refine-proposal` - Incorporate feedback into a proposal

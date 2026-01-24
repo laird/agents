@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # Autocoder Stop Hook
-# Prevents session exit when fix-github loop is active
-# Feeds the /fix-github prompt back to continue the loop
+# Prevents session exit when fix loop is active
+# Feeds the /fix prompt back to continue the loop
 
 set -euo pipefail
 
 # Read hook input from stdin (advanced stop hook API)
 HOOK_INPUT=$(cat)
 
-# Check if fix-github loop is active
-LOOP_STATE_FILE=".claude/fix-github-loop.local.md"
+# Check if fix loop is active
+LOOP_STATE_FILE=".claude/fix-loop.local.md"
 
 if [[ ! -f "$LOOP_STATE_FILE" ]]; then
     # No active loop - allow exit
@@ -29,7 +29,7 @@ if [[ ! "$ITERATION" =~ ^[0-9]+$ ]]; then
     echo "  File: $LOOP_STATE_FILE" >&2
     echo "  Problem: 'iteration' field is not a valid number (got: '$ITERATION')" >&2
     echo "" >&2
-    echo "  Run /fix-github-loop again to start fresh." >&2
+    echo "  Run /fix-loop again to start fresh." >&2
     rm "$LOOP_STATE_FILE"
     exit 0
 fi
@@ -79,7 +79,7 @@ if grep -q '"role":"assistant"' "$TRANSCRIPT_PATH"; then
     # Check for critical errors that should pause the loop
     if echo "$LAST_OUTPUT" | grep -qiE "(fatal error|authentication failed|rate limit exceeded|API quota)"; then
         echo "⚠️ Fix-github loop: Critical error detected, pausing loop" >&2
-        echo "  Review the error and run /fix-github-loop to resume" >&2
+        echo "  Review the error and run /fix-loop to resume" >&2
         rm "$LOOP_STATE_FILE"
         exit 0
     fi

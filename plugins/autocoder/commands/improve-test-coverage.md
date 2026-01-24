@@ -635,11 +635,11 @@ fi
 echo ""
 ```
 
-## Integration with /fix-github
+## Integration with /fix
 
-This command integrates with `/fix-github` workflow:
+This command integrates with `/fix` workflow:
 
-- When called from `/fix-github`, operates in improvement mode
+- When called from `/fix`, operates in improvement mode
 - Uses existing test-coverage.md for fast iteration
 - Updates report after each improvement cycle
 

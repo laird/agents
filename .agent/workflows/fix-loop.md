@@ -1,30 +1,30 @@
 ---
-description: Start infinite fix-github loop with stop hook
+description: Start infinite fix loop with stop hook
 ---
 
 # Start Infinite Fix-GitHub Loop
 
-Wrapper around `/fix-github` that installs a stop hook to keep it running forever.
+Wrapper around `/fix` that installs a stop hook to keep it running forever.
 
 ## Usage
 
 ```bash
 # Start infinite loop
-/fix-github-loop
+/fix-loop
 
 # Limit to 100 iterations
-/fix-github-loop 100
+/fix-loop 100
 
 # Custom idle sleep time (default: 15 minutes)
-/fix-github-loop --sleep 30
+/fix-loop --sleep 30
 ```
 
 ## How It Works
 
 1. Installs stop hook in `.claude/settings.json` (if not present)
-2. Creates state file `.claude/fix-github-loop.local.md`
-3. Runs `/fix-github`
-4. When Claude tries to exit, stop hook feeds `/fix-github` back as input
+2. Creates state file `.claude/fix-loop.local.md`
+3. Runs `/fix`
+4. When Claude tries to exit, stop hook feeds `/fix` back as input
 5. Loop continues until manually stopped or max iterations reached
 
 ## Stopping the Loop
@@ -32,7 +32,7 @@ Wrapper around `/fix-github` that installs a stop hook to keep it running foreve
 - **Ctrl+C** - Manual interrupt
 - **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 - **Max iterations** - If set, stops when reached
-- **Delete state file** - `rm .claude/fix-github-loop.local.md`
+- **Delete state file** - `rm .claude/fix-loop.local.md`
 
 ## Instructions
 
@@ -104,7 +104,7 @@ fi
 # ============================================================
 # Create loop state file
 # ============================================================
-cat > .claude/fix-github-loop.local.md << EOF
+cat > .claude/fix-loop.local.md << EOF
 ---
 iteration: 0
 max_iterations: $MAX_ITERATIONS
@@ -115,7 +115,7 @@ started: $(date -Iseconds)
 # Context Management (CRITICAL)
 # Run /compact BEFORE starting each new issue to prevent context overflow.
 
-/fix-github
+/fix
 EOF
 
 echo ""
@@ -125,4 +125,4 @@ echo "   Idle sleep: $IDLE_SLEEP_MINUTES minutes"
 echo ""
 ```
 
-Now run `/fix-github` to start. The stop hook will keep it running.
+Now run `/fix` to start. The stop hook will keep it running.

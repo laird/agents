@@ -38,8 +38,8 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 │   ├── modernize.md             # Modernization workflow
 │   ├── retro.md                 # Retrospective workflow
 │   ├── retro-apply.md           # Apply improvements workflow
-│   ├── fix-github.md            # Autonomous issue resolution (v2.0.0)
-│   ├── fix-github-loop.md       # Infinite loop with stop hook (v2.0.0)
+│   ├── fix.md            # Autonomous issue resolution (v2.0.0)
+│   ├── fix-loop.md       # Infinite loop with stop hook (v2.0.0)
 │   ├── install-stop-hook.md     # Stop hook installation (v2.0.0)
 │   ├── list-proposals.md        # List pending proposals (v2.0.0)
 │   ├── full-regression-test.md  # Regression testing (v2.0.0)
@@ -47,7 +47,7 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 │   └── debug-atomic.md          # Atomic debugging
 └── scripts/
     ├── append-to-history.sh     # Log to HISTORY.md
-    └── watchdog-fix-github.sh   # (Experimental) Watchdog script
+    └── watchdog-fix.sh   # (Experimental) Watchdog script
 ```
 
 ### Key Directories
@@ -96,8 +96,8 @@ ln -s /path/to/agents/.agent /your/project/.agent
 
 | Workflow | Description |
 |----------|-------------|
-| `fix-github.md` | Autonomous issue resolution with triage and proposals |
-| `fix-github-loop.md` | Infinite loop wrapper with stop hook |
+| `fix.md` | Autonomous issue resolution with triage and proposals |
+| `fix-loop.md` | Infinite loop wrapper with stop hook |
 | `install-stop-hook.md` | Install stop hook for continuous execution |
 | `list-proposals.md` | Display pending AI-generated proposals |
 | `full-regression-test.md` | Comprehensive test suite execution |
@@ -132,7 +132,7 @@ Logs agent activity to `HISTORY.md`:
 ./scripts/append-to-history.sh "Title" "Details" "Context" "Impact"
 ```
 
-### watchdog-fix-github.sh
+### watchdog-fix.sh
 
 > **Warning**: Experimental and currently non-functional.
 
@@ -152,7 +152,7 @@ Protocols define standardized methodologies:
 
 | Version | Changes |
 |---------|---------|
-| 2.0.0 | Full Claude Code parity: expanded fix-github (~1200 lines), added fix-github-loop, install-stop-hook |
+| 2.0.0 | Full Claude Code parity: expanded fix (~1200 lines), added fix-loop, install-stop-hook |
 | 1.5.0 | Added proposal system, issue triage, list-proposals workflow |
 | 1.0 | Initial Antigravity support |
 

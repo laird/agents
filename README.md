@@ -57,8 +57,14 @@ Each platform has its own directory structure and installation method. See the p
 
 After installation, commands will be available as slash commands in Claude Code:
 
-- **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
-- **autocoder**: `/fix-github`, `/list-proposals`, `/full-regression-test`, `/improve-test-coverage`
+- **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
+- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/autocoder-help`
+
+**Get help anytime:**
+```bash
+/modernize-help    # Overview of modernization workflow
+/autocoder-help    # Overview of autonomous coding workflow
+```
 
 ### Recommended Companion Plugins
 
@@ -81,7 +87,7 @@ These plugins enhance the capabilities of modernize and autocoder:
 
 **How they're used:**
 
-- **superpowers**: Automatically invoked by `/fix-github` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
+- **superpowers**: Automatically invoked by `/fix` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
 
 - **quint**: Automatically invoked for ultra-complex issues that exceed autonomous resolution capabilities (>100 test failures, major architecture decisions, irreversible consequences). Guides structured reasoning with human collaboration.
 
@@ -125,15 +131,32 @@ ln -s /path/to/agents/.agent /your/project/.agent
 
 After installation, these workflows are available:
 
+**Modernize Workflows:**
+
 | Workflow | Description |
 |----------|-------------|
 | `/assess` | Evaluate modernization viability |
 | `/plan` | Create execution strategy |
 | `/modernize` | Execute multi-phase modernization |
-| `/fix-github` | Autonomous issue resolution |
-| `/list-proposals` | View pending AI-generated proposals |
 | `/retro` | Analyze project for improvements |
 | `/retro-apply` | Apply retrospective findings |
+| `/modernize-help` | Show modernize workflow help |
+
+**Autocoder Workflows:**
+
+| Workflow | Description |
+|----------|-------------|
+| `/fix` | Autonomous issue resolution |
+| `/fix-loop` | Continuous autonomous resolution |
+| `/stop-loop` | Stop the continuous loop |
+| `/list-proposals` | View pending AI-generated proposals |
+| `/approve-proposal` | Approve a proposal for implementation |
+| `/list-needs-design` | List issues needing design work |
+| `/list-needs-feedback` | List issues needing feedback |
+| `/brainstorm-issue` | Brainstorm design for an issue |
+| `/full-regression-test` | Run comprehensive test suite |
+| `/improve-test-coverage` | Analyze and improve test coverage |
+| `/autocoder-help` | Show autocoder workflow help |
 
 > [!WARNING]
 > The watchdog scripts in `.agent/scripts/` are experimental. See [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) for details.
@@ -146,7 +169,9 @@ After installation, these workflows are available:
 
 Complete modernization workflow with multi-agent orchestration.
 
-#### 5 Protocol-Based Commands
+**Get help:** `/modernize-help`
+
+#### 6 Protocol-Based Commands
 
 Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
 
@@ -246,86 +271,133 @@ The modernize plugin includes 6 specialized agents invoked by Claude Code's Task
 
 Autonomous GitHub issue resolution with intelligent testing, quality automation, and human-in-the-loop proposal system.
 
-#### Commands
+**Get help:** `/autocoder-help`
+
+#### Commands by Category
+
+**Issue Resolution:**
 
 | Command | Description |
 |---------|-------------|
-| `/fix-github` | Autonomous issue resolution (triage → fix → test → propose) |
-| `/list-proposals` | View pending AI-generated proposals awaiting approval |
+| `/fix [number]` | Fix a specific issue or highest priority issue |
+| `/fix-loop` | Run continuous autonomous resolution |
+| `/stop-loop` | Stop the continuous loop |
+
+**Design & Brainstorming:**
+
+| Command | Description |
+|---------|-------------|
+| `/brainstorm-issue [number]` | Brainstorm design for an issue using available skills |
+| `/list-needs-design` | List issues requiring design/architecture work |
+| `/list-needs-feedback` | List issues requiring human feedback |
+
+**Proposal Management:**
+
+| Command | Description |
+|---------|-------------|
+| `/list-proposals` | View pending AI-generated proposals |
+| `/approve-proposal <number>` | Approve a proposal for implementation |
+
+**Testing & Quality:**
+
+| Command | Description |
+|---------|-------------|
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
 
-**`/fix-github`** - Autonomous issue resolution workflow that:
+**Setup:**
 
-- **Triages unprioritized issues** by assigning P0-P3 labels
-- Automatically prioritizes GitHub issues (P0 → P1 → P2 → P3)
-- Detects issue complexity (simple vs complex)
-- Uses superpowers skills for complex problems
-- Runs regression tests when no issues exist
-- **Creates proposals for human approval** (not auto-implemented)
-- Self-configures from project's `CLAUDE.md`
+| Command | Description |
+|---------|-------------|
+| `/install-stop-hook` | Install hook for loop control |
+| `/autocoder-help` | Show help and workflow overview |
 
-**Proposal System (New in v1.5.0):**
+#### Workflow Patterns
 
-- AI-generated enhancements are tagged with `proposal` label
-- Proposals are **NOT automatically implemented**
-- Use `/list-proposals` to review pending proposals
-- Approve by removing the `proposal` label
-- Provide feedback via issue comments
-- Reject by closing the issue
+**Pattern 1: One-Shot Issue Resolution**
+```bash
+/fix 123      # Fix specific issue
+/fix          # Fix highest priority issue
+```
 
-**Key Features:**
+**Pattern 2: Continuous Autonomous Mode**
+```bash
+/install-stop-hook   # First time only
+/fix-loop     # Run continuously until /stop-loop
+```
 
-- Works with any test framework (Jest, Playwright, pytest, etc.)
-- Auto-creates configuration if missing
-- GitHub integration for test failure tracking
-- Priority-based workflow (Triage → P0 → P1 → P2 → P3)
-- Human-in-the-loop for enhancement approval
-- Continuous quality improvement
+**Pattern 3: Design-First Workflow**
+```bash
+/list-needs-design           # Find issues needing design
+/brainstorm-issue 45         # Explore design options
+# Review results on GitHub
+/fix 45               # Implement after design approval
+```
+
+**Pattern 4: Proposal Review**
+```bash
+/list-proposals              # See AI-generated proposals
+/approve-proposal 67         # Approve for implementation
+/fix                  # Implements approved proposals
+```
+
+#### Priority & Label System
+
+**Priority Labels (P0-P3):**
+- **P0**: Critical - system down, security, data loss
+- **P1**: High - major feature broken, no workaround
+- **P2**: Medium - partial breakage, workaround exists
+- **P3**: Low - minor, cosmetic, nice-to-have
+
+**Workflow Labels:**
+- `proposal` - AI-generated, awaiting human approval
+- `needs-design` - Requires architecture/design work
+- `needs-feedback` - Requires human clarification
+- `enhancement` - Feature improvement
+- `test-failure` - Created from test failure
+
+#### Human-in-the-Loop Proposal System
+
+AI-generated enhancements are tagged with `proposal` label and require human approval:
+
+1. **Review**: `/list-proposals` shows all pending proposals
+2. **Approve**: `/approve-proposal <number>` enables implementation
+3. **Feedback**: Comment on GitHub issue, then `/brainstorm-issue <number>`
+4. **Reject**: Close the issue with explanation
+
+Proposals are **never auto-implemented** - you control what gets built.
 
 #### Quick Start
 
-**Usage:**
+```bash
+# Get help
+/autocoder-help
 
-```
-/fix-github
+# Start fixing issues
+/fix
+
+# Or run continuously
+/install-stop-hook
+/fix-loop
 ```
 
-**First Run:** Automatically adds this configuration to your `CLAUDE.md`:
+**First Run:** Auto-creates configuration in your `CLAUDE.md`:
 
 ```markdown
 ## Automated Testing & Issue Management
 
 ### Regression Test Suite
 ```bash
-npm run test:regression
+npm test
 ```
 
 ### Build Verification
-
 ```bash
 npm run build
 ```
-
 ```
 
-**Workflow:**
-1. Creates priority labels (P0-P3) if needed
-2. Finds highest priority issue
-3. Fixes it (uses superpowers for complex issues)
-4. Runs tests to verify
-5. Commits and closes issue
-6. Moves to next issue
-7. If no issues: runs full regression test suite
-8. Creates GitHub issues from test failures
-
-#### Configuration (Optional)
-
-Customize the auto-generated configuration in your `CLAUDE.md`:
-- Update test commands for your project
-- Specify test framework details
-- Configure report locations
-- Define priority patterns
+Customize these commands for your project's test framework.
 
 ---
 ## Repository Structure
@@ -341,8 +413,9 @@ agents/
 │       └── autocoder/
 │           └── plugin.json              # Autocoder plugin definition
 ├── plugins/                             # Plugin implementations
-│   ├── modernize/                       # Modernize plugin (5 commands, 6 agents, protocols)
+│   ├── modernize/                       # Modernize plugin (6 commands, 6 agents, protocols)
 │   │   ├── commands/
+│   │   │   ├── help.md                 # Plugin help and workflow overview
 │   │   │   ├── assess.md               # Assessment protocol
 │   │   │   ├── plan.md                 # Planning protocol
 │   │   │   ├── modernize.md            # Full modernization workflow
@@ -366,9 +439,20 @@ agents/
 │   │       ├── protocols-overview.md   # Protocols overview
 │   │       ├── security-scanning-protocol.md # Security scanning
 │   │       └── testing-protocol.md     # Testing protocol
-│   └── autocoder/                         # Autocoder plugin (1 command, 6 agents, 1 script)
+│   └── autocoder/                         # Autocoder plugin (12 commands)
 │       ├── commands/
-│       │   └── fix-github.md           # Autonomous issue resolution
+│       │   ├── help.md                 # Plugin help and workflow overview
+│       │   ├── fix.md           # Autonomous issue resolution
+│       │   ├── fix-loop.md      # Continuous autonomous resolution
+│       │   ├── stop-loop.md            # Stop the continuous loop
+│       │   ├── list-proposals.md       # View pending proposals
+│       │   ├── approve-proposal.md     # Approve a proposal
+│       │   ├── list-needs-design.md    # List issues needing design
+│       │   ├── list-needs-feedback.md  # List issues needing feedback
+│       │   ├── brainstorm-issue.md     # Brainstorm design for an issue
+│       │   ├── full-regression-test.md # Run comprehensive test suite
+│       │   ├── improve-test-coverage.md # Analyze and improve coverage
+│       │   └── install-stop-hook.md    # Install hook for loop control
 │       ├── agents/
 │       │   ├── architect.md            # Technology decisions and ADRs
 │       │   ├── coder.md                # Implementation and fixes
@@ -479,9 +563,11 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 **Autocoder Workflow:**
 
-1. Run `/fix-github` to start autonomous issue resolution
-2. Customize configuration in `CLAUDE.md` as needed
-3. Let it run continuously for ongoing quality improvement
+1. Run `/autocoder-help` to see all available commands
+2. Run `/fix` to start autonomous issue resolution
+3. Use `/list-needs-design` and `/brainstorm-issue` for complex issues
+4. Review proposals with `/list-proposals` and approve with `/approve-proposal`
+5. For continuous operation: `/install-stop-hook` then `/fix-loop`
 
 ---
 
@@ -502,8 +588,9 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/fix-github` → `/fix`, `/fix-github-loop` → `/fix-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
-| 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix-github` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
+| 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
 | 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |

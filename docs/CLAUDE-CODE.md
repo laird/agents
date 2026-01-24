@@ -85,7 +85,7 @@ plugins/
 
 | Command | Description |
 |---------|-------------|
-| `/fix-github` | Autonomous GitHub issue resolution |
+| `/fix` | Autonomous GitHub issue resolution |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/list-proposals` | View pending AI-generated proposals |
@@ -125,7 +125,7 @@ npm run build
 |---------|---------|
 | 3.3.0 | Added proposal system, issue triage, `/list-proposals` command |
 | 3.2.0 | Added `/improve-test-coverage` command |
-| 3.0.0 | Added autocoder plugin with `/fix-github` |
+| 3.0.0 | Added autocoder plugin with `/fix` |
 | 2.6.0 | Applied 5 retrospective improvements |
 | 2.5.0 | Added `/retro` and `/retro-apply` commands |
 

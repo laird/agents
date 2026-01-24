@@ -21,7 +21,7 @@ Approve one or more AI-generated proposals for implementation by removing the `p
 
 ## What This Does
 
-Removes the `proposal` label from specified GitHub issues, allowing `/fix-github-loop` to implement them automatically.
+Removes the `proposal` label from specified GitHub issues, allowing `/fix-loop` to implement them automatically.
 
 ## Instructions
 
@@ -132,8 +132,8 @@ echo ""
 
 if [ $APPROVED -gt 0 ]; then
   echo "🚀 Next steps:"
-  echo "   • Run /fix-github-loop to implement approved proposals"
-  echo "   • Or run /fix-github for a single iteration"
+  echo "   • Run /fix-loop to implement approved proposals"
+  echo "   • Or run /fix for a single iteration"
 fi
 ```
 
@@ -152,12 +152,12 @@ fi
            │
            ▼
 ┌─────────────────────┐
-│  /fix-github-loop   │  ← Implements approved issues
+│  /fix-loop   │  ← Implements approved issues
 └─────────────────────┘
 ```
 
 ## See Also
 
 - `/list-proposals` - View all pending proposals
-- `/fix-github` - Single iteration of issue resolution
-- `/fix-github-loop` - Continuous issue resolution loop
+- `/fix` - Single iteration of issue resolution
+- `/fix-loop` - Continuous issue resolution loop

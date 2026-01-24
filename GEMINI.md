@@ -35,9 +35,9 @@ This is the **Modernize** framework - a production-validated system providing pr
 | Workflow | Antigravity | Claude Code |
 |----------|-------------|-------------|
 | `/improve-test-coverage` | `.agent/workflows/improve-test-coverage.md` | `plugins/autocoder/commands/improve-test-coverage.md` |
-| `/fix-github` | `.agent/workflows/fix-github.md` | `plugins/autocoder/commands/fix-github.md` |
+| `/fix` | `.agent/workflows/fix.md` | `plugins/autocoder/commands/fix.md` |
 | `/full-regression-test` | `.agent/workflows/full-regression-test.md` | `plugins/autocoder/commands/full-regression-test.md` |
-| `/fix-github-loop` | `.agent/workflows/fix-github-loop.md` | `plugins/autocoder/commands/fix-github-loop.md` |
+| `/fix-loop` | `.agent/workflows/fix-loop.md` | `plugins/autocoder/commands/fix-loop.md` |
 
 ## Workflows
 
@@ -75,10 +75,10 @@ Available workflows in `.agent/workflows/`:
 
 ```bash
 # Autonomous issue resolution
-/fix-github
+/fix
 
 # Continuous issue resolution loop
-/fix-github-loop
+/fix-loop
 
 # Test coverage improvement
 /improve-test-coverage
@@ -106,7 +106,7 @@ Available workflows in `.agent/workflows/`:
 │   ├── tester.md                # Tester agent rules
 │   └── ...                      # Other agent rules
 ├── workflows/                    # Executable workflows
-│   ├── fix-github.md            # Autonomous issue resolution
+│   ├── fix.md            # Autonomous issue resolution
 │   ├── improve-test-coverage.md # Coverage improvement
 │   └── ...                      # Other workflows
 └── scripts/

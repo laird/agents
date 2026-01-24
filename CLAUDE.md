@@ -171,7 +171,7 @@ Located in `scripts/` directory:
 
 **Key parallel files:**
 - `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
-- `/fix-github`: `plugins/autocoder/commands/fix-github.md` ↔ `.agent/workflows/fix-github.md`
+- `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
 
 ### Agent Invocation Pattern

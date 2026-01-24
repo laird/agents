@@ -1,6 +1,6 @@
 # Install Autocoder Stop Hook
 
-Configures the stop hook in your project's `.claude/settings.json` to enable the infinite `/fix-github-loop`.
+Configures the stop hook in your project's `.claude/settings.json` to enable the infinite `/fix-loop`.
 
 ## Usage
 
@@ -24,7 +24,7 @@ if [ -f ".claude/settings.json" ]; then
   echo "📋 Found existing .claude/settings.json"
 
   # Check if stop hook already configured
-  if grep -q "fix-github-loop" .claude/settings.json 2>/dev/null; then
+  if grep -q "fix-loop" .claude/settings.json 2>/dev/null; then
     echo "✅ Stop hook already configured!"
     cat .claude/settings.json
     exit 0
@@ -60,7 +60,7 @@ if "Stop" not in settings["hooks"]:
 
 # Check if already present
 already_present = any(
-    "fix-github" in str(h.get("hooks", []))
+    "fix" in str(h.get("hooks", []))
     for h in settings["hooks"]["Stop"]
 )
 
@@ -108,7 +108,7 @@ fi
 echo ""
 echo "🎉 Setup complete! You can now run:"
 echo ""
-echo "   /fix-github-loop"
+echo "   /fix-loop"
 echo ""
 echo "This will start the infinite loop that:"
 echo "  1. Triages unprioritized issues"

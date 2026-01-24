@@ -1,7 +1,3 @@
----
-description: Autonomous GitHub issue resolution
----
-
 # Start Autonomous Fix of GitHub Issues
 
 Analyze all open GitHub issues, prioritize them, and begin systematically fixing or implementing them starting with the highest priority.
@@ -10,10 +6,10 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 
 ```bash
 # Automatic priority-based selection (processes all issues in priority order)
-/fix-github
+/fix
 
 # Target a specific issue directly (skips priority selection)
-/fix-github 223
+/fix 223
 ```
 
 **With issue number**: Skips the priority selection process and immediately starts working on the specified issue, regardless of its priority label.
@@ -23,7 +19,6 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 ## What This Does
 
 ### Bug Fixing Phase (Priority)
-
 1. Creates priority labels (P0, P1, P2, P3) if they don't exist
 2. Fetches all open GitHub issues with priority labels
 3. Identifies the highest priority issue (P0 > P1 > P2 > P3)
@@ -33,26 +28,23 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 7. Continues until all bug issues are resolved
 
 ### Regression Testing Phase
-
 8. **When no priority bugs exist**: Run full regression test suite
-2. Analyze regression test results and create GitHub issues for failures
-3. Loop back to bug fixing if new issues are created
+9. Analyze regression test results and create GitHub issues for failures
+10. Loop back to bug fixing if new issues are created
 
 ### Enhancement Phase (when no bugs)
-
 11. Check for existing enhancement issues
-2. **If enhancements exist**: Use superpowers to design, plan, and implement each one
-3. Run tests after implementation
-4. **If tests pass**: Commit, merge, and close enhancement
-5. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
-6. Repeat until all existing enhancements are implemented
+12. **If enhancements exist**: Use superpowers to design, plan, and implement each one
+13. Run tests after implementation
+14. **If tests pass**: Commit, merge, and close enhancement
+15. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
+16. Repeat until all existing enhancements are implemented
 
 ### Propose New Enhancements (lowest priority)
-
 17. **Only when no bugs AND no existing enhancements**: Propose new improvements
-2. Use superpowers:brainstorming to identify valuable enhancements
-3. Create enhancement issue with detailed implementation plan
-4. Loop back to Enhancement Phase to implement
+18. Use superpowers:brainstorming to identify valuable enhancements
+19. Create enhancement issue with detailed implementation plan
+20. Loop back to Enhancement Phase to implement
 
 Never stop, just keep looking for issues to address. Priority: Triage Unprioritized > Bugs > Existing Enhancements > Proposing New Enhancements.
 
@@ -79,7 +71,7 @@ For each unprioritized issue:
 gh issue edit <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
 ```
 
-1. **Add a triage comment** explaining the priority decision:
+4. **Add a triage comment** explaining the priority decision:
 
 ```bash
 gh issue comment <ISSUE_NUMBER> --body "🏷️ **Triage Complete**
@@ -116,7 +108,6 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 ## Issue Complexity Detection
 
 **Simple Issues** (direct fix):
-
 - Single file changes
 - Configuration tweaks
 - Small bug fixes
@@ -125,7 +116,6 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - Removing deprecated code
 
 **Complex Issues** (use superpowers if available):
-
 - Multiple failing tests (>10 failures)
 - Feature implementations
 - Architecture changes
@@ -134,7 +124,6 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - System integration issues
 
 **Ultra-Complex Issues** (use quint if available):
-
 - Major architecture decisions with significant trade-offs
 - Issues requiring human judgment on business/product direction
 - Problems too large for autonomous resolution (>100 test failures)
@@ -160,7 +149,6 @@ When spawning agents or using the Task tool during issue resolution, select the 
 ### Escalation Triggers
 
 **Start with Sonnet, escalate to Opus when:**
-
 - Fix attempt fails after 2 tries with same approach
 - Issue involves 5+ files requiring coordinated changes
 - Root cause is unclear after initial investigation
@@ -168,14 +156,12 @@ When spawning agents or using the Task tool during issue resolution, select the 
 - Issue requires architectural decision (new patterns, dependencies)
 
 **Stay with Sonnet when:**
-
 - Error messages clearly indicate the fix
 - Issue matches known patterns from previous fixes
 - Single file change with isolated impact
 - Test failures have obvious cause (typo, missing import)
 
 **Drop to Haiku for:**
-
 - Adding/updating priority labels
 - Posting status comments to GitHub
 - Formatting commit messages
@@ -238,7 +224,7 @@ if [ -f "CLAUDE.md" ]; then
 
 ## Automated Testing & Issue Management
 
-This section configures the `/fix-github` command for autonomous issue resolution.
+This section configures the `/fix` command for autonomous issue resolution.
 
 ### Regression Test Suite
 ```bash
@@ -246,7 +232,6 @@ npm test
 ```
 
 ### Build Verification
-
 ```bash
 npm run build
 ```
@@ -254,17 +239,14 @@ npm run build
 ### Test Framework Details
 
 **Unit Tests**:
-
 - Framework: (Configure your test framework)
 - Location: (Configure test file locations)
 
 **E2E Tests**:
-
 - Framework: (Configure E2E test framework)
 - Location: (Configure E2E test locations)
 
 **Test Reports**:
-
 - Location: `docs/test/regression-reports/`
 
 AUTOFIX_CONFIG
@@ -272,8 +254,7 @@ AUTOFIX_CONFIG
     echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
   fi
 
-# Extract test command
-
+  # Extract test command
   if grep -q "### Regression Test Suite" CLAUDE.md; then
     TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Regression test command: $TEST_COMMAND"
@@ -282,8 +263,7 @@ AUTOFIX_CONFIG
     echo "⚠️  No regression test command found, using default: $TEST_COMMAND"
   fi
 
-# Extract build command
-
+  # Extract build command
   if grep -q "### Build Verification" CLAUDE.md; then
     BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Build command: $BUILD_COMMAND"
@@ -319,7 +299,6 @@ else
 fi
 
 # Ensure priority labels exist (one-time setup per project)
-
 if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
@@ -332,26 +311,23 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
     fi
   done
 
-# Mark labels as configured
-
+  # Mark labels as configured
   mkdir -p .github
   echo "# Priority labels configured on $(date -I)" > .github/.priority-labels-configured
   echo "✅ Priority labels configured"
 fi
 
 # Step 0: Review and prioritize any unprioritized issues
-
 echo "🔍 Checking for unprioritized issues..."
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-open-issues.json
 
 # Find issues without any priority label (P0-P3)
-
 UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
 unprioritized = [i for i in issues if not any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))]
 for issue in unprioritized:
-    print(f\"{issue['number']}|{issue['title']}|{issue.get['body', ''](:500)}\")
+    print(f\"{issue['number']}|{issue['title']}|{issue.get('body', '')[:500]}\")
 ")
 
 if [ -n "$UNPRIORITIZED" ]; then
@@ -367,15 +343,11 @@ else
 fi
 
 # Check if a specific issue number was provided as argument
-
-# Usage: /fix-github [issue_number]
-
+# Usage: /fix [issue_number]
 SPECIFIED_ISSUE="${1:-}"
 
 if [ -n "$SPECIFIED_ISSUE" ]; then
-
-# Specific issue provided - fetch it directly
-
+  # Specific issue provided - fetch it directly
   echo "🎯 Targeting specific issue #$SPECIFIED_ISSUE"
   gh issue view "$SPECIFIED_ISSUE" --json number,title,body,labels > /tmp/top-issue.json 2>/dev/null
 
@@ -384,8 +356,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
-# Extract priority from labels (default to P2 if no priority label)
-
+  # Extract priority from labels (default to P2 if no priority label)
   ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '
     if (.labels | map(.name) | any(. == "P0")) then 0
     elif (.labels | map(.name) | any(. == "P1")) then 1
@@ -401,9 +372,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
 
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
 else
-
-# No specific issue - get highest priority issue (using labels only)
-
+  # No specific issue - get highest priority issue (using labels only)
   gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
   cat /tmp/all-issues.json | jq -r '
@@ -426,8 +395,7 @@ else
     }
   ' | jq -s 'sort_by(.priority) | .[0]' > /tmp/top-issue.json
 
-# Display the top issue
-
+  # Display the top issue
   ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
   ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
   ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
@@ -450,11 +418,9 @@ echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
 
 # Create fix branch
-
 git checkout -b "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || git checkout "fix/issue-${ISSUE_NUM}-auto"
 
 # Post comment that work started
-
 gh issue comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
 
 Starting automated fix for this issue.
@@ -467,7 +433,6 @@ Fix in progress..." 2>/dev/null || true
 echo "✅ Created branch: fix/issue-${ISSUE_NUM}-auto"
 echo "✅ Posted GitHub comment"
 echo ""
-
 ```
 
 ## Fixing Strategy
@@ -546,7 +511,6 @@ Use Skill tool: superpowers:systematic-debugging
 ```
 
 This will:
-
 - Investigate root cause thoroughly
 - Analyze patterns across failures
 - Test hypotheses before implementing
@@ -568,7 +532,6 @@ Use Skill tool: superpowers:brainstorming
 ```
 
 This will:
-
 - Explore design alternatives
 - Clarify requirements through questions
 - Validate assumptions
@@ -590,7 +553,6 @@ Use Skill tool: superpowers:writing-plans
 ```
 
 This will:
-
 - Break down into bite-sized tasks
 - Specify exact file paths and changes
 - Include verification steps
@@ -612,7 +574,6 @@ Use Skill tool: superpowers:executing-plans
 ```
 
 This will:
-
 - Load and review the plan critically
 - Execute tasks in batches
 - Report progress for review between batches
@@ -634,7 +595,6 @@ Use Skill tool: superpowers:verification-before-completion
 ```
 
 This will:
-
 - Run verification commands
 - Confirm output shows success
 - Provide evidence before assertions
@@ -687,8 +647,7 @@ gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ## Example Workflow
 
-### Simple Issue Example
-
+### Simple Issue Example:
 ```
 Issue #240: TypeScript compilation errors in disabled-features
 → Direct fix: Delete broken test files
@@ -696,8 +655,7 @@ Issue #240: TypeScript compilation errors in disabled-features
 → Commit and close
 ```
 
-### Complex Issue Example
-
+### Complex Issue Example:
 ```
 Issue #222: Review Management system broken (~30 test failures)
 → Complexity detected: >30 failures, multiple components
@@ -723,7 +681,6 @@ Issue #222: Review Management system broken (~30 test failures)
 ## Skip Criteria
 
 Skip to next issue if:
-
 - Issue requires external dependencies (API keys, services)
 - Issue is blocked by another issue
 - Issue requires user input/decision
@@ -772,7 +729,6 @@ Use the `/full-regression-test` command to run the complete test suite:
 ```
 
 This command will:
-
 - Load test configuration from CLAUDE.md
 - Run build verification
 - Run unit tests
@@ -885,7 +841,6 @@ Use Skill tool: superpowers:brainstorming
 ```
 
 Focus areas for enhancement proposals:
-
 1. **Test Coverage** - Use `/improve-test-coverage` to improve gaps (reads from test-coverage.md)
 2. **Code Quality** - Complex functions to refactor, duplication to reduce
 3. **Performance** - Slow queries, caching opportunities, bundle optimization
@@ -963,10 +918,11 @@ ENHANCEMENT_BODY
 
 echo "✅ Created proposal issue. Awaiting human approval before implementation."
 echo "💡 Use '/list-proposals' to view all pending proposals"
-
+echo ""
+echo "IDLE_NO_WORK_AVAILABLE"
 ```
 
-**IMPORTANT**: After creating a proposal, do NOT automatically implement it. The workflow should continue looking for other work (bugs, approved enhancements) or create additional proposals. Proposals require explicit human approval (removal of the `proposal` label) before implementation.
+**IMPORTANT**: After creating a proposal, output `IDLE_NO_WORK_AVAILABLE` to trigger the sleep cycle. This gives humans time to review the proposal before the next iteration. Do NOT immediately create more proposals or loop without sleeping.
 
 #### 5C: Implement Approved Enhancement Using Superpowers
 
@@ -996,7 +952,6 @@ Use Skill tool: superpowers:brainstorming
 ```
 
 This will:
-
 - Explore design alternatives
 - Clarify requirements
 - Validate assumptions
@@ -1009,7 +964,6 @@ Use Skill tool: superpowers:writing-plans
 ```
 
 This will:
-
 - Break down into bite-sized tasks
 - Specify exact file paths and changes
 - Include verification steps
@@ -1034,7 +988,6 @@ Use Skill tool: superpowers:executing-plans
 ```
 
 This will:
-
 - Load and review the plan critically
 - Execute tasks in batches
 - Report progress for review between batches
@@ -1163,7 +1116,6 @@ fi
 #### 5E: Enhancement Skip Criteria
 
 Skip an enhancement and move to the next if:
-
 - Enhancement requires external services not available
 - Enhancement scope is too large (>50 files affected)
 - Enhancement has unresolved dependencies on other issues
@@ -1209,7 +1161,6 @@ After completing ANY of these actions, you MUST immediately continue:
 ### Priority Order
 
 The workflow follows this strict priority order:
-
 1. **Triage Unprioritized Issues** (assign P0-P3 labels first)
 2. **P0-P3 Bug Issues** (fix bugs first)
 3. **Regression Test Failures** (creates new bug issues)
@@ -1261,11 +1212,18 @@ elif [ "$APPROVED_ENHANCEMENTS" -gt 0 ]; then
   echo "🚀 No bugs! Found $APPROVED_ENHANCEMENTS approved enhancement(s). Implementing..."
   # Process next approved enhancement (Step 5C)
 else
-  echo "✨ No bugs or approved enhancements. Checking for useful proposals to create..."
-  # Run /full-regression-test first if not recently run
-  # Then brainstorm proposals using superpowers:brainstorming
-  # Create proposals for genuinely useful improvements
-  # If nothing useful to propose → Output IDLE signal for sleep cycle
+  echo "✨ No bugs or approved enhancements."
+  if [ "$PENDING_PROPOSALS" -gt 0 ]; then
+    echo "📋 $PENDING_PROPOSALS proposal(s) awaiting human approval."
+    echo "💤 Nothing to do until proposals are approved or new issues arrive."
+    echo ""
+    echo "IDLE_NO_WORK_AVAILABLE"
+  else
+    echo "No pending proposals. Will brainstorm new proposals..."
+    # Run /full-regression-test first if not recently run
+    # Then brainstorm proposals using superpowers:brainstorming
+    # After creating proposals, output IDLE_NO_WORK_AVAILABLE
+  fi
 fi
 ```
 
@@ -1280,20 +1238,27 @@ fi
 - **DO** run `/full-regression-test` when bug queue is empty
 - **DO** process any new bug issues created by `/full-regression-test`
 - **DO** work on **approved** enhancements only when no bugs exist
-- **DO** keep generating proposals until you genuinely have no useful ideas
+- **DO** output `IDLE_NO_WORK_AVAILABLE` after creating a proposal (to allow human review)
+- **DO** output `IDLE_NO_WORK_AVAILABLE` when no bugs and proposals already exist
 - **DO** create bug issues for any test failures during enhancement work
 - **DO** loop back to bug fixing if enhancement work creates failures
 
 ### Idle State
 
-When truly idle (no bugs, no approved enhancements, no useful proposals to create, tests passing), output:
+**CRITICAL: You MUST output the idle signal when there's nothing to do.**
+
+Output this EXACT text (on its own line) when ANY of these conditions are true:
+- No priority bugs (P0-P3) AND no approved enhancements AND proposals already exist
+- After creating a new proposal (to allow human review time)
+- After completing all available work
 
 ```
 IDLE_NO_WORK_AVAILABLE
 ```
 
-This signals the stop hook to sleep (default 60 minutes) before checking again for:
+**Without this signal, the loop will spin forever without sleeping.**
 
+This signals the stop hook to sleep (default 15 minutes) before checking again for:
 - New human-created issues
 - Comments on existing issues
 - Approved proposals ready for implementation
@@ -1324,7 +1289,7 @@ To approve a proposal for automated implementation, remove the `proposal` label:
 gh issue edit <issue_number> --remove-label "proposal"
 ```
 
-Once the `proposal` label is removed, the `/fix-github` workflow will automatically implement the enhancement on its next iteration.
+Once the `proposal` label is removed, the `/fix` workflow will automatically implement the enhancement on its next iteration.
 
 ### How to Provide Feedback on a Proposal
 

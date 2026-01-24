@@ -1,6 +1,6 @@
-# Stop Fix-GitHub Loop
+# Stop Fix Loop
 
-Stops the infinite `/fix-github-loop` by removing the state file.
+Stops the infinite `/fix-loop` by removing the state file.
 
 ## Usage
 
@@ -11,7 +11,7 @@ Stops the infinite `/fix-github-loop` by removing the state file.
 ## Instructions
 
 ```bash
-LOOP_STATE_FILE=".claude/fix-github-loop.local.md"
+LOOP_STATE_FILE=".claude/fix-loop.local.md"
 
 if [[ -f "$LOOP_STATE_FILE" ]]; then
   # Extract current iteration for status message
@@ -21,10 +21,10 @@ if [[ -f "$LOOP_STATE_FILE" ]]; then
   echo "🛑 Fix-github loop stopped"
   echo "   Completed iterations: ${ITERATION:-0}"
   echo ""
-  echo "   To restart: /fix-github-loop"
+  echo "   To restart: /fix-loop"
 else
-  echo "ℹ️  No active fix-github loop found"
+  echo "ℹ️  No active fix loop found"
   echo ""
-  echo "   To start a loop: /fix-github-loop"
+  echo "   To start a loop: /fix-loop"
 fi
 ```

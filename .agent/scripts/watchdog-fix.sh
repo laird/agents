@@ -1,11 +1,11 @@
 #!/bin/bash
-# watchdog-fix-github.sh
-# Ensures the /fix-github workflow runs continuously.
-# Usage: ./watchdog-fix-github.sh [agent_command]
+# watchdog-fix.sh
+# Ensures the /fix workflow runs continuously.
+# Usage: ./watchdog-fix.sh [agent_command]
 
 # Default agent command - change this if your binary is named differently (e.g., 'cortex', 'claude')
 AGENT_CMD=${1:-"antigravity"}
-WORKFLOW="/fix-github"
+WORKFLOW="/fix"
 
 TARGET_DIR="/home/laird/src/librarian"
 
