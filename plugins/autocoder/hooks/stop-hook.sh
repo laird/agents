@@ -21,7 +21,7 @@ fi
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$LOOP_STATE_FILE")
 ITERATION=$(echo "$FRONTMATTER" | grep '^iteration:' | sed 's/iteration: *//')
 MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//')
-IDLE_SLEEP_MINUTES=$(echo "$FRONTMATTER" | grep '^idle_sleep_minutes:' | sed 's/idle_sleep_minutes: *//' || echo "60")
+IDLE_SLEEP_MINUTES=$(echo "$FRONTMATTER" | grep '^idle_sleep_minutes:' | sed 's/idle_sleep_minutes: *//' || echo "15")
 
 # Validate numeric fields before arithmetic operations
 if [[ ! "$ITERATION" =~ ^[0-9]+$ ]]; then

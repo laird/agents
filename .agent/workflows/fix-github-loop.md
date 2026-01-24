@@ -15,8 +15,8 @@ Wrapper around `/fix-github` that installs a stop hook to keep it running foreve
 # Limit to 100 iterations
 /fix-github-loop 100
 
-# Custom idle sleep time (default: 60 minutes)
-/fix-github-loop --sleep 120
+# Custom idle sleep time (default: 15 minutes)
+/fix-github-loop --sleep 30
 ```
 
 ## How It Works
@@ -39,7 +39,7 @@ Wrapper around `/fix-github` that installs a stop hook to keep it running foreve
 ```bash
 # Parse arguments
 MAX_ITERATIONS="${1:-0}"  # 0 = unlimited
-IDLE_SLEEP_MINUTES="60"
+IDLE_SLEEP_MINUTES="15"
 
 args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
