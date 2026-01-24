@@ -25,6 +25,8 @@ This directory contains configuration, rules, and workflows for the **Antigravit
 **Key parallel files:**
 - `/improve-test-coverage`: `.agent/workflows/improve-test-coverage.md` ↔ `plugins/autocoder/commands/improve-test-coverage.md`
 - `/fix-github`: `.agent/workflows/fix-github.md` ↔ `plugins/autocoder/commands/fix-github.md`
+- `/fix-github-loop`: `.agent/workflows/fix-github-loop.md` ↔ `plugins/autocoder/commands/fix-github-loop.md`
+- `/stop-loop`: `.agent/workflows/stop-loop.md` ↔ `plugins/autocoder/commands/stop-loop.md`
 - `/full-regression-test`: `.agent/workflows/full-regression-test.md` ↔ `plugins/autocoder/commands/full-regression-test.md`
 
 ## Structure
