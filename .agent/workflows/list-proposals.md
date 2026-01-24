@@ -4,10 +4,7 @@ description: List pending AI-generated proposals
 
 # List Pending Proposals
 
-**Version**: 1.5.0
-**Purpose**: Display all AI-generated enhancement proposals awaiting human review
-
----
+Display all AI-generated enhancement proposals awaiting human review and approval.
 
 ## Usage
 
@@ -18,37 +15,124 @@ description: List pending AI-generated proposals
 ## What This Does
 
 Lists all open GitHub issues with the `proposal` label, showing:
+
 - Issue number and title
 - Priority level (P0-P3)
 - Creation date
 - Brief description
-- Available actions (approve, feedback, reject)
 
----
+## Instructions
+
+```bash
+echo "📋 Fetching pending proposals..."
+echo ""
+
+# Fetch all open issues with the proposal label
+gh issue list --state open --label "proposal" --json number,title,body,labels,createdAt --limit 50 > /tmp/proposals.json
+
+PROPOSAL_COUNT=$(cat /tmp/proposals.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+
+if [ "$PROPOSAL_COUNT" -eq 0 ]; then
+  echo "✅ No pending proposals!"
+  echo ""
+  echo "All AI-generated proposals have been reviewed."
+  echo "Run '/fix-github' to generate new proposals if needed."
+  exit 0
+fi
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "                    PENDING PROPOSALS ($PROPOSAL_COUNT)"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Display each proposal
+cat /tmp/proposals.json | python3 -c "
+import json
+import sys
+from datetime import datetime
+
+proposals = json.load(sys.stdin)
+
+for p in proposals:
+    num = p['number']
+    title = p['title']
+    created = p.get('createdAt', 'Unknown')[:10]
+    body = p.get('body', '')[:200].replace('\n', ' ')
+
+    # Get priority label
+    priority = 'P?'
+    for label in p.get('labels', []):
+        if label['name'] in ['P0', 'P1', 'P2', 'P3']:
+            priority = label['name']
+            break
+
+    print(f'┌─ #{num} [{priority}] {title}')
+    print(f'│  Created: {created}')
+    print(f'│  {body}...')
+    print(f'│')
+    print(f'│  Actions:')
+    print(f'│    Approve:  gh issue edit {num} --remove-label \"proposal\"')
+    print(f'│    Feedback: gh issue comment {num} --body \"Your feedback here\"')
+    print(f'│    Reject:   gh issue close {num} --comment \"Rejected: reason\"')
+    print(f'│    View:     gh issue view {num}')
+    print(f'└────────────────────────────────────────────────────────────')
+    print()
+"
+
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "📖 Quick Reference:"
+echo ""
+echo "  Approve a proposal (allow implementation):"
+echo "    gh issue edit <number> --remove-label \"proposal\""
+echo ""
+echo "  Provide feedback (AI will refine):"
+echo "    gh issue comment <number> --body \"Your feedback\""
+echo "    /refine-proposal <number>"
+echo ""
+echo "  Reject a proposal:"
+echo "    gh issue close <number> --comment \"Rejected: reason\""
+echo ""
+echo "  View full proposal details:"
+echo "    gh issue view <number>"
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+```
 
 ## Proposal Workflow
 
 ```
-AI Creates Proposal → Human Reviews → Approve/Feedback/Reject
-                           ↓
-                    If Approved:
-                    Remove 'proposal' label
-                           ↓
-                    /fix-github implements
+┌─────────────────┐
+│  AI Creates     │
+│  Proposal       │
+│  (proposal tag) │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Human Reviews  │◄──────────────────┐
+│  /list-proposals│                   │
+└────────┬────────┘                   │
+         │                            │
+    ┌────┴────┐                       │
+    │         │                       │
+    ▼         ▼                       │
+┌───────┐ ┌───────┐ ┌───────┐        │
+│Approve│ │Feedback│ │Reject │        │
+└───┬───┘ └───┬───┘ └───┬───┘        │
+    │         │         │             │
+    ▼         ▼         ▼             │
+┌───────┐ ┌───────┐ ┌───────┐        │
+│Remove │ │Comment│ │Close  │        │
+│label  │ │+Refine│ │Issue  │        │
+└───┬───┘ └───┬───┘ └───────┘        │
+    │         │                       │
+    ▼         └───────────────────────┘
+┌─────────────────┐
+│  /fix-github    │
+│  Implements     │
+└─────────────────┘
 ```
-
-## Actions
-
-| Action | Command |
-|--------|---------|
-| List proposals | `/list-proposals` |
-| View details | `gh issue view <number>` |
-| Approve | `gh issue edit <number> --remove-label "proposal"` |
-| Feedback | `gh issue comment <number> --body "feedback"` |
-| Refine | `/refine-proposal <number>` |
-| Reject | `gh issue close <number> --comment "Rejected: reason"` |
-
----
 
 ## See Also
 
