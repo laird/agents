@@ -4,7 +4,7 @@ description: Start infinite fix loop with stop hook
 
 # Start Infinite Fix-GitHub Loop
 
-Wrapper around `/fix` that installs a stop hook to keep it running forever.
+Runs `/fix` in an infinite loop until manually stopped.
 
 ## Usage
 
@@ -21,20 +21,18 @@ Wrapper around `/fix` that installs a stop hook to keep it running forever.
 
 ## How It Works
 
-1. Installs stop hook in `.claude/settings.json` (if not present)
-2. Creates state file `.claude/fix-loop.local.md`
-3. Runs `/fix`
-4. When Claude tries to exit, stop hook feeds `/fix` back as input
-5. Loop continues until manually stopped or max iterations reached
+1. Runs `/fix` to process all priority issues
+2. When `/fix` outputs `IDLE_NO_WORK_AVAILABLE`, sleeps for configured duration
+3. Repeats until manually stopped (Ctrl+C) or max iterations reached
 
 ## Stopping the Loop
 
 - **Ctrl+C** - Manual interrupt
-- **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 - **Max iterations** - If set, stops when reached
-- **Delete state file** - `rm .claude/fix-loop.local.md`
 
 ## Instructions
+
+**Note**: Antigravity doesn't support Claude Code's stop hook mechanism. Instead, this workflow runs `/fix` repeatedly in a simple while loop.
 
 ```bash
 # Parse arguments
@@ -54,75 +52,98 @@ for ((i=0; i<${#args[@]}; i++)); do
   esac
 done
 
-mkdir -p .claude
-
-# ============================================================
-# Install stop hook if not configured
-# ============================================================
-if [ -f ".claude/settings.json" ] && grep -q "stop-hook.sh" .claude/settings.json 2>/dev/null; then
-  echo "✅ Stop hook already configured"
-else
-  echo "📝 Installing stop hook..."
-
-  if [ -f ".claude/settings.json" ]; then
-    python3 << 'PYTHON_SCRIPT'
-import json
-with open(".claude/settings.json", 'r') as f:
-    settings = json.load(f)
-stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"}]}
-if "hooks" not in settings:
-    settings["hooks"] = {}
-if "Stop" not in settings["hooks"]:
-    settings["hooks"]["Stop"] = []
-if not any("stop-hook.sh" in str(h) for h in settings["hooks"]["Stop"]):
-    settings["hooks"]["Stop"].append(stop_hook)
-    with open(".claude/settings.json", 'w') as f:
-        json.dump(settings, f, indent=2)
-PYTHON_SCRIPT
-  else
-    cat > .claude/settings.json << 'EOF'
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-  fi
-  echo "✅ Stop hook installed"
-fi
-
-# ============================================================
-# Create loop state file
-# ============================================================
-cat > .claude/fix-loop.local.md << EOF
----
-iteration: 0
-max_iterations: $MAX_ITERATIONS
-idle_sleep_minutes: $IDLE_SLEEP_MINUTES
-started: $(date -Iseconds)
----
-
-# Context Management (CRITICAL)
-# Run /compact BEFORE starting each new issue to prevent context overflow.
-
-/fix
-EOF
+# Create stop signal file location
+STOP_FILE=".git/.fix-loop-stop"
+rm -f "$STOP_FILE" 2>/dev/null
 
 echo ""
-echo "🔄 Loop initialized"
+echo "🔄 Starting infinite /fix loop"
 echo "   Max iterations: $([ "$MAX_ITERATIONS" = "0" ] && echo "unlimited" || echo "$MAX_ITERATIONS")"
 echo "   Idle sleep: $IDLE_SLEEP_MINUTES minutes"
 echo ""
+echo "To stop: Press Ctrl+C or run: touch $STOP_FILE"
+echo ""
+
+ITERATION=0
+while true; do
+  # Check for stop signal
+  if [ -f "$STOP_FILE" ]; then
+    echo "🛑 Stop signal detected. Exiting loop."
+    rm -f "$STOP_FILE"
+    break
+  fi
+
+  # Check max iterations
+  if [ "$MAX_ITERATIONS" != "0" ] && [ "$ITERATION" -ge "$MAX_ITERATIONS" ]; then
+    echo "✅ Reached max iterations ($MAX_ITERATIONS). Exiting loop."
+    break
+  fi
+
+  ITERATION=$((ITERATION + 1))
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🔄 Iteration $ITERATION"
+  if [ "$MAX_ITERATIONS" != "0" ]; then
+    echo "   Progress: $ITERATION / $MAX_ITERATIONS"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  # Run /compact before each iteration to prevent context overflow
+  echo "🗜️  Compacting context..."
+  # Note: Antigravity doesn't have /compact command like Claude
+  # Context management happens automatically
+
+  # Run the fix workflow
+  echo "🔧 Running /fix workflow..."
+  echo ""
 ```
 
-Now run `/fix` to start. The stop hook will keep it running.
+Now execute the `/fix` workflow. After it completes, check if it output `IDLE_NO_WORK_AVAILABLE`.
+
+**After `/fix` completes, continue:**
+
+```bash
+  # Check if we should sleep (idle state)
+  # The /fix workflow outputs "IDLE_NO_WORK_AVAILABLE" when there's no work
+  # For Antigravity, we'll just sleep between iterations
+  
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "💤 Iteration $ITERATION complete"
+  echo "   Sleeping for $IDLE_SLEEP_MINUTES minutes before next iteration..."
+  echo "   (Press Ctrl+C to stop, or: touch $STOP_FILE)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  
+  # Sleep in 1-minute increments to allow Ctrl+C interruption
+  SLEEP_SECONDS=$((IDLE_SLEEP_MINUTES * 60))
+  for ((s=0; s<SLEEP_SECONDS; s+=60)); do
+    if [ -f "$STOP_FILE" ]; then
+      echo "🛑 Stop signal detected during sleep. Exiting loop."
+      rm -f "$STOP_FILE"
+      exit 0
+    fi
+    sleep 60
+  done
+done
+
+echo ""
+echo "✅ Fix loop completed"
+echo "   Total iterations: $ITERATION"
+echo ""
+```
+
+## Alternative: Manual Loop
+
+If the automatic loop doesn't work well with Antigravity, you can manually run:
+
+```bash
+# Simple infinite loop
+while true; do
+  echo "Running /fix..."
+  # Execute /fix workflow here
+  echo "Sleeping 15 minutes..."
+  sleep 900
+done
+```
