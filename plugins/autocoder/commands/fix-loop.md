@@ -108,9 +108,6 @@ idle_sleep_minutes: $IDLE_SLEEP_MINUTES
 started: $(date -Iseconds)
 ---
 
-# Context Management (CRITICAL)
-# Run /compact BEFORE starting each new issue to prevent context overflow.
-
 /fix
 EOF
 
