@@ -436,6 +436,9 @@ echo ""
 echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
 
+# Save parent branch before creating feature branch
+PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
 # Create fix branch
 git checkout -b "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || git checkout "fix/issue-${ISSUE_NUM}-auto"
 
@@ -499,9 +502,17 @@ Detailed explanation of what was fixed and how.
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# Merge to main
-git checkout main
-git merge "fix/issue-${ISSUE_NUM}-auto" --no-edit
+# Push feature branch
+git push -u origin "fix/issue-${ISSUE_NUM}-auto"
+
+# Switch back to parent branch and merge
+git checkout "$PARENT_BRANCH"
+git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
+
+# Push parent branch
+git push
+
+# Clean up feature branch
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
 
 # Remove 'working' label and close issue
@@ -643,9 +654,17 @@ Detailed multi-line explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# Merge to main
-git checkout main
-git merge "fix/issue-${ISSUE_NUM}-auto" --no-edit
+# Push feature branch
+git push -u origin "fix/issue-${ISSUE_NUM}-auto"
+
+# Switch back to parent branch and merge
+git checkout "$PARENT_BRANCH"
+git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
+
+# Push parent branch
+git push
+
+# Clean up feature branch
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
 
 # Remove 'working' label and close issue with detailed explanation
@@ -963,6 +982,9 @@ For each **approved** enhancement issue (no `proposal` label), follow this workf
 **Step 1: Create Feature Branch**
 
 ```bash
+# Save parent branch before creating feature branch
+PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
 git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
 
 # Add 'working' label to claim the enhancement (prevents other agents from picking it up)
@@ -1061,9 +1083,17 @@ Detailed explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-  # Merge to main
-  git checkout main
-  git merge "enhancement/issue-${ENHANCE_NUM}-auto" --no-edit
+  # Push feature branch
+  git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"
+
+  # Switch back to parent branch and merge
+  git checkout "$PARENT_BRANCH"
+  git merge --no-ff "enhancement/issue-${ENHANCE_NUM}-auto"
+
+  # Push parent branch
+  git push
+
+  # Clean up feature branch
   git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
 
   # Remove 'working' label and close enhancement with details
