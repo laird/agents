@@ -24,11 +24,12 @@ check_active_tasks() {
     return 1  # No tasks or no tasks dir = idle
 }
 
-# Check if last transcript message is recent (< 2 min)
+# Check if last transcript message is recent (< 5 min)
 # Returns 0 if recent activity, 1 if idle
+# Note: 5-minute threshold matches file activity check for consistent idle detection
 check_transcript_activity() {
     local transcript_path="$1"
-    local threshold_seconds=120  # 2 minutes
+    local threshold_seconds=300  # 5 minutes (unified idle window)
 
     # Get timestamp of last assistant message
     local last_msg_time=$(grep '"role":"assistant"' "$transcript_path" | \
@@ -130,7 +131,7 @@ if check_active_tasks; then
     exit 0
 fi
 
-# Check 2: Recent transcript activity (< 2 minutes)
+# Check 2: Recent transcript activity (< 5 minutes)
 if check_transcript_activity "$TRANSCRIPT_PATH"; then
     echo "⏸️  Fix-github loop: Paused - recent conversation activity" >&2
     exit 0
