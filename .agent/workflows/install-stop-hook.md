@@ -11,7 +11,7 @@ Configures the stop hook in your project's `.claude/settings.json` to enable the
 The stop hook intelligently detects when Claude is actively working and pauses the loop to avoid interruptions. It only triggers `/fix` when ALL of these conditions are met:
 
 1. **No active tasks** - Task system has no pending/in_progress tasks
-2. **No recent conversation** - Last message was ≥ 2 minutes ago
+2. **No recent conversation** - Last message was ≥ 5 minutes ago
 3. **No recent file changes** - No files modified in last 5 minutes
 
 When any activity is detected, you'll see:
