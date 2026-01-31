@@ -273,6 +273,23 @@ This framework has proven results:
 
 **Installation**: Clone repository or copy `commands/` directory to target project.
 
+### Version Management
+
+**CRITICAL**: When updating any plugin version, you MUST also update the marketplace version:
+
+1. **Individual plugin versions** are in `.claude-plugin/marketplace.json` under `plugins[]`
+2. **Marketplace version** is at the root level of `.claude-plugin/marketplace.json`
+3. **Both must be updated** for the update mechanism to work properly
+
+**Example workflow:**
+```bash
+# When updating autocoder from 3.5.0 to 3.6.0:
+# 1. Update plugins[].version: "3.6.0"  (individual plugin)
+# 2. Update root version: "3.10.0"     (marketplace version bump)
+```
+
+**Why this matters**: The marketplace update mechanism relies on the root version number to detect that new plugin versions are available. Forgetting to bump the marketplace version will prevent users from receiving your plugin updates.
+
 ## References
 
 - **MADR 3.0.0**: https://adr.github.io/madr/ - ADR format specification

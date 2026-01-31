@@ -13,6 +13,7 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 /review-blocked --label needs-approval
 /review-blocked --label needs-clarification
 /review-blocked --label too-complex
+/review-blocked --label proposal
 
 # Filter to specific priority
 /review-blocked --priority P0
@@ -24,7 +25,7 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 
 ## What This Does
 
-1. **Fetches blocked issues** - Finds all open issues with blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`)
+1. **Fetches blocked issues** - Finds all open issues with blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`, `proposal`)
 2. **Shows overview** - Groups by blocking type and priority, shows counts
 3. **Proposes highest priority** - Starts with P0, then P1, then P2, then P3
 4. **Analyzes the issue** - Reads full context, explains why it's blocked
@@ -43,6 +44,7 @@ These labels indicate why fix-loop cannot autonomously work on an issue:
 | `needs-design` | Requirements unclear, multiple valid approaches, needs design phase | "Add user dashboard" (what features? layout?) |
 | `needs-clarification` | Incomplete information, missing context, questions needed | "Fix the bug in checkout" (which bug? what's failing?) |
 | `too-complex` | Beyond autonomous capability, requires deep expertise/judgment | "Refactor entire auth system for multi-tenancy" |
+| `proposal` | Proposed feature or change awaiting review | "Add dark mode support" (needs design review and approval) |
 
 **Note**: Blocking labels are independent from priority labels. An issue can have both `P0` + `needs-design`.
 
@@ -163,7 +165,7 @@ ISSUE_BODY=$(echo "$CURRENT_ISSUE" | python3 -c "import json,sys; print(json.loa
 BLOCKING_LABEL=$(echo "$CURRENT_ISSUE" | python3 -c "
 import json, sys
 issue = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'proposal']
 labels = [l['name'] for l in issue.get('labels', [])]
 for bl in blocking_labels:
     if bl in labels:
