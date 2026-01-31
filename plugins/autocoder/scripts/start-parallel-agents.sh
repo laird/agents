@@ -146,22 +146,29 @@ done
 # Balance the panes to make them equal width
 tmux select-layout -t "$SESSION_NAME:0" even-horizontal
 
-# Launch Claude Code in each pane
+# Launch Claude Code in each pane sequentially with individual waits
 echo ""
 echo "🤖 Starting Claude Code sessions..."
 
 for i in $(seq 0 $((NUM_AGENTS - 1))); do
+  echo "   Starting worker $((i+1))/$NUM_AGENTS..."
   tmux send-keys -t "$SESSION_NAME:0.$i" "claude code --dangerously-skip-permissions ." C-m
+
+  # Wait for this instance to initialize before starting next
+  sleep 3
 done
 
-# Wait for Claude Code to initialize
-echo "   Waiting for Claude Code to initialize (5 seconds)..."
+# Wait a bit more for all instances to be fully ready
+echo "   Waiting for all instances to be ready..."
 sleep 5
 
 # Send /fix-loop command to all agents
 echo "   Starting /fix-loop in all agents..."
 for i in $(seq 0 $((NUM_AGENTS - 1))); do
-  tmux send-keys -t "$SESSION_NAME:0.$i" "/fix-loop" C-m
+  tmux send-keys -t "$SESSION_NAME:0.$i" "/fix-loop"
+  sleep 0.5
+  tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
+  sleep 0.5
 done
 
 # Create second window for review/planning (single pane)
@@ -170,13 +177,16 @@ echo "📋 Setting up review/planning window..."
 tmux new-window -t "$SESSION_NAME:1" -n "review"
 
 # Set up review window
+echo "   Starting coordinator..."
 tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
 tmux send-keys -t "$SESSION_NAME:1.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
 tmux send-keys -t "$SESSION_NAME:1.0" "claude code --dangerously-skip-permissions ." C-m
 
 # Wait for Claude Code to initialize in review window
-sleep 3
-tmux send-keys -t "$SESSION_NAME:1.0" "/review-blocked" C-m
+sleep 5
+tmux send-keys -t "$SESSION_NAME:1.0" "/review-blocked"
+sleep 0.5
+tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
 
 # Select the first window (agents) by default
 tmux select-window -t "$SESSION_NAME:0"
