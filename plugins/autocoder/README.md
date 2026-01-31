@@ -22,6 +22,29 @@ The `/install` command will:
 
 Each step is explained clearly and requires your approval before making changes.
 
+## Updating
+
+If you cloned this repository and want to sync the installed plugin with the latest changes:
+
+```bash
+# From anywhere
+bash ~/src/agents/scripts/update-plugin.sh
+
+# Or from the repo
+bash scripts/update-plugin.sh
+```
+
+The script auto-detects the repository location and updates:
+- Commands (13 files)
+- Scripts (7 files)
+- Hooks (1 file)
+- plugin.json (version info)
+
+Alternatively, update via Claude Code (if available):
+```bash
+/plugin update autocoder
+```
+
 ## Required Labels
 
 The plugin automatically creates these labels on first run:
