@@ -267,21 +267,29 @@ Creates a tmux session with 2 windows:
 
 ### Terminal Commands
 
-After running `/install-parallel-scripts`:
+After running `/install`:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
 | `start-parallel` | Launch parallel agent system | `start-parallel [num_agents] [--no-worktrees]` |
 | `join-parallel` | Rejoin existing session | `join-parallel [session_name]` |
+| `end-parallel` | End session and clean up | `end-parallel [session_name] [--keep-worktrees]` |
 
 **Examples:**
 ```bash
+# Starting
 start-parallel              # 3 agents (default)
 start-parallel 5            # 5 agents (1 coordinator + 4 workers)
 start-parallel 3 --no-worktrees  # No git worktrees, same directory
 
+# Joining
 join-parallel              # Auto-detect based on current directory
 join-parallel claude-myproject  # Explicit session name
+
+# Ending
+end-parallel               # End session and optionally remove worktrees
+end-parallel --keep-worktrees  # End session but keep worktrees
+end-parallel claude-myproject  # End specific session
 ```
 
 ### Git Worktrees
@@ -298,10 +306,14 @@ For each worker agent:
 
 **Session naming**: `claude-<project-name>`
 
+**Recommended workflow:**
+- End session: `end-parallel` (kills tmux session + optionally removes worktrees)
+- Detach temporarily: `Ctrl+b` then `d` (session keeps running)
+
 **Tmux commands:**
 - Switch windows: `Ctrl+b` then `0` or `1`
 - Detach: `Ctrl+b` then `d`
-- Kill session: `tmux kill-session -t claude-<project-name>`
+- Manual kill: `tmux kill-session -t claude-<project-name>` (leaves worktrees behind)
 
 ### Benefits
 

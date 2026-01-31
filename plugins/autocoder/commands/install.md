@@ -191,7 +191,7 @@ INSTALL_DIR="$HOME/.local/bin"
 SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
 
 # Check if already installed
-if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/join-parallel" ]; then
+if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ]; then
   echo "✅ Parallel agent scripts already installed"
   INSTALL_SCRIPTS=false
 else
@@ -199,11 +199,13 @@ else
   echo ""
   echo "  start-parallel -> $SCRIPT_DIR/start-parallel-agents.sh"
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
+  echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
   echo ""
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
   echo "  start-parallel 3    # Launch 3 parallel agents"
   echo "  join-parallel       # Rejoin session"
+  echo "  end-parallel        # End session and optionally clean up worktrees"
   echo ""
   INSTALL_SCRIPTS=true
 fi
@@ -246,7 +248,7 @@ Use AskUserQuestion:
 Question: "Install parallel agent scripts?"
 Header: "Scripts"
 Options:
-  - "Yes, install scripts" - "Global terminal commands: start-parallel, join-parallel"
+  - "Yes, install scripts" - "Global terminal commands: start-parallel, join-parallel, end-parallel"
   - "No, skip this step" - "You can install later with /install"
 ```
 
@@ -260,10 +262,12 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   # Create symlinks
   ln -sf "$SCRIPT_DIR/start-parallel-agents.sh" "$INSTALL_DIR/start-parallel"
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
+  ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
 
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
   echo "   $INSTALL_DIR/join-parallel"
+  echo "   $INSTALL_DIR/end-parallel"
 
   # Add to PATH if needed
   if [ "$PATH_OK" = false ]; then
@@ -293,14 +297,16 @@ echo "📝 Will add these aliases:"
 echo ""
 echo "  alias start='start-parallel'"
 echo "  alias join='join-parallel'"
+echo "  alias end='end-parallel'"
 echo ""
-echo "⚠️  Warning: Only install if you don't have conflicting 'start'"
-echo "            or 'join' aliases in your shell."
+echo "⚠️  Warning: Only install if you don't have conflicting 'start',"
+echo "            'join', or 'end' aliases in your shell."
 echo ""
 echo "Usage after install:"
 echo "  cd ~/src/myproject"
 echo "  start 3    # Instead of: start-parallel 3"
 echo "  join       # Instead of: join-parallel"
+echo "  end        # Instead of: end-parallel"
 echo ""
 ```
 
@@ -310,8 +316,8 @@ Use AskUserQuestion:
 Question: "Create shell aliases?"
 Header: "Aliases"
 Options:
-  - "Yes, create aliases" - "Shorter commands: 'start' and 'join'"
-  - "No, use full names" - "Keep using 'start-parallel' and 'join-parallel'"
+  - "Yes, create aliases" - "Shorter commands: 'start', 'join', and 'end'"
+  - "No, use full names" - "Keep using 'start-parallel', 'join-parallel', and 'end-parallel'"
 ```
 
 If approved:
@@ -330,6 +336,11 @@ if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
     alias join
     CONFLICTS=true
   fi
+  if alias end 2>/dev/null | grep -qv "end-parallel"; then
+    echo "⚠️  Warning: 'end' alias already exists:"
+    alias end
+    CONFLICTS=true
+  fi
 
   if [ "$CONFLICTS" = true ]; then
     echo ""
@@ -337,6 +348,7 @@ if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
   else
     echo "alias start='start-parallel'" >> "$SHELL_RC"
     echo "alias join='join-parallel'" >> "$SHELL_RC"
+    echo "alias end='end-parallel'" >> "$SHELL_RC"
     echo "✅ Aliases added to $SHELL_RC"
     echo "   ⚡ Restart your shell or run: source $SHELL_RC"
   fi
