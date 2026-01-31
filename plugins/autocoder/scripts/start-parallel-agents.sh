@@ -154,22 +154,29 @@ for i in $(seq 0 $((NUM_AGENTS - 1))); do
   echo "   Starting worker $((i+1))/$NUM_AGENTS..."
   tmux send-keys -t "$SESSION_NAME:0.$i" "claude code --dangerously-skip-permissions ." C-m
 
-  # Wait for this instance to initialize before starting next
-  sleep 3
+  # Wait for this instance to fully initialize before starting next
+  sleep 5
 done
 
-# Wait a bit more for all instances to be fully ready
-echo "   Waiting for all instances to be ready..."
-sleep 5
+# Wait for all instances to be fully ready
+echo "   Waiting for all instances to stabilize..."
+sleep 3
 
-# Send /fix-loop command to all agents
-echo "   Starting /fix-loop in all agents..."
+# Send /fix-loop command to agents ONE AT A TIME with full initialization wait
+echo "   Starting /fix-loop in all agents (sequential)..."
 for i in $(seq 0 $((NUM_AGENTS - 1))); do
+  echo "   → Agent $((i+1)): sending /fix-loop..."
   tmux send-keys -t "$SESSION_NAME:0.$i" "/fix-loop"
   sleep 0.5
   tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
-  sleep 0.5
+
+  # Wait for THIS agent to fully process /fix-loop before starting next
+  # This prevents agents from racing during initialization
+  echo "   → Agent $((i+1)): waiting for initialization..."
+  sleep 10
 done
+
+echo "   All agents initialized"
 
 # Create second window for review/planning (single pane)
 echo ""
