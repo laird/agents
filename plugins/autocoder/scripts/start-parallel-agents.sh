@@ -87,7 +87,8 @@ WORKTREE_PATHS=()
 if [ "$USE_WORKTREES" = true ]; then
   echo "📁 Setting up git worktrees..."
 
-  for i in $(seq 1 $((NUM_AGENTS - 1))); do
+  # Create N worktrees for N agents (all workers in worktrees)
+  for i in $(seq 1 $NUM_AGENTS); do
     WORKTREE_PATH="${PROJECT_ROOT}-wt-${i}"
     WORKTREE_BRANCH="${CURRENT_BRANCH}-wt-${i}"
 
@@ -116,25 +117,30 @@ fi
 echo "🖥️  Creating tmux session: $SESSION_NAME"
 tmux new-session -d -s "$SESSION_NAME" -n "agents"
 
-# Main pane (leftmost) - coordinator in main repo
-echo "   Setting up main agent (coordinator)..."
-tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
+# First pane (leftmost) - worker 1 in wt-1
+echo "   Setting up worker agent 1..."
+if [ "$USE_WORKTREES" = true ]; then
+  WORKTREE_PATH="${WORKTREE_PATHS[0]}"
+  tmux send-keys -t "$SESSION_NAME:0.0" "cd '$WORKTREE_PATH'" C-m
+else
+  tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
+fi
 tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
 tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
 
-# Create panes for workers
-for i in $(seq 1 $((NUM_AGENTS - 1))); do
+# Create panes for remaining workers
+for i in $(seq 2 $NUM_AGENTS); do
   echo "   Setting up worker agent $i..."
   tmux split-window -h -t "$SESSION_NAME:0"
 
   if [ "$USE_WORKTREES" = true ]; then
     WORKTREE_PATH="${WORKTREE_PATHS[$((i-1))]}"
-    tmux send-keys -t "$SESSION_NAME:0.$i" "cd '$WORKTREE_PATH'" C-m
+    tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$WORKTREE_PATH'" C-m
   else
-    tmux send-keys -t "$SESSION_NAME:0.$i" "cd '$PROJECT_ROOT'" C-m
+    tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$PROJECT_ROOT'" C-m
   fi
 
-  tmux send-keys -t "$SESSION_NAME:0.$i" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+  tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
 done
 
 # Balance the panes to make them equal width
@@ -181,8 +187,8 @@ echo ""
 echo "📊 Session Info:"
 echo "   Session name: $SESSION_NAME"
 echo "   Task list ID: $TASK_LIST_ID"
-echo "   Window 0: $NUM_AGENTS parallel agents running /fix-loop"
-echo "   Window 1: Review/planning agent running /review-blocked"
+echo "   Window 0: $NUM_AGENTS worker agents in worktrees running /fix-loop"
+echo "   Window 1: Coordinator in main repo running /review-blocked"
 echo ""
 echo "🔧 Useful tmux commands:"
 echo "   Switch windows: Ctrl+b then 0 or 1"
