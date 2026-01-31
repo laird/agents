@@ -39,6 +39,7 @@ The **Autocoder** plugin provides autonomous GitHub issue resolution with intell
 |---------|---------|
 | `/fix` | Fix a single issue or start autonomous resolution |
 | `/fix-loop` | Run continuous issue resolution (with sleep between cycles) |
+| `/review-blocked` | Interactive review of blocked issues (run in parallel with fix-loop) |
 | `/stop-loop` | Stop the continuous loop |
 
 ### Design & Brainstorming
@@ -67,7 +68,7 @@ The **Autocoder** plugin provides autonomous GitHub issue resolution with intell
 
 | Command | Purpose |
 |---------|---------|
-| `/install-stop-hook` | Install the stop hook for loop control |
+| `/install` | Install stop hook and parallel agent scripts (interactive setup) |
 
 ## Workflow Patterns
 
@@ -90,7 +91,7 @@ Finds the highest priority issue (P0→P1→P2→P3) and fixes it.
 ### Pattern 3: Continuous Autonomous Mode
 
 ```
-/install-stop-hook    # First time only
+/install    # First time only (approves stop hook)
 /fix-loop
 ```
 
@@ -123,6 +124,24 @@ gh issue edit 45 --remove-label "needs-design"  # Mark design complete
 /fix                  # Implements approved proposals
 ```
 
+### Pattern 6: Parallel Planning + Execution
+
+```bash
+# Terminal 1: Run fix-loop continuously
+/fix-loop
+
+# Terminal 2: Review blocked issues as they appear (non-blocking)
+/review-blocked
+```
+
+When fix-loop encounters issues it can't handle (architectural decisions, unclear requirements, etc.), it adds blocking labels and continues. In a separate session, use `/review-blocked` to interactively:
+1. See overview of all blocked issues by category and priority
+2. Review highest priority blocked issue with 2-3 recommended approaches
+3. Approve (removes blocking label), explore further, reject, or skip
+4. Continue to next blocked issue
+
+This allows continuous autonomous work while you provide guidance on complex decisions.
+
 ## Priority System
 
 Issues are prioritized by labels:
@@ -138,15 +157,34 @@ Unlabeled issues are triaged automatically when `/fix` runs.
 
 ## Label System
 
+### Priority Labels
 | Label | Meaning |
 |-------|---------|
-| `P0`-`P3` | Priority level |
+| `P0` | Critical priority (system down, security, data loss) |
+| `P1` | High priority (major feature broken, no workaround) |
+| `P2` | Medium priority (feature degraded, workaround exists) |
+| `P3` | Low priority (minor issue, cosmetic) |
+
+### Blocking Labels
+These indicate why fix-loop cannot autonomously work on an issue:
+
+| Label | When Applied | Example |
+|-------|--------------|---------|
+| `needs-approval` | Architectural decisions, major changes, security implications | "Should we migrate from REST to GraphQL?" |
+| `needs-design` | Requirements unclear, multiple valid approaches | "Add user dashboard" (what features? layout?) |
+| `needs-clarification` | Incomplete information, missing context | "Fix the bug in checkout" (which bug?) |
+| `too-complex` | Beyond autonomous capability, requires deep expertise | "Refactor entire auth system" |
+
+**Note**: Blocking labels are independent from priority. An issue can have both `P0` + `needs-design`.
+
+### Status Labels
+| Label | Meaning |
+|-------|---------|
 | `proposal` | AI-generated, awaiting human approval |
-| `needs-design` | Requires design/architecture work |
-| `needs-feedback` | Requires human feedback or clarification |
 | `enhancement` | Feature improvement |
 | `bug` | Something isn't working |
 | `test-failure` | Created from test failure |
+| `working` | Currently claimed by an agent (concurrency lock) |
 
 ## Issue Complexity
 
@@ -199,6 +237,9 @@ Customize these commands for your project.
 # Stop continuous mode
 /stop-loop
 
+# Review blocked issues (run in parallel with fix-loop)
+/review-blocked
+
 # Review proposals
 /list-proposals
 
@@ -224,10 +265,11 @@ Customize these commands for your project.
 ## Tips
 
 1. **Install the stop hook** before using `/fix-loop`
-2. **Review proposals** regularly - they won't auto-implement
-3. **Use labels** to control what gets worked on
-4. **Customize test commands** in CLAUDE.md for your project
-5. **Brainstorm first** for complex issues needing design
+2. **Run `/review-blocked` in parallel** - fix-loop will add blocking labels when it needs guidance, review them separately without interrupting autonomous work
+3. **Review proposals** regularly - they won't auto-implement
+4. **Use labels** to control what gets worked on
+5. **Customize test commands** in CLAUDE.md for your project
+6. **Brainstorm first** for complex issues needing design
 
 ## See Also
 

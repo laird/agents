@@ -26,6 +26,8 @@ This directory contains configuration, rules, and workflows for the **Antigravit
 - `/improve-test-coverage`: `.agent/workflows/improve-test-coverage.md` ↔ `plugins/autocoder/commands/improve-test-coverage.md`
 - `/fix`: `.agent/workflows/fix.md` ↔ `plugins/autocoder/commands/fix.md`
 - `/fix-loop`: `.agent/workflows/fix-loop.md` ↔ `plugins/autocoder/commands/fix-loop.md`
+- `/review-blocked`: `.agent/workflows/review-blocked.md` ↔ `plugins/autocoder/commands/review-blocked.md`
+- `/install`: `.agent/workflows/install.md` ↔ `plugins/autocoder/commands/install.md`
 - `/stop-loop`: `.agent/workflows/stop-loop.md` ↔ `plugins/autocoder/commands/stop-loop.md`
 - `/full-regression-test`: `.agent/workflows/full-regression-test.md` ↔ `plugins/autocoder/commands/full-regression-test.md`
 

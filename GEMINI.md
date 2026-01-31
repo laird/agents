@@ -36,8 +36,21 @@ This is the **Modernize** framework - a production-validated system providing pr
 |----------|-------------|-------------|
 | `/improve-test-coverage` | `.agent/workflows/improve-test-coverage.md` | `plugins/autocoder/commands/improve-test-coverage.md` |
 | `/fix` | `.agent/workflows/fix.md` | `plugins/autocoder/commands/fix.md` |
-| `/full-regression-test` | `.agent/workflows/full-regression-test.md` | `plugins/autocoder/commands/full-regression-test.md` |
 | `/fix-loop` | `.agent/workflows/fix-loop.md` | `plugins/autocoder/commands/fix-loop.md` |
+| `/full-regression-test` | `.agent/workflows/full-regression-test.md` | `plugins/autocoder/commands/full-regression-test.md` |
+| `/review-blocked` | `.agent/workflows/review-blocked.md` | `plugins/autocoder/commands/review-blocked.md` |
+| `/install` | `.agent/workflows/install.md` | `plugins/autocoder/commands/install.md` |
+
+**Key parallel scripts:**
+
+| Script | Antigravity | Claude Code |
+|--------|-------------|-------------|
+| `start-parallel-agents.sh` | `.agent/scripts/start-parallel-agents.sh` | `plugins/autocoder/scripts/start-parallel-agents.sh` |
+| `join-parallel-agents.sh` | `.agent/scripts/join-parallel-agents.sh` | `plugins/autocoder/scripts/join-parallel-agents.sh` |
+| `fetch-blocked-issues.sh` | `.agent/scripts/fetch-blocked-issues.sh` | `plugins/autocoder/scripts/fetch-blocked-issues.sh` |
+| `add-blocking-label.sh` | `.agent/scripts/add-blocking-label.sh` | `plugins/autocoder/scripts/add-blocking-label.sh` |
+| `approve-blocked-issue.sh` | `.agent/scripts/approve-blocked-issue.sh` | `plugins/autocoder/scripts/approve-blocked-issue.sh` |
+| `reject-blocked-issue.sh` | `.agent/scripts/reject-blocked-issue.sh` | `plugins/autocoder/scripts/reject-blocked-issue.sh` |
 
 ## Workflows
 
@@ -160,6 +173,50 @@ All agent work is logged to `HISTORY.md` using:
 ```bash
 ./.agent/scripts/append-to-history.sh "<title>" "<details>" "<context>" "<impact>"
 ```
+
+## Parallel Agent System
+
+### Setup and Coordination
+
+Antigravity supports parallel agent coordination through git worktrees and workspace management:
+
+**Start parallel agents:**
+```bash
+bash .agent/scripts/start-parallel-agents.sh [num_agents]
+# Creates worktrees, generates config, attempts to launch Antigravity
+```
+
+**Join existing session:**
+```bash
+bash .agent/scripts/join-parallel-agents.sh
+# Reads config, shows status, attempts to reopen workspaces
+```
+
+**How it works:**
+- Creates N-1 git worktrees (one coordinator stays in main repo)
+- Detects if `.agent/` is a symlink and replicates to each worktree
+- Generates `.agent/parallel-workspaces.json` with workspace config
+- Attempts to launch Antigravity and open workspaces
+- Agents coordinate through GitHub issues and labels (working, needs-approval, P0-P3, etc.)
+
+**Key difference from Claude Code:**
+- No `CLAUDE_CODE_TASK_LIST_ID` environment variable
+- Coordination is purely through GitHub API (labels, comments)
+- No tmux - uses Antigravity GUI workspace model
+
+### Installation Into Projects
+
+Use `/install` workflow to install framework into target projects:
+
+**Option 1: Symlink (Recommended)**
+- Stays updated with framework improvements
+- `git pull` in framework repo updates all linked projects
+- Symlinks automatically replicated to worktrees by `start-parallel-agents.sh`
+
+**Option 2: Copy (Custom)**
+- Independent snapshot for customization
+- No automatic updates
+- Full control over protocols/rules
 
 ## References
 

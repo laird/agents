@@ -172,7 +172,18 @@ Located in `scripts/` directory:
 **Key parallel files:**
 - `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
 - `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
+- `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
+- `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
+- `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
+
+**Key parallel scripts:**
+- `start-parallel-agents.sh`: `plugins/autocoder/scripts/start-parallel-agents.sh` ↔ `.agent/scripts/start-parallel-agents.sh`
+- `join-parallel-agents.sh`: `plugins/autocoder/scripts/join-parallel-agents.sh` ↔ `.agent/scripts/join-parallel-agents.sh`
+- `fetch-blocked-issues.sh`: `plugins/autocoder/scripts/fetch-blocked-issues.sh` ↔ `.agent/scripts/fetch-blocked-issues.sh`
+- `add-blocking-label.sh`: `plugins/autocoder/scripts/add-blocking-label.sh` ↔ `.agent/scripts/add-blocking-label.sh`
+- `approve-blocked-issue.sh`: `plugins/autocoder/scripts/approve-blocked-issue.sh` ↔ `.agent/scripts/approve-blocked-issue.sh`
+- `reject-blocked-issue.sh`: `plugins/autocoder/scripts/reject-blocked-issue.sh` ↔ `.agent/scripts/reject-blocked-issue.sh`
 
 ### Agent Invocation Pattern
 

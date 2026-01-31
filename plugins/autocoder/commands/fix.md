@@ -303,7 +303,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -386,11 +386,13 @@ else
   gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
   # Filter out issues with 'working' label (being worked on by another agent)
+  # Also filter out issues with blocking labels (needs human review)
   cat /tmp/all-issues.json | jq -r '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex") | not)
     ) |
     {
       number: .number,
@@ -413,9 +415,11 @@ else
   ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
   ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '.priority')
 
-  # Check if any issue was found (after filtering out 'working' issues)
+  # Check if any issue was found (after filtering out 'working' and blocked issues)
   if [ "$ISSUE_NUM" = "null" ] || [ -z "$ISSUE_NUM" ]; then
-    echo "ℹ️  No available priority issues found (all may be claimed by other agents)"
+    echo "ℹ️  No available priority issues found"
+    echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
+    echo "   Use '/review-blocked' to review and approve blocked issues"
     echo "IDLE_NO_WORK_AVAILABLE"
     exit 0
   fi
@@ -722,46 +726,120 @@ Issue #222: Review Management system broken (~30 test failures)
 → Commit and close with evidence
 ```
 
-## Skip Criteria
+## Blocking Detection & Label Assignment
 
-Skip to next issue if:
-- Issue requires external dependencies (API keys, services)
-- Issue is blocked by another issue
-- Issue requires user input/decision
+Before attempting to work on an issue, assess whether it can be handled autonomously. If not, add the appropriate blocking label and skip to the next issue.
+
+### Blocking Labels
+
+| Label | When to Apply | Example Indicators |
+|-------|---------------|-------------------|
+| `needs-clarification` | Incomplete information, missing context, unclear requirements | "Fix the bug" (which bug?), "Improve performance" (of what?), vague descriptions |
+| `needs-design` | Multiple valid approaches without clear winner, requires design phase | "Add user dashboard", "Implement notifications", architectural uncertainty |
+| `needs-approval` | Architectural decisions, major changes, security implications, breaking changes | "Migrate to microservices", "Change auth system", "Remove deprecated API" |
+| `too-complex` | Beyond autonomous capability, >100 test failures, irreversible consequences | "Refactor entire codebase", massive failures, cross-system changes |
+
+### Detection Process
+
+**Step 1: Read the issue carefully**
+
+Look for these red flags:
+- **Vague or incomplete**: No specific steps, missing context, unclear acceptance criteria → `needs-clarification`
+- **Multiple solutions**: Several valid approaches, trade-offs unclear, design needed → `needs-design`
+- **Major decision**: Architectural change, breaking change, security impact → `needs-approval`
+- **Too large**: >100 test failures, affects multiple systems, irreversible → `too-complex`
+
+**Step 2: If blocked, add label and skip**
+
+```bash
+BLOCKING_LABEL=""  # Will be set to one of: needs-clarification, needs-design, needs-approval, too-complex
+BLOCKING_REASON=""  # Human-readable explanation
+
+# Example: Issue has unclear requirements
+if [issue description is vague or missing critical information]; then
+  BLOCKING_LABEL="needs-clarification"
+  BLOCKING_REASON="Issue description is unclear. Need specific details about: [what's missing]"
+fi
+
+# Example: Issue requires design decisions
+if [multiple approaches possible, no clear winner]; then
+  BLOCKING_LABEL="needs-design"
+  BLOCKING_REASON="Multiple valid approaches exist. Need design phase to evaluate: [list options]"
+fi
+
+# Example: Issue requires architectural approval
+if [breaking change or major architectural decision]; then
+  BLOCKING_LABEL="needs-approval"
+  BLOCKING_REASON="This requires architectural decision: [describe the decision]"
+fi
+
+# Example: Issue is too complex for autonomous resolution
+if [>100 test failures or cross-cutting concerns]; then
+  BLOCKING_LABEL="too-complex"
+  BLOCKING_REASON="Too large for autonomous resolution: [describe complexity]"
+fi
+
+# If a blocking label was identified, use the script to add it and skip
+if [ -n "$BLOCKING_LABEL" ]; then
+  # Determine script location (portable across different plugin install locations)
+  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+
+  bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "$BLOCKING_LABEL" "$BLOCKING_REASON"
+
+  echo "⏭️  Skipping to next issue..."
+  echo ""
+  # Continue to next issue in the workflow
+fi
+```
+
+**Step 3: If not blocked, proceed with fix**
+
+If no blocking conditions detected, continue with the normal fix workflow (simple vs complex vs ultra-complex determination).
 
 ### Ultra-Complex Issues - Use Quint (if available)
 
 For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions):
 
-```
-# If QUINT_AVAILABLE=true:
-Use Skill tool: quint:structured-reasoning
-
-# Quint will:
-# - Guide a structured reasoning process with the human
-# - Break down complex decisions into manageable components
-# - Facilitate trade-off analysis
-# - Build consensus on approach before implementation
-```
-
-If `QUINT_AVAILABLE=false`, skip the issue with a recommendation:
-
-Post a comment explaining why skipped and release the lock:
+**First, add the `too-complex` label:**
 
 ```bash
-# Remove 'working' label to release the issue for others
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+echo "⚠️  Ultra-complex issue detected: requires human guidance"
 
-gh issue comment "$ISSUE_NUM" --body "⏭️ **Skipped for Manual Review**
+# Prepare detailed reason for blocking
+COMPLEXITY_REASON="Ultra-complex issue requiring human guidance.
 
-This issue requires [reason] and cannot be automatically resolved.
+**Complexity Indicators**:
+- [List specific indicators: >100 test failures, major architectural change, etc.]
 
-**Recommendation**: [Suggested approach]
+**Recommended Approach**:
+- Use /review-blocked to interactively review this issue
+- Consider breaking into smaller issues if possible
+- May require structured reasoning with quint plugin
 
-Moving to next priority issue.
+**Available Tools**:
+$(if [ "$QUINT_AVAILABLE" = "true" ]; then
+  echo "- ✅ Quint plugin available for structured reasoning"
+else
+  echo "- ℹ️  Quint plugin not installed - manual review recommended"
+fi)"
 
-🤖 Autonomous fix workflow"
+# Determine script location (portable across different plugin install locations)
+SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+
+# Use the script to add blocking label
+bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "too-complex" "$COMPLEXITY_REASON"
+
+echo "⏭️  Issue labeled as too-complex. Use /review-blocked to review."
+echo ""
+# Continue to next issue
 ```
+
+### Skip Criteria (Legacy)
+
+Skip to next issue if:
+- Issue requires external dependencies (API keys, services) → add `needs-clarification` label
+- Issue is blocked by another issue → add comment, don't add blocking label
+- Issue requires user input/decision → add appropriate blocking label (`needs-approval`, `needs-design`, or `needs-clarification`)
 
 ## No Priority Issues Found
 
@@ -817,13 +895,15 @@ If regression tests pass completely (no new bug issues created), shift focus to 
 # Check for open enhancement issues that are NOT proposals (approved for implementation)
 gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 50 > /tmp/all-enhancements.json
 
-# Filter out proposals and issues being worked on - only get available approved enhancements
+# Filter out proposals, blocked issues, and issues being worked on - only get available approved enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
-            and not any(l['name'] == 'working' for l in i.get('labels', []))]
+            and not any(l['name'] == 'working' for l in i.get('labels', []))
+            and not any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(json.dumps(approved))
 ")
 
@@ -845,9 +925,22 @@ proposals = [i for i in issues if any(l['name'] == 'proposal' for l in i.get('la
 print(len(proposals))
 ")
 
+  # Check if there are blocked issues
+  BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
+print(len(blocked))
+")
+
   if [ "$PROPOSAL_COUNT" -gt 0 ]; then
     echo "📋 Found $PROPOSAL_COUNT proposal(s) awaiting human approval"
     echo "💡 Use '/list-proposals' to review pending proposals"
+    echo "✨ No approved enhancements to implement. Creating new proposals..."
+  elif [ "$BLOCKED_COUNT" -gt 0 ]; then
+    echo "🚫 Found $BLOCKED_COUNT blocked issue(s) (requires human review)"
+    echo "💡 Use '/review-blocked' to review and approve blocked issues"
     echo "✨ No approved enhancements to implement. Creating new proposals..."
   else
     echo "✨ No enhancements or proposals. Creating new proposals..."
@@ -1244,25 +1337,29 @@ After every issue is resolved, skipped, or when checking for work:
 # Fetch all open issues
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
-# Count priority bug issues (P0-P3, excluding proposals and issues being worked on)
+# Count priority bug issues (P0-P3, excluding proposals, blocked, and issues being worked on)
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
-            and not any(l['name'] == 'working' for l in i.get('labels',[]))]
+            and not any(l['name'] == 'working' for l in i.get('labels',[]))
+            and not any(l['name'] in blocking_labels for l in i.get('labels',[]))]
 print(len(priority))
 ")
 
-# Count APPROVED enhancement issues (enhancement label but NOT proposal or working label)
+# Count APPROVED enhancement issues (enhancement label but NOT proposal, blocked, or working label)
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
-            and not any(l['name'] == 'working' for l in i.get('labels',[]))]
+            and not any(l['name'] == 'working' for l in i.get('labels',[]))
+            and not any(l['name'] in blocking_labels for l in i.get('labels',[]))]
 print(len(approved))
 ")
 
@@ -1282,13 +1379,30 @@ elif [ "$APPROVED_ENHANCEMENTS" -gt 0 ]; then
   # Process next approved enhancement (Step 5C)
 else
   echo "✨ No bugs or approved enhancements."
-  if [ "$PENDING_PROPOSALS" -gt 0 ]; then
-    echo "📋 $PENDING_PROPOSALS proposal(s) awaiting human approval."
-    echo "💤 Nothing to do until proposals are approved or new issues arrive."
+
+  # Count blocked issues
+  BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
+print(len(blocked))
+")
+
+  if [ "$PENDING_PROPOSALS" -gt 0 ] || [ "$BLOCKED_ISSUES_COUNT" -gt 0 ]; then
+    if [ "$PENDING_PROPOSALS" -gt 0 ]; then
+      echo "📋 $PENDING_PROPOSALS proposal(s) awaiting human approval."
+      echo "💡 Use '/list-proposals' to review pending proposals"
+    fi
+    if [ "$BLOCKED_ISSUES_COUNT" -gt 0 ]; then
+      echo "🚫 $BLOCKED_ISSUES_COUNT issue(s) blocked (requires human review)."
+      echo "💡 Use '/review-blocked' to review and approve blocked issues"
+    fi
+    echo "💤 Nothing to do until proposals/blocked issues are approved or new issues arrive."
     echo ""
     echo "IDLE_NO_WORK_AVAILABLE"
   else
-    echo "No pending proposals. Will brainstorm new proposals..."
+    echo "No pending proposals or blocked issues. Will brainstorm new proposals..."
     # Run /full-regression-test first if not recently run
     # Then brainstorm proposals using superpowers:brainstorming
     # After creating proposals, output IDLE_NO_WORK_AVAILABLE
@@ -1317,7 +1431,7 @@ fi
 **CRITICAL: You MUST output the idle signal when there's nothing to do.**
 
 Output this EXACT text (on its own line) when ANY of these conditions are true:
-- No priority bugs (P0-P3) AND no approved enhancements AND proposals already exist
+- No priority bugs (P0-P3) AND no approved enhancements AND (proposals already exist OR blocked issues exist)
 - After creating a new proposal (to allow human review time)
 - After completing all available work
 
@@ -1331,6 +1445,7 @@ This signals the stop hook to sleep (default 15 minutes) before checking again f
 - New human-created issues
 - Comments on existing issues
 - Approved proposals ready for implementation
+- Blocked issues reviewed and approved (blocking label removed)
 
 **The only way this workflow stops is if the user manually interrupts it.**
 
