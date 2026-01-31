@@ -262,4 +262,10 @@ fi
 echo ""
 ```
 
-Now run `/fix` to start. The stop hook will keep it running.
+Now execute the `/fix` command to start the autonomous fix loop. The stop hook will automatically re-invoke `/fix` when it tries to exit, creating an infinite loop.
+
+**Execute `/fix` now using the Skill tool:**
+
+```
+Use the Skill tool to invoke: autocoder:fix
+```

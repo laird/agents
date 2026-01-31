@@ -99,7 +99,9 @@ while true; do
   echo ""
 ```
 
-Now execute the `/fix` workflow. After it completes, check if it output `IDLE_NO_WORK_AVAILABLE`.
+**Execute the `/fix` workflow now:**
+
+Run the `/fix` workflow to process all priority issues. After it completes, check if it output `IDLE_NO_WORK_AVAILABLE`.
 
 **After `/fix` completes, continue:**
 
