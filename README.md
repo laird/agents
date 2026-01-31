@@ -11,6 +11,16 @@ This marketplace contains **2 plugins** with complementary capabilities:
 
 Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. Originally created for .NET framework migrations, these tools work with any language or platform.
 
+## ⚠️ Compatibility Notice
+
+**These plugins are primarily developed for personal use.** While they should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees they will work in all environments. Use at your own risk.
+
+**Tested Platforms:**
+- ✅ Linux
+- ✅ macOS
+- ✅ WSL (Windows Subsystem for Linux)
+- ❌ Windows (native) - Not supported
+
 ---
 
 ## Directory Guide

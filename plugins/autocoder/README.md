@@ -2,6 +2,16 @@
 
 Autonomous GitHub issue resolution system with infinite loop support.
 
+## ⚠️ Compatibility Notice
+
+**This plugin is primarily developed for personal use.** While it should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees it will work in all environments. Use at your own risk.
+
+**Tested Platforms:**
+- ✅ Linux
+- ✅ macOS
+- ✅ WSL (Windows Subsystem for Linux)
+- ❌ Windows (native) - Not supported
+
 ## Installation
 
 ```bash
