@@ -220,7 +220,7 @@ if [ -f "CLAUDE.md" ]; then
     echo "📝 Adding autocoder configuration section to CLAUDE.md..."
 
     # Append autocoder configuration to CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOFIX_CONFIG'
+    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
 
 ## Automated Testing & Issue Management
 
@@ -249,7 +249,7 @@ npm run build
 **Test Reports**:
 - Location: `docs/test/regression-reports/`
 
-AUTOFIX_CONFIG
+AUTOCODER_CONFIG
 
     echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
   fi
@@ -700,7 +700,7 @@ gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 ```
 Issue #240: TypeScript compilation errors in disabled-features
 → Direct fix: Delete broken test files
-→ Verify: $BUILD_COMMAND (from CLAUDE-AUTOFIX-CONFIG.md)
+→ Verify: $BUILD_COMMAND (from CLAUDE.md autocoder config)
 → Commit and close
 ```
 
