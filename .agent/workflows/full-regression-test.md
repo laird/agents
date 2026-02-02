@@ -81,7 +81,7 @@ if [ -f "CLAUDE.md" ]; then
     echo "📝 Adding autocoder configuration section to CLAUDE.md..."
 
     # Append autocoder configuration to CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOFIX_CONFIG'
+    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
 
 ## Automated Testing & Issue Management
 
@@ -114,7 +114,7 @@ npm run build
 
 - Location: `docs/test/regression-reports/`
 
-AUTOFIX_CONFIG
+AUTOCODER_CONFIG
 
     echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
   fi
