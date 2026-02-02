@@ -303,7 +303,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -387,12 +387,13 @@ else
 
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
+  # Also filter out decomposed parent issues (work on their sub-tasks instead)
   cat /tmp/all-issues.json | jq -r '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "decomposed") | not)
     ) |
     {
       number: .number,
@@ -737,7 +738,9 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `needs-clarification` | Incomplete information, missing context, unclear requirements | "Fix the bug" (which bug?), "Improve performance" (of what?), vague descriptions |
 | `needs-design` | Multiple valid approaches without clear winner, requires design phase | "Add user dashboard", "Implement notifications", architectural uncertainty |
 | `needs-approval` | Architectural decisions, major changes, security implications, breaking changes | "Migrate to microservices", "Change auth system", "Remove deprecated API" |
-| `too-complex` | Beyond autonomous capability, >100 test failures, irreversible consequences | "Refactor entire codebase", massive failures, cross-system changes |
+| `too-complex` | Beyond autonomous capability (when decomposition fails or superpowers unavailable) | Manual decomposition needed, requires deep expertise |
+| `decomposed` | Complex issue broken into sub-tasks (automatically applied, not blocking) | Parent issue tracking sub-task completion |
+| `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
 
 ### Detection Process
 
@@ -796,25 +799,96 @@ fi
 
 If no blocking conditions detected, continue with the normal fix workflow (simple vs complex vs ultra-complex determination).
 
-### Ultra-Complex Issues - Use Quint (if available)
+### Ultra-Complex Issues - Decompose into Sub-Tasks
 
 For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions):
 
-**First, add the `too-complex` label:**
+**First, attempt to decompose the issue into manageable sub-tasks:**
 
 ```bash
-echo "⚠️  Ultra-complex issue detected: requires human guidance"
+echo "⚠️  Ultra-complex issue detected: attempting decomposition"
 
-# Prepare detailed reason for blocking
-COMPLEXITY_REASON="Ultra-complex issue requiring human guidance.
+# Use brainstorming skill to analyze and decompose the complex issue
+if [ "$SUPERPOWERS_AVAILABLE" = "true" ]; then
+  echo "📋 Using superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
+  # Prompt: "Analyze issue #$ISSUE_NUM and decompose it into 3-8 manageable sub-tasks.
+  # Each sub-task should be independently fixable and testable.
+  # For each sub-task, provide: title, description, acceptance criteria, and priority."
+
+  # After decomposition analysis is complete, create GitHub issues for each sub-task
+  # Store sub-task numbers for linking
+  SUBTASK_NUMBERS=()
+
+  # Example sub-task creation (repeat for each decomposed task):
+  # for SUBTASK in "${SUBTASKS[@]}"; do
+  SUBTASK_NUM=$(gh issue create \
+    --label "bug,P2,subtask" \
+    --title "Subtask: [Brief description]" \
+    --body "$(cat <<SUBTASK_BODY
+## Sub-task of #${ISSUE_NUM}
+
+This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
+
+## Description
+[What needs to be done in this specific sub-task]
+
+## Acceptance Criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+
+## Dependencies
+- Must be completed as part of #${ISSUE_NUM}
+- [Any dependencies on other sub-tasks]
+
+## Testing
+[How to verify this sub-task is complete]
+
+---
+
+🤖 Auto-decomposed from #${ISSUE_NUM} by autonomous fix workflow
+SUBTASK_BODY
+)" | grep -oP '#\K[0-9]+')
+
+  SUBTASK_NUMBERS+=("$SUBTASK_NUM")
+  echo "✅ Created sub-task #$SUBTASK_NUM"
+  # done
+
+  # Update original issue to reference all sub-tasks
+  gh issue comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
+
+This complex issue has been broken down into manageable sub-tasks:
+
+$(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
+
+**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
+
+**To track progress**: Check the sub-tasks listed above.
+
+🤖 Auto-decomposed by autonomous fix workflow"
+
+  # Add label to indicate decomposition
+  gh issue edit "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
+
+  echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
+  echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"
+  echo ""
+  echo "⏭️  Moving to next issue. Sub-tasks will be processed in priority order."
+
+else
+  # Fallback: If superpowers not available, add too-complex label
+  echo "ℹ️  Superpowers not available for decomposition"
+
+  # Prepare detailed reason for blocking
+  COMPLEXITY_REASON="Ultra-complex issue requiring decomposition or human guidance.
 
 **Complexity Indicators**:
 - [List specific indicators: >100 test failures, major architectural change, etc.]
 
 **Recommended Approach**:
+- Manually decompose into smaller sub-tasks
 - Use /review-blocked to interactively review this issue
-- Consider breaking into smaller issues if possible
-- May require structured reasoning with quint plugin
+- Consider using superpowers plugin for assisted decomposition
 
 **Available Tools**:
 $(if [ "$QUINT_AVAILABLE" = "true" ]; then
@@ -823,15 +897,56 @@ else
   echo "- ℹ️  Quint plugin not installed - manual review recommended"
 fi)"
 
-# Determine script location (portable across different plugin install locations)
-SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+  # Determine script location (portable across different plugin install locations)
+  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
 
-# Use the script to add blocking label
-bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "too-complex" "$COMPLEXITY_REASON"
+  # Use the script to add blocking label
+  bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "too-complex" "$COMPLEXITY_REASON"
 
-echo "⏭️  Issue labeled as too-complex. Use /review-blocked to review."
+  echo "⏭️  Issue labeled as too-complex. Use /review-blocked to review."
+fi
+
 echo ""
 # Continue to next issue
+```
+
+**Monitoring Decomposed Issues**:
+
+When processing issues in the main loop, check for decomposed issues where all sub-tasks are complete:
+
+```bash
+# After fixing each issue, check if it was a sub-task that completes a decomposed issue
+# Get parent issue if this was a subtask
+PARENT_ISSUE=$(gh issue view "$ISSUE_NUM" --json body --jq '.body' | grep -oP 'Sub-task of #\K[0-9]+' || echo "")
+
+if [ -n "$PARENT_ISSUE" ]; then
+  echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
+
+  # Check if all sub-tasks of parent are closed
+  PARENT_SUBTASKS=$(gh issue view "$PARENT_ISSUE" --json body --jq '.body' | grep -oP '#\K[0-9]+' || echo "")
+  ALL_CLOSED=true
+
+  for SUBTASK_NUM in $PARENT_SUBTASKS; do
+    SUBTASK_STATE=$(gh issue view "$SUBTASK_NUM" --json state --jq '.state')
+    if [ "$SUBTASK_STATE" != "CLOSED" ]; then
+      ALL_CLOSED=false
+      break
+    fi
+  done
+
+  if [ "$ALL_CLOSED" = "true" ]; then
+    echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
+    gh issue close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+
+All sub-tasks have been completed and verified:
+
+$(for num in $PARENT_SUBTASKS; do echo "- ✅ #$num"; done)
+
+The decomposed approach successfully resolved this complex issue.
+
+🤖 Auto-closed by autonomous fix workflow"
+  fi
+fi
 ```
 
 ### Skip Criteria (Legacy)
@@ -1337,11 +1452,11 @@ After every issue is resolved, skipped, or when checking for work:
 # Fetch all open issues
 gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
 
-# Count priority bug issues (P0-P3, excluding proposals, blocked, and issues being worked on)
+# Count priority bug issues (P0-P3, excluding proposals, blocked, decomposed, and issues being worked on)
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'decomposed']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
