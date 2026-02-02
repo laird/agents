@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
+            "command": "bash .claude-plugin/plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }

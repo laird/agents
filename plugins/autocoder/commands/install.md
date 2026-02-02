@@ -82,6 +82,30 @@ echo ""
 echo "Location: .claude/settings.json (current project only)"
 echo ""
 
+# Auto-detect plugin installation context
+STOP_HOOK_PATH=""
+if [ -f ".claude-plugin/plugins/autocoder/hooks/stop-hook.sh" ]; then
+  STOP_HOOK_PATH=".claude-plugin/plugins/autocoder/hooks/stop-hook.sh"
+  CONTEXT="project"
+elif [ -f "$HOME/.claude/plugins/autocoder/hooks/stop-hook.sh" ]; then
+  STOP_HOOK_PATH="$HOME/.claude/plugins/autocoder/hooks/stop-hook.sh"
+  CONTEXT="personal"
+elif [ -f "$HOME/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh" ]; then
+  STOP_HOOK_PATH="$HOME/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh"
+  CONTEXT="personal"
+else
+  echo "❌ Error: Could not locate stop-hook.sh"
+  echo "   Searched:"
+  echo "   - .claude-plugin/plugins/autocoder/hooks/stop-hook.sh (project)"
+  echo "   - ~/.claude/plugins/autocoder/hooks/stop-hook.sh (personal)"
+  echo "   - ~/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh (personal)"
+  exit 1
+fi
+
+echo "🔍 Detected: Plugin installed in $CONTEXT context"
+echo "   Path: $STOP_HOOK_PATH"
+echo ""
+
 # Check if already installed
 if [ -f ".claude/settings.json" ] && grep -q "stop-hook.sh" .claude/settings.json 2>/dev/null; then
   echo "✅ Stop hook already installed in this project"
@@ -89,7 +113,7 @@ if [ -f ".claude/settings.json" ] && grep -q "stop-hook.sh" .claude/settings.jso
 else
   echo "📝 Stop hook not found. Will add this to .claude/settings.json:"
   echo ""
-  cat << 'PREVIEW'
+  cat << PREVIEW
 {
   "hooks": {
     "Stop": [
@@ -98,7 +122,7 @@ else
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
+            "command": "bash $STOP_HOOK_PATH"
           }
         ]
       }
@@ -131,11 +155,12 @@ if [ "$USER_APPROVED_STOP_HOOK" = "yes" ]; then
 
   if [ -f ".claude/settings.json" ]; then
     # Merge with existing settings
-    python3 << 'PYTHON_SCRIPT'
+    python3 << PYTHON_SCRIPT
 import json
+import os
 with open(".claude/settings.json", 'r') as f:
     settings = json.load(f)
-stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"}]}
+stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash $STOP_HOOK_PATH"}]}
 if "hooks" not in settings:
     settings["hooks"] = {}
 if "Stop" not in settings["hooks"]:
@@ -148,7 +173,7 @@ if not any("stop-hook.sh" in str(h) for h in settings["hooks"]["Stop"]):
 PYTHON_SCRIPT
   else
     # Create new settings file
-    cat > .claude/settings.json << 'EOF'
+    cat > .claude/settings.json << EOF
 {
   "hooks": {
     "Stop": [
@@ -157,7 +182,7 @@ PYTHON_SCRIPT
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
+            "command": "bash $STOP_HOOK_PATH"
           }
         ]
       }
@@ -188,7 +213,25 @@ echo "Location: ~/.local/bin/ (global, all projects)"
 echo ""
 
 INSTALL_DIR="$HOME/.local/bin"
-SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+
+# Auto-detect plugin script directory
+if [ -d ".claude-plugin/plugins/autocoder/scripts" ]; then
+  SCRIPT_DIR="$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+elif [ -d "$HOME/.claude/plugins/autocoder/scripts" ]; then
+  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+elif [ -d "$HOME/.config/claude-code/plugins/autocoder/scripts" ]; then
+  SCRIPT_DIR="$HOME/.config/claude-code/plugins/autocoder/scripts"
+else
+  echo "❌ Error: Could not locate autocoder scripts directory"
+  echo "   Searched:"
+  echo "   - .claude-plugin/plugins/autocoder/scripts (project)"
+  echo "   - ~/.claude/plugins/autocoder/scripts (personal)"
+  echo "   - ~/.config/claude-code/plugins/autocoder/scripts (personal)"
+  exit 1
+fi
+
+echo "🔍 Scripts directory: $SCRIPT_DIR"
+echo ""
 
 # Check if already installed
 if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ]; then
