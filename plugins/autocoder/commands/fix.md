@@ -517,8 +517,9 @@ git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
 # Push parent branch
 git push
 
-# Clean up feature branch
+# Clean up feature branch (local and remote)
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
+git push origin --delete "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || true
 
 # Remove 'working' label and close issue
 gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -669,8 +670,9 @@ git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
 # Push parent branch
 git push
 
-# Clean up feature branch
+# Clean up feature branch (local and remote)
 git branch -d "fix/issue-${ISSUE_NUM}-auto"
+git push origin --delete "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || true
 
 # Remove 'working' label and close issue with detailed explanation
 gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -1302,8 +1304,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # Push parent branch
   git push
 
-  # Clean up feature branch
+  # Clean up feature branch (local and remote)
   git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
+  git push origin --delete "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || true
 
   # Remove 'working' label and close enhancement with details
   gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
