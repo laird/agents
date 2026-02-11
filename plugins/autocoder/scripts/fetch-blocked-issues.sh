@@ -33,7 +33,7 @@ done
 # Ensure blocking labels exist
 EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-for label in "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "proposal:Proposed feature or change awaiting review:7057ff"; do
+for label in "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "proposal:Proposed feature or change awaiting review:7057ff"; do
   IFS=':' read -r name desc color <<< "$label"
   if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
     gh label create "$name" --description "$desc" --color "$color" 2>/dev/null || true
@@ -52,7 +52,7 @@ import os
 with open('/tmp/all-issues.json') as f:
     issues = json.load(f)
 
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'proposal']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'proposal']
 priorities = ['P0', 'P1', 'P2', 'P3']
 
 # Filter to blocked issues only

@@ -303,7 +303,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -393,7 +393,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "decomposed") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
     ) |
     {
       number: .number,
@@ -739,6 +739,7 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `needs-design` | Multiple valid approaches without clear winner, requires design phase | "Add user dashboard", "Implement notifications", architectural uncertainty |
 | `needs-approval` | Architectural decisions, major changes, security implications, breaking changes | "Migrate to microservices", "Change auth system", "Remove deprecated API" |
 | `too-complex` | Beyond autonomous capability (when decomposition fails or superpowers unavailable) | Manual decomposition needed, requires deep expertise |
+| `future` | Idea for future consideration, not ready for implementation | "Expose data via MCP server", research spikes, long-term ideas |
 | `decomposed` | Complex issue broken into sub-tasks (automatically applied, not blocking) | Parent issue tracking sub-task completion |
 | `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
 
@@ -1014,7 +1015,7 @@ gh issue list --state open --label "enhancement" --json number,title,body,labels
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
             and not any(l['name'] == 'working' for l in i.get('labels', []))
@@ -1044,7 +1045,7 @@ print(len(proposals))
   BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -1456,7 +1457,7 @@ gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/al
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'decomposed']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -1469,7 +1470,7 @@ print(len(priority))
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -1499,7 +1500,7 @@ else
   BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
