@@ -107,7 +107,7 @@ echo "   Path: $STOP_HOOK_PATH"
 echo ""
 
 # Check if already installed
-if [ -f ".claude/settings.json" ] && grep -q "stop-hook.sh" .claude/settings.json 2>/dev/null; then
+if [ -f ".claude/settings.json" ] && grep -qF "$STOP_HOOK_PATH" .claude/settings.json 2>/dev/null; then
   echo "✅ Stop hook already installed in this project"
   INSTALL_STOP_HOOK=false
 else
@@ -165,11 +165,14 @@ if "hooks" not in settings:
     settings["hooks"] = {}
 if "Stop" not in settings["hooks"]:
     settings["hooks"]["Stop"] = []
-if not any("stop-hook.sh" in str(h) for h in settings["hooks"]["Stop"]):
+CURRENT_CMD = "bash $STOP_HOOK_PATH"
+# Remove stale/legacy stop hooks (e.g. stop-hook-wrapper.sh) that aren't the current hook
+settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h) or CURRENT_CMD in str(h)]
+if not any(CURRENT_CMD in str(h) for h in settings["hooks"]["Stop"]):
     settings["hooks"]["Stop"].append(stop_hook)
-    with open(".claude/settings.json", 'w') as f:
-        json.dump(settings, f, indent=2)
-    print("✅ Stop hook installed")
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
+print("✅ Stop hook installed")
 PYTHON_SCRIPT
   else
     # Create new settings file

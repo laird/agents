@@ -188,7 +188,7 @@ mkdir -p .claude
 # ============================================================
 # Install stop hook if not configured
 # ============================================================
-if [ -f ".claude/settings.json" ] && grep -q "stop-hook.sh" .claude/settings.json 2>/dev/null; then
+if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
   echo "✅ Stop hook already configured"
 else
   echo "📝 Installing stop hook..."
@@ -203,10 +203,13 @@ if "hooks" not in settings:
     settings["hooks"] = {}
 if "Stop" not in settings["hooks"]:
     settings["hooks"]["Stop"] = []
-if not any("stop-hook.sh" in str(h) for h in settings["hooks"]["Stop"]):
+CURRENT_PATH = "autocoder/hooks/stop-hook.sh"
+# Remove stale/legacy stop hooks (e.g. stop-hook-wrapper.sh) that aren't the current autocoder hook
+settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h) or CURRENT_PATH in str(h)]
+if not any(CURRENT_PATH in str(h) for h in settings["hooks"]["Stop"]):
     settings["hooks"]["Stop"].append(stop_hook)
-    with open(".claude/settings.json", 'w') as f:
-        json.dump(settings, f, indent=2)
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
 PYTHON_SCRIPT
   else
     cat > .claude/settings.json << 'EOF'
