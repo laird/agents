@@ -1,6 +1,6 @@
 # Start Infinite Fix-GitHub Loop
 
-Wrapper around `/fix` that installs a stop hook to keep it running forever.
+Wrapper around `/autocoder:fix` that installs a stop hook to keep it running forever.
 
 ## Usage
 
@@ -27,8 +27,8 @@ export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
 
 1. Installs stop hook in `.claude/settings.json` (if not present)
 2. Creates state file `.claude/fix-loop.local.md`
-3. Runs `/fix`
-4. When Claude tries to exit, stop hook feeds `/fix` back as input
+3. Runs `/autocoder:fix`
+4. When Claude tries to exit, stop hook feeds `/autocoder:fix` back as input
 5. Loop continues until manually stopped or max iterations reached
 
 ## Multi-Agent Coordination (Automatic)
@@ -246,7 +246,7 @@ deploy_command: $DEPLOY_COMMAND
 started: $(date -Iseconds)
 ---
 
-/fix
+/autocoder:fix
 EOF
 
 echo ""
@@ -265,7 +265,7 @@ fi
 echo ""
 ```
 
-Now execute the `/fix` command to start the autonomous fix loop. The stop hook will automatically re-invoke `/fix` when it tries to exit, creating an infinite loop.
+Now execute the `/autocoder:fix` command to start the autonomous fix loop. The stop hook will automatically re-invoke `/autocoder:fix` when it tries to exit, creating an infinite loop.
 
 **Execute `/fix` now using the Skill tool:**
 
