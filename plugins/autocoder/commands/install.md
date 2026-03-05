@@ -83,23 +83,30 @@ echo "Location: .claude/settings.json (current project only)"
 echo ""
 
 # Auto-detect plugin installation context
+# Priority 1: project-local dev install (this repo's own plugins/ directory)
+# Priority 2: marketplace cache (~/.claude/plugins/cache/**/autocoder/**)
+# Priority 3: legacy fixed paths
 STOP_HOOK_PATH=""
-if [ -f ".claude-plugin/plugins/autocoder/hooks/stop-hook.sh" ]; then
+if [ -f "plugins/autocoder/hooks/stop-hook.sh" ]; then
+  STOP_HOOK_PATH="plugins/autocoder/hooks/stop-hook.sh"
+  CONTEXT="project (plugins/)"
+elif [ -f ".claude-plugin/plugins/autocoder/hooks/stop-hook.sh" ]; then
   STOP_HOOK_PATH=".claude-plugin/plugins/autocoder/hooks/stop-hook.sh"
-  CONTEXT="project"
-elif [ -f "$HOME/.claude/plugins/autocoder/hooks/stop-hook.sh" ]; then
-  STOP_HOOK_PATH="$HOME/.claude/plugins/autocoder/hooks/stop-hook.sh"
-  CONTEXT="personal"
-elif [ -f "$HOME/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh" ]; then
-  STOP_HOOK_PATH="$HOME/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh"
-  CONTEXT="personal"
+  CONTEXT="project (.claude-plugin/)"
 else
-  echo "❌ Error: Could not locate stop-hook.sh"
-  echo "   Searched:"
-  echo "   - .claude-plugin/plugins/autocoder/hooks/stop-hook.sh (project)"
-  echo "   - ~/.claude/plugins/autocoder/hooks/stop-hook.sh (personal)"
-  echo "   - ~/.config/claude-code/plugins/autocoder/hooks/stop-hook.sh (personal)"
-  exit 1
+  # Search plugin cache - finds any marketplace/version, picks latest by version sort
+  CACHE_HOOK=$(find "$HOME/.claude/plugins/cache" -name "stop-hook.sh" -path "*/autocoder/*" ! -name "*wrapper*" 2>/dev/null | sort -V | tail -1)
+  if [ -n "$CACHE_HOOK" ]; then
+    STOP_HOOK_PATH="$CACHE_HOOK"
+    CONTEXT="marketplace cache"
+  else
+    echo "❌ Error: Could not locate stop-hook.sh"
+    echo "   Searched:"
+    echo "   - plugins/autocoder/hooks/stop-hook.sh (project)"
+    echo "   - .claude-plugin/plugins/autocoder/hooks/stop-hook.sh (project)"
+    echo "   - ~/.claude/plugins/cache/**/autocoder/**/hooks/stop-hook.sh (marketplace)"
+    exit 1
+  fi
 fi
 
 echo "🔍 Detected: Plugin installed in $CONTEXT context"
@@ -217,20 +224,24 @@ echo ""
 
 INSTALL_DIR="$HOME/.local/bin"
 
-# Auto-detect plugin script directory
-if [ -d ".claude-plugin/plugins/autocoder/scripts" ]; then
+# Auto-detect plugin script directory (same priority order as stop hook)
+if [ -d "plugins/autocoder/scripts" ]; then
+  SCRIPT_DIR="$(pwd)/plugins/autocoder/scripts"
+elif [ -d ".claude-plugin/plugins/autocoder/scripts" ]; then
   SCRIPT_DIR="$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-elif [ -d "$HOME/.claude/plugins/autocoder/scripts" ]; then
-  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
-elif [ -d "$HOME/.config/claude-code/plugins/autocoder/scripts" ]; then
-  SCRIPT_DIR="$HOME/.config/claude-code/plugins/autocoder/scripts"
 else
-  echo "❌ Error: Could not locate autocoder scripts directory"
-  echo "   Searched:"
-  echo "   - .claude-plugin/plugins/autocoder/scripts (project)"
-  echo "   - ~/.claude/plugins/autocoder/scripts (personal)"
-  echo "   - ~/.config/claude-code/plugins/autocoder/scripts (personal)"
-  exit 1
+  # Search plugin cache - same logic as stop hook detection above
+  CACHE_SCRIPTS=$(find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1)
+  if [ -n "$CACHE_SCRIPTS" ]; then
+    SCRIPT_DIR="$CACHE_SCRIPTS"
+  else
+    echo "❌ Error: Could not locate autocoder scripts directory"
+    echo "   Searched:"
+    echo "   - plugins/autocoder/scripts (project)"
+    echo "   - .claude-plugin/plugins/autocoder/scripts (project)"
+    echo "   - ~/.claude/plugins/cache/**/autocoder/**/scripts (marketplace)"
+    exit 1
+  fi
 fi
 
 echo "🔍 Scripts directory: $SCRIPT_DIR"

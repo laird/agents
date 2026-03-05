@@ -68,7 +68,7 @@ Each platform has its own directory structure and installation method. See the p
 After installation, commands will be available as slash commands in Claude Code:
 
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
-- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/autocoder-help`
+- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
 
 **Get help anytime:**
 ```bash
@@ -166,6 +166,8 @@ After installation, these workflows are available:
 | `/brainstorm-issue` | Brainstorm design for an issue |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
+| `/review-blocked` | Review and unblock issues labeled by fix-loop |
+| `/install` | Install all autocoder plugin components |
 | `/autocoder-help` | Show autocoder workflow help |
 
 > [!WARNING]
@@ -307,6 +309,7 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 |---------|-------------|
 | `/list-proposals` | View pending AI-generated proposals |
 | `/approve-proposal <number>` | Approve a proposal for implementation |
+| `/review-blocked` | Review and unblock issues labeled by fix-loop (needs-design, too-complex, proposal, etc.) |
 
 **Testing & Quality:**
 
@@ -319,7 +322,7 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 | Command | Description |
 |---------|-------------|
-| `/install-stop-hook` | Install hook for loop control |
+| `/install` | Install all autocoder plugin components (stop hook, scripts) |
 | `/autocoder-help` | Show help and workflow overview |
 
 #### Workflow Patterns
@@ -332,8 +335,8 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 **Pattern 2: Continuous Autonomous Mode**
 ```bash
-/install-stop-hook   # First time only
-/fix-loop     # Run continuously until /stop-loop
+/install         # First time only (installs stop hook and scripts)
+/fix-loop        # Run continuously until /stop-loop
 ```
 
 **Pattern 3: Design-First Workflow**
@@ -351,6 +354,16 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 /fix                  # Implements approved proposals
 ```
 
+**Pattern 5: Parallel Review Session**
+```bash
+# Terminal 1: Run fix loop
+/fix-loop
+
+# Terminal 2: Review and unblock issues
+/review-blocked              # Review all blocked issues (needs-design, too-complex, etc.)
+/review-blocked --label proposal  # Review only proposals
+```
+
 #### Priority & Label System
 
 **Priority Labels (P0-P3):**
@@ -363,8 +376,11 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 - `proposal` - AI-generated, awaiting human approval
 - `needs-design` - Requires architecture/design work
 - `needs-feedback` - Requires human clarification
+- `too-complex` - Issue exceeds autonomous resolution scope
+- `future` - Deferred for later consideration
 - `enhancement` - Feature improvement
 - `test-failure` - Created from test failure
+- `sre` - Filed by SRE monitoring workflow
 
 #### Human-in-the-Loop Proposal System
 
@@ -377,6 +393,18 @@ AI-generated enhancements are tagged with `proposal` label and require human app
 
 Proposals are **never auto-implemented** - you control what gets built.
 
+#### SRE Monitoring (Idle Fallback)
+
+When fix-loop has no bugs to fix, enhancements to implement, or proposals to create, autocoder switches to **SRE monitoring mode**:
+
+1. **Production log scanning** - Checks Cloud Logging for errors/warnings in the last 30 minutes
+2. **Engagement health checks** - Detects stalled, stuck, or errored engagements
+3. **Worker factory heartbeats** - Identifies dead workers before they cause outages
+4. **Automated issue filing** - Files new GitHub issues for new error patterns; comments on existing issues
+5. **Periodic rechecks** - Waits 15-30 minutes, then restarts the loop
+
+This turns idle time into continuous production monitoring — fixing issues before they escalate.
+
 #### Quick Start
 
 ```bash
@@ -387,7 +415,7 @@ Proposals are **never auto-implemented** - you control what gets built.
 /fix
 
 # Or run continuously
-/install-stop-hook
+/install     # one-time setup
 /fix-loop
 ```
 
@@ -462,7 +490,8 @@ agents/
 │       │   ├── brainstorm-issue.md     # Brainstorm design for an issue
 │       │   ├── full-regression-test.md # Run comprehensive test suite
 │       │   ├── improve-test-coverage.md # Analyze and improve coverage
-│       │   └── install-stop-hook.md    # Install hook for loop control
+│       │   ├── review-blocked.md       # Review and unblock labeled issues
+│       │   └── install.md              # Install all plugin components
 │       ├── agents/
 │       │   ├── architect.md            # Technology decisions and ADRs
 │       │   ├── coder.md                # Implementation and fixes
@@ -577,7 +606,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 2. Run `/fix` to start autonomous issue resolution
 3. Use `/list-needs-design` and `/brainstorm-issue` for complex issues
 4. Review proposals with `/list-proposals` and approve with `/approve-proposal`
-5. For continuous operation: `/install-stop-hook` then `/fix-loop`
+5. For continuous operation: `/install` then `/fix-loop`
 
 ---
 
@@ -598,6 +627,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, engagement health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/fix` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
 | 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/fix-github` → `/fix`, `/fix-github-loop` → `/fix-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
 | 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
