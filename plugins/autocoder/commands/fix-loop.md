@@ -1,6 +1,8 @@
 # Start Infinite Fix-GitHub Loop
 
-Wrapper around `/autocoder:fix` that installs a stop hook to keep it running forever.
+Wrapper around `/autocoder:fix` that runs it in a loop forever.
+
+Uses the `/loop` command (CronCreate-based) if available in this Claude Code version; falls back to the stop hook mechanism for older versions.
 
 ## Usage
 
@@ -8,7 +10,7 @@ Wrapper around `/autocoder:fix` that installs a stop hook to keep it running for
 # Start infinite loop
 /fix-loop
 
-# Limit to 100 iterations
+# Limit to 100 iterations (stop hook mode only)
 /fix-loop 100
 
 # Custom idle sleep time (default: 15 minutes)
@@ -24,6 +26,15 @@ export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
 ```
 
 ## How It Works
+
+**Mode 1: `/loop` command (preferred, when CronCreate tool is available)**
+
+1. Parses arguments and reads config from CLAUDE.md
+2. Uses the `loop` skill to schedule `/autocoder:fix` every `IDLE_SLEEP_MINUTES` minutes
+3. No settings.json modification needed — cleaner and more reliable
+4. Loop runs until manually cancelled (CronDelete)
+
+**Mode 2: Stop hook (fallback for older Claude Code versions)**
 
 1. Installs stop hook in `.claude/settings.json` (if not present)
 2. Creates state file `.claude/fix-loop.local.md`
@@ -117,6 +128,11 @@ Then: Main worktree automatically:
 
 ## Stopping the Loop
 
+**`/loop` mode:**
+- **CronDelete** - Remove the scheduled cron job
+- **Ctrl+C** - Manual interrupt of current run
+
+**Stop hook mode:**
 - **Ctrl+C** - Manual interrupt
 - **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 - **Max iterations** - If set, stops when reached
@@ -156,7 +172,6 @@ done
 if [[ -z "$INTEGRATION_BRANCH" ]]; then
   for claude_file in CLAUDE.md claude.md README.md; do
     if [[ -f "$claude_file" ]]; then
-      # Look for integration branch patterns
       INTEGRATION_BRANCH=$(grep -i "integration.*branch\|main.*branch\|merge.*into" "$claude_file" | \
         grep -Eo '\b(main|master|develop|integration)\b' | head -1)
       [[ -n "$INTEGRATION_BRANCH" ]] && break
@@ -171,7 +186,6 @@ INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
 if [[ -z "$DEPLOY_COMMAND" ]]; then
   for claude_file in CLAUDE.md claude.md README.md; do
     if [[ -f "$claude_file" ]]; then
-      # Look for deployment command patterns
       DEPLOY_COMMAND=$(grep -i "deploy.*staging\|staging.*deploy" "$claude_file" | \
         grep -Eo '(\.?/)?[a-zA-Z0-9_/-]+\.sh\s+[a-zA-Z0-9_. /-]*' | head -1)
       [[ -n "$DEPLOY_COMMAND" ]] && break
@@ -179,12 +193,65 @@ if [[ -z "$DEPLOY_COMMAND" ]]; then
   done
 fi
 
-# Export for stop hook to use
 export CLAUDE_CODE_INTEGRATION_BRANCH="$INTEGRATION_BRANCH"
 export CLAUDE_CODE_DEPLOY_COMMAND="$DEPLOY_COMMAND"
 
 mkdir -p .claude
+```
 
+### Detect /loop availability and choose mode
+
+**Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).
+
+**If CronCreate IS available → Use `/loop` mode (preferred):**
+
+```bash
+# Remove the stop hook if it was previously installed, since /loop replaces it
+if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
+  echo "🔄 Removing stop hook (replaced by /loop command)..."
+  python3 << 'PYTHON_SCRIPT'
+import json
+with open(".claude/settings.json", 'r') as f:
+    settings = json.load(f)
+if "hooks" in settings and "Stop" in settings["hooks"]:
+    settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h)]
+    if not settings["hooks"]["Stop"]:
+        del settings["hooks"]["Stop"]
+    if not settings["hooks"]:
+        del settings["hooks"]
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
+PYTHON_SCRIPT
+  echo "✅ Stop hook removed"
+fi
+
+echo ""
+echo "🔄 Starting fix loop using /loop command"
+echo "   Interval: ${IDLE_SLEEP_MINUTES}m"
+if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
+  echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
+  echo "   Integration branch: $INTEGRATION_BRANCH"
+  [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
+fi
+echo ""
+echo "To stop: use CronDelete to remove the scheduled job, or Ctrl+C"
+echo ""
+```
+
+**Then invoke the loop skill:**
+
+```
+Use the Skill tool to invoke: loop
+With args: ${IDLE_SLEEP_MINUTES}m /autocoder:fix
+```
+
+This schedules `/autocoder:fix` to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. No stop hook or settings.json modification needed.
+
+---
+
+**If CronCreate is NOT available → Use stop hook mode (fallback):**
+
+```bash
 # ============================================================
 # Install stop hook if not configured
 # ============================================================
@@ -233,9 +300,7 @@ EOF
   echo "✅ Stop hook installed"
 fi
 
-# ============================================================
 # Create loop state file
-# ============================================================
 cat > .claude/fix-loop.local.md << EOF
 ---
 iteration: 0
@@ -250,25 +315,21 @@ started: $(date -Iseconds)
 EOF
 
 echo ""
-echo "🔄 Loop initialized"
+echo "🔄 Loop initialized (stop hook mode)"
 echo "   Max iterations: $([ "$MAX_ITERATIONS" = "0" ] && echo "unlimited" || echo "$MAX_ITERATIONS")"
 echo "   Idle sleep: $IDLE_SLEEP_MINUTES minutes"
 if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
   echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
   echo "   Integration branch: $INTEGRATION_BRANCH"
-  if [[ -n "$DEPLOY_COMMAND" ]]; then
-    echo "   Deploy command: $DEPLOY_COMMAND"
-  else
-    echo "   Deploy command: Not configured (won't deploy)"
-  fi
+  [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
 fi
 echo ""
 ```
 
-Now execute the `/autocoder:fix` command to start the autonomous fix loop. The stop hook will automatically re-invoke `/autocoder:fix` when it tries to exit, creating an infinite loop.
-
-**Execute `/fix` now using the Skill tool:**
+**Then execute `/fix` using the Skill tool:**
 
 ```
 Use the Skill tool to invoke: autocoder:fix
 ```
+
+The stop hook will automatically re-invoke `/autocoder:fix` when Claude exits, creating an infinite loop.
