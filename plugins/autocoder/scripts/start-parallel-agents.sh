@@ -120,7 +120,7 @@ case "$AGENT" in
     fi
     AGENT_LAUNCH_CMD="claude code --dangerously-skip-permissions ."
     WORKER_CMD="/autocoder:fix-loop"
-    REVIEW_CMD="/autocoder:review-blocked"
+    MANAGER_CMD="/autocoder:monitor-loop"
     ;;
   gemini)
     if ! command -v gemini &> /dev/null; then
@@ -130,7 +130,7 @@ case "$AGENT" in
     fi
     AGENT_LAUNCH_CMD="gemini --sandbox=false"
     WORKER_CMD="/fix-loop"
-    REVIEW_CMD="/review-blocked"
+    MANAGER_CMD="/review-blocked"
     ;;
   *)
     echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude' or 'gemini'" >&2
@@ -315,7 +315,7 @@ if [ "$MUX" = "tmux" ]; then
 
   # Wait for agent to initialize in review window
   sleep 5
-  tmux send-keys -t "$SESSION_NAME:1.0" "$REVIEW_CMD"
+  tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
   sleep 0.5
   tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
 
@@ -331,7 +331,7 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
   echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-  echo "   Window 1: Coordinator in main repo running $REVIEW_CMD"
+  echo "   Window 1: Manager in main repo running $MANAGER_CMD"
   echo ""
   echo "🔧 Useful tmux commands:"
   echo "   Switch windows: Ctrl+b then 0 or 1"
@@ -427,24 +427,24 @@ elif [ "$MUX" = "cmux" ]; then
   echo ""
   echo "📋 Setting up review/planning workspace..."
   REVIEW_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
-  REVIEW_WS_REF=$(parse_ws_ref "$REVIEW_OUTPUT")
-  echo "   Created $REVIEW_WS_REF"
+  MANAGER_WS_REF=$(parse_ws_ref "$REVIEW_OUTPUT")
+  echo "   Created $MANAGER_WS_REF"
   sleep 1
 
-  if [ -n "$REVIEW_WS_REF" ]; then
+  if [ -n "$MANAGER_WS_REF" ]; then
     # Manager workspace: just the project name (no prefix)
-    cmux rename-workspace --workspace "$REVIEW_WS_REF" "$PROJECT_NAME" >/dev/null || true
+    cmux rename-workspace --workspace "$MANAGER_WS_REF" "$PROJECT_NAME" >/dev/null || true
 
     if [ "$AGENT" = "claude" ]; then
-      cmux_send_cmd "$REVIEW_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      cmux_send_cmd "$MANAGER_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
     fi
 
     echo "   Starting coordinator..."
-    cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
+    cmux_send_cmd "$MANAGER_WS_REF" "$AGENT_LAUNCH_CMD"
     sleep 5
-    echo "   → Coordinator: sending $REVIEW_CMD..."
-    cmux_send_cmd "$REVIEW_WS_REF" "$REVIEW_CMD"
+    echo "   → Manager: sending $MANAGER_CMD..."
+    cmux_send_cmd "$MANAGER_WS_REF" "$MANAGER_CMD"
   else
     echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
   fi
@@ -462,11 +462,11 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
   echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
-  echo "   1 review workspace running $REVIEW_CMD"
+  echo "   1 manager workspace running $MANAGER_CMD"
   echo ""
   echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
-  if [ -n "$REVIEW_WS_REF" ]; then
-    echo "   Review workspace: $REVIEW_WS_REF"
+  if [ -n "$MANAGER_WS_REF" ]; then
+    echo "   Review workspace: $MANAGER_WS_REF"
   fi
   echo ""
   echo "🔧 Useful cmux commands:"

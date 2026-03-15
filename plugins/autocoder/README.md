@@ -218,7 +218,8 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/fix-loop` | Start infinite loop that runs `/fix` continuously |
 | `/stop-loop` | Stop the continuous fix loop |
 | `/monitor-workers` | Monitor worker agents, dispatch idle workers, detect stale locks, deploy when done |
-| `/review-blocked` | Interactive review of blocked issues (run in parallel with fix-loop) |
+| `/monitor-loop` | Start continuous monitor-workers loop (default manager session startup command) |
+| `/review-blocked` | Interactive review of blocked issues (auto-triggered by monitor-workers when all issues blocked) |
 | `/list-proposals` | List pending enhancement proposals |
 | `/approve-proposal <number>` | Approve a proposal for implementation |
 | `/list-needs-design` | List issues requiring design/architecture work |

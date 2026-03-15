@@ -197,7 +197,7 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 **Get help:** `/autocoder-help`
 
-**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
+**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
 
 **Quick Start:**
 ```bash
