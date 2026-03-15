@@ -24,6 +24,54 @@ description: Orchestrate a team of specialist agents to upgrade a project to be 
    - Check if `docs/modernization-assessment.md` exists. If not, consider running `/assess`.
    - Check if `PLAN.md` exists. If not, consider running `/plan`.
 
+3. **Autocoder Detection** (optional, for parallel issue resolution)
+
+```bash
+# Detect autocoder plugin
+AUTOCODER_AVAILABLE=false
+# Check for autocoder workflows in .agent/workflows/
+if [ -f ".agent/workflows/fix.md" ]; then
+    AUTOCODER_AVAILABLE=true
+    echo "✅ Autocoder workflows detected"
+else
+    echo "ℹ️  Autocoder not installed — using direct fix-and-retest cycles"
+    echo "   Tip: Install autocoder to enable parallel issue resolution via GitHub issues"
+fi
+
+# Detect swarm environment (tmux/cmux/plain)
+SWARM_ENV="none"
+WORKER_COUNT=0
+if [ "$AUTOCODER_AVAILABLE" = true ]; then
+    if [ -n "$TMUX" ]; then
+        SWARM_ENV="tmux"
+        SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+        WORKER_COUNT=$(tmux list-panes -t "$SESSION_NAME:0" -F '#{pane_index}' 2>/dev/null | wc -l | tr -d ' ')
+        echo "✅ tmux swarm detected ($WORKER_COUNT worker panes)"
+        echo "   Test failures will be filed as GitHub issues and resolved by workers in parallel"
+    elif cmux list-workspaces 2>/dev/null | grep -q "wt"; then
+        SWARM_ENV="cmux"
+        WORKER_COUNT=$(cmux list-workspaces 2>/dev/null | grep "wt" | wc -l | tr -d ' ')
+        echo "✅ cmux swarm detected ($WORKER_COUNT worker workspaces)"
+    else
+        echo "⚠️  Autocoder available but no swarm detected"
+        echo "   Recommend: start a swarm first, then run /modernize in the manager session"
+    fi
+fi
+
+# Ensure gh is authenticated as the correct user for this repo
+REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
+if [ -n "$REPO_OWNER" ]; then
+    CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
+        gh auth switch --user "$REPO_OWNER" 2>/dev/null || true
+    fi
+fi
+```
+
+**With autocoder**: When test failures occur during phases, modernize creates GitHub issues grouped by root cause and lets autocoder workers resolve them in parallel. It polls GitHub for issue closure, dispatches idle workers via tmux/cmux, and re-runs the quality gate when all issues are closed.
+
+**Without autocoder**: Direct fix-and-retest cycles between Coder and Tester agents (max 3 iterations). No GitHub issues created.
+
 ---
 
 ## Overview
@@ -221,12 +269,16 @@ This protocol orchestrates a **multi-agent team** to modernize and secure your p
 
 3. **Continuous Testing** (BLOCKING)
    - Run tests after each change
-   - Fix-and-retest cycles
+   - **If autocoder available**: Create GitHub issues for failures grouped by root cause, wait for workers to resolve
+   - **If no autocoder**: Direct fix-and-retest cycles (Coder + Tester, max 3 iterations)
    - Maintain 100% pass rate
    - No progression until tests pass
 
 **Parallel Execution Strategy**:
-Spawn multiple Coder agents for different modules if applicable, summarized by Migration Coordinator.
+
+With autocoder swarm: Manager creates GitHub issues for failures → workers fix in parallel → poll until resolved → re-run quality gate.
+
+Without autocoder: Spawn multiple Coder agents for different modules if applicable, summarized by Migration Coordinator.
 
 **Quality Gate**:
 

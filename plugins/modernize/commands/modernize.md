@@ -37,12 +37,219 @@ else
     echo "   Recommend running /modernize-plan first for better accuracy"
     USE_PLAN=false
 fi
+
+# Detect autocoder plugin for parallel issue resolution
+AUTOCODER_AVAILABLE=false
+if claude plugins list 2>/dev/null | grep -q "autocoder"; then
+    AUTOCODER_AVAILABLE=true
+    echo "✅ Autocoder plugin detected"
+else
+    echo "ℹ️  Autocoder plugin not installed — using direct fix-and-retest cycles"
+    echo "   Tip: Install autocoder (/plugin install autocoder) to enable parallel"
+    echo "   issue resolution via GitHub issues and worker agents"
+fi
+
+# Detect swarm environment (tmux/cmux/plain)
+SWARM_ENV="none"
+WORKER_COUNT=0
+if [ "$AUTOCODER_AVAILABLE" = true ]; then
+    if [ -n "$TMUX" ]; then
+        SWARM_ENV="tmux"
+        SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+        WORKER_COUNT=$(tmux list-panes -t "$SESSION_NAME:0" -F '#{pane_index}' 2>/dev/null | wc -l | tr -d ' ')
+        echo "✅ tmux swarm detected (session: $SESSION_NAME, $WORKER_COUNT worker panes)"
+        echo "   Test failures will be filed as GitHub issues and resolved by workers in parallel"
+    elif cmux list-workspaces 2>/dev/null | grep -q "wt"; then
+        SWARM_ENV="cmux"
+        WORKER_COUNT=$(cmux list-workspaces 2>/dev/null | grep "wt" | wc -l | tr -d ' ')
+        echo "✅ cmux swarm detected ($WORKER_COUNT worker workspaces)"
+        echo "   Test failures will be filed as GitHub issues and resolved by workers in parallel"
+    else
+        echo "⚠️  Autocoder available but no swarm detected"
+        echo "   Recommend: exit, run 'startt 3' (or 'startc 3'), then /modernize in the manager session"
+        echo "   Continuing in single-agent mode — issues will be created, but you'll need workers to fix them"
+    fi
+fi
+
+# Ensure gh is authenticated as the correct user for this repo
+REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
+if [ -n "$REPO_OWNER" ]; then
+    CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
+        echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
+        gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER"
+    fi
+fi
 ```
 
 **Recommendation Workflow**:
-1. **Best**: Run `/modernize-assess` → `/modernize-plan` → `/modernize-project`
-2. **Good**: Run `/modernize-plan` → `/modernize-project`
-3. **Acceptable**: Run `/modernize-project` (will create minimal assessment/plan inline)
+
+**With autocoder installed (recommended)**:
+1. **Best**: Start swarm (`startt 3`), then in manager: `/assess` → `/plan` → `/modernize`
+2. **Good**: Start swarm, then `/modernize` (creates assessment/plan inline)
+
+**Without autocoder**:
+1. **Best**: `/assess` → `/plan` → `/modernize`
+2. **Good**: `/plan` → `/modernize`
+3. **Acceptable**: `/modernize` (creates minimal assessment/plan inline)
+
+---
+
+## Autocoder Integration (when both plugins installed)
+
+When the autocoder plugin is detected, modernize changes how it handles test failures during phases. Instead of direct fix-and-retest cycles, it creates GitHub issues and lets autocoder workers resolve them in parallel.
+
+### How It Works
+
+When a phase's quality gate fails due to test failures:
+
+**Step 1: Analyze and group failures**
+
+```bash
+# Run tests and capture output
+$TEST_COMMAND 2>&1 | tee /tmp/modernize-test-results.txt
+
+# If tests fail, analyze and group by root cause
+if [ $? -ne 0 ]; then
+  echo "❌ Phase $CURRENT_PHASE quality gate failed — test failures detected"
+
+  if [ "$AUTOCODER_AVAILABLE" = true ]; then
+    echo "📋 Grouping failures by root cause for GitHub issue creation..."
+    # Group failures by:
+    # - Same module/directory (tests in same path)
+    # - Same error pattern (similar error messages)
+    # - Same triggering change (API replacement, dependency update)
+  fi
+fi
+```
+
+**Step 2: Create GitHub issues (one per root-cause group)**
+
+```bash
+# Ensure 'modernize' label exists
+gh label create "modernize" --description "Created by /modernize for phase test failures" --color "0e8a16" 2>/dev/null || true
+
+# For each root-cause group, create an issue
+CREATED_ISSUES=""
+for group in $FAILURE_GROUPS; do
+  ISSUE_NUM=$(gh issue create \
+    --title "[modernize] Phase $CURRENT_PHASE: $GROUP_DESCRIPTION" \
+    --label "$PRIORITY_LABEL" \
+    --label "modernize" \
+    --body "## Modernize Phase $CURRENT_PHASE - $PHASE_NAME
+
+**Root Cause**: $GROUP_DESCRIPTION
+
+**Changed**: $WHAT_WAS_MODIFIED
+
+**Failing Tests** ($FAILURE_COUNT):
+$(for test in $GROUP_TESTS; do echo "- \`$test\` - $ERROR_SUMMARY"; done)
+
+**Context**: This issue was created by \`/modernize\` during Phase $CURRENT_PHASE ($PHASE_NAME).
+Fix the failing tests to unblock the modernization workflow.
+
+**Phase Quality Gate**: $QUALITY_GATE_DESCRIPTION" \
+    --json number --jq '.number')
+
+  CREATED_ISSUES="$CREATED_ISSUES $ISSUE_NUM"
+  echo "📝 Created issue #$ISSUE_NUM: $GROUP_DESCRIPTION ($PRIORITY_LABEL)"
+done
+
+# Log to HISTORY.md
+./scripts/append-to-history.sh \
+  "Phase $CURRENT_PHASE: Created $(echo $CREATED_ISSUES | wc -w) issues for test failures" \
+  "Test failures during $PHASE_NAME grouped by root cause" \
+  "Issues: $CREATED_ISSUES" \
+  "Waiting for autocoder workers to resolve"
+```
+
+**Step 3: Wait for resolution (adaptive coordination)**
+
+```bash
+echo "⏳ Waiting for workers to resolve issues: $CREATED_ISSUES"
+
+while true; do
+  # Check GitHub — source of truth
+  OPEN_COUNT=0
+  for issue_num in $CREATED_ISSUES; do
+    STATE=$(gh issue view "$issue_num" --json state --jq '.state')
+    if [ "$STATE" = "OPEN" ]; then
+      OPEN_COUNT=$((OPEN_COUNT + 1))
+
+      # Check if any worker has claimed it
+      HAS_WORKING=$(gh issue view "$issue_num" --json labels --jq '.labels[].name' | grep -c "working")
+      if [ "$HAS_WORKING" = "0" ]; then
+        # Issue unclaimed — try to dispatch a worker
+        IDLE_DISPATCHED=false
+
+        if [ "$SWARM_ENV" = "tmux" ]; then
+          # Read worker screens to find idle agents
+          for pane in $(tmux list-panes -t "$SESSION_NAME:0" -F '#{pane_index}' 2>/dev/null); do
+            SCREEN=$(tmux capture-pane -t "$SESSION_NAME:0.$pane" -p 2>/dev/null | tail -15)
+            if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
+              echo "🚀 Dispatching idle worker (pane $pane) to issue #$issue_num"
+              tmux send-keys -t "$SESSION_NAME:0.$pane" "/autocoder:fix $issue_num" Enter
+              IDLE_DISPATCHED=true
+              break
+            fi
+          done
+        elif [ "$SWARM_ENV" = "cmux" ]; then
+          for ws in $(cmux list-workspaces 2>/dev/null | grep "wt"); do
+            SCREEN=$(cmux read-screen --workspace "$ws" --lines 15 2>/dev/null)
+            if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
+              echo "🚀 Dispatching idle worker ($ws) to issue #$issue_num"
+              cmux send --workspace "$ws" "/autocoder:fix $issue_num"
+              cmux send-key --workspace "$ws" Enter
+              IDLE_DISPATCHED=true
+              break
+            fi
+          done
+        fi
+
+        if [ "$IDLE_DISPATCHED" = false ]; then
+          # Check how long the issue has been open without a worker
+          CREATED_AT=$(gh issue view "$issue_num" --json createdAt --jq '.createdAt')
+          MINUTES_AGO=$(( ($(date +%s) - $(date -d "$CREATED_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CREATED_AT" +%s 2>/dev/null)) / 60 ))
+          if [ "$MINUTES_AGO" -gt 30 ]; then
+            echo "⚠️  Issue #$issue_num has been open for ${MINUTES_AGO}m with no worker assigned"
+            echo "   Please check on your worker agents or assign manually"
+          fi
+        fi
+      fi
+    fi
+  done
+
+  if [ "$OPEN_COUNT" -eq 0 ]; then
+    echo "✅ All modernize issues resolved"
+    break
+  fi
+
+  echo "⏳ $OPEN_COUNT issue(s) still open — checking again in 3 minutes..."
+  sleep 180
+done
+
+# Re-run quality gate after all issues resolved
+echo "🔄 Re-running phase quality gate..."
+$TEST_COMMAND 2>&1 | tee /tmp/modernize-retest-results.txt
+if [ $? -eq 0 ]; then
+  echo "✅ Phase $CURRENT_PHASE quality gate passed"
+else
+  echo "❌ New test failures after fixes — creating additional issues..."
+  # Repeat the issue creation cycle (the agent should loop back)
+fi
+```
+
+### Without Autocoder (default behavior)
+
+When autocoder is NOT installed, the standard fix-and-retest cycle is used:
+
+1. Tester Agent documents failures and categorizes by priority
+2. Coder Agent fixes issues directly
+3. Tester Agent re-runs all tests
+4. Repeat up to 3 iterations
+5. If still failing after 3 iterations: BLOCK progression, escalate
+
+No GitHub issues are created. No swarm coordination. All existing behavior is unchanged.
 
 ---
 
@@ -318,11 +525,25 @@ ELSE:
 
 3. **Continuous Testing** (BLOCKING)
    - Run tests after each change
-   - Fix-and-retest cycles
+   - **If autocoder available**: Create GitHub issues for failures grouped by root cause, wait for workers to resolve (see [Autocoder Integration](#autocoder-integration-when-both-plugins-installed))
+   - **If no autocoder**: Direct fix-and-retest cycles (Coder + Tester, max 3 iterations)
    - Maintain 100% pass rate
    - No progression until tests pass
 
 **Parallel Execution Strategy**:
+
+With autocoder swarm:
+```
+Migration Coordinator (manager session)
+  ↓ creates GitHub issues for failures
+  ├─ Autocoder Worker #1 (worktree 1) → picks up issue, fixes, PRs
+  ├─ Autocoder Worker #2 (worktree 2) → picks up issue, fixes, PRs
+  └─ Autocoder Worker #3 (worktree 3) → picks up issue, fixes, PRs
+  ↓ polls GitHub until all issues closed
+  ↓ re-runs quality gate
+```
+
+Without autocoder:
 ```
 Migration Coordinator
   ↓
@@ -819,9 +1040,17 @@ Claude: This is a major migration requiring all agents:
 **Testing Gate Failed**
 ```
 ❌ Test pass rate: 87% (required 100%)
-→ Action: Tester Agent documents failures
+
+With autocoder:
+→ Group failures by root cause
+→ Create GitHub issues (P0/P1 + modernize label)
+→ Workers pick up and fix issues in parallel
+→ Poll until all issues closed, re-run quality gate
+
+Without autocoder:
+→ Tester Agent documents failures
 → Coder Agent fixes issues
-→ Re-run fix-and-retest cycle
+→ Re-run fix-and-retest cycle (max 3 iterations)
 ```
 
 **Performance Gate Failed**

@@ -256,6 +256,61 @@ Located in the `scripts/` directory (referenced from the main repo):
 | `run-stage-tests.sh` | Execute stage-specific test tiers |
 | `validate-migration-stage.sh` | Check quality gates for phase completion |
 
+## Integration with Autocoder
+
+When the **autocoder** plugin is also installed, modernize can leverage parallel worker agents to resolve test failures faster. This is optional — modernize works exactly the same without autocoder.
+
+### What Changes
+
+| Aspect | Without Autocoder | With Autocoder |
+|--------|-------------------|----------------|
+| **Test failure handling** | Direct fix-and-retest cycles (Coder + Tester, max 3 iterations) | Creates GitHub issues grouped by root cause, workers fix in parallel |
+| **Parallelism** | Sequential within each phase | Multiple workers fix different failure groups simultaneously |
+| **Coordination** | Internal agent handoffs | GitHub issues + labels as source of truth |
+| **Human oversight** | Watch agent output | Use `/review-blocked` and `/monitor-workers` in manager session |
+
+### Recommended Workflow (with autocoder)
+
+```bash
+# 1. Install both plugins
+/plugin install modernize autocoder
+
+# 2. One-time setup (installs scripts, aliases)
+/install
+
+# 3. Start a swarm from your terminal
+cd ~/src/myproject
+startt 3          # 3 workers + 1 manager (or: startc 3 for cmux)
+
+# 4. In the manager session, run the modernization
+/assess           # Evaluate viability
+/plan             # Create execution strategy
+/modernize        # Execute — files issues for failures, workers fix in parallel
+
+# 5. While modernize runs, use manager commands as needed
+/review-blocked   # Approve architectural decisions workers can't handle
+/monitor-workers  # Check worker progress, dispatch idle workers
+
+# 6. When done, tear down
+endt              # or: endc for cmux
+```
+
+### How It Works
+
+1. Modernize detects autocoder at startup and reports the swarm environment (tmux/cmux/plain terminal)
+2. During each phase, when the quality gate fails due to test failures, modernize:
+   - Analyzes failures and groups them by likely root cause (same module, same API change, same error pattern)
+   - Creates one GitHub issue per group with P0/P1 priority and a `modernize` label
+   - Enters a wait loop, polling GitHub every 3 minutes for issue closure
+3. In the wait loop, modernize uses the best available coordination:
+   - **tmux/cmux**: Reads worker screens, dispatches idle workers to unclaimed issues, detects stuck agents
+   - **Plain terminal**: Polls GitHub issue status, prompts user if an issue is unclaimed for >30 minutes
+4. When all issues are closed, modernize re-runs the quality gate and proceeds to the next phase
+
+### Without Autocoder
+
+Everything works exactly as before — direct fix-and-retest cycles between Coder and Tester agents, no GitHub issues, no swarm coordination. You don't need a GitHub repo or issues to use modernize standalone.
+
 ## Production Results
 
 - **32/32 projects** migrated successfully (100% success rate)
