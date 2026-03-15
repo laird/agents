@@ -277,6 +277,16 @@ else
   BUILD_COMMAND="npm run build"
 fi
 
+# Ensure gh is authenticated as the correct user for this repo
+REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
+if [ -n "$REPO_OWNER" ]; then
+  CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+  if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
+    echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
+    gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER — ensure 'gh auth login' has been run for this account"
+  fi
+fi
+
 # Detect available plugins for enhanced capabilities
 echo "🔌 Detecting available plugins..."
 
@@ -465,6 +475,24 @@ echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
 ```
+
+## CRITICAL: Always Remove 'working' Label
+
+**The `working` label MUST be removed when you stop working on an issue, regardless of the outcome.** This is a concurrency lock — if not removed, no other agent can pick up the issue.
+
+Remove it in ALL exit paths:
+- **Issue fixed and closed** → remove `working` label
+- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly with `gh issue edit`, you MUST also remove `working`)
+- **Issue skipped** → remove `working` label
+- **Error or failure** → remove `working` label
+- **Moving to next issue** → remove `working` label from current issue
+
+```bash
+# ALWAYS run this before moving to the next issue:
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+**Never add a blocking label without also removing the `working` label.** If you use `gh issue edit` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
 
 ## Fixing Strategy
 
@@ -1384,6 +1412,9 @@ Enhancement implementation paused. Will resume after bugs are fixed.
   # Do NOT merge - leave branch for investigation
   echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
 
+  # Remove 'working' label to release the enhancement
+  gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+
   # Switch back to main
   git checkout main
 fi
@@ -1620,3 +1651,9 @@ gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
 ---
 
 🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
+
+**REMINDER**: Before moving to the next issue, ALWAYS remove the `working` label from the current issue:
+```bash
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+This applies to ALL outcomes: fixed, skipped, deferred, blocked, or errored. Failing to remove this label will prevent any agent from working on the issue.

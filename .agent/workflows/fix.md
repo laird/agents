@@ -277,6 +277,16 @@ else
   BUILD_COMMAND="npm run build"
 fi
 
+# Ensure gh is authenticated as the correct user for this repo
+REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
+if [ -n "$REPO_OWNER" ]; then
+  CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+  if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
+    echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
+    gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER — ensure 'gh auth login' has been run for this account"
+  fi
+fi
+
 # Detect available plugins for enhanced capabilities
 echo "🔌 Detecting available plugins..."
 
@@ -1379,6 +1389,9 @@ Enhancement implementation paused. Will resume after bugs are fixed.
 
   # Do NOT merge - leave branch for investigation
   echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
+
+  # Remove 'working' label to release the enhancement
+  gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
   # Switch back to main
   git checkout main
