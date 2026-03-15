@@ -2,6 +2,8 @@
 
 Autonomous GitHub issue resolution system with infinite loop support.
 
+![Autocoder Architecture](../../agents-architecture.png)
+
 ## ⚠️ Compatibility Notice
 
 **This plugin is primarily developed for personal use.** While it should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees it will work in all environments. Use at your own risk.
@@ -278,41 +280,7 @@ The autocoder plugin supports running a **swarm** of parallel AI agents — mult
 
 ### Architecture
 
-```mermaid
-graph TB
-    subgraph "Swarm (startc / startt)"
-        manager["Manager Session<br/>/review-blocked<br/>/monitor-workers"]
-        w1["Worker 1<br/>/fix-loop<br/>worktree 1 · own branch"]
-        w2["Worker 2<br/>/fix-loop<br/>worktree 2 · own branch"]
-        w3["Worker 3<br/>/fix-loop<br/>worktree 3 · own branch"]
-        manager -- "dispatch idle workers" --> w1
-        manager -- "dispatch idle workers" --> w2
-        manager -- "dispatch idle workers" --> w3
-    end
-
-    subgraph "GitHub"
-        issues["Issues<br/>P0 · P1 · P2 · P3"]
-        prs["Pull Requests"]
-        labels["Labels<br/>working · needs-design<br/>proposal · too-complex"]
-    end
-
-    w1 -- "claim → fix → PR" --> issues
-    w2 -- "claim → fix → PR" --> issues
-    w3 -- "claim → fix → PR" --> issues
-    w1 & w2 & w3 -- "open" --> prs
-    w1 & w2 & w3 -- "coordinate via" --> labels
-    manager -- "unblock issues" --> labels
-
-    subgraph "Multiplexer"
-        tmux["tmux (headless / remote)"]
-        cmux["cmux (macOS GUI)"]
-    end
-
-    subgraph "Agent Framework"
-        cc["Claude Code"]
-        gemini["Gemini CLI"]
-    end
-```
+See the [architecture diagram](#autocoder-plugin-claude-code) at the top of this README.
 
 ### Quick Start
 
