@@ -1,25 +1,142 @@
 #!/bin/bash
-# Start parallel Antigravity agents using git worktrees and workspace configuration
-# Usage: start-parallel-agents.sh [num_agents] [--no-worktrees]
+# Start parallel AI agents using a terminal multiplexer and git worktrees
+# Supports both tmux and cmux multiplexers, and both Claude and Gemini agent frameworks
+#
+# Usage: start-parallel-agents.sh [num_agents] [options]
+#
+# Options:
+#   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
+#   --agent claude|gemini  Agent framework to use (default: auto-detect)
+#   --no-worktrees         Run all agents in the same directory
+#
+# Examples:
+#   start-parallel-agents.sh 3 --mux tmux --agent claude
+#   start-parallel-agents.sh 4 --mux cmux --agent gemini
+#   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
 
-# Parse arguments
-NUM_AGENTS="${1:-3}"
+# Defaults
+NUM_AGENTS=3
 USE_WORKTREES=true
+MUX=""
+AGENT=""
 
-for arg in "$@"; do
-  case $arg in
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --mux)
+      MUX="$2"
+      shift 2
+      ;;
+    --agent)
+      AGENT="$2"
+      shift 2
+      ;;
     --no-worktrees)
       USE_WORKTREES=false
       shift
       ;;
     [0-9]*)
-      NUM_AGENTS="$arg"
+      NUM_AGENTS="$1"
       shift
+      ;;
+    -h|--help)
+      echo "Usage: start-parallel-agents.sh [num_agents] [options]"
+      echo ""
+      echo "Options:"
+      echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
+      echo "  --agent claude|gemini  Agent framework (default: auto-detect)"
+      echo "  --no-worktrees         Run all agents in the same directory"
+      echo ""
+      echo "Examples:"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
+      echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
+      exit 0
+      ;;
+    *)
+      echo "❌ Unknown argument: $1" >&2
+      echo "   Use --help for usage information" >&2
+      exit 1
       ;;
   esac
 done
+
+# Auto-detect multiplexer if not specified
+if [ -z "$MUX" ]; then
+  if command -v cmux &> /dev/null; then
+    MUX="cmux"
+  elif command -v tmux &> /dev/null; then
+    MUX="tmux"
+  else
+    echo "❌ Error: No terminal multiplexer found" >&2
+    echo "" >&2
+    echo "Install one of the following:" >&2
+    echo "  tmux:  brew install tmux" >&2
+    echo "  cmux:  brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# Validate multiplexer choice
+case "$MUX" in
+  tmux|cmux)
+    if ! command -v "$MUX" &> /dev/null; then
+      echo "❌ Error: $MUX is not installed" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+    exit 1
+    ;;
+esac
+
+# Auto-detect agent framework if not specified
+if [ -z "$AGENT" ]; then
+  if command -v claude &> /dev/null; then
+    AGENT="claude"
+  elif command -v gemini &> /dev/null; then
+    AGENT="gemini"
+  else
+    echo "❌ Error: No agent framework found" >&2
+    echo "" >&2
+    echo "Install one of the following:" >&2
+    echo "  Claude Code: https://claude.ai/download" >&2
+    echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# Validate agent choice and set launch command
+case "$AGENT" in
+  claude)
+    if ! command -v claude &> /dev/null; then
+      echo "❌ Error: claude command is not installed" >&2
+      echo "   Install Claude Code: https://claude.ai/download" >&2
+      exit 1
+    fi
+    AGENT_LAUNCH_CMD="claude code --dangerously-skip-permissions ."
+    WORKER_CMD="/autocoder:fix-loop"
+    REVIEW_CMD="/autocoder:review-blocked"
+    ;;
+  gemini)
+    if ! command -v gemini &> /dev/null; then
+      echo "❌ Error: gemini command is not installed" >&2
+      echo "   Install Gemini CLI: https://github.com/google-gemini/gemini-cli" >&2
+      exit 1
+    fi
+    AGENT_LAUNCH_CMD="gemini --sandbox=false"
+    WORKER_CMD="/fix-loop"
+    REVIEW_CMD="/review-blocked"
+    ;;
+  *)
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude' or 'gemini'" >&2
+    exit 1
+    ;;
+esac
 
 # Validate we're in a git repo (if using worktrees)
 if [ "$USE_WORKTREES" = true ]; then
@@ -33,14 +150,19 @@ fi
 # Get project info
 PROJECT_ROOT=$(pwd)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
+SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-SESSION_ID="parallel-$(date +%Y%m%d-%H%M%S)"
+
+# Generate shared task list ID for coordination
+TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
 
 echo "🚀 Starting parallel agent system"
 echo "   Project: $PROJECT_NAME"
 echo "   Main path: $PROJECT_ROOT"
 echo "   Num agents: $NUM_AGENTS"
-echo "   Session ID: $SESSION_ID"
+echo "   Multiplexer: $MUX"
+echo "   Agent framework: $AGENT"
+echo "   Task list ID: $TASK_LIST_ID"
 echo "   Branch: $CURRENT_BRANCH"
 echo ""
 
@@ -50,7 +172,8 @@ WORKTREE_PATHS=()
 if [ "$USE_WORKTREES" = true ]; then
   echo "📁 Setting up git worktrees..."
 
-  for i in $(seq 1 $((NUM_AGENTS - 1))); do
+  # Create N worktrees for N agents (all workers in worktrees)
+  for i in $(seq 1 $NUM_AGENTS); do
     WORKTREE_PATH="${PROJECT_ROOT}-wt-${i}"
     WORKTREE_BRANCH="${CURRENT_BRANCH}-wt-${i}"
 
@@ -69,14 +192,14 @@ if [ "$USE_WORKTREES" = true ]; then
 
     WORKTREE_PATHS+=("$WORKTREE_PATH")
   done
-  echo ""
 
-  # Check if .agent is a symlink in main repo, replicate in worktrees
+  # Replicate .agent symlink to worktrees if it exists (for Gemini/Antigravity)
   if [ -L "$PROJECT_ROOT/.agent" ]; then
     AGENT_TARGET=$(readlink "$PROJECT_ROOT/.agent")
+    echo ""
     echo "📁 Detected .agent/ symlink, replicating to worktrees..."
 
-    for i in $(seq 1 $((NUM_AGENTS - 1))); do
+    for i in $(seq 1 $NUM_AGENTS); do
       WORKTREE_PATH="${WORKTREE_PATHS[$((i-1))]}"
 
       if [ ! -L "$WORKTREE_PATH/.agent" ]; then
@@ -86,177 +209,273 @@ if [ "$USE_WORKTREES" = true ]; then
         echo "   ✓ Symlink already exists in worktree $i"
       fi
     done
-    echo ""
-  elif [ ! -d "$PROJECT_ROOT/.agent" ]; then
-    echo "⚠️  Warning: .agent/ directory not found in project root"
-    echo "   Run /install to set up the agents framework first"
-    echo ""
-  fi
-fi
-
-# Generate workspace configuration
-CONFIG_FILE=".agent/parallel-workspaces.json"
-echo "📝 Generating workspace configuration..."
-
-# Build JSON configuration
-cat > "$CONFIG_FILE" << EOF
-{
-  "session_id": "$SESSION_ID",
-  "integration_branch": "$CURRENT_BRANCH",
-  "created": "$(date -Iseconds)",
-  "workspaces": [
-    {
-      "id": "coordinator",
-      "role": "coordinator",
-      "path": "$PROJECT_ROOT",
-      "branch": "$CURRENT_BRANCH",
-      "command": "/fix-loop"
-    }
-EOF
-
-# Add worker workspaces
-for i in $(seq 1 $((NUM_AGENTS - 1))); do
-  if [ "$USE_WORKTREES" = true ]; then
-    WORKSPACE_PATH="${WORKTREE_PATHS[$((i-1))]}"
-    WORKSPACE_BRANCH="${CURRENT_BRANCH}-wt-${i}"
-  else
-    WORKSPACE_PATH="$PROJECT_ROOT"
-    WORKSPACE_BRANCH="$CURRENT_BRANCH"
   fi
 
-  # Add comma if not the last item
-  echo "," >> "$CONFIG_FILE"
-
-  cat >> "$CONFIG_FILE" << EOF
-    {
-      "id": "worker-$i",
-      "role": "worker",
-      "path": "$WORKSPACE_PATH",
-      "branch": "$WORKSPACE_BRANCH",
-      "command": "/fix-loop"
-    }
-EOF
-done
-
-# Add review workspace
-cat >> "$CONFIG_FILE" << EOF
-,
-    {
-      "id": "review",
-      "role": "review",
-      "path": "$PROJECT_ROOT",
-      "branch": "$CURRENT_BRANCH",
-      "command": "/review-blocked"
-    }
-  ]
-}
-EOF
-
-echo "   ✓ Configuration saved to: $CONFIG_FILE"
-echo ""
-
-# Try to launch Antigravity
-echo "🚀 Attempting to launch Antigravity..."
-echo ""
-
-LAUNCHED=false
-
-# Try different methods to launch Antigravity
-if command -v antigravity &> /dev/null; then
-  echo "   Found 'antigravity' command, attempting to launch..."
-
-  # Try to open each workspace
-  if antigravity workspace open "$PROJECT_ROOT" &> /dev/null; then
-    echo "   ✓ Opened coordinator workspace: $PROJECT_ROOT"
-    LAUNCHED=true
-
-    # Open worker workspaces
-    if [ "$USE_WORKTREES" = true ]; then
-      for i in $(seq 1 $((NUM_AGENTS - 1))); do
-        WORKSPACE_PATH="${WORKTREE_PATHS[$((i-1))]}"
-        if antigravity workspace open "$WORKSPACE_PATH" &> /dev/null; then
-          echo "   ✓ Opened worker workspace $i: $WORKSPACE_PATH"
-        fi
-      done
-    fi
-  else
-    # Try just launching Antigravity without specific workspaces
-    if antigravity &> /dev/null & then
-      echo "   ✓ Launched Antigravity (workspaces may need manual opening)"
-      LAUNCHED=true
-    fi
-  fi
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS: try to open Antigravity app
-  if [ -d "/Applications/Antigravity.app" ]; then
-    echo "   Found Antigravity.app, launching..."
-    open -a "Antigravity" "$PROJECT_ROOT" 2>/dev/null && LAUNCHED=true
-  fi
-fi
-
-echo ""
-
-# Print appropriate instructions based on whether we launched
-if [ "$LAUNCHED" = true ]; then
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "✅ Antigravity launched!"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-  echo "📋 Workspaces to configure in Antigravity:"
   echo ""
 else
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "✅ Parallel agent system configured!"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-  echo "⚠️  Could not auto-launch Antigravity"
-  echo ""
-  echo "📋 Manual Steps - Open Workspaces in Antigravity GUI:"
-  echo ""
-  echo "1. Launch Antigravity manually"
-  echo ""
-  echo "2. Add these workspaces:"
+  echo "⚠️  Running without worktrees (all agents in same directory)"
   echo ""
 fi
 
-# Print workspace details
-echo "   Coordinator Agent (main repo):"
-echo "   • Path: $PROJECT_ROOT"
-echo "   • Branch: $CURRENT_BRANCH"
-echo "   • Command: /fix-loop"
-echo ""
+# ============================================================================
+# TMUX MODE
+# ============================================================================
+if [ "$MUX" = "tmux" ]; then
 
-if [ "$USE_WORKTREES" = true ]; then
-  for i in $(seq 1 $((NUM_AGENTS - 1))); do
-    WORKSPACE_PATH="${WORKTREE_PATHS[$((i-1))]}"
-    WORKSPACE_BRANCH="${CURRENT_BRANCH}-wt-${i}"
-    echo "   Worker Agent $i:"
-    echo "   • Path: $WORKSPACE_PATH"
-    echo "   • Branch: $WORKSPACE_BRANCH"
-    echo "   • Command: /fix-loop"
-    echo ""
+  # Check if session already exists
+  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "⚠️  Session '$SESSION_NAME' already exists"
+    echo "   Attaching to existing session..."
+    tmux attach-session -t "$SESSION_NAME"
+    exit 0
+  fi
+
+  # Create tmux session with first window (parallel agents)
+  echo "🖥️  Creating tmux session: $SESSION_NAME"
+  tmux new-session -d -s "$SESSION_NAME" -n "agents"
+
+  # First pane (leftmost) - worker 1 in wt-1
+  echo "   Setting up worker agent 1..."
+  if [ "$USE_WORKTREES" = true ]; then
+    tmux send-keys -t "$SESSION_NAME:0.0" "cd '${WORKTREE_PATHS[0]}'" C-m
+  else
+    tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
+  fi
+
+  # Set environment variables for Claude Code coordination
+  if [ "$AGENT" = "claude" ]; then
+    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
+  fi
+
+  # Create panes for remaining workers
+  for i in $(seq 2 $NUM_AGENTS); do
+    echo "   Setting up worker agent $i..."
+    tmux split-window -h -t "$SESSION_NAME:0"
+
+    if [ "$USE_WORKTREES" = true ]; then
+      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '${WORKTREE_PATHS[$((i-1))]}'" C-m
+    else
+      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$PROJECT_ROOT'" C-m
+    fi
+
+    if [ "$AGENT" = "claude" ]; then
+      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    fi
   done
+
+  # Balance the panes to make them equal width
+  tmux select-layout -t "$SESSION_NAME:0" even-horizontal
+
+  # Launch agent in each pane sequentially with individual waits
+  echo ""
+  echo "🤖 Starting $AGENT sessions..."
+
+  for i in $(seq 0 $((NUM_AGENTS - 1))); do
+    echo "   Starting worker $((i+1))/$NUM_AGENTS..."
+    tmux send-keys -t "$SESSION_NAME:0.$i" "$AGENT_LAUNCH_CMD" C-m
+
+    # Wait for this instance to fully initialize before starting next
+    sleep 5
+  done
+
+  # Wait for all instances to be fully ready
+  echo "   Waiting for all instances to stabilize..."
+  sleep 3
+
+  # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
+  echo "   Starting $WORKER_CMD in all agents (sequential)..."
+  for i in $(seq 0 $((NUM_AGENTS - 1))); do
+    echo "   → Agent $((i+1)): sending $WORKER_CMD..."
+    tmux send-keys -t "$SESSION_NAME:0.$i" "$WORKER_CMD"
+    sleep 0.5
+    tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
+
+    # Wait for THIS agent to fully process $WORKER_CMD before starting next
+    echo "   → Agent $((i+1)): waiting for initialization..."
+    sleep 10
+  done
+
+  echo "   All agents initialized"
+
+  # Create second window for review/planning (single pane)
+  echo ""
+  echo "📋 Setting up review/planning window..."
+  tmux new-window -t "$SESSION_NAME:1" -n "review"
+
+  # Set up review window
+  echo "   Starting coordinator..."
+  tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
+
+  if [ "$AGENT" = "claude" ]; then
+    tmux send-keys -t "$SESSION_NAME:1.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+  fi
+
+  tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
+
+  # Wait for agent to initialize in review window
+  sleep 5
+  tmux send-keys -t "$SESSION_NAME:1.0" "$REVIEW_CMD"
+  sleep 0.5
+  tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
+
+  # Select the first window (agents) by default
+  tmux select-window -t "$SESSION_NAME:0"
+
+  echo ""
+  echo "✅ Parallel agent system started!"
+  echo ""
+  echo "📊 Session Info:"
+  echo "   Session name: $SESSION_NAME"
+  echo "   Multiplexer: tmux"
+  echo "   Agent framework: $AGENT"
+  echo "   Task list ID: $TASK_LIST_ID"
+  echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+  echo "   Window 1: Coordinator in main repo running $REVIEW_CMD"
+  echo ""
+  echo "🔧 Useful tmux commands:"
+  echo "   Switch windows: Ctrl+b then 0 or 1"
+  echo "   Detach: Ctrl+b then d"
+  echo "   Reattach: tmux attach -t $SESSION_NAME"
+  echo "   Kill session: tmux kill-session -t $SESSION_NAME"
+  echo ""
+  echo "📌 To join this session later, use:"
+  echo "   tmux attach -t $SESSION_NAME"
+  echo ""
+
+  # Attach to the session
+  tmux attach-session -t "$SESSION_NAME"
+
+# ============================================================================
+# CMUX MODE
+# ============================================================================
+elif [ "$MUX" = "cmux" ]; then
+
+  # Verify cmux is running (it's a GUI app, must be open)
+  if ! cmux ping &>/dev/null; then
+    echo "❌ Error: cmux is not running" >&2
+    echo "   Please launch cmux.app first, then re-run this script" >&2
+    exit 1
+  fi
+
+  # Helper: send text to a workspace and press enter
+  # Uses --workspace ref to target the right workspace
+  cmux_send_cmd() {
+    local ws_ref="$1"
+    local text="$2"
+    cmux send --workspace "$ws_ref" "$text" >/dev/null
+    cmux send-key --workspace "$ws_ref" enter >/dev/null
+  }
+
+  # Extract workspace ref (e.g. "workspace:3") from "OK workspace:3" output
+  parse_ws_ref() {
+    echo "$1" | grep -o 'workspace:[0-9]*'
+  }
+
+  WORKER_WS_REFS=()
+
+  # --- Create one workspace per worker agent ---
+  echo "🤖 Starting $AGENT worker sessions..."
+  echo ""
+
+  for i in $(seq 1 $NUM_AGENTS); do
+    echo "   Setting up worker agent $i/$NUM_AGENTS..."
+
+    # Create a new workspace in the worktree directory
+    if [ "$USE_WORKTREES" = true ]; then
+      WS_OUTPUT=$(cmux new-workspace --cwd "${WORKTREE_PATHS[$((i-1))]}")
+    else
+      WS_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
+    fi
+    WS_REF=$(parse_ws_ref "$WS_OUTPUT")
+    echo "   Created $WS_REF"
+
+    if [ -z "$WS_REF" ]; then
+      echo "   ⚠️  Could not parse workspace ref from: $WS_OUTPUT"
+      continue
+    fi
+
+    WORKER_WS_REFS+=("$WS_REF")
+    sleep 1
+
+    # Rename workspace: wt<N>-<project>
+    cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
+
+    # Set environment variables for Claude Code coordination
+    if [ "$AGENT" = "claude" ]; then
+      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      sleep 0.5
+    fi
+
+    # Launch agent
+    echo "   Starting $AGENT in worker $i..."
+    cmux_send_cmd "$WS_REF" "$AGENT_LAUNCH_CMD"
+    sleep 5
+
+    # Send worker command
+    echo "   → Worker $i: sending $WORKER_CMD..."
+    cmux_send_cmd "$WS_REF" "$WORKER_CMD"
+
+    echo "   → Worker $i: waiting for initialization..."
+    sleep 10
+  done
+
+  echo "   All workers initialized"
+
+  # --- Review Workspace ---
+  echo ""
+  echo "📋 Setting up review/planning workspace..."
+  REVIEW_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
+  REVIEW_WS_REF=$(parse_ws_ref "$REVIEW_OUTPUT")
+  echo "   Created $REVIEW_WS_REF"
+  sleep 1
+
+  if [ -n "$REVIEW_WS_REF" ]; then
+    # Manager workspace: just the project name (no prefix)
+    cmux rename-workspace --workspace "$REVIEW_WS_REF" "$PROJECT_NAME" >/dev/null || true
+
+    if [ "$AGENT" = "claude" ]; then
+      cmux_send_cmd "$REVIEW_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      sleep 0.5
+    fi
+
+    echo "   Starting coordinator..."
+    cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
+    sleep 5
+    echo "   → Coordinator: sending $REVIEW_CMD..."
+    cmux_send_cmd "$REVIEW_WS_REF" "$REVIEW_CMD"
+  else
+    echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
+  fi
+
+  # Switch back to the first worker workspace
+  if [ -n "${WORKER_WS_REFS[0]}" ]; then
+    cmux select-workspace --workspace "${WORKER_WS_REFS[0]}" >/dev/null || true
+  fi
+
+  echo ""
+  echo "✅ Parallel agent system started!"
+  echo ""
+  echo "📊 Session Info:"
+  echo "   Multiplexer: cmux"
+  echo "   Agent framework: $AGENT"
+  echo "   Task list ID: $TASK_LIST_ID"
+  echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
+  echo "   1 review workspace running $REVIEW_CMD"
+  echo ""
+  echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
+  if [ -n "$REVIEW_WS_REF" ]; then
+    echo "   Review workspace: $REVIEW_WS_REF"
+  fi
+  echo ""
+  echo "🔧 Useful cmux commands:"
+  echo "   List workspaces:  cmux list-workspaces"
+  echo "   List panes:       cmux list-panes --workspace <ref>"
+  echo "   Read screen:      cmux read-screen --workspace <ref>"
+  echo "   Send text:        cmux send --workspace <ref> \"text\""
+  echo "   Send enter:       cmux send-key --workspace <ref> enter"
+  echo "   Close workspace:  cmux close-workspace --workspace <ref>"
+  echo ""
+
 fi
-
-echo "   Review Agent (main repo):"
-echo "   • Path: $PROJECT_ROOT"
-echo "   • Branch: $CURRENT_BRANCH"
-echo "   • Command: /review-blocked"
-echo ""
-
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "📌 Configuration Details:"
-echo "   Session ID: $SESSION_ID"
-echo "   Integration Branch: $CURRENT_BRANCH"
-echo "   Config File: $CONFIG_FILE"
-echo ""
-echo "🔄 Agent Coordination:"
-echo "   Agents coordinate through GitHub issues and labels:"
-echo "   • 'working' label - Agent currently working on issue"
-echo "   • 'needs-approval', 'needs-design', etc. - Blocking labels"
-echo "   • P0-P3 labels - Priority levels"
-echo ""
-echo "💡 Each agent works independently on different issues."
-echo "   Git worktrees provide isolation for parallel work."
-echo ""

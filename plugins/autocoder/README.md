@@ -223,7 +223,7 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 
 ## Parallel Agent System
 
-Run multiple Claude Code agents in parallel using tmux and git worktrees for coordinated autonomous work.
+Run multiple AI agents in parallel using tmux or cmux and git worktrees for coordinated autonomous work. Supports both Claude Code and Gemini CLI as agent frameworks.
 
 ### Quick Start
 
@@ -238,58 +238,105 @@ Run multiple Claude Code agents in parallel using tmux and git worktrees for coo
 
 # 2. Start parallel agents (from terminal, in your project)
 cd ~/src/myproject
-start-parallel 3        # 3 agents: 1 coordinator + 2 workers
-# or: start 3 (if you installed aliases)
 
-# 3. Detach when done watching
+# Using tmux (headless terminal multiplexer)
+startt 3                # 3 workers + 1 review coordinator
+# or: start-parallel-agents.sh --mux tmux 3
+
+# Using cmux (native macOS GUI multiplexer)
+startc 3                # 3 workers + 1 review coordinator
+# or: start-parallel-agents.sh --mux cmux 3
+
+# 3. Detach when done watching (tmux only)
 # Ctrl+b then d
 
 # 4. Rejoin anytime
-join-parallel          # or: join (if using aliases)
+joint                   # tmux
+joinc                   # cmux
 ```
 
+### Multiplexer Options
+
+| Multiplexer | Type | Platform | Install |
+|-------------|------|----------|---------|
+| **tmux** | Headless terminal multiplexer | Linux, macOS | `brew install tmux` |
+| **cmux** | Native macOS GUI app (Ghostty-based) | macOS only | `brew tap manaflow-ai/cmux && brew install --cask cmux` |
+
+### Agent Framework Options
+
+| Framework | Launch Command | Slash Commands |
+|-----------|---------------|----------------|
+| **Claude Code** | `claude code --dangerously-skip-permissions .` | `/autocoder:fix-loop`, `/autocoder:review-blocked` |
+| **Gemini CLI** | `gemini --sandbox=false` | `/fix-loop`, `/review-blocked` |
+
+Auto-detection prefers cmux over tmux, and Claude over Gemini. Override with `--mux` and `--agent` flags.
+
 ### How It Works
+
+#### tmux Mode
 
 Creates a tmux session with 2 windows:
 
 **Window 0: Parallel Fix Agents**
 - 3+ panes running `/fix-loop` simultaneously
-- Pane 0: Main repo (coordinator, handles deployment)
-- Pane 1-N: Git worktrees (workers, each in separate feature branch)
+- Each pane in its own git worktree (separate feature branch)
 - All share task list via `CLAUDE_CODE_TASK_LIST_ID`
 - Prevents duplicate work with `working` label
-- Coordinator merges and deploys when all agents idle
 
 **Window 1: Review/Planning**
 - 1 pane running `/review-blocked`
 - Interactive review of issues needing human decisions
 - Non-blocking to autonomous agents
 
+#### cmux Mode
+
+Creates one workspace (tab) per agent:
+
+**Worker Workspaces** (named `wt1-<project>`, `wt2-<project>`, etc.)
+- Each runs `/fix-loop` in its own git worktree
+- Isolated feature branches for parallel work
+
+**Manager Workspace** (named `<project>`)
+- Runs `/review-blocked`
+- Interactive review of issues needing human decisions
+
+### Shell Aliases
+
+After adding aliases to `~/.zshrc`:
+
+| Alias | Purpose |
+|-------|---------|
+| `startt N` | Start N agents in tmux |
+| `joint` | Rejoin tmux session |
+| `stopt` | Kill tmux session |
+| `startc N` | Start N agents in cmux |
+| `joinc` | List/select cmux workspaces |
+| `stopc` | Close cmux agent workspaces |
+
 ### Terminal Commands
 
-After running `/install`:
+Full command syntax with all options:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
-| `start-parallel` | Launch parallel agent system | `start-parallel [num_agents] [--no-worktrees]` |
-| `join-parallel` | Rejoin existing session | `join-parallel [session_name]` |
-| `end-parallel` | End session and clean up | `end-parallel [session_name] [--keep-worktrees]` |
+| `start-parallel-agents.sh` | Launch parallel agent system | `[num_agents] [--mux tmux\|cmux] [--agent claude\|gemini] [--no-worktrees]` |
+| `join-parallel-agents.sh` | Rejoin existing session | `[--mux tmux\|cmux] [session_name]` |
+| `stop-parallel-agents.sh` | Stop all agent sessions | `[--mux tmux\|cmux]` |
 
 **Examples:**
 ```bash
-# Starting
-start-parallel              # 3 agents (default)
-start-parallel 5            # 5 agents (1 coordinator + 4 workers)
-start-parallel 3 --no-worktrees  # No git worktrees, same directory
+# Starting with explicit options
+start-parallel-agents.sh 3 --mux tmux --agent claude
+start-parallel-agents.sh 4 --mux cmux --agent gemini
+start-parallel-agents.sh 3 --no-worktrees
 
 # Joining
-join-parallel              # Auto-detect based on current directory
-join-parallel claude-myproject  # Explicit session name
+joint                           # tmux: auto-detect session
+joinc                           # cmux: list workspaces
 
-# Ending
-end-parallel               # End session and optionally remove worktrees
-end-parallel --keep-worktrees  # End session but keep worktrees
-end-parallel claude-myproject  # End specific session
+# Stopping
+stopt                           # tmux: kill session for current project
+stopc                           # cmux: close all agent workspaces for current project
 ```
 
 ### Git Worktrees
@@ -304,16 +351,21 @@ For each worker agent:
 
 ### Session Management
 
-**Session naming**: `claude-<project-name>`
+**tmux session naming**: `<agent>-<project-name>` (e.g. `claude-myproject`)
 
-**Recommended workflow:**
-- End session: `end-parallel` (kills tmux session + optionally removes worktrees)
+**tmux workflow:**
+- Stop session: `stopt` (kills tmux session)
 - Detach temporarily: `Ctrl+b` then `d` (session keeps running)
-
-**Tmux commands:**
 - Switch windows: `Ctrl+b` then `0` or `1`
-- Detach: `Ctrl+b` then `d`
-- Manual kill: `tmux kill-session -t claude-<project-name>` (leaves worktrees behind)
+- Manual kill: `tmux kill-session -t claude-<project-name>`
+
+**cmux workspace naming**: `wt<N>-<project>` (workers), `<project>` (manager)
+
+**cmux workflow:**
+- Stop workspaces: `stopc` (closes all agent workspaces for current project)
+- List workspaces: `cmux list-workspaces`
+- Read screen: `cmux read-screen --workspace <ref>`
+- Send command: `cmux send --workspace <ref> "text"` + `cmux send-key --workspace <ref> enter`
 
 ### Benefits
 
@@ -322,29 +374,26 @@ For each worker agent:
 - **Coordinated**: Shared task list prevents duplicate work
 - **Non-blocking review**: Handle blocked issues without interrupting agents
 - **Automatic deployment**: Coordinator merges and deploys when ready
+- **Flexible**: Choose tmux (headless/remote) or cmux (native macOS GUI)
 
 ### Example Workflow
 
 ```bash
-# Terminal: Start the system
+# Terminal: Start the system with cmux
 cd ~/src/myproject
-start-parallel 3
+startc 3
 
-# [Window 0 shows 3 agents working in parallel]
-# - Main agent: Fixing P0 issue #45
-# - Worker 1: Fixing P1 issue #67
-# - Worker 2: Running regression tests
-
-# [Switch to Window 1 with Ctrl+b then 1]
-# - Review agent prompts: "Issue #89 needs-design. Review?"
-# - You approve Option A
-# - Issue unblocked, agents can work on it
-
-# Detach and let it run
-# Ctrl+b then d
+# [cmux shows 4 workspaces/tabs:]
+# - wt1-myproject: Agent fixing P0 issue #45
+# - wt2-myproject: Agent fixing P1 issue #67
+# - wt3-myproject: Agent running regression tests
+# - myproject: Review coordinator handling blocked issues
 
 # Later: Check on progress
-join-parallel
+joinc
+
+# Done: Tear down all agent workspaces
+stopc
 ```
 
 ## Utility Scripts
@@ -355,8 +404,9 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `start-parallel-agents.sh` | Launch multi-agent tmux session | `start-parallel [num_agents] [--no-worktrees]` (after install) |
-| `join-parallel-agents.sh` | Rejoin existing tmux session | `join-parallel [session_name]` (after install) |
+| `start-parallel-agents.sh` | Launch multi-agent session (tmux/cmux) | `start-parallel-agents.sh [num_agents] [--mux tmux\|cmux] [--agent claude\|gemini]` |
+| `join-parallel-agents.sh` | Rejoin existing session (tmux/cmux) | `join-parallel-agents.sh [--mux tmux\|cmux] [session_name]` |
+| `stop-parallel-agents.sh` | Stop all agent sessions (tmux/cmux) | `stop-parallel-agents.sh [--mux tmux\|cmux]` |
 
 ### Blocked Issue Management
 

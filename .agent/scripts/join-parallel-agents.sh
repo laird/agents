@@ -1,127 +1,151 @@
 #!/bin/bash
-# Join an existing parallel agent workspace configuration
-# Usage: join-parallel-agents.sh
+# Join an existing parallel agent session
+# Supports both tmux and cmux multiplexers
+#
+# Usage: join-parallel-agents.sh [options] [session_name]
+#
+# Options:
+#   --mux tmux|cmux  Terminal multiplexer to use (default: auto-detect)
 
-# Check if parallel workspace config exists
-CONFIG_FILE=".agent/parallel-workspaces.json"
+# Parse arguments
+MUX=""
+SESSION_NAME=""
 
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "❌ No parallel agent configuration found"
-  echo ""
-  echo "   Expected config file: $CONFIG_FILE"
-  echo ""
-  echo "💡 To start a new parallel agent system:"
-  echo "   start-parallel-agents.sh [num_agents]"
-  echo ""
-  exit 1
-fi
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --mux)
+      MUX="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: join-parallel-agents.sh [options] [session_name]"
+      echo ""
+      echo "Options:"
+      echo "  --mux tmux|cmux  Terminal multiplexer (default: auto-detect)"
+      echo ""
+      echo "If no session name is given, auto-detects from current directory."
+      exit 0
+      ;;
+    *)
+      SESSION_NAME="$1"
+      shift
+      ;;
+  esac
+done
 
-# Read configuration
-PROJECT_ROOT=$(pwd)
-SESSION_ID=$(python3 -c "import json,sys; print(json.load(open('$CONFIG_FILE'))['session_id'])" 2>/dev/null || echo "unknown")
-INTEGRATION_BRANCH=$(python3 -c "import json,sys; print(json.load(open('$CONFIG_FILE'))['integration_branch'])" 2>/dev/null || echo "unknown")
-NUM_WORKSPACES=$(python3 -c "import json,sys; print(len(json.load(open('$CONFIG_FILE'))['workspaces']))" 2>/dev/null || echo "0")
-
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📋 Parallel Agent Configuration Found"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "📌 Configuration Details:"
-echo "   Session ID: $SESSION_ID"
-echo "   Integration Branch: $INTEGRATION_BRANCH"
-echo "   Workspaces: $NUM_WORKSPACES"
-echo "   Config File: $CONFIG_FILE"
-echo ""
-
-# List workspaces
-echo "📁 Configured Workspaces:"
-echo ""
-
-python3 << 'EOF'
-import json
-import os
-
-with open('.agent/parallel-workspaces.json', 'r') as f:
-    config = json.load(f)
-
-for ws in config['workspaces']:
-    role_emoji = {
-        'coordinator': '🎯',
-        'worker': '🔧',
-        'review': '📋'
-    }.get(ws['role'], '❓')
-
-    print(f"   {role_emoji} {ws['id'].upper()}")
-    print(f"   • Path: {ws['path']}")
-    print(f"   • Branch: {ws['branch']}")
-    print(f"   • Command: {ws['command']}")
-
-    # Check if path exists
-    if os.path.exists(ws['path']):
-        print(f"   • Status: ✓ Path exists")
-    else:
-        print(f"   • Status: ⚠️  Path not found")
-
-    print()
-EOF
-
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-# Try to launch Antigravity
-echo "🚀 Attempting to launch Antigravity workspaces..."
-echo ""
-
-LAUNCHED=false
-
-# Try different methods to launch Antigravity
-if command -v antigravity &> /dev/null; then
-  echo "   Found 'antigravity' command, attempting to open workspaces..."
-
-  # Read workspaces and try to open them
-  python3 << 'EOF'
-import json
-import subprocess
-
-with open('.agent/parallel-workspaces.json', 'r') as f:
-    config = json.load(f)
-
-for ws in config['workspaces']:
-    try:
-        subprocess.run(['antigravity', 'workspace', 'open', ws['path']],
-                       check=True, capture_output=True, timeout=5)
-        print(f"   ✓ Opened workspace: {ws['id']}")
-    except:
-        pass
-EOF
-
-  LAUNCHED=true
-
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS: try to open Antigravity app
-  if [ -d "/Applications/Antigravity.app" ]; then
-    echo "   Found Antigravity.app, launching..."
-    open -a "Antigravity" "$PROJECT_ROOT" 2>/dev/null && LAUNCHED=true
+# Auto-detect multiplexer if not specified
+if [ -z "$MUX" ]; then
+  if command -v cmux &> /dev/null; then
+    MUX="cmux"
+  elif command -v tmux &> /dev/null; then
+    MUX="tmux"
+  else
+    echo "❌ Error: No terminal multiplexer found" >&2
+    echo "" >&2
+    echo "Install one of the following:" >&2
+    echo "  tmux:  brew install tmux" >&2
+    echo "  cmux:  brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "" >&2
+    exit 1
   fi
 fi
 
-echo ""
+# Validate multiplexer choice
+case "$MUX" in
+  tmux|cmux)
+    if ! command -v "$MUX" &> /dev/null; then
+      echo "❌ Error: $MUX is not installed" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+    exit 1
+    ;;
+esac
 
-if [ "$LAUNCHED" = true ]; then
-  echo "✅ Antigravity launched with workspaces"
-else
-  echo "⚠️  Could not auto-launch Antigravity"
+# ============================================================================
+# TMUX MODE
+# ============================================================================
+if [ "$MUX" = "tmux" ]; then
+
+  # Get session name from argument or auto-detect from current directory
+  if [ -z "$SESSION_NAME" ]; then
+    PROJECT_NAME=$(basename "$(pwd)")
+
+    # Try both claude- and gemini- prefixed sessions
+    if tmux has-session -t "claude-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="claude-${PROJECT_NAME}"
+    elif tmux has-session -t "gemini-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="gemini-${PROJECT_NAME}"
+    else
+      SESSION_NAME="claude-${PROJECT_NAME}"
+    fi
+  fi
+
+  # Check if the session exists
+  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "❌ Session '$SESSION_NAME' not found"
+    echo ""
+
+    # List available agent sessions
+    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini)-" || true)
+
+    if [ -n "$AGENT_SESSIONS" ]; then
+      echo "📋 Available agent sessions (tmux):"
+      echo "$AGENT_SESSIONS" | sed 's/^/   /'
+      echo ""
+      echo "💡 To join a specific session:"
+      echo "   join-parallel-agents.sh --mux tmux <session_name>"
+    else
+      echo "No parallel agent sessions found in tmux."
+      echo ""
+      echo "💡 To start a new session:"
+      echo "   start-parallel-agents.sh --mux tmux [num_agents]"
+    fi
+
+    exit 1
+  fi
+
+  # Attach to the session
+  echo "🔗 Joining session: $SESSION_NAME (tmux)"
+  tmux attach-session -t "$SESSION_NAME"
+
+# ============================================================================
+# CMUX MODE
+# ============================================================================
+elif [ "$MUX" = "cmux" ]; then
+
+  # Verify cmux is running
+  if ! cmux ping &>/dev/null; then
+    echo "❌ Error: cmux is not running" >&2
+    echo "   Please launch cmux.app first" >&2
+    exit 1
+  fi
+
+  echo "📋 cmux Workspaces:"
   echo ""
-  echo "💡 Manual Steps:"
-  echo "   1. Launch Antigravity manually"
-  echo "   2. Open the workspaces listed above"
-  echo "   3. In each workspace, run the specified command"
-fi
 
-echo ""
-echo "🔄 Agent Coordination:"
-echo "   Agents coordinate through GitHub issues and labels:"
-echo "   • 'working' label - Agent currently working on issue"
-echo "   • 'needs-approval', 'needs-design', etc. - Blocking labels"
-echo "   • P0-P3 labels - Priority levels"
-echo ""
+  # List all workspaces
+  cmux list-workspaces
+
+  # If a session name was provided, try to select that workspace
+  if [ -n "$SESSION_NAME" ]; then
+    echo ""
+    echo "🔗 Selecting workspace matching: $SESSION_NAME"
+    # Try using find-window to locate it
+    cmux find-window --select "$SESSION_NAME" 2>/dev/null || \
+      echo "⚠️  No workspace matching '$SESSION_NAME' found"
+  fi
+
+  echo ""
+  echo "🔧 Useful cmux commands:"
+  echo "   List workspaces:  cmux list-workspaces"
+  echo "   Select workspace: cmux select-workspace --workspace <ref>"
+  echo "   List panes:       cmux list-panes --workspace <ref>"
+  echo "   Read screen:      cmux read-screen --workspace <ref>"
+  echo "   Send text:        cmux send --workspace <ref> \"text\""
+  echo "   Send enter:       cmux send-key --workspace <ref> enter"
+  echo ""
+
+fi
