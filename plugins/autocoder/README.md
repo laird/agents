@@ -275,6 +275,31 @@ Detects when a "working" label is stale (agent crashed or disconnected):
 - No agent process found working on it
 - Asks you before removing the label so another worker can pick it up
 
+## Monitor Loop (`/monitor-loop`)
+
+The `/monitor-loop` command runs `/monitor-workers` on a recurring interval. This is the **default startup command for the manager session** in a swarm — it keeps the manager actively overseeing workers without manual intervention.
+
+### Usage
+
+```bash
+# Start with default 15-minute interval
+/monitor-loop
+
+# Custom interval (every 5 minutes)
+/monitor-loop 5
+```
+
+### What It Does
+
+Each iteration:
+1. Checks worker status via cmux/tmux screen reading
+2. Detects stale "working" labels (agent crashed or disconnected)
+3. Dispatches idle workers to unblocked issues
+4. Runs `/review-blocked` automatically when all remaining issues are blocked (needs human input)
+5. Deploys when all work is complete
+
+This means you can start the swarm, run `/monitor-loop` in the manager session, and it handles the ongoing coordination — dispatching work, detecting problems, and escalating to you only when human decisions are needed.
+
 ## Running the Swarm
 
 The autocoder plugin supports running a **swarm** of parallel AI agents — multiple workers fixing issues simultaneously, coordinated by a manager session that reviews blocked issues, monitors progress, and deploys completed work.
@@ -345,11 +370,14 @@ This shows a summary of blocked issues by category and priority. For each one, i
 - **Skip** — leave it blocked for now, move to the next one
 
 ```bash
-# Check on worker status, dispatch idle agents, deploy when ready
+# Start continuous monitoring (recommended — runs every 15 min)
+/monitor-loop
+
+# Or one-shot status check
 /monitor-workers
 ```
 
-This reads each worker's screen via cmux/tmux, reports their status (active, idle, or stalled), detects stale `working` labels from crashed agents, and dispatches idle workers to unblocked issues. When all workers have finished all available work, it can auto-deploy.
+`/monitor-loop` continuously monitors workers, dispatches idle agents, detects stale locks, and auto-triggers `/review-blocked` when all remaining issues need human input. It's the recommended way to run the manager session — you start it and it handles the ongoing coordination, escalating to you only when decisions are needed.
 
 You can also review proposals and approve them for workers to implement:
 
