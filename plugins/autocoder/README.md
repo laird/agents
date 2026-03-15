@@ -278,18 +278,40 @@ The autocoder plugin supports running a **swarm** of parallel AI agents — mult
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Manager Session                    │
-│  /review-blocked  /monitor-workers  deploy commands  │
-│  Reviews blocked issues, dispatches idle workers,    │
-│  monitors progress, deploys when ready               │
-├─────────────────────────────────────────────────────┤
-│  Worker 1 (wt-1)  │  Worker 2 (wt-2)  │  Worker 3  │
-│  /fix-loop         │  /fix-loop         │  /fix-loop │
-│  Own git worktree  │  Own git worktree  │  Own wt    │
-│  Own branch        │  Own branch        │  Own branch│
-└─────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Swarm (startc / startt)"
+        manager["Manager Session<br/>/review-blocked<br/>/monitor-workers"]
+        w1["Worker 1<br/>/fix-loop<br/>worktree 1 · own branch"]
+        w2["Worker 2<br/>/fix-loop<br/>worktree 2 · own branch"]
+        w3["Worker 3<br/>/fix-loop<br/>worktree 3 · own branch"]
+        manager -- "dispatch idle workers" --> w1
+        manager -- "dispatch idle workers" --> w2
+        manager -- "dispatch idle workers" --> w3
+    end
+
+    subgraph "GitHub"
+        issues["Issues<br/>P0 · P1 · P2 · P3"]
+        prs["Pull Requests"]
+        labels["Labels<br/>working · needs-design<br/>proposal · too-complex"]
+    end
+
+    w1 -- "claim → fix → PR" --> issues
+    w2 -- "claim → fix → PR" --> issues
+    w3 -- "claim → fix → PR" --> issues
+    w1 & w2 & w3 -- "open" --> prs
+    w1 & w2 & w3 -- "coordinate via" --> labels
+    manager -- "unblock issues" --> labels
+
+    subgraph "Multiplexer"
+        tmux["tmux (headless / remote)"]
+        cmux["cmux (macOS GUI)"]
+    end
+
+    subgraph "Agent Framework"
+        cc["Claude Code"]
+        gemini["Gemini CLI"]
+    end
 ```
 
 ### Quick Start
