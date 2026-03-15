@@ -12,6 +12,11 @@ Complete installation of autocoder plugin components for autonomous issue resolu
 
 This command installs all autocoder plugin components:
 
+### 0. Dependency Check
+- **Checks for**: tmux, cmux, claude, gemini, gh
+- **Action**: Reports what's installed and suggests install commands for anything missing
+- **Scope**: Read-only (no changes made)
+
 ### 1. Stop Hook (for infinite loops)
 - **File**: `.claude/settings.json` in current project
 - **Purpose**: Enables `/fix-loop` to run continuously
@@ -20,19 +25,21 @@ This command installs all autocoder plugin components:
 
 ### 2. Parallel Agent Scripts (for multi-agent coordination)
 - **Files**: Symlinks in `~/.local/bin/`
-  - `start-parallel` → `~/.claude/plugins/autocoder/scripts/start-parallel-agents.sh`
-  - `join-parallel` → `~/.claude/plugins/autocoder/scripts/join-parallel-agents.sh`
-- **Purpose**: Terminal commands to launch/join parallel agent sessions
+  - `start-parallel` → `start-parallel-agents.sh`
+  - `join-parallel` → `join-parallel-agents.sh`
+  - `end-parallel` → `end-parallel-agents.sh`
+  - `stop-parallel` → `stop-parallel-agents.sh`
+- **Purpose**: Terminal commands to launch, join, end, and stop parallel agent sessions
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
 
 ### 3. Shell Aliases (optional)
 - **File**: `~/.bashrc` or `~/.zshrc`
-- **Aliases**:
-  - `start='start-parallel'`
-  - `join='join-parallel'`
-- **Purpose**: Shorter commands for convenience
-- **Action**: Appends aliases to shell config
+- **Generic aliases**: `start`, `join`, `end` (auto-detect multiplexer)
+- **tmux aliases**: `startt`, `joint`, `stopt`, `endt`
+- **cmux aliases**: `startc`, `joinc`, `stopc`, `endc`
+- **Purpose**: Shorter multiplexer-specific commands
+- **Action**: Appends aliases to shell config (only for installed multiplexers)
 - **Scope**: Global (available in all terminals after restart)
 
 ## Installation Process
@@ -63,9 +70,84 @@ echo "🔧 Autocoder Plugin Installer"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "This installer will set up:"
+echo "  0. Dependency check (tmux/cmux, agent tooling)"
 echo "  1. Stop hook (for infinite /fix-loop)"
 echo "  2. Parallel agent scripts (terminal commands)"
 echo "  3. Shell aliases (optional shortcuts)"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+```
+
+### Part 0: Dependency Check
+
+```bash
+echo "📍 Part 0: Dependency Check"
+echo ""
+echo "Checking for required and optional dependencies..."
+echo ""
+
+# Check for terminal multiplexers
+HAS_TMUX=false
+HAS_CMUX=false
+if command -v tmux &> /dev/null; then
+  TMUX_VERSION=$(tmux -V 2>/dev/null || echo "unknown")
+  echo "✅ tmux installed ($TMUX_VERSION)"
+  HAS_TMUX=true
+else
+  echo "❌ tmux not installed"
+  echo "   Install: brew install tmux"
+  echo "   (Required for headless parallel agents on Linux/macOS)"
+fi
+
+if command -v cmux &> /dev/null; then
+  echo "✅ cmux installed"
+  HAS_CMUX=true
+else
+  echo "⚠️  cmux not installed (optional, macOS only)"
+  echo "   Install: brew tap manaflow-ai/cmux && brew install --cask cmux"
+  echo "   (Native macOS GUI for parallel agents)"
+fi
+
+if [ "$HAS_TMUX" = false ] && [ "$HAS_CMUX" = false ]; then
+  echo ""
+  echo "⚠️  No terminal multiplexer found!"
+  echo "   You need at least one of tmux or cmux to run parallel agents."
+  echo "   Single-agent mode (/fix, /fix-loop) works without a multiplexer."
+fi
+
+echo ""
+
+# Check for agent frameworks
+HAS_CLAUDE=false
+HAS_GEMINI=false
+if command -v claude &> /dev/null; then
+  echo "✅ Claude Code installed"
+  HAS_CLAUDE=true
+else
+  echo "❌ Claude Code not installed"
+  echo "   Install: npm install -g @anthropic-ai/claude-code"
+fi
+
+if command -v gemini &> /dev/null; then
+  echo "✅ Gemini CLI installed"
+  HAS_GEMINI=true
+else
+  echo "⚠️  Gemini CLI not installed (optional)"
+  echo "   Install: npm install -g @anthropic-ai/gemini-cli"
+fi
+
+echo ""
+
+# Check for GitHub CLI
+if command -v gh &> /dev/null; then
+  echo "✅ GitHub CLI (gh) installed"
+else
+  echo "❌ GitHub CLI (gh) not installed"
+  echo "   Install: brew install gh"
+  echo "   (Required for all autocoder commands)"
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -257,12 +339,14 @@ else
   echo "  start-parallel -> $SCRIPT_DIR/start-parallel-agents.sh"
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
   echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
+  echo "  stop-parallel  -> $SCRIPT_DIR/stop-parallel-agents.sh"
   echo ""
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
   echo "  start-parallel 3    # Launch 3 parallel agents"
   echo "  join-parallel       # Rejoin session"
-  echo "  end-parallel        # End session and optionally clean up worktrees"
+  echo "  end-parallel        # End session and clean up worktrees"
+  echo "  stop-parallel       # Stop sessions (no cleanup)"
   echo ""
   INSTALL_SCRIPTS=true
 fi
@@ -320,11 +404,13 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   ln -sf "$SCRIPT_DIR/start-parallel-agents.sh" "$INSTALL_DIR/start-parallel"
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
   ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
+  ln -sf "$SCRIPT_DIR/stop-parallel-agents.sh" "$INSTALL_DIR/stop-parallel"
 
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
   echo "   $INSTALL_DIR/join-parallel"
   echo "   $INSTALL_DIR/end-parallel"
+  echo "   $INSTALL_DIR/stop-parallel"
 
   # Add to PATH if needed
   if [ "$PATH_OK" = false ]; then
@@ -346,24 +432,52 @@ echo ""
 ```bash
 echo "📍 Part 3: Shell Aliases (Optional)"
 echo ""
-echo "Purpose: Shorter commands for convenience."
+echo "Purpose: Shorter commands for convenience, with multiplexer-specific variants."
 echo ""
 echo "Location: $SHELL_RC"
 echo ""
 echo "📝 Will add these aliases:"
 echo ""
+echo "  # Generic (auto-detect multiplexer)"
 echo "  alias start='start-parallel'"
 echo "  alias join='join-parallel'"
 echo "  alias end='end-parallel'"
 echo ""
-echo "⚠️  Warning: Only install if you don't have conflicting 'start',"
-echo "            'join', or 'end' aliases in your shell."
+```
+
+Check which multiplexers are available and offer mux-specific aliases:
+
+```bash
+if [ "$HAS_TMUX" = true ]; then
+  echo "  # tmux-specific"
+  echo "  alias startt='start-parallel --mux tmux'"
+  echo "  alias joint='join-parallel --mux tmux'"
+  echo "  alias stopt='stop-parallel --mux tmux'"
+  echo "  alias endt='end-parallel'"
+fi
+
+if [ "$HAS_CMUX" = true ]; then
+  echo "  # cmux-specific"
+  echo "  alias startc='start-parallel --mux cmux'"
+  echo "  alias joinc='join-parallel --mux cmux'"
+  echo "  alias stopc='stop-parallel --mux cmux'"
+  echo "  alias endc='end-parallel'"
+fi
+
+echo ""
+echo "⚠️  Warning: Only install if you don't have conflicting aliases."
 echo ""
 echo "Usage after install:"
 echo "  cd ~/src/myproject"
-echo "  start 3    # Instead of: start-parallel 3"
-echo "  join       # Instead of: join-parallel"
-echo "  end        # Instead of: end-parallel"
+if [ "$HAS_CMUX" = true ]; then
+  echo "  startc 3   # Launch 3 agents in cmux"
+  echo "  joinc      # Rejoin cmux session"
+  echo "  endc       # End cmux session + cleanup"
+elif [ "$HAS_TMUX" = true ]; then
+  echo "  startt 3   # Launch 3 agents in tmux"
+  echo "  joint      # Rejoin tmux session"
+  echo "  endt       # End tmux session + cleanup"
+fi
 echo ""
 ```
 
@@ -373,42 +487,50 @@ Use AskUserQuestion:
 Question: "Create shell aliases?"
 Header: "Aliases"
 Options:
-  - "Yes, create aliases" - "Shorter commands: 'start', 'join', and 'end'"
-  - "No, use full names" - "Keep using 'start-parallel', 'join-parallel', and 'end-parallel'"
+  - "Yes, create aliases" - "Multiplexer-specific shortcuts: startt/startc, joint/joinc, stopt/stopc, endt/endc"
+  - "No, use full names" - "Keep using 'start-parallel', 'join-parallel', 'end-parallel', and 'stop-parallel'"
 ```
 
 If approved:
 
 ```bash
 if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
-  # Check for conflicts
+  # Check for conflicts with generic aliases
   CONFLICTS=false
   if alias start 2>/dev/null | grep -qv "start-parallel"; then
-    echo "⚠️  Warning: 'start' alias already exists:"
-    alias start
-    CONFLICTS=true
-  fi
-  if alias join 2>/dev/null | grep -qv "join-parallel"; then
-    echo "⚠️  Warning: 'join' alias already exists:"
-    alias join
-    CONFLICTS=true
-  fi
-  if alias end 2>/dev/null | grep -qv "end-parallel"; then
-    echo "⚠️  Warning: 'end' alias already exists:"
-    alias end
+    echo "⚠️  Warning: 'start' alias already exists — skipping generic aliases"
     CONFLICTS=true
   fi
 
-  if [ "$CONFLICTS" = true ]; then
-    echo ""
-    echo "⚠️  Existing aliases detected. Skipping to avoid conflicts."
-  else
+  if [ "$CONFLICTS" = false ]; then
+    # Generic aliases
+    echo "" >> "$SHELL_RC"
+    echo "# Autocoder parallel agent aliases" >> "$SHELL_RC"
     echo "alias start='start-parallel'" >> "$SHELL_RC"
     echo "alias join='join-parallel'" >> "$SHELL_RC"
     echo "alias end='end-parallel'" >> "$SHELL_RC"
-    echo "✅ Aliases added to $SHELL_RC"
-    echo "   ⚡ Restart your shell or run: source $SHELL_RC"
+    echo "✅ Generic aliases added (start, join, end)"
   fi
+
+  # tmux-specific aliases (always safe — unique names)
+  if [ "$HAS_TMUX" = true ]; then
+    echo "alias startt='start-parallel --mux tmux'" >> "$SHELL_RC"
+    echo "alias joint='join-parallel --mux tmux'" >> "$SHELL_RC"
+    echo "alias stopt='stop-parallel --mux tmux'" >> "$SHELL_RC"
+    echo "alias endt='end-parallel'" >> "$SHELL_RC"
+    echo "✅ tmux aliases added (startt, joint, stopt, endt)"
+  fi
+
+  # cmux-specific aliases (always safe — unique names)
+  if [ "$HAS_CMUX" = true ]; then
+    echo "alias startc='start-parallel --mux cmux'" >> "$SHELL_RC"
+    echo "alias joinc='join-parallel --mux cmux'" >> "$SHELL_RC"
+    echo "alias stopc='stop-parallel --mux cmux'" >> "$SHELL_RC"
+    echo "alias endc='end-parallel'" >> "$SHELL_RC"
+    echo "✅ cmux aliases added (startc, joinc, stopc, endc)"
+  fi
+
+  echo "   ⚡ Restart your shell or run: source $SHELL_RC"
 else
   echo "⏭️  Skipped alias creation"
 fi
@@ -437,14 +559,20 @@ if [ "$INSTALL_SCRIPTS" = true ] && [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "  ✅ Parallel agent scripts in ~/.local/bin/"
   echo "     → start-parallel: Launch multi-agent system"
   echo "     → join-parallel: Rejoin existing session"
+  echo "     → end-parallel: End session and clean up worktrees"
+  echo "     → stop-parallel: Stop sessions (no cleanup)"
 else
   echo "  ⏭️  Parallel agent scripts (skipped)"
 fi
 
-if [ "$USER_APPROVED_ALIASES" = "yes" ] && [ "$CONFLICTS" = false ]; then
+if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
   echo "  ✅ Shell aliases in $SHELL_RC"
-  echo "     → start: Shortcut for start-parallel"
-  echo "     → join: Shortcut for join-parallel"
+  if [ "$HAS_TMUX" = true ]; then
+    echo "     → tmux: startt, joint, stopt, endt"
+  fi
+  if [ "$HAS_CMUX" = true ]; then
+    echo "     → cmux: startc, joinc, stopc, endc"
+  fi
 else
   echo "  ⏭️  Shell aliases (skipped)"
 fi
@@ -460,12 +588,20 @@ echo ""
 if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "2. From terminal (after restarting shell):"
   echo "   cd ~/src/myproject"
-  if [ "$USER_APPROVED_ALIASES" = "yes" ] && [ "$CONFLICTS" = false ]; then
-    echo "   start 3       # Launch 3 parallel agents"
-    echo "   join          # Rejoin session"
+  if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
+    if [ "$HAS_CMUX" = true ]; then
+      echo "   startc 3     # Launch 3 agents in cmux"
+      echo "   joinc        # Rejoin cmux session"
+      echo "   endc         # End session + cleanup"
+    elif [ "$HAS_TMUX" = true ]; then
+      echo "   startt 3     # Launch 3 agents in tmux"
+      echo "   joint        # Rejoin tmux session"
+      echo "   endt         # End session + cleanup"
+    fi
   else
     echo "   start-parallel 3    # Launch 3 parallel agents"
     echo "   join-parallel       # Rejoin session"
+    echo "   end-parallel        # End session + cleanup"
   fi
   echo ""
 fi

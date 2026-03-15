@@ -68,7 +68,7 @@ Each platform has its own directory structure and installation method. See the p
 After installation, commands will be available as slash commands in Claude Code:
 
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
-- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
+- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
 
 **Get help anytime:**
 ```bash
@@ -167,6 +167,7 @@ After installation, these workflows are available:
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/review-blocked` | Review and unblock issues labeled by fix-loop |
+| `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
 | `/install` | Install all autocoder plugin components |
 | `/autocoder-help` | Show autocoder workflow help |
 
@@ -179,263 +180,30 @@ After installation, these workflows are available:
 
 ### Plugin 1: Modernize
 
-Complete modernization workflow with multi-agent orchestration.
+Complete modernization workflow with multi-agent orchestration. See the [Modernize README](plugins/modernize/README.md) for full documentation.
 
 **Get help:** `/modernize-help`
 
-#### 6 Protocol-Based Commands
+**Commands:** `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`
 
-Each command is a comprehensive protocol document (`.md` file) containing agent coordination, workflows, quality gates, and best practices:
-
-- **`/assess`** - Assessment protocol with viability evaluation (outputs `ASSESSMENT.md`)
-  - 8 assessment dimensions, scoring methodology, recommendation matrix
-  - Do this first to assess software for potential modernization
-
-- **`/plan`** - Planning protocol with detailed execution strategy (outputs `PLAN.md`)
-  - Phase breakdown, timeline estimation, risk management, resource allocation
-  - Do this to propose a modernization plan
-
-- **`/modernize`** - Full modernization protocol with 7-phase workflow
-  - Coordinates 6 specialist agents through Discovery → Security → Architecture → Framework → API → Performance → Documentation
-  - Do this to execute the plan. If there is no plan it will generate a plan and then execute it.
-
-- **`/retro`** - Retrospective protocol analyzing project history (outputs `IMPROVEMENTS.md`)
-  - Reviews git history, user corrections, agent mistakes, protocol inefficiencies
-  - Do this after execution to assess how the project went and make improvement recommendations for future projects. This is optional.
-
-- **`/retro-apply`** - Improvement application protocol
-  - Systematically updates commands, protocols, and automation based on retrospective findings
-  - Do this after `/retro` if you agree with the recommendations.
-
-#### Quick Start
-
-1. **Assess Viability**
-
-   ```
-   /assess
-   ```
-
-   Evaluates technical debt, risks, and ROI. Outputs `ASSESSMENT.md`.
-
-2. **Create Plan**
-
-   ```
-   /plan
-   ```
-
-   Develops detailed execution strategy with phases, timeline, and resources. Outputs `PLAN.md`.
-
-3. **Execute Modernization**
-
-   ```
-   /modernize
-   ```
-
-   Orchestrates specialized agents through 7 phases:
-   - Discovery & Planning
-   - Security Assessment
-   - Architecture Decisions
-   - Framework Upgrade
-   - API Modernization
-   - Performance Optimization
-   - Documentation
-
-4. **Continuous Improvement (Optional)**
-
-   ```
-   /retro
-   ```
-
-   After project completion, analyzes history to identify process improvements. Reviews:
-   - User interruptions and corrections
-   - Agent behavioral issues (wrong tools, wasted effort)
-   - Protocol inefficiencies
-   - Automation opportunities
-
-   Outputs `IMPROVEMENTS.md` with 3-5 evidence-based recommendations.
-
-5. **Apply Improvements**
-
-   ```
-   /retro-apply
-   ```
-
-   Systematically applies approved recommendations from `IMPROVEMENTS.md`:
-   - Updates command files with better agent behavior guidance
-   - Modifies protocols to prevent recurring issues
-   - Adds automation (scripts, hooks, CI/CD)
-   - Embeds lessons learned into workflow
-
-#### Specialist Agents
-
-The modernize plugin includes 6 specialized agents invoked by Claude Code's Task tool:
-
-- **Architect** makes technology decisions and creates ADRs
-- **Security** scans for vulnerabilities and blocks on CRITICAL/HIGH issues
-- **Coder** implements migrations and fixes
-- **Tester** validates with comprehensive test suites (100% pass rate required)
-- **Documentation** generates user-facing guides and changelogs
-- **Migration Coordinator** orchestrates multi-stage workflows
+**Quick Start:** `/assess` → `/plan` → `/modernize` → `/retro` → `/retro-apply`
 
 ---
 
 ### Plugin 2: Autocoder
 
-Autonomous GitHub issue resolution with intelligent testing, quality automation, and human-in-the-loop proposal system.
+Autonomous GitHub issue resolution with intelligent testing, quality automation, multi-agent swarm support, and human-in-the-loop proposal system. See the [Autocoder README](plugins/autocoder/README.md) for full documentation.
 
 **Get help:** `/autocoder-help`
 
-#### Commands by Category
+**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
 
-**Issue Resolution:**
-
-| Command | Description |
-|---------|-------------|
-| `/fix [number]` | Fix a specific issue or highest priority issue |
-| `/fix-loop` | Run continuous autonomous resolution |
-| `/stop-loop` | Stop the continuous loop |
-
-**Design & Brainstorming:**
-
-| Command | Description |
-|---------|-------------|
-| `/brainstorm-issue [number]` | Brainstorm design for an issue using available skills |
-| `/list-needs-design` | List issues requiring design/architecture work |
-| `/list-needs-feedback` | List issues requiring human feedback |
-
-**Proposal Management:**
-
-| Command | Description |
-|---------|-------------|
-| `/list-proposals` | View pending AI-generated proposals |
-| `/approve-proposal <number>` | Approve a proposal for implementation |
-| `/review-blocked` | Review and unblock issues labeled by fix-loop (needs-design, too-complex, proposal, etc.) |
-
-**Testing & Quality:**
-
-| Command | Description |
-|---------|-------------|
-| `/full-regression-test` | Run comprehensive test suite |
-| `/improve-test-coverage` | Analyze and improve test coverage |
-
-**Setup:**
-
-| Command | Description |
-|---------|-------------|
-| `/install` | Install all autocoder plugin components (stop hook, scripts) |
-| `/autocoder-help` | Show help and workflow overview |
-
-#### Workflow Patterns
-
-**Pattern 1: One-Shot Issue Resolution**
+**Quick Start:**
 ```bash
-/fix 123      # Fix specific issue
-/fix          # Fix highest priority issue
+/fix              # Fix highest priority issue
+/install          # One-time setup for continuous mode
+/fix-loop         # Run continuously
 ```
-
-**Pattern 2: Continuous Autonomous Mode**
-```bash
-/install         # First time only (installs stop hook and scripts)
-/fix-loop        # Run continuously until /stop-loop
-```
-
-**Pattern 3: Design-First Workflow**
-```bash
-/list-needs-design           # Find issues needing design
-/brainstorm-issue 45         # Explore design options
-# Review results on GitHub
-/fix 45               # Implement after design approval
-```
-
-**Pattern 4: Proposal Review**
-```bash
-/list-proposals              # See AI-generated proposals
-/approve-proposal 67         # Approve for implementation
-/fix                  # Implements approved proposals
-```
-
-**Pattern 5: Parallel Review Session**
-```bash
-# Terminal 1: Run fix loop
-/fix-loop
-
-# Terminal 2: Review and unblock issues
-/review-blocked              # Review all blocked issues (needs-design, too-complex, etc.)
-/review-blocked --label proposal  # Review only proposals
-```
-
-#### Priority & Label System
-
-**Priority Labels (P0-P3):**
-- **P0**: Critical - system down, security, data loss
-- **P1**: High - major feature broken, no workaround
-- **P2**: Medium - partial breakage, workaround exists
-- **P3**: Low - minor, cosmetic, nice-to-have
-
-**Workflow Labels:**
-- `proposal` - AI-generated, awaiting human approval
-- `needs-design` - Requires architecture/design work
-- `needs-feedback` - Requires human clarification
-- `too-complex` - Issue exceeds autonomous resolution scope
-- `future` - Deferred for later consideration
-- `enhancement` - Feature improvement
-- `test-failure` - Created from test failure
-- `sre` - Filed by SRE monitoring workflow
-
-#### Human-in-the-Loop Proposal System
-
-AI-generated enhancements are tagged with `proposal` label and require human approval:
-
-1. **Review**: `/list-proposals` shows all pending proposals
-2. **Approve**: `/approve-proposal <number>` enables implementation
-3. **Feedback**: Comment on GitHub issue, then `/brainstorm-issue <number>`
-4. **Reject**: Close the issue with explanation
-
-Proposals are **never auto-implemented** - you control what gets built.
-
-#### SRE Monitoring (Idle Fallback)
-
-When fix-loop has no bugs to fix, enhancements to implement, or proposals to create, autocoder switches to **SRE monitoring mode**:
-
-1. **Production log scanning** - Checks Cloud Logging for errors/warnings in the last 30 minutes
-2. **Engagement health checks** - Detects stalled, stuck, or errored engagements
-3. **Worker factory heartbeats** - Identifies dead workers before they cause outages
-4. **Automated issue filing** - Files new GitHub issues for new error patterns; comments on existing issues
-5. **Periodic rechecks** - Waits 15-30 minutes, then restarts the loop
-
-This turns idle time into continuous production monitoring — fixing issues before they escalate.
-
-#### Quick Start
-
-```bash
-# Get help
-/autocoder-help
-
-# Start fixing issues
-/fix
-
-# Or run continuously
-/install     # one-time setup
-/fix-loop
-```
-
-**First Run:** Auto-creates configuration in your `CLAUDE.md`:
-
-```markdown
-## Automated Testing & Issue Management
-
-### Regression Test Suite
-```bash
-npm test
-```
-
-### Build Verification
-```bash
-npm run build
-```
-```
-
-Customize these commands for your project's test framework.
 
 ---
 ## Repository Structure
@@ -491,6 +259,7 @@ agents/
 │       │   ├── full-regression-test.md # Run comprehensive test suite
 │       │   ├── improve-test-coverage.md # Analyze and improve coverage
 │       │   ├── review-blocked.md       # Review and unblock labeled issues
+│       │   ├── monitor-workers.md     # Monitor workers, dispatch idle agents, deploy
 │       │   └── install.md              # Install all plugin components
 │       ├── agents/
 │       │   ├── architect.md            # Technology decisions and ADRs
