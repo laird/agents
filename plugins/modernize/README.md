@@ -2,6 +2,8 @@
 
 Complete modernization workflow with multi-agent orchestration. Assess viability, plan the migration, execute with 6 specialist agents, and continuously improve through retrospective analysis.
 
+![Modernize Architecture](../../modernize-architecture.png)
+
 ## Compatibility Notice
 
 **This plugin is primarily developed for personal use.** While it should work on Linux, macOS, and WSL, there are no guarantees. Use at your own risk.
