@@ -22,6 +22,16 @@ Schedules `/autocoder:monitor-workers` to run on a recurring interval using the 
 4. Runs `/autocoder:review-blocked` when all issues are blocked
 5. Deploys when all work is complete
 
+## How It Works
+
+**Mode 1: `/loop` command (preferred, when CronCreate tool is available)**
+
+Uses the native CronCreate mechanism to schedule recurring `/autocoder:monitor-workers` calls. No stop hook or settings.json modification needed.
+
+**Mode 2: Manual loop (fallback for older Claude Code versions)**
+
+Runs `/autocoder:monitor-workers` in a bash sleep loop, polling at the configured interval.
+
 ## Instructions
 
 ```bash
@@ -38,6 +48,16 @@ echo "  • Dispatch idle workers to unblocked issues"
 echo "  • Run /review-blocked when all issues need human review"
 echo "  • Deploy to ey-staging when all work completes"
 echo ""
+```
+
+### Detect /loop availability and choose mode
+
+**Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).
+
+**If CronCreate IS available → Use `/loop` mode (preferred):**
+
+```bash
+echo "✅ Using /loop command (CronCreate available)"
 echo "To stop: use CronDelete to remove the scheduled job"
 echo ""
 ```
@@ -58,3 +78,30 @@ With args: ${INTERVAL_MINUTES}m /autocoder:monitor-workers
 ```
 
 This schedules `/autocoder:monitor-workers` to run every `INTERVAL_MINUTES` minutes using CronCreate.
+
+---
+
+**If CronCreate is NOT available → Use manual loop (fallback):**
+
+```bash
+echo "⚠️  /loop command not available — using manual sleep loop"
+echo "To stop: Ctrl+C"
+echo ""
+```
+
+Run the first iteration immediately, then loop with sleep:
+
+```
+Use the Skill tool to invoke: monitor-workers
+```
+
+After each iteration, sleep and repeat:
+
+```bash
+INTERVAL_SECONDS=$((INTERVAL_MINUTES * 60))
+echo ""
+echo "💤 Next check in ${INTERVAL_MINUTES} minutes..."
+sleep "$INTERVAL_SECONDS"
+```
+
+Then invoke monitor-workers again via the Skill tool. Repeat until manually stopped (Ctrl+C) or all work is complete and deployed.

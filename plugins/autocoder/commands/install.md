@@ -13,14 +13,14 @@ Complete installation of autocoder plugin components for autonomous issue resolu
 This command installs all autocoder plugin components:
 
 ### 0. Dependency Check
-- **Checks for**: tmux, cmux, claude, gemini, gh
+- **Checks for**: tmux, cmux, claude, gemini, codex, gh
 - **Action**: Reports what's installed and suggests install commands for anything missing
 - **Scope**: Read-only (no changes made)
 
-### 1. Stop Hook (for infinite loops)
-- **File**: `.claude/settings.json` in current project
+### 1. Loop Mechanism (for infinite loops)
+- **Preferred**: Claude Code `/loop` command (CronCreate) — no installation needed
+- **Fallback**: Stop hook in `.claude/settings.json` for older Claude Code versions
 - **Purpose**: Enables `/fix-loop` to run continuously
-- **Action**: Adds stop hook configuration to settings
 - **Scope**: Current project only
 
 ### 2. Parallel Agent Scripts (for multi-agent coordination)
@@ -34,10 +34,12 @@ This command installs all autocoder plugin components:
 - **Scope**: Global (available in all terminals)
 
 ### 3. Shell Aliases (optional)
-- **File**: `~/.bashrc` or `~/.zshrc`
+- **File**: Shell rc file for the current shell, typically `~/.bashrc` or `~/.zshrc`
 - **Generic aliases**: `start`, `join`, `end` (auto-detect multiplexer)
 - **tmux aliases**: `startt`, `joint`, `stopt`, `endt`
 - **cmux aliases**: `startc`, `joinc`, `stopc`, `endc`
+- **Codex tmux aliases**: `startct`, `joinct`
+- **Codex cmux aliases**: `startcc`, `joincc`
 - **Purpose**: Shorter multiplexer-specific commands
 - **Action**: Appends aliases to shell config (only for installed multiplexers)
 - **Scope**: Global (available in all terminals after restart)
@@ -70,8 +72,8 @@ echo "🔧 Autocoder Plugin Installer"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "This installer will set up:"
-echo "  0. Dependency check (tmux/cmux, agent tooling)"
-echo "  1. Stop hook (for infinite /fix-loop)"
+echo "  0. Dependency check (tmux/cmux, claude/gemini/codex, gh)"
+echo "  1. Loop mechanism (for infinite /fix-loop)"
 echo "  2. Parallel agent scripts (terminal commands)"
 echo "  3. Shell aliases (optional shortcuts)"
 echo ""
@@ -121,6 +123,7 @@ echo ""
 # Check for agent frameworks
 HAS_CLAUDE=false
 HAS_GEMINI=false
+HAS_CODEX=false
 if command -v claude &> /dev/null; then
   echo "✅ Claude Code installed"
   HAS_CLAUDE=true
@@ -135,6 +138,14 @@ if command -v gemini &> /dev/null; then
 else
   echo "⚠️  Gemini CLI not installed (optional)"
   echo "   Install: npm install -g @anthropic-ai/gemini-cli"
+fi
+
+if command -v codex &> /dev/null; then
+  echo "✅ Codex CLI installed"
+  HAS_CODEX=true
+else
+  echo "⚠️  Codex CLI not installed (optional)"
+  echo "   Install the Codex CLI to enable Codex worker swarms"
 fi
 
 echo ""
@@ -153,14 +164,81 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 ```
 
-### Part 1: Stop Hook Installation
+### Part 1: Loop Mechanism
+
+**Check whether Claude Code supports the `/loop` command** by looking for the `CronCreate` tool in the available deferred tools list.
+
+**If CronCreate IS available (modern Claude Code):**
 
 ```bash
-echo "📍 Part 1: Stop Hook Installation"
+echo "📍 Part 1: Loop Mechanism"
 echo ""
-echo "Purpose: Enables /fix-loop to run continuously by intercepting"
-echo "         session exits and feeding /fix back as input."
+echo "✅ Claude Code /loop command detected (CronCreate available)"
+echo "   /fix-loop will use the native /loop command — no stop hook needed."
 echo ""
+INSTALL_STOP_HOOK=false
+```
+
+If a legacy stop hook exists, offer to clean it up:
+
+```bash
+if [ -f ".claude/settings.json" ] && grep -q "stop-hook" .claude/settings.json 2>/dev/null; then
+  echo "⚠️  Legacy stop hook found in .claude/settings.json"
+  echo "   This is no longer needed since /loop replaces it."
+  echo ""
+fi
+```
+
+Use AskUserQuestion:
+
+```
+Question: "Remove legacy stop hook from .claude/settings.json? (No longer needed with /loop command)"
+Header: "Cleanup"
+Options:
+  - "Yes, remove it" - "Clean up the legacy stop hook since /loop replaces it"
+  - "No, leave it" - "Keep the stop hook (harmless but unnecessary)"
+```
+
+If approved:
+
+```bash
+if [ "$USER_APPROVED_CLEANUP" = "yes" ]; then
+  python3 << 'PYTHON_SCRIPT'
+import json
+with open(".claude/settings.json", 'r') as f:
+    settings = json.load(f)
+if "hooks" in settings and "Stop" in settings["hooks"]:
+    settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h)]
+    if not settings["hooks"]["Stop"]:
+        del settings["hooks"]["Stop"]
+    if not settings["hooks"]:
+        del settings["hooks"]
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
+print("✅ Legacy stop hook removed")
+PYTHON_SCRIPT
+else
+  echo "⏭️  Kept legacy stop hook"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+```
+
+Skip the cleanup question entirely if no legacy stop hook was found.
+
+---
+
+**If CronCreate is NOT available (older Claude Code) → Install stop hook as fallback:**
+
+```bash
+echo "📍 Part 1: Stop Hook Installation (fallback)"
+echo ""
+echo "⚠️  Claude Code /loop command not available in this version."
+echo "   Installing stop hook for /fix-loop to run continuously."
+echo ""
+echo "Purpose: Intercepts session exits and feeds /fix back as input."
 echo "Location: .claude/settings.json (current project only)"
 echo ""
 
@@ -229,7 +307,7 @@ echo ""
 Use AskUserQuestion to ask about stop hook:
 
 ```
-Question: "Install stop hook in this project?"
+Question: "Install stop hook in this project? (needed for /fix-loop on older Claude Code)"
 Header: "Stop Hook"
 Options:
   - "Yes, install stop hook" - "Required for /fix-loop to run continuously"
@@ -464,6 +542,18 @@ if [ "$HAS_CMUX" = true ]; then
   echo "  alias endc='end-parallel'"
 fi
 
+if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
+  echo "  # Codex + tmux"
+  echo "  alias startct='start-parallel --mux tmux --agent codex'"
+  echo "  alias joinct='join-parallel --mux tmux'"
+fi
+
+if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
+  echo "  # Codex + cmux"
+  echo "  alias startcc='start-parallel --mux cmux --agent codex'"
+  echo "  alias joincc='join-parallel --mux cmux'"
+fi
+
 echo ""
 echo "⚠️  Warning: Only install if you don't have conflicting aliases."
 echo ""
@@ -473,10 +563,19 @@ if [ "$HAS_CMUX" = true ]; then
   echo "  startc 3   # Launch 3 agents in cmux"
   echo "  joinc      # Rejoin cmux session"
   echo "  endc       # End cmux session + cleanup"
-elif [ "$HAS_TMUX" = true ]; then
+fi
+if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
+  echo "  startcc 3  # Launch 1 manager + 3 Codex workers in cmux"
+  echo "  joincc     # Rejoin/list Codex cmux workspaces"
+fi
+if [ "$HAS_TMUX" = true ]; then
   echo "  startt 3   # Launch 3 agents in tmux"
   echo "  joint      # Rejoin tmux session"
   echo "  endt       # End tmux session + cleanup"
+fi
+if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
+  echo "  startct 3  # Launch 1 manager + 3 Codex workers in tmux"
+  echo "  joinct     # Rejoin Codex tmux session"
 fi
 echo ""
 ```
@@ -487,7 +586,7 @@ Use AskUserQuestion:
 Question: "Create shell aliases?"
 Header: "Aliases"
 Options:
-  - "Yes, create aliases" - "Multiplexer-specific shortcuts: startt/startc, joint/joinc, stopt/stopc, endt/endc"
+  - "Yes, create aliases" - "Multiplexer-specific shortcuts including Codex aliases when Codex is installed"
   - "No, use full names" - "Keep using 'start-parallel', 'join-parallel', 'end-parallel', and 'stop-parallel'"
 ```
 
@@ -530,6 +629,18 @@ if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
     echo "✅ cmux aliases added (startc, joinc, stopc, endc)"
   fi
 
+  if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
+    echo "alias startct='start-parallel --mux tmux --agent codex'" >> "$SHELL_RC"
+    echo "alias joinct='join-parallel --mux tmux'" >> "$SHELL_RC"
+    echo "✅ Codex tmux aliases added (startct, joinct)"
+  fi
+
+  if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
+    echo "alias startcc='start-parallel --mux cmux --agent codex'" >> "$SHELL_RC"
+    echo "alias joincc='join-parallel --mux cmux'" >> "$SHELL_RC"
+    echo "✅ Codex cmux aliases added (startcc, joincc)"
+  fi
+
   echo "   ⚡ Restart your shell or run: source $SHELL_RC"
 else
   echo "⏭️  Skipped alias creation"
@@ -548,11 +659,14 @@ echo ""
 echo "📊 What was installed:"
 echo ""
 
-if [ "$INSTALL_STOP_HOOK" = true ] && [ "$USER_APPROVED_STOP_HOOK" = "yes" ]; then
-  echo "  ✅ Stop hook in .claude/settings.json"
+if [ "$INSTALL_STOP_HOOK" = false ] && grep -q "CronCreate" <<< "${AVAILABLE_TOOLS:-}"; then
+  echo "  ✅ /loop command available (no stop hook needed)"
+  echo "     → /fix-loop uses native CronCreate mechanism"
+elif [ "$INSTALL_STOP_HOOK" = true ] && [ "$USER_APPROVED_STOP_HOOK" = "yes" ]; then
+  echo "  ✅ Stop hook in .claude/settings.json (fallback)"
   echo "     → Enables /fix-loop to run continuously"
 else
-  echo "  ⏭️  Stop hook (skipped)"
+  echo "  ⏭️  Loop mechanism (skipped)"
 fi
 
 if [ "$INSTALL_SCRIPTS" = true ] && [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
@@ -572,6 +686,12 @@ if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
   fi
   if [ "$HAS_CMUX" = true ]; then
     echo "     → cmux: startc, joinc, stopc, endc"
+  fi
+  if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
+    echo "     → Codex tmux: startct, joinct"
+  fi
+  if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
+    echo "     → Codex cmux: startcc, joincc"
   fi
 else
   echo "  ⏭️  Shell aliases (skipped)"
@@ -593,10 +713,19 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
       echo "   startc 3     # Launch 3 agents in cmux"
       echo "   joinc        # Rejoin cmux session"
       echo "   endc         # End session + cleanup"
-    elif [ "$HAS_TMUX" = true ]; then
+    fi
+    if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
+      echo "   startcc 3    # Launch 1 manager + 3 Codex workers in cmux"
+      echo "   joincc       # Rejoin/list Codex cmux workspaces"
+    fi
+    if [ "$HAS_TMUX" = true ]; then
       echo "   startt 3     # Launch 3 agents in tmux"
       echo "   joint        # Rejoin tmux session"
       echo "   endt         # End session + cleanup"
+    fi
+    if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
+      echo "   startct 3    # Launch 1 manager + 3 Codex workers in tmux"
+      echo "   joinct       # Rejoin Codex tmux session"
     fi
   else
     echo "   start-parallel 3    # Launch 3 parallel agents"
