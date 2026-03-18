@@ -420,14 +420,62 @@ else
     }
   ' | jq -s 'sort_by(.priority) | .[0]' > /tmp/top-issue.json
 
-  # Display the top issue
-  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body')
-  ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '.priority')
+  # Build ranked list of all candidate issues (for retry on race conflict)
+  cat /tmp/top-issue.json > /tmp/top-issue-single.json
+  cat /tmp/all-issues.json | jq -r '
+    [.[] |
+    select(
+      (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
+      and (.labels | map(.name) | any(. == "working") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
+    ) |
+    {
+      number: .number,
+      title: .title,
+      body: (.body // ""),
+      priority: (
+        if (.labels | map(.name) | any(. == "P0")) then 0
+        elif (.labels | map(.name) | any(. == "P1")) then 1
+        elif (.labels | map(.name) | any(. == "P2")) then 2
+        elif (.labels | map(.name) | any(. == "P3")) then 3
+        else 4
+        end
+      )
+    }] | sort_by(.priority)
+  ' > /tmp/candidate-issues.json
 
-  # Check if any issue was found (after filtering out 'working' and blocked issues)
-  if [ "$ISSUE_NUM" = "null" ] || [ -z "$ISSUE_NUM" ]; then
+  CANDIDATE_COUNT=$(cat /tmp/candidate-issues.json | jq 'length')
+
+  # Try each candidate issue in priority order until we successfully claim one
+  ISSUE_CLAIMED=false
+  for idx in $(seq 0 $((CANDIDATE_COUNT - 1))); do
+    ISSUE_NUM=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].number")
+    ISSUE_TITLE=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].title")
+    ISSUE_BODY=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].body")
+    ISSUE_PRIORITY=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].priority")
+
+    if [ "$ISSUE_NUM" = "null" ] || [ -z "$ISSUE_NUM" ]; then
+      continue
+    fi
+
+    # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
+    gh issue edit "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+    sleep 1
+
+    # Re-fetch the issue to verify we won the race
+    # Check if another agent already posted a "work started" comment
+    RECENT_COMMENTS=$(gh issue view "$ISSUE_NUM" --json comments --jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+
+    if [ "$RECENT_COMMENTS" -gt 0 ]; then
+      echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
+      continue
+    fi
+
+    ISSUE_CLAIMED=true
+    break
+  done
+
+  if [ "$ISSUE_CLAIMED" != "true" ]; then
     echo "ℹ️  No available priority issues found"
     echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
     echo "   Use '/review-blocked' to review and approve blocked issues"
@@ -457,8 +505,7 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Create fix branch
 git checkout -b "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || git checkout "fix/issue-${ISSUE_NUM}-auto"
 
-# Add 'working' label to claim the issue (prevents other agents from picking it up)
-gh issue edit "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+# 'working' label was already added during claim-then-verify above
 
 # Post comment that work started
 gh issue comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
@@ -1205,8 +1252,17 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
 
-# Add 'working' label to claim the enhancement (prevents other agents from picking it up)
+# Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
 gh issue edit "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
+sleep 1
+
+# Re-fetch to verify we won the race (check for existing work-started comments)
+RACE_CHECK=$(gh issue view "$ENHANCE_NUM" --json comments --jq '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+if [ "$RACE_CHECK" -gt 0 ]; then
+  echo "⚠️  Race condition: another agent already claimed enhancement #$ENHANCE_NUM. Skipping."
+  git checkout "$PARENT_BRANCH"
+  # Continue to next iteration or exit
+fi
 
 gh issue comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**
 

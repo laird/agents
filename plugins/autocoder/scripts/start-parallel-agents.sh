@@ -1,20 +1,32 @@
 #!/bin/bash
 # Start parallel AI agents using a terminal multiplexer and git worktrees
-# Supports both tmux and cmux multiplexers, and both Claude and Gemini agent frameworks
+# Supports both tmux and cmux multiplexers, and Claude, Gemini, and Codex agent frameworks
 #
 # Usage: start-parallel-agents.sh [num_agents] [options]
 #
 # Options:
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
-#   --agent claude|gemini  Agent framework to use (default: auto-detect)
+#   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
 #   start-parallel-agents.sh 3 --mux tmux --agent claude
 #   start-parallel-agents.sh 4 --mux cmux --agent gemini
+#   start-parallel-agents.sh 3 --mux tmux --agent codex
+#   start-parallel-agents.sh 3 --mux tmux --agent droid
 #   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
+
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_PATH" ]; do
+  SOURCE_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+  SOURCE_PATH="$(readlink "$SOURCE_PATH")"
+  [[ "$SOURCE_PATH" != /* ]] && SOURCE_PATH="$SOURCE_DIR/$SOURCE_PATH"
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Defaults
 NUM_AGENTS=3
@@ -46,12 +58,14 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
-      echo "  --agent claude|gemini  Agent framework (default: auto-detect)"
+      echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
       echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
       exit 0
       ;;
     *)
@@ -99,12 +113,18 @@ if [ -z "$AGENT" ]; then
     AGENT="claude"
   elif command -v gemini &> /dev/null; then
     AGENT="gemini"
+  elif command -v codex &> /dev/null; then
+    AGENT="codex"
+  elif command -v droid &> /dev/null; then
+    AGENT="droid"
   else
     echo "❌ Error: No agent framework found" >&2
     echo "" >&2
     echo "Install one of the following:" >&2
     echo "  Claude Code: https://claude.ai/download" >&2
     echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
+    echo "  Codex CLI:   codex" >&2
+    echo "  Droid CLI:   https://docs.factory.ai/" >&2
     echo "" >&2
     exit 1
   fi
@@ -132,8 +152,27 @@ case "$AGENT" in
     WORKER_CMD="/fix-loop"
     MANAGER_CMD="/review-blocked"
     ;;
+  codex)
+    if ! command -v codex &> /dev/null; then
+      echo "❌ Error: codex command is not installed" >&2
+      exit 1
+    fi
+    AGENT_LAUNCH_CMD=""
+    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
+    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-manage-workers-loop.sh'"
+    ;;
+  droid)
+    if ! command -v droid &> /dev/null; then
+      echo "❌ Error: droid command is not installed" >&2
+      echo "   Install Droid: https://docs.factory.ai/" >&2
+      exit 1
+    fi
+    AGENT_LAUNCH_CMD=""
+    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-fix-loop.sh'"
+    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-manage-workers-loop.sh'"
+    ;;
   *)
-    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude' or 'gemini'" >&2
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
     exit 1
     ;;
 esac
@@ -273,10 +312,10 @@ if [ "$MUX" = "tmux" ]; then
 
   for i in $(seq 0 $((NUM_AGENTS - 1))); do
     echo "   Starting worker $((i+1))/$NUM_AGENTS..."
-    tmux send-keys -t "$SESSION_NAME:0.$i" "$AGENT_LAUNCH_CMD" C-m
-
-    # Wait for this instance to fully initialize before starting next
-    sleep 5
+    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+      tmux send-keys -t "$SESSION_NAME:0.$i" "$AGENT_LAUNCH_CMD" C-m
+      sleep 5
+    fi
   done
 
   # Wait for all instances to be fully ready
@@ -311,10 +350,10 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$SESSION_NAME:1.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
   fi
 
-  tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
-
-  # Wait for agent to initialize in review window
-  sleep 5
+  if [ -n "$AGENT_LAUNCH_CMD" ]; then
+    tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
+    sleep 5
+  fi
   tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
   sleep 0.5
   tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
@@ -409,9 +448,11 @@ elif [ "$MUX" = "cmux" ]; then
     fi
 
     # Launch agent
-    echo "   Starting $AGENT in worker $i..."
-    cmux_send_cmd "$WS_REF" "$AGENT_LAUNCH_CMD"
-    sleep 5
+    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+      echo "   Starting $AGENT in worker $i..."
+      cmux_send_cmd "$WS_REF" "$AGENT_LAUNCH_CMD"
+      sleep 5
+    fi
 
     # Send worker command
     echo "   → Worker $i: sending $WORKER_CMD..."
@@ -432,17 +473,19 @@ elif [ "$MUX" = "cmux" ]; then
   sleep 1
 
   if [ -n "$MANAGER_WS_REF" ]; then
-    # Manager workspace: just the project name (no prefix)
-    cmux rename-workspace --workspace "$MANAGER_WS_REF" "$PROJECT_NAME" >/dev/null || true
+    # Manager workspace: manager-<project> (same pattern as wt<N>-<project> workers)
+    cmux rename-workspace --workspace "$MANAGER_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
 
     if [ "$AGENT" = "claude" ]; then
       cmux_send_cmd "$MANAGER_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
     fi
 
-    echo "   Starting coordinator..."
-    cmux_send_cmd "$MANAGER_WS_REF" "$AGENT_LAUNCH_CMD"
-    sleep 5
+    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+      echo "   Starting coordinator..."
+      cmux_send_cmd "$MANAGER_WS_REF" "$AGENT_LAUNCH_CMD"
+      sleep 5
+    fi
     echo "   → Manager: sending $MANAGER_CMD..."
     cmux_send_cmd "$MANAGER_WS_REF" "$MANAGER_CMD"
   else
