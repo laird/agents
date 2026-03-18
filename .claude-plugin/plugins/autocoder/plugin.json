@@ -42,6 +42,8 @@
     "../../../plugins/autocoder/commands/list-needs-feedback.md",
     "../../../plugins/autocoder/commands/brainstorm-issue.md",
     "../../../plugins/autocoder/commands/full-regression-test.md",
-    "../../../plugins/autocoder/commands/improve-test-coverage.md"
+    "../../../plugins/autocoder/commands/improve-test-coverage.md",
+    "../../../plugins/autocoder/commands/monitor-workers.md",
+    "../../../plugins/autocoder/commands/monitor-loop.md"
   ]
 }
