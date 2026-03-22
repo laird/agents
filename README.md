@@ -160,6 +160,10 @@ After installation, these workflows are available:
 | `/fix` | Autonomous issue resolution |
 | `/fix-loop` | Continuous autonomous resolution |
 | `/stop-loop` | Stop the continuous loop |
+| `/install` | Install all autocoder plugin components |
+| `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
+| `/monitor-loop` | Continuous manager monitoring loop |
+| `/review-blocked` | Review and unblock issues labeled by fix-loop |
 | `/list-proposals` | View pending AI-generated proposals |
 | `/approve-proposal` | Approve a proposal for implementation |
 | `/list-needs-design` | List issues needing design work |
@@ -167,9 +171,6 @@ After installation, these workflows are available:
 | `/brainstorm-issue` | Brainstorm design for an issue |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
-| `/review-blocked` | Review and unblock issues labeled by fix-loop |
-| `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
-| `/install` | Install all autocoder plugin components |
 | `/autocoder-help` | Show autocoder workflow help |
 
 > [!WARNING]
@@ -208,78 +209,54 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 ---
 ## Repository Structure
----
 
-agents/
-├── .agent/                              # Antigravity agent configuration (rules, workflows)
+```
+├── .agent/                              # Antigravity agent configuration
+│   ├── protocols/                       # 12 agent behavior protocols
+│   ├── rules/                           # 6 specialist agent rules
+│   ├── workflows/                       # 21 workflow definitions
+│   ├── hooks/                           # Stop hook for loop termination
+│   └── scripts/                         # 13 automation scripts
 ├── .claude-plugin/                      # Claude Code plugin configuration
 │   ├── marketplace.json                 # Marketplace metadata (2 plugins)
 │   └── plugins/
-│       ├── modernize/
-│       │   └── plugin.json              # Modernize plugin definition
-│       └── autocoder/
-│           └── plugin.json              # Autocoder plugin definition
-├── plugins/                             # Plugin implementations
-│   ├── modernize/                       # Modernize plugin (6 commands, 6 agents, protocols)
-│   │   ├── commands/
-│   │   │   ├── help.md                 # Plugin help and workflow overview
-│   │   │   ├── assess.md               # Assessment protocol
-│   │   │   ├── plan.md                 # Planning protocol
-│   │   │   ├── modernize.md            # Full modernization workflow
-│   │   │   ├── retro.md                # Retrospective analysis
-│   │   │   └── retro-apply.md          # Improvement application
-│   │   ├── agents/
-│   │   │   ├── architect.md            # Technology decisions and ADRs
-│   │   │   ├── coder.md                # Implementation and fixes
-│   │   │   ├── documentation.md        # User-facing guides
-│   │   │   ├── migration-coordinator.md # Multi-stage orchestration
-│   │   │   ├── security.md             # Vulnerability scanning
-│   │   │   └── tester.md               # Comprehensive testing
-│   │   └── protocols/                   # Protocol documentation (10 protocols)
-│   │       ├── 00-PROTOCOL-INDEX.md    # Protocol index
-│   │       ├── adr-lifecycle.md        # ADR lifecycle protocol
-│   │       ├── agent-logging.md        # Agent logging protocol
-│   │       ├── agents-overview.md      # Agents overview
-│   │       ├── documentation-plan.md   # Documentation planning
-│   │       ├── documentation-protocol.md # Documentation protocol
-│   │       ├── incremental-documentation.md # Incremental docs
-│   │       ├── protocols-overview.md   # Protocols overview
-│   │       ├── security-scanning-protocol.md # Security scanning
-│   │       └── testing-protocol.md     # Testing protocol
-│   └── autocoder/                         # Autocoder plugin (12 commands)
-│       ├── commands/
-│       │   ├── help.md                 # Plugin help and workflow overview
-│       │   ├── fix.md           # Autonomous issue resolution
-│       │   ├── fix-loop.md      # Continuous autonomous resolution
-│       │   ├── stop-loop.md            # Stop the continuous loop
-│       │   ├── list-proposals.md       # View pending proposals
-│       │   ├── approve-proposal.md     # Approve a proposal
-│       │   ├── list-needs-design.md    # List issues needing design
-│       │   ├── list-needs-feedback.md  # List issues needing feedback
-│       │   ├── brainstorm-issue.md     # Brainstorm design for an issue
-│       │   ├── full-regression-test.md # Run comprehensive test suite
-│       │   ├── improve-test-coverage.md # Analyze and improve coverage
-│       │   ├── review-blocked.md       # Review and unblock labeled issues
-│       │   ├── monitor-workers.md     # Monitor workers, dispatch idle agents, deploy
-│       │   └── install.md              # Install all plugin components
-│       ├── agents/
-│       │   ├── architect.md            # Technology decisions and ADRs
-│       │   ├── coder.md                # Implementation and fixes
-│       │   ├── documentation.md        # User-facing guides
-│       │   ├── migration-coordinator.md # Multi-stage orchestration
-│       │   ├── security.md             # Vulnerability scanning
-│       │   └── tester.md               # Comprehensive testing
-│       └── scripts/
-│           └── regression-test.sh      # Full test suite with GitHub integration
+│       ├── modernize/plugin.json        # Modernize plugin definition
+│       └── autocoder/plugin.json        # Autocoder plugin definition
+├── agents/                              # OpenCode agent configuration
+│   ├── autocoder/                       # Autocoder agent + 5 workflows
+│   └── modernize/                       # Modernize coordinator + 5 specialists
+├── plugins/                             # Claude Code plugin implementations
+│   ├── modernize/                       # Modernize plugin
+│   │   ├── commands/                    # 6 slash commands
+│   │   ├── agents/                      # 6 specialist agent definitions
+│   │   └── protocols/                   # 10 supporting protocols
+│   └── autocoder/                       # Autocoder plugin
+│       ├── commands/                    # 15 slash commands
+│       ├── scripts/                     # 9 automation scripts
+│       └── hooks/                       # Stop hook scripts
+├── docs/                                # Platform-specific documentation
+│   ├── CLAUDE-CODE.md                   # Claude Code integration guide
+│   ├── ANTIGRAVITY.md                   # Antigravity integration guide
+│   └── OPENCODE.md                      # OpenCode integration guide
 └── README.md
 ```
 
-**Structure Notes**:
+## Platform Comparison
 
-- **Parallel plugin architecture**: Each plugin has its own commands/, agents/, and scripts/
-- **Complete separation**: Plugins are independent and can be installed individually
-- **Shared agent definitions**: Both plugins include the same 6 specialized agents (architecture, coder, documentation, migration-coordinator, security, tester)
-- **Self-contained**: Each plugin can evolve independently without affecting the other
+| Feature | Claude Code | Antigravity | OpenCode |
+|---------|:-----------:|:-----------:|:--------:|
+| Modernize commands | 6 | 6 | 1 (assessment) |
+| Autocoder commands | 15 | 15 | 5 workflows |
+| Specialist agents | 6 | 6 | 5 |
+| Automation scripts | 9 | 13 | - |
+| Stop hook | Yes | Yes | - |
+| Plugin marketplace | Yes | - | - |
+| Worker monitoring | Yes | Yes | - |
+| Watchdog scripts | - | Yes (experimental) | - |
+
+All platforms share the same core capabilities (issue triage, bug fixing, regression testing, enhancements, proposals). Claude Code and Antigravity maintain full feature parity. OpenCode provides a streamlined subset focused on core agent functionality.
+
+See the [platform-specific documentation](docs/) for details on each platform.
 
 ---
 
