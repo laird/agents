@@ -8,6 +8,7 @@
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
 #   --no-worktrees         Run all agents in the same directory
+#   --idle                 Start sessions without auto-launching commands
 #
 # Examples:
 #   start-parallel-agents.sh 3 --mux tmux --agent claude
@@ -15,6 +16,7 @@
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
 #   start-parallel-agents.sh 2 --no-worktrees
+#   start-parallel-agents.sh 3 --idle
 
 set -e
 
@@ -31,6 +33,7 @@ AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
+AUTO_START=true
 MUX=""
 AGENT=""
 
@@ -49,6 +52,10 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
+    --idle)
+      AUTO_START=false
+      shift
+      ;;
     [0-9]*)
       NUM_AGENTS="$1"
       shift
@@ -60,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
       echo "  --no-worktrees         Run all agents in the same directory"
+      echo "  --idle                 Start sessions without auto-launching commands"
       echo ""
       echo "Examples:"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
@@ -203,6 +211,7 @@ echo "   Multiplexer: $MUX"
 echo "   Agent framework: $AGENT"
 echo "   Task list ID: $TASK_LIST_ID"
 echo "   Branch: $CURRENT_BRANCH"
+echo "   Auto-start: $AUTO_START"
 echo ""
 
 # Create worktrees if needed
@@ -322,20 +331,25 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Waiting for all instances to stabilize..."
   sleep 3
 
-  # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
-  echo "   Starting $WORKER_CMD in all agents (sequential)..."
-  for i in $(seq 0 $((NUM_AGENTS - 1))); do
-    echo "   → Agent $((i+1)): sending $WORKER_CMD..."
-    tmux send-keys -t "$SESSION_NAME:0.$i" "$WORKER_CMD"
-    sleep 0.5
-    tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
+  if [ "$AUTO_START" = true ]; then
+    # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
+    echo "   Starting $WORKER_CMD in all agents (sequential)..."
+    for i in $(seq 0 $((NUM_AGENTS - 1))); do
+      echo "   → Agent $((i+1)): sending $WORKER_CMD..."
+      tmux send-keys -t "$SESSION_NAME:0.$i" "$WORKER_CMD"
+      sleep 0.5
+      tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
 
-    # Wait for THIS agent to fully process $WORKER_CMD before starting next
-    echo "   → Agent $((i+1)): waiting for initialization..."
-    sleep 10
-  done
+      # Wait for THIS agent to fully process $WORKER_CMD before starting next
+      echo "   → Agent $((i+1)): waiting for initialization..."
+      sleep 10
+    done
 
-  echo "   All agents initialized"
+    echo "   All agents initialized"
+  else
+    echo "   ⏸️  Idle mode: agents started without commands (use --idle)"
+    echo "   Send commands manually to each agent pane"
+  fi
 
   # Create second window for review/planning (single pane)
   echo ""
@@ -354,9 +368,14 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
     sleep 5
   fi
-  tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
-  sleep 0.5
-  tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
+
+  if [ "$AUTO_START" = true ]; then
+    tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
+    sleep 0.5
+    tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
+  else
+    echo "   ⏸️  Idle mode: coordinator started without commands"
+  fi
 
   # Select the first window (agents) by default
   tmux select-window -t "$SESSION_NAME:0"
@@ -369,8 +388,13 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Multiplexer: tmux"
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
-  echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-  echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  if [ "$AUTO_START" = true ]; then
+    echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+    echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  else
+    echo "   Window 0: $NUM_AGENTS worker agents in worktrees (idle)"
+    echo "   Window 1: Manager in main repo (idle)"
+  fi
   echo ""
   echo "🔧 Useful tmux commands:"
   echo "   Switch windows: Ctrl+b then 0 or 1"
@@ -454,12 +478,16 @@ elif [ "$MUX" = "cmux" ]; then
       sleep 5
     fi
 
-    # Send worker command
-    echo "   → Worker $i: sending $WORKER_CMD..."
-    cmux_send_cmd "$WS_REF" "$WORKER_CMD"
+    if [ "$AUTO_START" = true ]; then
+      # Send worker command
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      cmux_send_cmd "$WS_REF" "$WORKER_CMD"
 
-    echo "   → Worker $i: waiting for initialization..."
-    sleep 10
+      echo "   → Worker $i: waiting for initialization..."
+      sleep 10
+    else
+      echo "   → Worker $i: idle (no command dispatched)"
+    fi
   done
 
   echo "   All workers initialized"
@@ -486,8 +514,12 @@ elif [ "$MUX" = "cmux" ]; then
       cmux_send_cmd "$MANAGER_WS_REF" "$AGENT_LAUNCH_CMD"
       sleep 5
     fi
-    echo "   → Manager: sending $MANAGER_CMD..."
-    cmux_send_cmd "$MANAGER_WS_REF" "$MANAGER_CMD"
+    if [ "$AUTO_START" = true ]; then
+      echo "   → Manager: sending $MANAGER_CMD..."
+      cmux_send_cmd "$MANAGER_WS_REF" "$MANAGER_CMD"
+    else
+      echo "   → Manager: idle (no command dispatched)"
+    fi
   else
     echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
   fi
@@ -504,8 +536,13 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Multiplexer: cmux"
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
-  echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
-  echo "   1 manager workspace running $MANAGER_CMD"
+  if [ "$AUTO_START" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
+    echo "   1 manager workspace running $MANAGER_CMD"
+  else
+    echo "   $NUM_AGENTS worker workspaces (idle)"
+    echo "   1 manager workspace (idle)"
+  fi
   echo ""
   echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
   if [ -n "$MANAGER_WS_REF" ]; then
