@@ -549,7 +549,7 @@ These are the three key commands for managing the parallel agent lifecycle:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
-| `start-parallel-agents.sh` | **Start** parallel agent system | `[num_agents] [--mux tmux\|cmux] [--agent claude\|gemini] [--no-worktrees]` |
+| `start-parallel-agents.sh` | **Start** parallel agent system | `[num_agents] [--mux tmux\|cmux] [--agent claude\|gemini] [--no-worktrees] [--idle]` |
 | `join-parallel-agents.sh` | **Join** (rejoin) existing session | `[--mux tmux\|cmux] [session_name]` |
 | `end-parallel-agents.sh` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
 | `stop-parallel-agents.sh` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux]` |
@@ -575,6 +575,7 @@ These are the three key commands for managing the parallel agent lifecycle:
 start-parallel-agents.sh 3 --mux tmux --agent claude
 start-parallel-agents.sh 4 --mux cmux --agent gemini
 start-parallel-agents.sh 3 --no-worktrees
+start-parallel-agents.sh 3 --idle              # Start without auto-launching commands
 
 # Joining
 joint                           # tmux: auto-detect session
@@ -598,7 +599,7 @@ For each worker agent:
 - **Isolation**: Each agent works on independent branch without conflicts
 - **Integration**: Main agent merges completed work when deploying
 
-**Note**: Use `--no-worktrees` to run all agents in same directory (no git operations).
+**Note**: Use `--no-worktrees` to run all agents in same directory (no git operations). Use `--idle` to start sessions without auto-launching commands — workers start at an idle prompt ready for manual commands.
 
 ### Session Management
 
@@ -655,7 +656,7 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `start-parallel-agents.sh` | Launch multi-agent session (tmux/cmux) | `start-parallel-agents.sh [num_agents] [--mux tmux\|cmux] [--agent claude\|gemini]` |
+| `start-parallel-agents.sh` | Launch multi-agent session (tmux/cmux) | `start-parallel-agents.sh [num_agents] [--mux tmux\|cmux] [--agent claude\|gemini] [--idle]` |
 | `join-parallel-agents.sh` | Rejoin existing session (tmux/cmux) | `join-parallel-agents.sh [--mux tmux\|cmux] [session_name]` |
 | `end-parallel-agents.sh` | End session and clean up worktrees | `end-parallel-agents.sh [session_name] [--keep-worktrees]` |
 | `stop-parallel-agents.sh` | Stop all agent sessions (tmux/cmux) | `stop-parallel-agents.sh [--mux tmux\|cmux]` |
