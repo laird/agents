@@ -670,6 +670,12 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 | `approve-blocked-issue.sh` | Approve and unblock an issue | `bash ~/.claude/plugins/autocoder/scripts/approve-blocked-issue.sh <issue_num> <label> <approach>` |
 | `reject-blocked-issue.sh` | Reject and close a blocked issue | `bash ~/.claude/plugins/autocoder/scripts/reject-blocked-issue.sh <issue_num> <reason>` |
 
+### Issue Creation
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `create-issue.sh` | Create GitHub issue with editor for multi-line body | `create-issue "Title" [--label bug] [--label P1]` |
+
 ### Testing
 
 | Script | Purpose | Usage |
