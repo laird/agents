@@ -13,13 +13,15 @@ OpenCode uses an `agents/` directory structure to define agent configurations, w
 ```
 agents/
 ├── README.md                     # OpenCode agents overview
-├── autocoder/                      # Autocoder agent configuration
+├── autocoder/                    # Autocoder agent configuration
 │   ├── README.md                # Autocoder agent overview
 │   ├── agent.md                 # Main agent definition (v1.5.0)
 │   └── workflows/               # Autocoder workflows
+│       ├── triage.md            # Issue triage workflow
 │       ├── bug-resolution.md    # Bug fixing workflow
 │       ├── regression-testing.md # Test suite workflow
-│       └── enhancement.md       # Enhancement workflow
+│       ├── enhancement.md       # Enhancement workflow
+│       └── proposals.md         # Proposal creation workflow
 └── modernize/                    # Modernize agent configuration
     ├── README.md                # Modernize agent overview
     ├── coordinator.md           # Migration coordinator definition
@@ -76,9 +78,11 @@ Autonomous GitHub issue resolution with intelligent testing and quality automati
 
 | Workflow | Description |
 |----------|-------------|
+| `triage.md` | Review and prioritize unprioritized issues |
 | `bug-resolution.md` | Fix prioritized bugs |
 | `regression-testing.md` | Run comprehensive tests |
 | `enhancement.md` | Implement approved enhancements |
+| `proposals.md` | Create enhancement proposals for human review |
 
 ### Modernize Agent (v1.0)
 
@@ -103,6 +107,36 @@ Multi-agent modernization orchestration for legacy software.
 | Workflow | Description |
 |----------|-------------|
 | `assessment.md` | Evaluate modernization viability |
+
+## Platform Differences
+
+OpenCode has a different architecture from Claude Code and Antigravity:
+
+| Feature | Claude Code / Antigravity | OpenCode |
+|---------|--------------------------|----------|
+| **Workflow model** | Individual slash commands (1 file per command) | Consolidated agent definition with workflow phases |
+| **Commands** | 21 individual commands | 1 agent definition + 5 workflows per plugin |
+| **Scripts** | Shell scripts for automation | Relies on agent capabilities |
+| **Hooks** | Stop hook for loop termination | Not applicable |
+| **Parallel agents** | tmux/cmux-based swarm | Not supported |
+| **Monitor/dispatch** | `/monitor-workers`, `/monitor-loop` | Not available |
+
+### Feature Coverage Comparison
+
+| Capability | Claude Code | Antigravity | OpenCode |
+|------------|:-----------:|:-----------:|:--------:|
+| Issue triage | Yes | Yes | Yes |
+| Bug fixing | Yes | Yes | Yes |
+| Regression testing | Yes | Yes | Yes |
+| Enhancement implementation | Yes | Yes | Yes |
+| Proposal system | Yes | Yes | Yes |
+| Continuous loop | Yes | Yes | Yes |
+| Design workflows | Yes | Yes | No |
+| Blocked issue review | Yes | Yes | No |
+| Worker monitoring/dispatch | Yes | Yes | No |
+| Modernization (full) | Yes | Yes | Partial |
+
+OpenCode provides core autocoder and modernization capabilities. Advanced features like parallel worker management and design workflows are available on Claude Code and Antigravity.
 
 ## Agent Definition Format
 
