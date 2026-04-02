@@ -1,6 +1,6 @@
 # Antigravity Integration
 
-**Version**: 3.14.0
+**Version**: 2.1.0
 **Platform**: Antigravity Agent Engine
 **Directory**: `.agent/`
 
@@ -38,38 +38,16 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 │   ├── modernize.md             # Modernization workflow
 │   ├── retro.md                 # Retrospective workflow
 │   ├── retro-apply.md           # Apply improvements workflow
-│   ├── modernize-help.md        # Modernize help
-│   ├── fix.md                   # Autonomous issue resolution
-│   ├── fix-loop.md              # Continuous autonomous resolution
-│   ├── stop-loop.md             # Stop the continuous loop
-│   ├── install.md               # Install all plugin components
-│   ├── monitor-workers.md       # Monitor workers, dispatch idle agents
-│   ├── monitor-loop.md          # Continuous manager monitoring loop
-│   ├── review-blocked.md        # Review and unblock labeled issues
-│   ├── list-proposals.md        # List pending proposals
-│   ├── approve-proposal.md      # Approve a proposal
-│   ├── list-needs-design.md     # List issues needing design
-│   ├── list-needs-feedback.md   # List issues needing feedback
-│   ├── brainstorm-issue.md      # Brainstorm design for an issue
-│   ├── full-regression-test.md  # Regression testing
-│   ├── improve-test-coverage.md # Coverage improvement
-│   ├── autocoder-help.md        # Autocoder help
-│   └── debug-atomic.md          # Atomic debugging (Antigravity-only)
-├── hooks/
-│   └── stop-hook.sh             # Stop hook for infinite loops
+│   ├── fix.md            # Autonomous issue resolution (v2.0.0)
+│   ├── fix-loop.md       # Infinite loop with stop hook (v2.0.0)
+│   ├── install-stop-hook.md     # Stop hook installation (v2.0.0)
+│   ├── list-proposals.md        # List pending proposals (v2.0.0)
+│   ├── full-regression-test.md  # Regression testing (v2.0.0)
+│   ├── improve-test-coverage.md # Coverage improvement (v2.0.0)
+│   └── debug-atomic.md          # Atomic debugging
 └── scripts/
     ├── append-to-history.sh     # Log to HISTORY.md
-    ├── start-parallel-agents.sh # Start parallel agent workers
-    ├── join-parallel-agents.sh  # Wait for parallel agents to finish
-    ├── stop-parallel-agents.sh  # Stop parallel agent workers
-    ├── end-parallel-agents.sh   # End and clean up parallel agents
-    ├── fetch-blocked-issues.sh  # Fetch issues with blocking labels
-    ├── add-blocking-label.sh    # Add blocking label to an issue
-    ├── approve-blocked-issue.sh # Approve a blocked issue
-    ├── reject-blocked-issue.sh  # Reject a blocked issue
-    ├── watchdog-fix.sh          # (Experimental) Watchdog script
-    ├── watchdog-fix-github.sh   # (Experimental) GitHub-specific watchdog
-    └── watchdog-fix-nextgen.sh  # (Experimental) Next-gen watchdog
+    └── watchdog-fix.sh   # (Experimental) Watchdog script
 ```
 
 ### Key Directories
@@ -80,17 +58,10 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 | `rules/` | Agent-specific instructions and capabilities |
 | `workflows/` | Executable workflow definitions (like slash commands) |
 | `scripts/` | Helper scripts for automation |
-| `hooks/` | Event-driven scripts (stop hook for loop termination) |
 
 ## Installation
 
-### Option 1: One-Liner Install
-
-```bash
-curl -sSL https://raw.githubusercontent.com/laird/agents/main/scripts/install.sh | bash
-```
-
-### Option 2: Copy Directory
+### Option 1: Copy Directory
 
 Copy the `.agent/` directory to your project root:
 
@@ -98,7 +69,7 @@ Copy the `.agent/` directory to your project root:
 cp -r /path/to/agents/.agent /your/project/
 ```
 
-### Option 3: Symlink (Development)
+### Option 2: Symlink (Development)
 
 ```bash
 ln -s /path/to/agents/.agent /your/project/.agent
@@ -120,33 +91,32 @@ ln -s /path/to/agents/.agent /your/project/.agent
 | `modernize.md` | Execute multi-phase modernization |
 | `retro.md` | Analyze project for improvements |
 | `retro-apply.md` | Apply retrospective findings |
-| `modernize-help.md` | Show modernize workflow help |
 
-### Autocoder Workflows
+### Autocoder Workflows (v2.0.0)
 
 | Workflow | Description |
 |----------|-------------|
 | `fix.md` | Autonomous issue resolution with triage and proposals |
-| `fix-loop.md` | Continuous autonomous resolution loop |
-| `stop-loop.md` | Stop the continuous loop |
-| `install.md` | Install all plugin components |
-| `monitor-workers.md` | Monitor workers, dispatch idle agents, deploy |
-| `monitor-loop.md` | Continuous manager monitoring loop |
-| `review-blocked.md` | Review and unblock labeled issues |
+| `fix-loop.md` | Infinite loop wrapper with stop hook |
+| `monitor-workers.md` | Check worker status, stale locks, and dispatch opportunities |
+| `monitor-loop.md` | Continuous manager loop for worker coordination |
+| `install.md` | Install stop hook, parallel scripts, and aliases |
+| `stop-loop.md` | Stop the continuous fix loop |
+| `review-blocked.md` | Interactively review and unblock blocked issues |
 | `list-proposals.md` | Display pending AI-generated proposals |
 | `approve-proposal.md` | Approve a proposal for implementation |
-| `list-needs-design.md` | List issues needing design work |
-| `list-needs-feedback.md` | List issues needing feedback |
-| `brainstorm-issue.md` | Brainstorm design for an issue |
+| `list-needs-design.md` | List issues requiring design work |
+| `list-needs-feedback.md` | List issues requiring human feedback |
+| `brainstorm-issue.md` | Brainstorm approaches for a blocked issue |
 | `full-regression-test.md` | Comprehensive test suite execution |
 | `improve-test-coverage.md` | Coverage analysis and improvement |
-| `autocoder-help.md` | Show autocoder workflow help |
+| `autocoder-help.md` | Show the autocoder command overview |
 
 ### Utility Workflows
 
 | Workflow | Description |
 |----------|-------------|
-| `debug-atomic.md` | Atomic debugging methodology (Antigravity-only) |
+| `debug-atomic.md` | Atomic debugging methodology |
 
 ## Agent Rules
 
@@ -163,38 +133,19 @@ The `rules/` directory contains behavior definitions for 6 specialist agents:
 
 ## Scripts
 
-### Core Scripts
+### append-to-history.sh
 
-| Script | Purpose |
-|--------|---------|
-| `append-to-history.sh` | Log agent activity to HISTORY.md |
-| `start-parallel-agents.sh` | Start parallel agent workers |
-| `join-parallel-agents.sh` | Wait for parallel agents to finish |
-| `stop-parallel-agents.sh` | Stop parallel agent workers |
-| `end-parallel-agents.sh` | End and clean up parallel agents |
-| `fetch-blocked-issues.sh` | Fetch issues with blocking labels |
-| `add-blocking-label.sh` | Add blocking label to an issue |
-| `approve-blocked-issue.sh` | Approve a blocked issue |
-| `reject-blocked-issue.sh` | Reject a blocked issue |
+Logs agent activity to `HISTORY.md`:
 
-### Experimental Scripts
+```bash
+./scripts/append-to-history.sh "Title" "Details" "Context" "Impact"
+```
 
-| Script | Purpose |
-|--------|---------|
-| `watchdog-fix.sh` | Continuous monitoring of GitHub issues |
-| `watchdog-fix-github.sh` | GitHub-specific watchdog variant |
-| `watchdog-fix-nextgen.sh` | Next-generation watchdog variant |
+### watchdog-fix.sh
 
-> **Warning**: Watchdog scripts are experimental and may not work in all environments.
+> **Warning**: Experimental and currently non-functional.
 
-## Platform-Specific Features
-
-Features unique to or different in Antigravity:
-
-- **`debug-atomic.md`** workflow (not available in Claude Code)
-- **Watchdog scripts** for continuous monitoring (experimental)
-- **`GENERIC-MIGRATION-PLANNING-GUIDE.md`** protocol (additional migration guidance)
-- **No plugin marketplace** - install by copying the `.agent/` directory
+Intended for continuous monitoring of GitHub issues.
 
 ## Protocols
 
@@ -204,16 +155,13 @@ Protocols define standardized methodologies:
 - **Testing Protocol**: 6-phase testing (Unit → Integration → Build → Smoke → Security → Performance)
 - **Agent Logging**: Structured HISTORY.md entries
 - **Security Scanning**: CVE scanning and scoring
-- **Documentation**: Incremental status markers
-- **Migration Planning**: Generic migration planning guide
+- **Documentation**: Incremental status markers (⚠️ → ✅ → 📝)
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
-| 3.14.0 | Full parity with Claude Code: added monitor-workers, monitor-loop, all autocoder workflows |
-| 2.1.0 | Added design workflow commands, help workflows |
-| 2.0.0 | Full Claude Code parity: expanded fix, added fix-loop, install |
+| 2.0.0 | Full Claude Code parity: expanded fix (~1200 lines), added fix-loop, install-stop-hook |
 | 1.5.0 | Added proposal system, issue triage, list-proposals workflow |
 | 1.0 | Initial Antigravity support |
 

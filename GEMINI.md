@@ -37,6 +37,8 @@ This is the **Modernize** framework - a production-validated system providing pr
 | `/improve-test-coverage` | `.agent/workflows/improve-test-coverage.md` | `plugins/autocoder/commands/improve-test-coverage.md` |
 | `/fix` | `.agent/workflows/fix.md` | `plugins/autocoder/commands/fix.md` |
 | `/fix-loop` | `.agent/workflows/fix-loop.md` | `plugins/autocoder/commands/fix-loop.md` |
+| `/monitor-workers` | `.agent/workflows/monitor-workers.md` | `plugins/autocoder/commands/monitor-workers.md` |
+| `/monitor-loop` | `.agent/workflows/monitor-loop.md` | `plugins/autocoder/commands/monitor-loop.md` |
 | `/full-regression-test` | `.agent/workflows/full-regression-test.md` | `plugins/autocoder/commands/full-regression-test.md` |
 | `/review-blocked` | `.agent/workflows/review-blocked.md` | `plugins/autocoder/commands/review-blocked.md` |
 | `/install` | `.agent/workflows/install.md` | `plugins/autocoder/commands/install.md` |
