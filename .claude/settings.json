@@ -1,17 +1,4 @@
 {
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash plugins/autocoder/hooks/stop-hook.sh"
-          }
-        ]
-      }
-    ]
-  },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "playwright@claude-plugins-official": true,

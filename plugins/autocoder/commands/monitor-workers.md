@@ -175,7 +175,49 @@ If ready, deploy:
 ./deploy.sh ey-staging
 ```
 
-### Step 7: Report Summary
+### Step 7: Write Structured Status (for agents-tui)
+
+If `/tmp/agents-ui/` exists (indicating agents-tui is running), write a JSON summary file so the TUI can update its display without polling GitHub:
+
+```bash
+if [ -d /tmp/agents-ui ]; then
+  SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "unknown")
+
+  # Build JSON with worker statuses — use the data gathered in Steps 2-5
+  # Each worker entry should include pane, status, issue number, and title
+  # Example:
+  cat > "/tmp/agents-ui/${SESSION_NAME}-monitor.json" << MONITOR_EOF
+  {
+    "timestamp": "$(date -Iseconds)",
+    "session": "${SESSION_NAME}",
+    "workers": [WORKER_ENTRIES_HERE],
+    "open_issues": OPEN_COUNT,
+    "working_issues": WORKING_COUNT,
+    "blocked_issues": BLOCKED_COUNT,
+    "idle_workers": IDLE_COUNT,
+    "actions": [ACTIONS_LIST_HERE]
+  }
+  MONITOR_EOF
+fi
+```
+
+Construct the `workers` array from the status gathered in Steps 2-3. Each entry:
+```json
+{"pane": "claude-agents-ui:2.0", "worktree": "wt-2", "status": "working", "issue": 100, "title": "Issue detail view"}
+```
+
+Also update individual worker status files for each worker discovered:
+```bash
+if [ -d /tmp/agents-ui ]; then
+  # For each worker, write/update its status file
+  # This ensures the TUI sees fresh data even between monitor-workers runs
+  for each worker pane:
+    echo "{\"status\": \"${WORKER_STATUS}\", \"issue\": ${ISSUE_NUM:-null}, \"title\": \"${ISSUE_TITLE:-}\"}" > "/tmp/agents-ui/${PANE_ID}.json"
+  done
+fi
+```
+
+### Step 8: Report Summary
 
 Present a clear summary table:
 

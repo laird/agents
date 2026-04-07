@@ -73,11 +73,13 @@ if [ "$MUX" = "tmux" ]; then
   if [ -z "$SESSION_NAME" ]; then
     PROJECT_NAME=$(basename "$(pwd)")
 
-    # Try both claude- and gemini- prefixed sessions
+    # Try known agent-prefixed sessions
     if tmux has-session -t "claude-${PROJECT_NAME}" 2>/dev/null; then
       SESSION_NAME="claude-${PROJECT_NAME}"
     elif tmux has-session -t "gemini-${PROJECT_NAME}" 2>/dev/null; then
       SESSION_NAME="gemini-${PROJECT_NAME}"
+    elif tmux has-session -t "codex-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="codex-${PROJECT_NAME}"
     else
       SESSION_NAME="claude-${PROJECT_NAME}"
     fi
@@ -89,7 +91,7 @@ if [ "$MUX" = "tmux" ]; then
     echo ""
 
     # List available agent sessions
-    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini)-" || true)
+    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini|codex)-" || true)
 
     if [ -n "$AGENT_SESSIONS" ]; then
       echo "📋 Available agent sessions (tmux):"

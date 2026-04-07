@@ -18,6 +18,16 @@
 
 set -e
 
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_PATH" ]; do
+  SOURCE_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+  SOURCE_PATH="$(readlink "$SOURCE_PATH")"
+  [[ "$SOURCE_PATH" != /* ]] && SOURCE_PATH="$SOURCE_DIR/$SOURCE_PATH"
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
@@ -130,7 +140,7 @@ case "$AGENT" in
     fi
     AGENT_LAUNCH_CMD="claude code --dangerously-skip-permissions ."
     WORKER_CMD="/autocoder:fix-loop"
-    REVIEW_CMD="/autocoder:review-blocked"
+    MANAGER_CMD="/autocoder:monitor-loop"
     ;;
   gemini)
     if ! command -v gemini &> /dev/null; then
@@ -140,7 +150,7 @@ case "$AGENT" in
     fi
     AGENT_LAUNCH_CMD="gemini --sandbox=false"
     WORKER_CMD="/fix-loop"
-    REVIEW_CMD="/review-blocked"
+    MANAGER_CMD="/monitor-loop"
     ;;
   codex)
     if ! command -v codex &> /dev/null; then
@@ -148,8 +158,8 @@ case "$AGENT" in
       exit 1
     fi
     AGENT_LAUNCH_CMD=""
-    WORKER_CMD="bash scripts/codex-fix-loop.sh"
-    REVIEW_CMD="bash scripts/codex-manage-workers-loop.sh"
+    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
+    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-manage-workers-loop.sh'"
     ;;
   droid)
     if ! command -v droid &> /dev/null; then
@@ -158,8 +168,8 @@ case "$AGENT" in
       exit 1
     fi
     AGENT_LAUNCH_CMD=""
-    WORKER_CMD="bash scripts/droid-fix-loop.sh"
-    REVIEW_CMD="bash scripts/droid-manage-workers-loop.sh"
+    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-fix-loop.sh'"
+    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-manage-workers-loop.sh'"
     ;;
   *)
     echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
@@ -344,7 +354,7 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
     sleep 5
   fi
-  tmux send-keys -t "$SESSION_NAME:1.0" "$REVIEW_CMD"
+  tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
   sleep 0.5
   tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
 
@@ -360,7 +370,7 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
   echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-  echo "   Window 1: Coordinator in main repo running $REVIEW_CMD"
+  echo "   Window 1: Manager in main repo running $MANAGER_CMD"
   echo ""
   echo "🔧 Useful tmux commands:"
   echo "   Switch windows: Ctrl+b then 0 or 1"
@@ -476,8 +486,8 @@ elif [ "$MUX" = "cmux" ]; then
       cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
       sleep 5
     fi
-    echo "   → Coordinator: sending $REVIEW_CMD..."
-    cmux_send_cmd "$REVIEW_WS_REF" "$REVIEW_CMD"
+    echo "   → Manager: sending $MANAGER_CMD..."
+    cmux_send_cmd "$REVIEW_WS_REF" "$MANAGER_CMD"
   else
     echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
   fi
@@ -495,7 +505,7 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
   echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
-  echo "   1 review workspace running $REVIEW_CMD"
+  echo "   1 manager workspace running $MANAGER_CMD"
   echo ""
   echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
   if [ -n "$REVIEW_WS_REF" ]; then

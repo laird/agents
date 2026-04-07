@@ -1,10 +1,8 @@
----
-description: Start infinite fix loop with stop hook
----
-
 # Start Infinite Fix-GitHub Loop
 
-Runs `/fix` in an infinite loop until manually stopped.
+Wrapper around `/autocoder:fix` that runs it in a loop forever.
+
+Uses the `/loop` command (CronCreate-based) if available in this Claude Code version; falls back to the stop hook mechanism for older versions.
 
 ## Usage
 
@@ -12,32 +10,142 @@ Runs `/fix` in an infinite loop until manually stopped.
 # Start infinite loop
 /fix-loop
 
-# Limit to 100 iterations
+# Limit to 100 iterations (stop hook mode only)
 /fix-loop 100
 
 # Custom idle sleep time (default: 15 minutes)
 /fix-loop --sleep 30
+
+# Multi-agent coordination with deployment
+/fix-loop --branch main --deploy "deploy.sh staging ."
+
+# Or set via environment
+export CLAUDE_CODE_INTEGRATION_BRANCH="main"
+export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
+/fix-loop
 ```
 
 ## How It Works
 
-1. Runs `/fix` to process all priority issues
-2. When `/fix` outputs `IDLE_NO_WORK_AVAILABLE`, sleeps for configured duration
-3. Repeats until manually stopped (Ctrl+C) or max iterations reached
+**Mode 1: `/loop` command (preferred, when CronCreate tool is available)**
+
+1. Parses arguments and reads config from CLAUDE.md
+2. Uses the `loop` skill to schedule `/autocoder:fix` every `IDLE_SLEEP_MINUTES` minutes
+3. No settings.json modification needed — cleaner and more reliable
+4. Loop runs until manually cancelled (CronDelete)
+
+**Mode 2: Stop hook (fallback for older Claude Code versions)**
+
+1. Installs stop hook in `.claude/settings.json` (if not present)
+2. Creates state file `.claude/fix-loop.local.md`
+3. Runs `/autocoder:fix`
+4. When Claude tries to exit, stop hook feeds `/autocoder:fix` back as input
+5. Loop continues until manually stopped or max iterations reached
+
+## Multi-Agent Coordination (Automatic)
+
+When `CLAUDE_CODE_TASK_LIST_ID` is set, `/fix-loop` automatically coordinates with other agents:
+
+**Setup:**
+```bash
+# 1. Configure deployment in your CLAUDE.md:
+cat >> CLAUDE.md << 'EOF'
+
+## Deployment
+
+Integration branch: main
+Deploy to staging: deploy.sh staging .
+EOF
+
+# 2. Set shared task list ID in all worktrees
+export CLAUDE_CODE_TASK_LIST_ID="project-$(date +%Y%m%d)"
+
+# 3. Run /fix-loop in each worktree (same command everywhere)
+# Main worktree
+cd /path/to/project
+/fix-loop  # → Auto-detects: "I'm coordinator, will deploy when ready"
+
+# Feature worktree 1
+cd /path/to/project-wt-auth
+/fix-loop  # → Auto-detects: "I'm worker, will complete tasks"
+
+# Feature worktree 2
+cd /path/to/project-wt-api
+/fix-loop  # → Auto-detects: "I'm worker, will complete tasks"
+```
+
+**Configuration Options:**
+
+The integration branch and deploy command can be specified:
+
+1. **In CLAUDE.md** (recommended):
+   ```markdown
+   ## Deployment
+   Integration branch: main
+   Deploy to staging: deploy.sh staging .
+   ```
+
+2. **Via environment**:
+   ```bash
+   export CLAUDE_CODE_INTEGRATION_BRANCH="main"
+   export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
+   ```
+
+3. **Via command line**:
+   ```bash
+   /fix-loop --branch main --deploy "deploy.sh staging ."
+   ```
+
+4. **Auto-detection**: Defaults to `main` branch and looks for:
+   - `scripts/deploy-staging.sh`
+   - `deploy.sh staging`
+   - Deployment commands in CLAUDE.md
+
+**Automatic Deployment Trigger:**
+
+When ALL these conditions are met:
+- ✅ All agents idle (no pending/in_progress tasks)
+- ✅ Integration branch ready (clean working tree, all pushed)
+- ✅ I'm in main worktree (not a feature worktree)
+- ✅ New changes to deploy (current commit not already deployed)
+- ✅ Deploy command configured
+
+Then: Main worktree automatically:
+1. Switches to integration branch
+2. Commits any uncommitted changes
+3. Pushes integration branch (if needed)
+4. Pulls latest integration branch
+5. Merges all feature branches from worktrees
+6. Pushes merged integration branch
+7. Executes deployment command
+
+**Benefits:**
+- Zero manual coordination needed
+- Same `/fix-loop` command everywhere
+- Automatic role detection (coordinator vs worker)
+- Safe deployment (only when all work complete and pushed)
+- Project-specific deployment via CLAUDE.md
 
 ## Stopping the Loop
 
+**`/loop` mode:**
+- **CronDelete** - Remove the scheduled cron job
+- **Ctrl+C** - Manual interrupt of current run
+
+**Stop hook mode:**
 - **Ctrl+C** - Manual interrupt
+- **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 - **Max iterations** - If set, stops when reached
+- **Delete state file** - `rm .claude/fix-loop.local.md`
 
 ## Instructions
-
-**Note**: Antigravity doesn't support Claude Code's stop hook mechanism. Instead, this workflow runs `/fix` repeatedly in a simple while loop.
 
 ```bash
 # Parse arguments
 MAX_ITERATIONS="${1:-0}"  # 0 = unlimited
 IDLE_SLEEP_MINUTES="15"
+INTEGRATION_BRANCH="${CLAUDE_CODE_INTEGRATION_BRANCH:-}"
+DEPLOY_COMMAND="${CLAUDE_CODE_DEPLOY_COMMAND:-}"
 
 args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
@@ -46,106 +154,182 @@ for ((i=0; i<${#args[@]}; i++)); do
       IDLE_SLEEP_MINUTES="${args[i+1]}"
       ((i++))
       ;;
+    --branch)
+      INTEGRATION_BRANCH="${args[i+1]}"
+      ((i++))
+      ;;
+    --deploy)
+      DEPLOY_COMMAND="${args[i+1]}"
+      ((i++))
+      ;;
     [0-9]*)
       MAX_ITERATIONS="${args[i]}"
       ;;
   esac
 done
 
-# Create stop signal file location
-STOP_FILE=".git/.fix-loop-stop"
-rm -f "$STOP_FILE" 2>/dev/null
+# If not set, try to extract from CLAUDE.md
+if [[ -z "$INTEGRATION_BRANCH" ]]; then
+  for claude_file in CLAUDE.md claude.md README.md; do
+    if [[ -f "$claude_file" ]]; then
+      INTEGRATION_BRANCH=$(grep -i "integration.*branch\|main.*branch\|merge.*into" "$claude_file" | \
+        grep -Eo '\b(main|master|develop|integration)\b' | head -1)
+      [[ -n "$INTEGRATION_BRANCH" ]] && break
+    fi
+  done
+fi
+
+# Default to main if still not found
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+
+# If not set, try to extract deploy command from CLAUDE.md
+if [[ -z "$DEPLOY_COMMAND" ]]; then
+  for claude_file in CLAUDE.md claude.md README.md; do
+    if [[ -f "$claude_file" ]]; then
+      DEPLOY_COMMAND=$(grep -i "deploy.*staging\|staging.*deploy" "$claude_file" | \
+        grep -Eo '(\.?/)?[a-zA-Z0-9_/-]+\.sh\s+[a-zA-Z0-9_. /-]*' | head -1)
+      [[ -n "$DEPLOY_COMMAND" ]] && break
+    fi
+  done
+fi
+
+export CLAUDE_CODE_INTEGRATION_BRANCH="$INTEGRATION_BRANCH"
+export CLAUDE_CODE_DEPLOY_COMMAND="$DEPLOY_COMMAND"
+
+mkdir -p .claude
+```
+
+### Detect /loop availability and choose mode
+
+**Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).
+
+**If CronCreate IS available → Use `/loop` mode (preferred):**
+
+```bash
+# Remove the stop hook if it was previously installed, since /loop replaces it
+if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
+  echo "🔄 Removing stop hook (replaced by /loop command)..."
+  python3 << 'PYTHON_SCRIPT'
+import json
+with open(".claude/settings.json", 'r') as f:
+    settings = json.load(f)
+if "hooks" in settings and "Stop" in settings["hooks"]:
+    settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h)]
+    if not settings["hooks"]["Stop"]:
+        del settings["hooks"]["Stop"]
+    if not settings["hooks"]:
+        del settings["hooks"]
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
+PYTHON_SCRIPT
+  echo "✅ Stop hook removed"
+fi
 
 echo ""
-echo "🔄 Starting infinite /fix loop"
+echo "🔄 Starting fix loop using /loop command"
+echo "   Interval: ${IDLE_SLEEP_MINUTES}m"
+if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
+  echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
+  echo "   Integration branch: $INTEGRATION_BRANCH"
+  [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
+fi
+echo ""
+echo "To stop: use CronDelete to remove the scheduled job, or Ctrl+C"
+echo ""
+```
+
+**Then invoke the loop skill:**
+
+```
+Use the Skill tool to invoke: loop
+With args: ${IDLE_SLEEP_MINUTES}m /autocoder:fix
+```
+
+This schedules `/autocoder:fix` to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. No stop hook or settings.json modification needed.
+
+---
+
+**If CronCreate is NOT available → Use stop hook mode (fallback):**
+
+```bash
+# ============================================================
+# Install stop hook if not configured
+# ============================================================
+if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
+  echo "✅ Stop hook already configured"
+else
+  echo "📝 Installing stop hook..."
+
+  if [ -f ".claude/settings.json" ]; then
+    python3 << 'PYTHON_SCRIPT'
+import json
+with open(".claude/settings.json", 'r') as f:
+    settings = json.load(f)
+stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"}]}
+if "hooks" not in settings:
+    settings["hooks"] = {}
+if "Stop" not in settings["hooks"]:
+    settings["hooks"]["Stop"] = []
+CURRENT_PATH = "autocoder/hooks/stop-hook.sh"
+# Remove stale/legacy stop hooks (e.g. stop-hook-wrapper.sh) that aren't the current autocoder hook
+settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h) or CURRENT_PATH in str(h)]
+if not any(CURRENT_PATH in str(h) for h in settings["hooks"]["Stop"]):
+    settings["hooks"]["Stop"].append(stop_hook)
+with open(".claude/settings.json", 'w') as f:
+    json.dump(settings, f, indent=2)
+PYTHON_SCRIPT
+  else
+    cat > .claude/settings.json << 'EOF'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  fi
+  echo "✅ Stop hook installed"
+fi
+
+# Create loop state file
+cat > .claude/fix-loop.local.md << EOF
+---
+iteration: 0
+max_iterations: $MAX_ITERATIONS
+idle_sleep_minutes: $IDLE_SLEEP_MINUTES
+integration_branch: $INTEGRATION_BRANCH
+deploy_command: $DEPLOY_COMMAND
+started: $(date -Iseconds)
+---
+
+/autocoder:fix
+EOF
+
+echo ""
+echo "🔄 Loop initialized (stop hook mode)"
 echo "   Max iterations: $([ "$MAX_ITERATIONS" = "0" ] && echo "unlimited" || echo "$MAX_ITERATIONS")"
 echo "   Idle sleep: $IDLE_SLEEP_MINUTES minutes"
-echo ""
-echo "To stop: Press Ctrl+C or run: touch $STOP_FILE"
-echo ""
-
-ITERATION=0
-while true; do
-  # Check for stop signal
-  if [ -f "$STOP_FILE" ]; then
-    echo "🛑 Stop signal detected. Exiting loop."
-    rm -f "$STOP_FILE"
-    break
-  fi
-
-  # Check max iterations
-  if [ "$MAX_ITERATIONS" != "0" ] && [ "$ITERATION" -ge "$MAX_ITERATIONS" ]; then
-    echo "✅ Reached max iterations ($MAX_ITERATIONS). Exiting loop."
-    break
-  fi
-
-  ITERATION=$((ITERATION + 1))
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🔄 Iteration $ITERATION"
-  if [ "$MAX_ITERATIONS" != "0" ]; then
-    echo "   Progress: $ITERATION / $MAX_ITERATIONS"
-  fi
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-
-  # Run /compact before each iteration to prevent context overflow
-  echo "🗜️  Compacting context..."
-  # Note: Antigravity doesn't have /compact command like Claude
-  # Context management happens automatically
-
-  # Run the fix workflow
-  echo "🔧 Running /fix workflow..."
-  echo ""
-```
-
-**Execute the `/fix` workflow now:**
-
-Run the `/fix` workflow to process all priority issues. After it completes, check if it output `IDLE_NO_WORK_AVAILABLE`.
-
-**After `/fix` completes, continue:**
-
-```bash
-  # Check if we should sleep (idle state)
-  # The /fix workflow outputs "IDLE_NO_WORK_AVAILABLE" when there's no work
-  # For Antigravity, we'll just sleep between iterations
-  
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "💤 Iteration $ITERATION complete"
-  echo "   Sleeping for $IDLE_SLEEP_MINUTES minutes before next iteration..."
-  echo "   (Press Ctrl+C to stop, or: touch $STOP_FILE)"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-  
-  # Sleep in 1-minute increments to allow Ctrl+C interruption
-  SLEEP_SECONDS=$((IDLE_SLEEP_MINUTES * 60))
-  for ((s=0; s<SLEEP_SECONDS; s+=60)); do
-    if [ -f "$STOP_FILE" ]; then
-      echo "🛑 Stop signal detected during sleep. Exiting loop."
-      rm -f "$STOP_FILE"
-      exit 0
-    fi
-    sleep 60
-  done
-done
-
-echo ""
-echo "✅ Fix loop completed"
-echo "   Total iterations: $ITERATION"
+if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
+  echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
+  echo "   Integration branch: $INTEGRATION_BRANCH"
+  [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
+fi
 echo ""
 ```
 
-## Alternative: Manual Loop
+**Then execute `/fix` using the Skill tool:**
 
-If the automatic loop doesn't work well with Antigravity, you can manually run:
-
-```bash
-# Simple infinite loop
-while true; do
-  echo "Running /fix..."
-  # Execute /fix workflow here
-  echo "Sleeping 15 minutes..."
-  sleep 900
-done
 ```
+Use the Skill tool to invoke: autocoder:fix
+```
+
+The stop hook will automatically re-invoke `/autocoder:fix` when Claude exits, creating an infinite loop.

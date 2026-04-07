@@ -28,10 +28,12 @@ This command installs the agents framework into your project:
 - **Scope**: Global (available in all terminals)
 
 ### 3. Shell Aliases (optional)
-- **File**: `~/.bashrc` or `~/.zshrc`
+- **File**: Shell rc file for the current shell, typically `~/.bashrc` or `~/.zshrc`
 - **Aliases**:
   - `start-parallel='bash <framework-path>/.agent/scripts/start-parallel-agents.sh'`
   - `join-parallel='bash <framework-path>/.agent/scripts/join-parallel-agents.sh'`
+  - `startct='start-parallel --mux tmux --agent codex'`
+  - `startcc='start-parallel --mux cmux --agent codex'`
 - **Purpose**: Quick commands to manage parallel agents
 - **Scope**: Global
 
@@ -222,9 +224,7 @@ if [ -n "$ZSH_VERSION" ]; then
 elif [ -n "$BASH_VERSION" ]; then
   SHELL_RC="$HOME/.bashrc"
 else
-  echo "⚠️  Could not detect shell type"
-  echo "   Please add aliases manually"
-  exit 0
+  SHELL_RC="$HOME/.profile"
 fi
 
 # Check for existing aliases
@@ -244,6 +244,8 @@ cat >> "$SHELL_RC" << 'EOF'
 # Antigravity parallel agents
 alias start='start-parallel'
 alias join='join-parallel'
+alias startct='start-parallel --mux tmux --agent codex'
+alias startcc='start-parallel --mux cmux --agent codex'
 EOF
 
 echo "✓ Added aliases to $SHELL_RC"
@@ -281,7 +283,7 @@ fi
 
 if [ "$INSTALL_ALIASES" = true ]; then
   echo "   • Shell aliases"
-  echo "     Shortcuts: start, join"
+  echo "     Shortcuts: start, join, startct, startcc"
 fi
 
 echo ""

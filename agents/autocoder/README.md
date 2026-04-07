@@ -1,6 +1,6 @@
 # Autocoder Agent (OpenCode)
 
-**Version**: 1.5.0
+**Version**: 2.1.0
 
 This directory contains the definition for the **Autocoder** agent on the OpenCode platform.
 
@@ -12,6 +12,7 @@ The Autocoder agent is responsible for autonomously resolving GitHub issues with
 - **Regression Testing**: Runs comprehensive test suites
 - **Proposal System**: Creates enhancement proposals for human approval (NOT auto-implemented)
 - **Enhancement Implementation**: Implements only approved enhancements
+- **Continuous Loop**: Repeats the workflow phases until interrupted
 
 ## Files
 
@@ -32,7 +33,11 @@ The Autocoder agent is responsible for autonomously resolving GitHub issues with
 4. **Enhancement** - Implement approved enhancements (NOT proposals)
 5. **Proposals** - Create new proposals when no other work exists
 
-## Proposal System (v1.5.0)
+## Current Scope
+
+This OpenCode agent directory currently provides the core autocoder workflow set only. Manager-session workflows such as blocked-issue review and worker monitoring exist in the Claude Code and Antigravity paths, not in `agents/autocoder/`.
+
+## Proposal System (v2.1.0)
 
 AI-generated enhancements are tagged with `proposal` label and require human approval:
 

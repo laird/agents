@@ -150,7 +150,7 @@ case "$AGENT" in
     fi
     AGENT_LAUNCH_CMD="gemini --sandbox=false"
     WORKER_CMD="/fix-loop"
-    MANAGER_CMD="/review-blocked"
+    MANAGER_CMD="/monitor-loop"
     ;;
   codex)
     if ! command -v codex &> /dev/null; then

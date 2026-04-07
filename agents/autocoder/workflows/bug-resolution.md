@@ -53,8 +53,11 @@ for b in bugs:
 ### 4. Git Operations
 
 ```bash
+# Start: pull latest from origin to ensure work starts from current state
+git pull origin $(git rev-parse --abbrev-ref HEAD) 2>/dev/null || git pull origin main
 git checkout -b fix/issue-{number}-{description}
 git add . && git commit -m "Fix #{number}: {title}"
+# End: push branch to origin so all work is preserved and available for PR
 git push origin fix/issue-{number}-{description}
 ```
 

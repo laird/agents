@@ -58,20 +58,8 @@ Implement enhancements WITHOUT `proposal` label. Run tests after implementation.
 ### 4. Proposal Creation
 Create new enhancement proposals WITH `proposal` label. Do NOT auto-implement.
 
-### 5. SRE Monitor (Idle Fallback)
-When phases 0-4 yield no work (no untriaged issues, no open bugs, no approved enhancements, no proposals to create): run the `sre-monitor` workflow. See `workflows/sre-monitor.md` for full steps.
-
-Summary:
-1. Check production Cloud Logging for errors/warnings (last 30 min)
-2. Check engagement health via API — look for stalled, stuck, or errored engagements
-3. Check worker factory heartbeats for dead workers
-4. File new GitHub issues for new error patterns; comment on existing issues with updates
-5. Wait 15-30 minutes, then return to Phase 0 (triage)
-
-Skip sre-monitor if a P0 issue is detected — fix immediately.
-
-### 6. Continuous Loop
-Cycle through phases 0-5 until interrupted. Inform user of pending proposals.
+### 5. Continuous Loop
+Cycle through phases 0-4 until interrupted. Inform user of pending proposals.
 
 ## Exit Conditions
 
