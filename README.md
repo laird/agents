@@ -1,6 +1,6 @@
-# Agent Protocols - Claude Code Plugins
+# Agent Protocols
 
-A **Claude Code plugin marketplace** providing production-validated protocols, specialized agents, and automation frameworks for systematic AI-assisted software development.
+A multi-platform repository of production-validated protocols, specialized agents, skills, and automation frameworks for systematic AI-assisted software development.
 
 ## Overview
 
@@ -30,23 +30,111 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 
 | Platform | Directory | Documentation |
 |----------|-----------|---------------|
-| **Claude Code** | `.claude-plugin/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
+| **Claude Code** | `.claude-plugin/` and `plugins/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
 | **Antigravity** | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
-| **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
+| **Gemini / Antigravity companion assets** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
+| **Codex** | `.codex-plugin/`, `codex-plugins/`, `skills/`, and `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
+| **Droid (Factory)** | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
 
 Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
 
 ---
 
-## Installation
+## Codex Support
 
-### Add Marketplace
+Codex support is additive and does not replace the Claude Code or Antigravity / Gemini implementations.
+
+#### Add Marketplace
 
 ```bash
 /plugin add marketplace https://github.com/laird/agents
 ```
 
-### Install Plugins
+### Codex Skills
+
+- `skills/autocoder/` - Codex-native entrypoint for autonomous GitHub issue workflows
+- `skills/modernize/` - Codex-native entrypoint for modernization workflows
+
+### Codex Runtime Scripts
+
+```bash
+# Install Codex skills, aliases, and parallel-agent commands
+bash scripts/install-codex.sh /path/to/target-repo
+
+# Run one autocoder pass
+bash scripts/codex-autocoder.sh fix
+
+# Run the continuous fix loop
+bash scripts/codex-fix-loop.sh
+
+# Run the manager monitor loop
+bash scripts/codex-monitor-loop.sh 15
+
+# Stop running loops
+bash scripts/codex-stop-loop.sh all
+
+# Start a Codex swarm (defaults to tmux; pass `cmux` to override)
+bash scripts/start-parallel-codex.sh 3
+```
+
+If you want shell aliases for Codex swarm startup, source [codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) from your shell config. That gives you `startct`, `startcc`, `joinct`, and `joincc`.
+
+See [docs/CODEX.md](docs/CODEX.md) for details.
+
+---
+
+## Droid (Factory) Support
+
+Droid support is additive and does not replace the Claude Code, Antigravity / Gemini, or Codex implementations.
+
+### Droid Skills
+
+- `.factory/skills/autocoder/` - Droid-native entrypoint for autonomous GitHub issue workflows
+- `.factory/skills/modernize/` - Droid-native entrypoint for modernization workflows
+
+### Droid Custom Droids (Subagents)
+
+Six specialist subagents in `.factory/droids/`: `architect`, `coder`, `documentation`, `migration-coordinator`, `security`, `tester`.
+
+### Droid Runtime Scripts
+
+```bash
+# Install Droid skills, droids, aliases, and parallel-agent commands
+bash scripts/install-droid.sh /path/to/target-repo
+
+# Run one autocoder pass
+bash scripts/droid-autocoder.sh fix
+
+# Run the continuous fix loop
+bash scripts/droid-fix-loop.sh
+
+# Run the manager monitor loop
+bash scripts/droid-monitor-loop.sh 15
+
+# Stop running loops
+bash scripts/droid-stop-loop.sh all
+
+# Start a tmux-based Droid swarm
+bash scripts/droid-start-parallel.sh tmux 3
+```
+
+If you want shell aliases for Droid swarm startup, source [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) from your shell config. That gives you `startdt`, `startdc`, `joindt`, and `joindc`.
+
+See [docs/DROID.md](docs/DROID.md) for details.
+
+---
+
+## Installation
+
+### Claude Code
+
+#### Add Marketplace
+
+```bash
+/plugin add marketplace https://github.com/laird/agents
+```
+
+#### Install Plugins
 
 **Install modernize plugin** (software modernization workflows):
 
@@ -103,6 +191,29 @@ These plugins enhance the capabilities of modernize and autocoder:
 - **quint**: Automatically invoked for ultra-complex issues that exceed autonomous resolution capabilities (>100 test failures, major architecture decisions, irreversible consequences). Guides structured reasoning with human collaboration.
 
 If these plugins are not installed, the workflows use direct problem-solving approaches instead.
+
+### Droid (Factory)
+
+#### Add Marketplace
+
+```bash
+droid plugin marketplace add https://github.com/laird/agents
+```
+
+#### Install Plugins
+
+```bash
+droid plugin install modernize@plugin-marketplace
+droid plugin install autocoder@plugin-marketplace
+```
+
+#### Standalone Installer
+
+```bash
+bash scripts/install-droid.sh /path/to/target-repo
+```
+
+After installation, the same slash commands are available in Droid. See [docs/DROID.md](docs/DROID.md) and [docs/DROID-INSTALL.md](docs/DROID-INSTALL.md) for details.
 
 ---
 
@@ -213,6 +324,25 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 agents/
 ├── .agent/                              # Antigravity agent configuration (rules, workflows)
 ├── .claude-plugin/                      # Claude Code plugin configuration
+├── .factory/                            # Droid (Factory) configuration
+│   ├── settings.json                   # Hooks (stop hook for continuous operation)
+│   ├── skills/
+│   │   ├── autocoder/                  # Droid autocoder skill + references
+│   │   └── modernize/                  # Droid modernize skill + references
+│   └── droids/
+│       ├── architect.md                # Specialist subagent: architecture
+│       ├── coder.md                    # Specialist subagent: implementation
+│       ├── documentation.md            # Specialist subagent: documentation
+│       ├── migration-coordinator.md    # Specialist subagent: orchestration
+│       ├── security.md                 # Specialist subagent: security
+│       └── tester.md                   # Specialist subagent: testing
+├── .factory-plugin/                     # Droid plugin marketplace configuration
+│   ├── marketplace.json                # Marketplace metadata (2 plugins)
+│   └── plugins/
+│       ├── modernize/
+│       │   └── plugin.json
+│       └── autocoder/
+│           └── plugin.json
 │   ├── marketplace.json                 # Marketplace metadata (2 plugins)
 │   └── plugins/
 │       ├── modernize/

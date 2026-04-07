@@ -5,6 +5,9 @@
 # Swarm coordination (runtime generated)
 .swarm/
 
+# Droid loop state (runtime generated)
+.factory/loops/
+
 # OS files
 .DS_Store
 Thumbs.db
