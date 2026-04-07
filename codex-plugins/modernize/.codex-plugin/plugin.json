@@ -1,0 +1,40 @@
+{
+  "name": "modernize",
+  "version": "3.2.0",
+  "description": "Systematic modernization workflows for Codex, including assessment, planning, execution guidance, and retrospective improvement loops.",
+  "author": {
+    "name": "Agent Protocols Team",
+    "email": "laird@popk.in",
+    "url": "https://github.com/laird/agents"
+  },
+  "homepage": "https://github.com/laird/agents",
+  "repository": "https://github.com/laird/agents",
+  "license": "MIT",
+  "keywords": [
+    "protocols",
+    "agents",
+    "automation",
+    "migration",
+    "modernization",
+    "testing",
+    "documentation",
+    "quality-gates",
+    "codex"
+  ],
+  "skills": "../../../skills/modernize",
+  "interface": {
+    "displayName": "Modernize",
+    "shortDescription": "Modernization workflows for Codex",
+    "longDescription": "Use Modernize to assess legacy systems, plan migrations, execute phased modernization work, and capture retrospective improvements from Codex.",
+    "developerName": "Agent Protocols Team",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/laird/agents",
+    "defaultPrompt": [
+      "Assess, plan, and execute a structured software modernization workflow"
+    ]
+  }
+}

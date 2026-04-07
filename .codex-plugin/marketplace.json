@@ -1,0 +1,30 @@
+{
+  "name": "laird-agents",
+  "interface": {
+    "displayName": "Laird Agents"
+  },
+  "plugins": [
+    {
+      "name": "modernize",
+      "source": {
+        "source": "local",
+        "path": "./codex-plugins/modernize"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Coding"
+    },
+    {
+      "name": "autocoder",
+      "source": {
+        "source": "local",
+        "path": "./codex-plugins/autocoder"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Coding"
+    }
+  ]
+}

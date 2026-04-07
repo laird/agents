@@ -1,0 +1,42 @@
+{
+  "name": "autocoder",
+  "version": "3.7.3",
+  "description": "Autonomous GitHub issue resolution workflows for Codex, including fix loops, worker coordination, proposal handling, and validation-oriented issue triage.",
+  "author": {
+    "name": "Agent Protocols Team",
+    "email": "laird@popk.in",
+    "url": "https://github.com/laird/agents"
+  },
+  "homepage": "https://github.com/laird/agents",
+  "repository": "https://github.com/laird/agents",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "automation",
+    "issue-management",
+    "autonomous-fix",
+    "testing",
+    "regression",
+    "quality-automation",
+    "proposals",
+    "triage",
+    "review",
+    "codex"
+  ],
+  "skills": "../../../skills/autocoder",
+  "interface": {
+    "displayName": "Autocoder",
+    "shortDescription": "Autonomous GitHub issue workflows for Codex",
+    "longDescription": "Use Autocoder to triage issues, run fix loops, review blocked work, improve coverage, and coordinate parallel worker sessions from Codex.",
+    "developerName": "Agent Protocols Team",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/laird/agents",
+    "defaultPrompt": [
+      "Triage GitHub issues, run fix loops, review blocked work, and coordinate autonomous coding workflows"
+    ]
+  }
+}
