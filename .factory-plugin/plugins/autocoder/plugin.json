@@ -1,0 +1,47 @@
+{
+  "name": "autocoder",
+  "version": "3.7.3",
+  "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work. Proposals require human approval before implementation.",
+  "author": {
+    "name": "Agent Protocols Team",
+    "email": "laird@popk.in"
+  },
+  "homepage": "https://github.com/laird/agents",
+  "repository": "https://github.com/laird/agents",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "automation",
+    "issue-management",
+    "autonomous-fix",
+    "testing",
+    "regression",
+    "coverage",
+    "test-coverage",
+    "superpowers",
+    "quint",
+    "quality-automation",
+    "proposals",
+    "triage",
+    "infinite-loop",
+    "stop-hook",
+    "blocked-issues",
+    "planning",
+    "review"
+  ],
+  "commands": [
+    "../../../plugins/autocoder/commands/autocoder-help.md",
+    "../../../plugins/autocoder/commands/fix.md",
+    "../../../plugins/autocoder/commands/fix-loop.md",
+    "../../../plugins/autocoder/commands/review-blocked.md",
+    "../../../plugins/autocoder/commands/install.md",
+    "../../../plugins/autocoder/commands/stop-loop.md",
+    "../../../plugins/autocoder/commands/list-proposals.md",
+    "../../../plugins/autocoder/commands/approve-proposal.md",
+    "../../../plugins/autocoder/commands/list-needs-design.md",
+    "../../../plugins/autocoder/commands/list-needs-feedback.md",
+    "../../../plugins/autocoder/commands/brainstorm-issue.md",
+    "../../../plugins/autocoder/commands/full-regression-test.md",
+    "../../../plugins/autocoder/commands/improve-test-coverage.md"
+  ]
+}
