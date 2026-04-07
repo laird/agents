@@ -1,6 +1,6 @@
 # OpenCode Integration
 
-**Version**: 2.1.0
+**Version**: 1.5.0
 **Platform**: OpenCode
 **Directory**: `agents/`
 
@@ -15,11 +15,9 @@ agents/
 ├── README.md                     # OpenCode agents overview
 ├── autocoder/                      # Autocoder agent configuration
 │   ├── README.md                # Autocoder agent overview
-│   ├── agent.md                 # Main agent definition (v2.1.0)
+│   ├── agent.md                 # Main agent definition (v1.5.0)
 │   └── workflows/               # Autocoder workflows
-│       ├── triage.md            # Priority assignment workflow
 │       ├── bug-resolution.md    # Bug fixing workflow
-│       ├── proposals.md         # Enhancement proposal workflow
 │       ├── regression-testing.md # Test suite workflow
 │       └── enhancement.md       # Enhancement workflow
 └── modernize/                    # Modernize agent configuration
@@ -60,7 +58,7 @@ Configure OpenCode to reference this repository's `agents/` directory.
 
 ## Available Agents
 
-### Autocoder Agent (v2.1.0)
+### Autocoder Agent (v1.5.0)
 
 Autonomous GitHub issue resolution with intelligent testing and quality automation.
 
@@ -74,15 +72,11 @@ Autonomous GitHub issue resolution with intelligent testing and quality automati
 - Approved enhancement implementation
 - Continuous loop execution
 
-Current OpenCode scope is the core autocoder workflow set. Manager-session workflows such as blocked-issue review, worker monitoring, and swarm dispatch are documented in the Claude Code and Antigravity integrations, not under `agents/`.
-
 **Workflows**:
 
 | Workflow | Description |
 |----------|-------------|
-| `triage.md` | Assign priority labels to unprioritized issues |
 | `bug-resolution.md` | Fix prioritized bugs |
-| `proposals.md` | Create enhancement proposals for human approval |
 | `regression-testing.md` | Run comprehensive tests |
 | `enhancement.md` | Implement approved enhancements |
 
@@ -117,7 +111,7 @@ Each agent is defined in a Markdown file with YAML frontmatter:
 ```yaml
 ---
 name: autocoder
-version: 2.1.0
+version: 1.5.0
 type: agent
 category: automation
 ---

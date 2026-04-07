@@ -1,6 +1,6 @@
 # Claude Code Plugin Integration
 
-**Version**: 3.14.0
+**Version**: 3.4.0
 **Platform**: [Claude Code](https://claude.ai/code)
 **Directory**: `.claude-plugin/`
 
@@ -15,9 +15,9 @@ Claude Code is Anthropic's official CLI for Claude. This repository provides a p
 ├── marketplace.json              # Marketplace metadata and plugin registry
 └── plugins/
     ├── modernize/
-    │   └── plugin.json           # Modernize plugin definition (v3.2.0)
+    │   └── plugin.json           # Modernize plugin definition (v3.1.0)
     └── autocoder/
-        └── plugin.json           # Autocoder plugin definition (v3.7.3)
+        └── plugin.json           # Autocoder plugin definition (v2.1.0)
 ```
 
 ### Key Files
@@ -34,13 +34,12 @@ The actual plugin implementations (commands, protocols) are in the `plugins/` di
 ```
 plugins/
 ├── modernize/
-│   ├── commands/          # 6 slash commands (.md protocol files)
+│   ├── commands/          # 5 slash commands (.md protocol files)
 │   ├── agents/            # 6 specialist agent definitions
 │   └── protocols/         # 10 supporting protocol documents
 └── autocoder/
-    ├── commands/          # 15 slash commands
-    ├── scripts/           # 9 automation scripts
-    └── hooks/             # 2 hook scripts (stop-hook)
+    ├── commands/          # 4 slash commands
+    └── scripts/           # Automation scripts
 ```
 
 ## Installation
@@ -72,7 +71,7 @@ plugins/
 
 ## Available Commands
 
-### Modernize Plugin (v3.2.0)
+### Modernize Plugin (v3.1.0)
 
 | Command | Description |
 |---------|-------------|
@@ -81,27 +80,15 @@ plugins/
 | `/modernize` | Execute 7-phase modernization with 6 specialist agents |
 | `/retro` | Analyze project history for improvements (outputs IMPROVEMENTS.md) |
 | `/retro-apply` | Apply retrospective recommendations |
-| `/modernize-help` | Show modernize workflow overview and help |
 
-### Autocoder Plugin (v3.7.3)
+### Autocoder Plugin (v1.5.0)
 
 | Command | Description |
 |---------|-------------|
 | `/fix` | Autonomous GitHub issue resolution |
-| `/fix-loop` | Continuous autonomous resolution loop |
-| `/stop-loop` | Stop the continuous loop |
-| `/install` | One-time setup for continuous mode (hooks, labels) |
-| `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
-| `/monitor-loop` | Continuous manager monitoring loop |
-| `/review-blocked` | Review and unblock labeled issues |
-| `/list-proposals` | View pending AI-generated proposals |
-| `/approve-proposal` | Approve a proposal for implementation |
-| `/list-needs-design` | List issues needing design work |
-| `/list-needs-feedback` | List issues needing feedback |
-| `/brainstorm-issue` | Brainstorm design for an issue |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
-| `/autocoder-help` | Show autocoder workflow overview and help |
+| `/list-proposals` | View pending AI-generated proposals |
 
 ## Configuration
 
@@ -132,23 +119,12 @@ npm run build
    - Quality gates and success criteria
    - Examples and troubleshooting
 
-## Platform-Specific Features
-
-Features unique to Claude Code (not available on other platforms):
-
-- **Plugin marketplace** with automatic updates
-- **Stop hook** for graceful loop termination (`plugins/autocoder/hooks/stop-hook.sh`)
-- **Agent tool** for spawning specialized sub-agents (used by `/modernize` and `/fix`)
-- **CronCreate** for scheduling recurring tasks (used by `/monitor-loop`)
-
 ## Version History
 
 | Version | Changes |
 |---------|---------|
-| 3.14.0 | Added `/monitor-workers` and `/monitor-loop` for parallel agent swarm management |
-| 3.11.1 | Added SRE monitoring, issue decomposition, `/review-blocked`, `/install` |
-| 3.4.0 | Renamed `/fix-github` → `/fix`, added design workflow commands and help |
 | 3.3.0 | Added proposal system, issue triage, `/list-proposals` command |
+| 3.2.0 | Added `/improve-test-coverage` command |
 | 3.0.0 | Added autocoder plugin with `/fix` |
 | 2.6.0 | Applied 5 retrospective improvements |
 | 2.5.0 | Added `/retro` and `/retro-apply` commands |

@@ -98,19 +98,10 @@ ln -s /path/to/agents/.agent /your/project/.agent
 |----------|-------------|
 | `fix.md` | Autonomous issue resolution with triage and proposals |
 | `fix-loop.md` | Infinite loop wrapper with stop hook |
-| `monitor-workers.md` | Check worker status, stale locks, and dispatch opportunities |
-| `monitor-loop.md` | Continuous manager loop for worker coordination |
-| `install.md` | Install stop hook, parallel scripts, and aliases |
-| `stop-loop.md` | Stop the continuous fix loop |
-| `review-blocked.md` | Interactively review and unblock blocked issues |
+| `install-stop-hook.md` | Install stop hook for continuous execution |
 | `list-proposals.md` | Display pending AI-generated proposals |
-| `approve-proposal.md` | Approve a proposal for implementation |
-| `list-needs-design.md` | List issues requiring design work |
-| `list-needs-feedback.md` | List issues requiring human feedback |
-| `brainstorm-issue.md` | Brainstorm approaches for a blocked issue |
 | `full-regression-test.md` | Comprehensive test suite execution |
 | `improve-test-coverage.md` | Coverage analysis and improvement |
-| `autocoder-help.md` | Show the autocoder command overview |
 
 ### Utility Workflows
 

@@ -170,21 +170,12 @@ Located in `scripts/` directory:
 4. **Test both platforms** if possible before committing
 
 **Key parallel files:**
+- `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
 - `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
 - `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
-- `/stop-loop`: `plugins/autocoder/commands/stop-loop.md` ↔ `.agent/workflows/stop-loop.md`
-- `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
-- `/monitor-workers`: `plugins/autocoder/commands/monitor-workers.md` ↔ `.agent/workflows/monitor-workers.md`
-- `/monitor-loop`: `plugins/autocoder/commands/monitor-loop.md` ↔ `.agent/workflows/monitor-loop.md`
-- `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
-- `/list-proposals`: `plugins/autocoder/commands/list-proposals.md` ↔ `.agent/workflows/list-proposals.md`
-- `/approve-proposal`: `plugins/autocoder/commands/approve-proposal.md` ↔ `.agent/workflows/approve-proposal.md`
-- `/list-needs-design`: `plugins/autocoder/commands/list-needs-design.md` ↔ `.agent/workflows/list-needs-design.md`
-- `/list-needs-feedback`: `plugins/autocoder/commands/list-needs-feedback.md` ↔ `.agent/workflows/list-needs-feedback.md`
-- `/brainstorm-issue`: `plugins/autocoder/commands/brainstorm-issue.md` ↔ `.agent/workflows/brainstorm-issue.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
-- `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
-- `/autocoder-help`: `plugins/autocoder/commands/autocoder-help.md` ↔ `.agent/workflows/autocoder-help.md`
+- `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
+- `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
 
 **Key parallel scripts:**
 - `start-parallel-agents.sh`: `plugins/autocoder/scripts/start-parallel-agents.sh` ↔ `.agent/scripts/start-parallel-agents.sh`

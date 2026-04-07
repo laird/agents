@@ -249,6 +249,12 @@ npm run build
 **Test Reports**:
 - Location: `docs/test/regression-reports/`
 
+### Merge Mode
+```
+merge
+```
+Options: `merge` (auto-merge to parent branch and push) or `pr` (push feature branch and create a pull request, then stop).
+
 AUTOCODER_CONFIG
 
     echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
@@ -271,10 +277,19 @@ AUTOCODER_CONFIG
     BUILD_COMMAND="npm run build"
     echo "⚠️  No build command found, using default: $BUILD_COMMAND"
   fi
+  # Extract merge mode (merge or pr)
+  if grep -q "### Merge Mode" CLAUDE.md; then
+    MERGE_MODE=$(sed -n "/### Merge Mode/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+    echo "✅ Merge mode: $MERGE_MODE"
+  else
+    MERGE_MODE=""
+    echo "MERGE_MODE_NOT_CONFIGURED=true"
+  fi
 else
   echo "⚠️  No CLAUDE.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
+  MERGE_MODE="merge"
 fi
 
 # Ensure gh is authenticated as the correct user for this repo
@@ -313,7 +328,7 @@ if [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -403,7 +418,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "decomposed") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
     ) |
     {
       number: .number,
@@ -479,6 +494,12 @@ else
     echo "ℹ️  No available priority issues found"
     echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
     echo "   Use '/review-blocked' to review and approve blocked issues"
+
+    # Write idle status file for agents-ui TUI monitoring
+    mkdir -p /tmp/agents-ui
+    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+
     echo "IDLE_NO_WORK_AVAILABLE"
     exit 0
   fi
@@ -502,8 +523,11 @@ echo ""
 # Save parent branch before creating feature branch
 PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
+# Pull latest changes from origin before branching
+git pull origin "$PARENT_BRANCH" 2>/dev/null || echo "⚠️  Could not pull from origin — proceeding with local state"
+
 # Create fix branch
-git checkout -b "fix/issue-${ISSUE_NUM}-auto" 2>/dev/null || git checkout "fix/issue-${ISSUE_NUM}-auto"
+git checkout -b "feature/issue-${ISSUE_NUM}" 2>/dev/null || git checkout "feature/issue-${ISSUE_NUM}"
 
 # 'working' label was already added during claim-then-verify above
 
@@ -512,16 +536,61 @@ gh issue comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
 
 Starting automated fix for this issue.
 
-**Branch**: \`fix/issue-${ISSUE_NUM}-auto\`
+**Branch**: \`feature/issue-${ISSUE_NUM}\`
 **Started**: $(date)
 
 Fix in progress..." 2>/dev/null || true
 
-echo "✅ Created branch: fix/issue-${ISSUE_NUM}-auto"
+echo "✅ Created branch: feature/issue-${ISSUE_NUM}"
 echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
+
+# Write status file for agents-ui TUI monitoring
+mkdir -p /tmp/agents-ui
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"started\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 ```
+
+## First-Run: Configure Merge Mode
+
+When `MERGE_MODE_NOT_CONFIGURED=true` is detected in the output above, you **MUST** prompt the user before proceeding:
+
+1. Use AskUserQuestion to ask: *"How should completed issues be integrated? Options: **merge** (auto-merge feature branch to parent and push — fully autonomous) or **pr** (push feature branch and create a pull request for human review). Enter 'merge' or 'pr':"*
+2. Set `MERGE_MODE` to the user's response (default to `merge` if unclear).
+3. Append the setting to the project's CLAUDE.md (or AGENTS.md if it exists) so it persists:
+
+```bash
+cat >> CLAUDE.md << MERGE_MODE_CONFIG
+
+### Merge Mode
+\`\`\`
+${MERGE_MODE}
+\`\`\`
+Options: \`merge\` (auto-merge to parent branch and push) or \`pr\` (push feature branch and create a pull request, then stop).
+MERGE_MODE_CONFIG
+echo "✅ Saved merge mode '$MERGE_MODE' to CLAUDE.md"
+```
+
+4. Commit the CLAUDE.md change so all agents share the setting.
+
+## CRITICAL: Always Remove 'working' Label
+
+**The `working` label MUST be removed when you stop working on an issue, regardless of the outcome.** This is a concurrency lock — if not removed, no other agent can pick up the issue.
+
+Remove it in ALL exit paths:
+- **Issue fixed and closed** → remove `working` label
+- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly with `gh issue edit`, you MUST also remove `working`)
+- **Issue skipped** → remove `working` label
+- **Error or failure** → remove `working` label
+- **Moving to next issue** → remove `working` label from current issue
+
+```bash
+# ALWAYS run this before moving to the next issue:
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+**Never add a blocking label without also removing the `working` label.** If you use `gh issue edit` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
 
 ## Fixing Strategy
 
@@ -565,27 +634,49 @@ Detailed explanation of what was fixed and how.
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
 # Push feature branch
-git push -u origin "fix/issue-${ISSUE_NUM}-auto"
+git push -u origin "feature/issue-${ISSUE_NUM}"
 
-# Switch back to parent branch and merge
-git checkout "$PARENT_BRANCH"
-git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
-
-# Push parent branch
-git push
-
-# Clean up feature branch
-git branch -d "fix/issue-${ISSUE_NUM}-auto"
-
-# Remove 'working' label and close issue
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+if [ "$MERGE_MODE" = "pr" ]; then
+  # Create a pull request and stop
+  gh pr create \
+    --base "$PARENT_BRANCH" \
+    --head "feature/issue-${ISSUE_NUM}" \
+    --title "Fix #${ISSUE_NUM}: Brief description" \
+    --body "Closes #${ISSUE_NUM}
 
 [Detailed explanation of fix]
 
-**Branch**: \`fix/issue-${ISSUE_NUM}-auto\` (merged and deleted)
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+  # Remove 'working' label (PR is ready for review)
+  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+else
+  # Auto-merge: switch back to parent branch and merge
+  git checkout "$PARENT_BRANCH"
+  git merge --no-ff "feature/issue-${ISSUE_NUM}"
+
+  # Push parent branch
+  git push
+
+  # Clean up feature branch (local and remote)
+  git branch -d "feature/issue-${ISSUE_NUM}"
+  git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
+
+  # Remove 'working' label and close issue
+  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+
+[Detailed explanation of fix]
+
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 
 🤖 Auto-resolved by autonomous fix workflow"
+
+# Write completion status file for agents-ui TUI monitoring
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+fi
 ```
 
 ### Step 2B: Complex Issue - Use Superpowers (if available)
@@ -717,21 +808,15 @@ Detailed multi-line explanation of:
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
 # Push feature branch
-git push -u origin "fix/issue-${ISSUE_NUM}-auto"
+git push -u origin "feature/issue-${ISSUE_NUM}"
 
-# Switch back to parent branch and merge
-git checkout "$PARENT_BRANCH"
-git merge --no-ff "fix/issue-${ISSUE_NUM}-auto"
-
-# Push parent branch
-git push
-
-# Clean up feature branch
-git branch -d "fix/issue-${ISSUE_NUM}-auto"
-
-# Remove 'working' label and close issue with detailed explanation
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+if [ "$MERGE_MODE" = "pr" ]; then
+  # Create a pull request and stop
+  gh pr create \
+    --base "$PARENT_BRANCH" \
+    --head "feature/issue-${ISSUE_NUM}" \
+    --title "Fix #${ISSUE_NUM}: Brief description" \
+    --body "Closes #${ISSUE_NUM}
 
 ## Root Cause
 [Detailed analysis]
@@ -745,10 +830,48 @@ gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 ## Verification
 [Test results and evidence]
 
-**Branch**: \`fix/issue-${ISSUE_NUM}-auto\` (merged and deleted)
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+  # Remove 'working' label (PR is ready for review)
+  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+else
+  # Auto-merge: switch back to parent branch and merge
+  git checkout "$PARENT_BRANCH"
+  git merge --no-ff "feature/issue-${ISSUE_NUM}"
+
+  # Push parent branch
+  git push
+
+  # Clean up feature branch (local and remote)
+  git branch -d "feature/issue-${ISSUE_NUM}"
+  git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
+
+  # Remove 'working' label and close issue with detailed explanation
+  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+
+## Root Cause
+[Detailed analysis]
+
+## Solution
+[Approach taken]
+
+## Changes Made
+[List of changes]
+
+## Verification
+[Test results and evidence]
+
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 **Commit**: [commit hash]
 
 🤖 Auto-resolved by autonomous fix workflow with superpowers"
+
+# Write completion status file for agents-ui TUI monitoring
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+fi
 ```
 
 ## Example Workflow
@@ -796,6 +919,7 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `needs-design` | Multiple valid approaches without clear winner, requires design phase | "Add user dashboard", "Implement notifications", architectural uncertainty |
 | `needs-approval` | Architectural decisions, major changes, security implications, breaking changes | "Migrate to microservices", "Change auth system", "Remove deprecated API" |
 | `too-complex` | Beyond autonomous capability (when decomposition fails or superpowers unavailable) | Manual decomposition needed, requires deep expertise |
+| `future` | Idea for future consideration, not ready for implementation | "Expose data via MCP server", research spikes, long-term ideas |
 | `decomposed` | Complex issue broken into sub-tasks (automatically applied, not blocking) | Parent issue tracking sub-task completion |
 | `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
 
@@ -1071,7 +1195,7 @@ gh issue list --state open --label "enhancement" --json number,title,body,labels
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
             and not any(l['name'] == 'working' for l in i.get('labels', []))
@@ -1101,7 +1225,7 @@ print(len(proposals))
   BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -1233,6 +1357,11 @@ ENHANCEMENT_BODY
 echo "✅ Created proposal issue. Awaiting human approval before implementation."
 echo "💡 Use '/list-proposals' to view all pending proposals"
 echo ""
+
+# Write idle status file for agents-ui TUI monitoring
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+
 echo "IDLE_NO_WORK_AVAILABLE"
 ```
 
@@ -1367,8 +1496,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # Push parent branch
   git push
 
-  # Clean up feature branch
+  # Clean up feature branch (local and remote)
   git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
+  git push origin --delete "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || true
 
   # Remove 'working' label and close enhancement with details
   gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
@@ -1390,6 +1520,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 **Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\` (merged and deleted)
 
 🤖 Auto-implemented by autonomous enhancement workflow"
+
+  # Write completion status file for agents-ui TUI monitoring
+  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+  echo "{\"status\": \"idle\", \"issue\": ${ENHANCE_NUM}, \"title\": \"${ENHANCE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 fi
 ```
 
@@ -1525,7 +1659,7 @@ gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/al
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'decomposed']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -1538,7 +1672,7 @@ print(len(priority))
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -1568,7 +1702,7 @@ else
   BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -1584,6 +1718,11 @@ print(len(blocked))
     fi
     echo "💤 Nothing to do until proposals/blocked issues are approved or new issues arrive."
     echo ""
+
+    # Write idle status file for agents-ui TUI monitoring
+    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+
     echo "IDLE_NO_WORK_AVAILABLE"
   else
     echo "No pending proposals or blocked issues. Will brainstorm new proposals..."
@@ -1685,3 +1824,9 @@ gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
 ---
 
 🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
+
+**REMINDER**: Before moving to the next issue, ALWAYS remove the `working` label from the current issue:
+```bash
+gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+This applies to ALL outcomes: fixed, skipped, deferred, blocked, or errored. Failing to remove this label will prevent any agent from working on the issue.

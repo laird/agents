@@ -483,14 +483,12 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
   ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
   ln -sf "$SCRIPT_DIR/stop-parallel-agents.sh" "$INSTALL_DIR/stop-parallel"
-  ln -sf "$SCRIPT_DIR/create-issue.sh" "$INSTALL_DIR/create-issue"
 
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
   echo "   $INSTALL_DIR/join-parallel"
   echo "   $INSTALL_DIR/end-parallel"
   echo "   $INSTALL_DIR/stop-parallel"
-  echo "   $INSTALL_DIR/create-issue"
 
   # Add to PATH if needed
   if [ "$PATH_OK" = false ]; then
