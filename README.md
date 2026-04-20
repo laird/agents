@@ -32,8 +32,9 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 |----------|-----------|---------------|
 | **Claude Code** | `.claude-plugin/` and `plugins/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
 | **Antigravity** | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
-| **Gemini / Antigravity companion assets** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
+| **Gemini CLI skill extensions** | `skills/` with per-skill `gemini-extension.json` and `GEMINI.md` | [skills/autocoder/README.md](skills/autocoder/README.md), [skills/modernize/README.md](skills/modernize/README.md) |
 | **Codex** | `.codex-plugin/`, `codex-plugins/`, `skills/`, and `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
+| **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
 | **Droid (Factory)** | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
 
 Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
@@ -54,6 +55,11 @@ Codex support is additive and does not replace the Claude Code or Antigravity / 
 
 - `skills/autocoder/` - Codex-native entrypoint for autonomous GitHub issue workflows
 - `skills/modernize/` - Codex-native entrypoint for modernization workflows
+
+### Gemini CLI Skill Packaging
+
+- `skills/autocoder/` - shared skill content plus `gemini-extension.json` and `GEMINI.md`
+- `skills/modernize/` - shared skill content plus `gemini-extension.json` and `GEMINI.md`
 
 ### Codex Runtime Scripts
 

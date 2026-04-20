@@ -156,3 +156,322 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Parallel startup now routes through the same cross-agent launcher for all supported agent technologies, reducing drift between Claude, Gemini, Codex, and Droid startup paths and making the documented commands match actual behavior.
 
+
+---
+
+## 2026-04-16 08:22:17 - Monitor worker swarm state
+
+**What Changed**: Ran the /monitor-workers checks against the agents repo, including worktree status, cmux workspace discovery, label/issue state, and deploy readiness checks.
+
+**Why Changed**: AGENTS.md requires logging agent activity, and this pass needed a persistent record of the current manager/worker state without changing code.
+
+**Impact**: Captured that the swarm is currently idle: no open GitHub issues, no working locks, no integration branch to deploy from, and worker worktrees only contain lingering untracked files.
+
+
+---
+
+## 2026-04-16 09:07:11 - Monitor worker swarm state
+
+**What Changed**: Ran the /monitor-workers checks against the agents repo again, including worktree status, cmux worker screens, loop status files, GitHub issue state, and deploy-readiness validation.
+
+**Why Changed**: AGENTS.md requires logging agent activity, and this monitor pass identified whether any workers needed dispatch or cleanup.
+
+**Impact**: Confirmed there are no open or working GitHub issues, two workers are idle, one worker is stuck in a regression-harness/config validation pass, and deployment is not applicable because origin/integration does not exist in this repository.
+
+
+---
+
+## 2026-04-16 09:23:24 - Monitor-workers status pass
+
+**What Changed**: Ran the manager-side monitor-workers checks across agents worktrees, cmux worker sessions, GitHub queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, no open GitHub issues, and no integration branch configured for deploy gating.
+
+**Why Changed**: The autocoder manager workflow requires periodic worker monitoring to detect idle capacity, stale work, queue state, and whether deployment conditions have been met.
+
+**Impact**: Confirmed the swarm is idle because no actionable queue exists. Worker worktrees only show local history/report artifacts from their completed passes, and deployment was not attempted because this repo uses origin/master rather than origin/integration.
+
+
+---
+
+## 2026-04-16 09:39:32 - Monitor workers status check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker screens, GitHub queue state, and deploy-readiness refs. Confirmed three worker worktrees, one active fix-loop session, two idle fix-loop sessions, zero open issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user requested the manager-side monitor pass for the autocoder swarm, which requires an up-to-date status snapshot before dispatch or deploy decisions.
+
+**Impact**: Provides a current worker/queue summary, confirms there is no work to dispatch or stale working label to clear, and shows deploy cannot be evaluated against an integration branch because the ref is not configured.
+
+
+---
+
+## 2026-04-16 09:55:40 - Monitor workers
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, zero open issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: Provide a manager-side status snapshot for the active swarm and verify whether any work dispatch or stale-lock cleanup was required.
+
+**Impact**: Workers are idle with no queue to dispatch; deploy is not gated because origin/integration is not configured, and worker worktrees still contain local history/test artifacts from recent regression passes.
+
+
+---
+
+## 2026-04-16 10:11:38 - Monitor workers pass
+
+**What Changed**: Ran /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: User invoked /monitor-workers and the autocoder workflow requires manager-side queue and worker visibility.
+
+**Impact**: Current swarm is idle with no dispatchable work and no deploy action available.
+
+
+---
+
+## 2026-04-16 10:27:50 - Monitor workers status check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a point-in-time view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: Verified all workers are idle with no actionable queue items, so no dispatch, stale-label cleanup, review-blocked action, or deploy step was needed.
+
+
+---
+
+## 2026-04-16 10:43:54 - Monitor-workers status pass
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: Verified the swarm is idle with no actionable queue items, no stale working labels to clear, and no deploy trigger because the integration ref is not configured in origin.
+
+
+---
+
+## 2026-04-16 10:59:58 - Monitor workers status check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch, stale-label cleanup, review-blocked escalation, or deploy action was needed. The swarm is idle because the GitHub queue is empty, and deployment remains ungated until an integration branch exists.
+
+
+---
+
+## 2026-04-16 11:16:06 - Monitor workers manager pass
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No work was dispatched because every worker is idle and the GitHub queue is empty. Deploy was not attempted because there is no origin/integration ref available to evaluate staging readiness.
+
+
+---
+
+## 2026-04-16 11:32:23 - Monitor workers manager check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch, stale-label cleanup, blocked-issue review, or deploy action was required because the queue is empty and all workers are already idle.
+
+
+---
+
+## 2026-04-16 11:48:25 - Monitor-workers status pass
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: There is no actionable queue to dispatch and no deploy gate branch to evaluate, so the swarm is idle and waiting for new work or an explicit integration/deploy configuration.
+
+
+---
+
+## 2026-04-16 12:04:24 - Monitor workers
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: The repository now has a fresh point-in-time worker monitor record showing no dispatchable work, no stale working labels, and no deploy-ready integration branch.
+
+
+---
+
+## 2026-04-16 12:20:34 - Monitor workers manager check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: The repository now has a fresh point-in-time worker monitor record showing no dispatchable work, no stale working labels, and no deploy-ready integration branch.
+
+
+---
+
+## 2026-04-16 12:36:56 - Monitor workers status snapshot
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: Confirmed there is no actionable queue to dispatch, no stale working labels to clear, and no deploy gate to evaluate because origin/integration is not configured in this repository.
+
+
+---
+
+## 2026-04-16 12:52:59 - Monitor workers manager sweep
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch actions were needed because the GitHub queue is empty and all workers are already idle. Deploy is not eligible because there is no origin/integration ref configured for readiness checks.
+
+
+---
+
+## 2026-04-16 13:09:11 - Monitor workers status check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: The repository now has a fresh point-in-time worker monitor record showing no dispatchable work, no stale working labels, and no deploy-ready integration branch.
+
+
+---
+
+## 2026-04-16 13:25:32 - Monitor workers: idle queue check
+
+**What Changed**: Ran the /monitor-workers manager checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No worker dispatch or stale-label cleanup was needed. The swarm is idle, the queue is empty, and staging deploy gating cannot proceed until an integration branch/ref is configured and new integration commits exist.
+
+
+---
+
+## 2026-04-16 13:42:13 - Monitor workers status check
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch or stale-label cleanup was required. Workers remain idle because there is no actionable queue work, and deploy is not gated because origin/integration is not configured.
+
+
+---
+
+## 2026-04-16 13:58:28 - Monitor workers
+
+**What Changed**: Ran one-shot /monitor-workers status check across worktrees, GitHub issue queue, and tmux availability.
+
+**Why Changed**: Repo policy requires logging agent activity and the monitor pass established current worker state before taking further action.
+
+**Impact**: Confirmed no open GitHub issues or active tmux workers; surfaced dirty worker worktrees that may need cleanup or integration review.
+
+
+---
+
+## 2026-04-16 14:14:30 - Monitor-workers status pass
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: Verified there was no work to dispatch, no stale working labels to clear, and no deploy trigger available from this repo state.
+
+
+---
+
+## 2026-04-16 14:30:26 - Monitor workers status check
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch or deploy action was taken because there is no available or blocked work in the queue, all workers are idle, and integration deploy readiness is not configured.
+
+
+---
+
+## 2026-04-16 14:46:23 - Monitor workers status check
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No worker dispatch or deploy action was needed. The system is idle and ready for new issues, while the missing integration ref means automated deploy readiness cannot be evaluated in this repo state.
+
+
+---
+
+## 2026-04-16 15:02:12 - Monitor workers
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatches were needed because the queue is empty. Current risk is limited to stale uncommitted worker artifacts in the worktrees and an unconfigured integration deploy ref.
+
+
+---
+
+## 2026-04-16 15:18:07 - Monitor workers
+
+**What Changed**: Ran the /monitor-workers workflow from the manager session. Verified three worker worktrees and cmux workspaces, checked GitHub issue state, and inspected worker screens.
+
+**Why Changed**: Confirm whether any workers were active, whether dispatch/review was needed, and whether stale working labels existed.
+
+**Impact**: No open or blocked GitHub issues were present, all three workers were idle at IDLE_NO_WORK_AVAILABLE, and no dispatch or review-blocked action was required.
+
+
+---
+
+## 2026-04-16 15:34:36 - Monitor-workers status pass
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, three idle Codex fix-loop sessions, zero open issues, zero working issues, zero blocked issues, and no origin/integration ref configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: No dispatch or deploy action was required. All workers are idle with no actionable queue, and deploy remains gated because the repository has no origin/integration ref configured.
+
+
+---
+
+## 2026-04-16 21:56:06 - Monitor workers status check
+
+**What Changed**: Ran the manager-side /monitor-workers checks across agents worktrees, cmux worker sessions, GitHub issue queue state, and deploy-readiness refs. Confirmed three worker worktrees, zero open issues, zero working issues, zero blocked issues, two idle Codex fix-loop workers, and one disconnected worker session in agents-wt-2 showing repeated Codex websocket reconnect failures. Also confirmed origin/integration is not configured for deploy gating.
+
+**Why Changed**: The user invoked /monitor-workers and AGENTS.md requires agent activity to be logged. The manager workflow needs a current view of worker utilization, queue state, worker health, and deploy readiness before dispatching or escalating anything.
+
+**Impact**: The repository has no dispatchable GitHub work at this time, so no worker was assigned. The only actionable follow-up is to restart or repair the wt2 worker session if that worker should remain available; deploy cannot be evaluated against an integration branch because origin/integration does not exist.
+
+
+---
+
+## 2026-04-20 13:36:43 - Attempted user-level skillporter install
+
+**What Changed**: Inspected the skill-installer workflow, verified https://github.com/keithmackay/skillporter is a valid root-level skill, and attempted installation into ~/.codex/skills/skillporter. The install was blocked by sandbox write restrictions on the user-level Codex directory.
+
+**Why Changed**: The request was to install skillporter at the user level using the standard Codex skill install path.
+
+**Impact**: No global skill was installed from this session, but the exact working install command and blocker were identified.
+
+
+---
+
+## 2026-04-20 13:52:49 - Port shared skills for Gemini and sync plugin parity
+
+**What Changed**: Applied the skillporter workflow to the shared autocoder and modernize skills by adding Gemini CLI extension manifests and context files, adding per-skill cross-platform READMEs, and updating the repo README to document Gemini CLI packaging. Synced autocoder metadata across Claude, Codex, and Factory manifests, and updated the shared autocoder skill references to include worker monitoring and manager-loop capabilities.
+
+**Why Changed**: The repository already had Claude, Codex, Antigravity, and Factory surfaces, but the shared skills were missing Gemini CLI packaging and some autocoder command metadata had drifted between platform manifests.
+
+**Impact**: Shared skills are now portable across Claude, Codex, Antigravity, and Gemini CLI packaging patterns, and the autocoder command and version metadata is aligned across the supported platform surfaces.
+

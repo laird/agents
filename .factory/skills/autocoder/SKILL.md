@@ -1,11 +1,11 @@
 ---
 name: autocoder
-description: Use this skill for autonomous GitHub issue resolution, issue triage, regression-test failure handling, proposal review, blocked-issue review, and continuous fix loops in repositories that use the autocoder workflow.
+description: Use this skill for autonomous GitHub issue resolution, issue triage, regression-test failure handling, proposal review, blocked-issue review, worker monitoring, and continuous fix loops in repositories that use the autocoder workflow.
 ---
 
 # Autocoder
 
-Use this skill when the user wants Droid to operate the repo's autonomous issue-resolution workflow.
+Use this skill when the user wants Droid to operate the repo's autonomous issue-resolution or worker-coordination workflow.
 
 ## Start Here
 

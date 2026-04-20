@@ -13,9 +13,12 @@
 
 - Primary protocol: `plugins/autocoder/commands/fix.md`
 - Continuous loop behavior: `plugins/autocoder/commands/fix-loop.md`
+- Manager review protocol: `plugins/autocoder/commands/monitor-workers.md`
+- Continuous manager loop: `plugins/autocoder/commands/monitor-loop.md`
 - Help and command inventory: `plugins/autocoder/commands/autocoder-help.md`
 - Automation scripts:
   - `plugins/autocoder/scripts/regression-test.sh`
+  - `plugins/autocoder/scripts/start-parallel-agents.sh`
   - `plugins/autocoder/scripts/fetch-blocked-issues.sh`
   - `plugins/autocoder/scripts/approve-blocked-issue.sh`
   - `plugins/autocoder/scripts/reject-blocked-issue.sh`

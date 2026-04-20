@@ -4,6 +4,8 @@
 |---|---|
 | `/fix` | Run the core autocoder workflow against a specific issue or the highest-priority queue item |
 | `/fix-loop` | Re-run the core workflow continuously with explicit shell/session control |
+| `/monitor-workers` | Inspect worker sessions, stale locks, and dispatch opportunities for parallel work |
+| `/monitor-loop` | Re-run worker monitoring continuously with explicit shell/session control |
 | `/stop-loop` | Stop the active shell/session loop |
 | `/review-blocked` | Review blocked issues by priority and recommend approve / reject / clarify actions |
 | `/full-regression-test` | Run `bash plugins/autocoder/scripts/regression-test.sh` and file issues for failures |
