@@ -1,8 +1,8 @@
 # Opportunistic Skill Integration for Autocoder/Modernize Commands
 
-**Version:** v3
+**Version:** v4
 **Date:** 2026-04-30
-**Status:** Design — revised after critical-design-review-2; ready for implementation planning
+**Status:** Design — revised after critical-design-review-3; ready for implementation planning
 
 ## Problem
 
@@ -41,7 +41,7 @@ Detection happens at the level where the `Skill` tool will actually be invoked. 
 
 2. **Dispatcher commands** (`/fix-loop`, `/modernize`). These dispatch worker subagents via the `Task` tool. Workers run in a fresh session and may not see the parent's available-skills list. To preserve skill access at the worker level, the dispatcher prepends a **worker skills manifest** (defined below) to each worker's prompt.
 
-3. **Agent-level files** (`coder.md`, `tester.md`, etc.) are out of scope this round; agent-level integration is deferred.
+3. **Agent-level files** (`coder.md`, `tester.md`, etc.) are out of scope this round; agent-level integration is deferred. The manifest sub-system is explicitly transitional — see "Out of scope, future rounds."
 
 #### Worker skills manifest (CDR2-C1)
 
@@ -62,7 +62,7 @@ Failure semantics: silent fallback for not-installed; visible failure message fo
 
 **Per-role policy.** The dispatcher passes the **full intersection** to all workers — the same manifest content goes to every worker the dispatcher spawns in this run. Workers filter by relevance to their own work (a coder worker doesn't need `finishing-a-development-branch` if its assignment doesn't include the merge step; the worker simply doesn't invoke it). Rationale: dispatcher logic stays simple (one intersection per command run); workers already classify their own scope.
 
-**Conflict resolution with `superpowers:subagent-driven-development`.** When the dispatcher invokes that skill (it appears in the dispatcher mappings for `/fix-loop` and `/modernize`), the manifest is **wrapper text** prepended to whatever prompt that skill produces. The skill's prompt-construction discipline owns the body of the worker prompt; the manifest owns the first paragraph. Both apply.
+**Conflict resolution with `superpowers:subagent-driven-development`.** When the dispatcher invokes that skill (it appears in the dispatcher mappings for `/fix-loop` and `/modernize`), the manifest is **wrapper text** prepended to whatever prompt that skill produces. The skill's prompt-construction discipline owns the body of the worker prompt; the manifest owns the first paragraph. Both apply. The implementation must verify this assumption against the installed version of the skill (validation step 1).
 
 ### Failure semantics (CDR1-C4)
 
@@ -74,11 +74,11 @@ Failure semantics: silent fallback for not-installed; visible failure message fo
 | Skill installed, invoked, fails or interrupts mid-run | Failure message visible (diagnostic); fall back to inline protocol for the remainder of that step; do not retry within the same command run |
 | Skill installed, invoked, self-skips (e.g., a `<SUBAGENT-STOP>` directive) | Silent fallback; not treated as failure |
 
-**Recommendation text** (CDR2-M1) — single line, informational tone, ~120 chars max, links to the public superpowers plugin and names the install path:
+**Recommendation text** (CDR2-M1, CDR3-M1) — single line, informational tone, ~120 chars max, links to the public superpowers plugin and names the install path:
 
-> *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via the Claude Code plugin marketplace.*
+> *Tip: this command works best with the `superpowers` plugin — install via the Claude Code plugin marketplace.* `<!-- IMPLEMENTATION: insert verified URL of public superpowers distribution; confirm install-command shape against current marketplace identifier (cached path suggests "claude-plugins-official"). -->`
 
-This text is held verbatim in the canonical prelude file. URL and install path are verified against the current public superpowers distribution at implementation time and the spec is updated if either has changed.
+The HTML comment is invisible to end users but flags the unverified content for the implementation engineer. Verifying the URL and install path against the current public superpowers distribution is implementation-blocking — see validation step 1.
 
 ### Skills are advisory, not gating (CDR1-H3)
 
@@ -87,6 +87,8 @@ A command's completion criteria are defined by its inline protocol. Optional ski
 If an invoked skill reports a problem (e.g., `superpowers:verification-before-completion` reports a failed verification), surface the report and treat it as input the agent must consider — but the command itself completes or fails according to its inline criteria. If the skill and the inline protocol disagree, the agent treats the skill's stricter signal as a reason to investigate; the inline protocol remains the contract.
 
 **Clarification on "always applied"** (CDR2-M2). Where a mapping table marks a skill as "always" applied (e.g., `/fix`'s Step 2 branch row lists `superpowers:verification-before-completion` as always), this means the skill is *invoked* at the right step whenever installed. The skill's *outcome* is still advisory per the rule above — invocation is required, gating is not.
+
+**Reconciling visible advisory failures with command success** (CDR3-M5). When a command claims success while an advisory skill earlier in the run surfaced a failure or concern, the success summary must explicitly acknowledge the advisory finding. Recommended phrasing: *"Completed per inline protocol. Note: advisory skill `<name>` reported a concern earlier in this run — see above."* This prevents the user from reading two contradictory-looking lines from the same command without context.
 
 ### Version trust (CDR1-H1)
 
@@ -133,29 +135,58 @@ These canonical files contain the boilerplate paragraph (legend, failure semanti
 1. **Boilerplate sentinels** (`optional-skills-prelude v1`) — byte-identical across all 12 command files, cross-platform.
 2. **Mapping sentinels** (`optional-skills-mapping <command-name> v1`) — byte-identical between Claude Code and Antigravity mirrors of the same command. Differs from one command to the next.
 
-Drift detection is a two-pass shell pipeline, packaged as `scripts/check-optional-skills-drift.sh` (CDR2-M4):
+Drift detection is a two-pass shell pipeline, packaged as `scripts/check-optional-skills-drift.sh` (CDR2-M4, hardened per CDR3-M4):
 
 ```bash
 #!/usr/bin/env bash
+set -euo pipefail
+drift_seen=0
+
 # Pass 1: boilerplate identical across all 12 command files (and the 2 canonical sources).
-for f in plugins/shared/optional-skills-prelude.md \
-         .agent/shared/optional-skills-prelude.md \
-         plugins/*/commands/{brainstorm-issue,approve-proposal,plan,modernize,fix,fix-loop}.md \
-         .agent/workflows/{brainstorm-issue,approve-proposal,plan,modernize,fix,fix-loop}.md; do
-  awk '/BEGIN optional-skills-prelude v1/,/END optional-skills-prelude v1/' "$f" | sha256sum
-done | sort -u  # one unique hash expected
+boilerplate_hashes=$(
+  for f in plugins/shared/optional-skills-prelude.md \
+           .agent/shared/optional-skills-prelude.md \
+           plugins/*/commands/{brainstorm-issue,approve-proposal,plan,modernize,fix,fix-loop}.md \
+           .agent/workflows/{brainstorm-issue,approve-proposal,plan,modernize,fix,fix-loop}.md; do
+    awk '/BEGIN optional-skills-prelude v1/,/END optional-skills-prelude v1/' "$f" | sha256sum
+  done | sort -u
+)
+unique_count=$(echo "$boilerplate_hashes" | wc -l)
+if [ "$unique_count" -ne 1 ]; then
+  echo "ERROR: boilerplate hashes diverge across files (${unique_count} distinct hashes)" >&2
+  echo "$boilerplate_hashes" >&2
+  drift_seen=1
+fi
 
 # Pass 2: per-command mapping identical between Claude Code and Antigravity mirror.
 for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop; do
-  cc_file=$(find plugins/*/commands -name "${cmd}.md" -print -quit)
+  matches=$(find plugins/*/commands -name "${cmd}.md")
+  count=$(echo "$matches" | grep -c .)
+  if [ "$count" -ne 1 ]; then
+    echo "ERROR: ${cmd}.md matches ${count} files (expected 1):" >&2
+    echo "$matches" >&2
+    exit 1
+  fi
+  cc_file="$matches"
   ag_file=".agent/workflows/${cmd}.md"
   cc_hash=$(awk "/BEGIN optional-skills-mapping ${cmd} v1/,/END optional-skills-mapping ${cmd} v1/" "$cc_file" | sha256sum)
   ag_hash=$(awk "/BEGIN optional-skills-mapping ${cmd} v1/,/END optional-skills-mapping ${cmd} v1/" "$ag_file" | sha256sum)
-  [ "$cc_hash" = "$ag_hash" ] && echo "${cmd}: OK" || echo "${cmd}: DRIFT"
+  if [ "$cc_hash" = "$ag_hash" ]; then
+    echo "${cmd}: OK"
+  else
+    echo "${cmd}: DRIFT" >&2
+    drift_seen=1
+  fi
 done
+
+exit "$drift_seen"
 ```
 
-The script is runnable manually and wireable as a pre-commit hook or GitHub Actions check. Automating the smoke tests is out of scope this round.
+The script is runnable manually and wireable as a pre-commit hook or GitHub Actions check (exit non-zero on any drift or structural problem). Automating the smoke tests is out of scope this round.
+
+#### Known limitation: shared-bug blind spot (CDR3-C1)
+
+Pass 2 verifies cross-platform parity, not correctness. A bug applied identically to both Claude Code and Antigravity mirrors satisfies Pass 2 and ships green. The drift check is a safety net for one-sided drift only. Smoke tests (validation steps 3 and 4) and the parity check (step 1) are the safety nets for content correctness; the drift script does not replace them.
 
 ### Notation in mapping tables (CDR1-C5, applied uniformly per CDR2-C3)
 
@@ -233,7 +264,14 @@ See "Worker skills manifest" subsection for dispatcher-to-worker plumbing.
 
 `/fix` accepts heterogeneous work — bug fixes, feature implementation, refactoring, increasing test coverage, docs/config/chore, or proposing new tasks. The agent classifies the work after reading the issue and applies the matching skills along two axes: deliverable type and kind of work.
 
-**Composition rule** (CDR2-C4). Step 2 and Step 3 compose by **union**: apply every skill named in either step. Where both steps name the same skill, apply it once. Where the two steps disagree on whether a skill is required vs. optional, the **stronger requirement wins** (a skill marked required in one step is required overall, regardless of "optional" framing in the other). Step 1 (deliverable classification) is purely a routing input to Step 2 and produces no skills of its own.
+**Composition rule** (CDR2-C4, extended by CDR3-C2). Step 2 and Step 3 compose by **union**: apply every skill named in either step. Where both steps name the same skill, apply it once. Where the two steps disagree on whether a skill is required vs. optional, the **stronger requirement wins** (a skill marked required in one step is required overall, regardless of "optional" framing in the other). Step 1 (deliverable classification) is purely a routing input to Step 2 and produces no skills of its own.
+
+**Ordering across steps.** When Step 3 contributes a sequence (`A → B → C`), that sequence defines the spine. Step 2 facets attach at conventional points:
+- **Provisioning facets** (e.g., `superpowers:using-git-worktrees`) attach at spine entry — before the first sequence step runs.
+- **Verification facets** (e.g., `superpowers:verification-before-completion`) attach at spine exit — after the last sequence step.
+- **Wrap-up facets** (e.g., `completion-review`, `superpowers:requesting-code-review` → `superpowers:receiving-code-review`) attach after spine exit and after verification.
+
+Where Step 3 contributes only a single skill or no sequence, treat it as a one-step spine and apply the same attachment points. Where a facet has no obvious attachment category, attach at spine exit.
 
 **Step 1: classify the deliverable.**
 
@@ -275,7 +313,7 @@ See "Worker skills manifest" subsection for dispatcher-to-worker plumbing.
 
 See "Worker skills manifest" subsection for the per-worker plumbing.
 
-**Per-worker level** (each worker in its own worktree; workers receive the dispatcher's manifest and apply the full `/fix` mapping above to their assigned issue, including the same composition rule), plus:
+**Per-worker level** (each worker in its own worktree; workers receive the dispatcher's manifest and apply the full `/fix` mapping above to their assigned issue, including the same composition rule and ordering-across-steps rule), plus:
 
 | Step | Skill mapping |
 |---|---|
@@ -298,9 +336,9 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 **Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
 
-**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via the Claude Code plugin marketplace.* Never emit such notices for personal toolkit skills.
+**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin — install via the Claude Code plugin marketplace.* `<!-- IMPLEMENTATION: insert verified URL of public superpowers distribution; confirm install-command shape against current marketplace identifier (cached path suggests "claude-plugins-official"). -->` Never emit such notices for personal toolkit skills.
 
-**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory.
+**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
 
 **Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
 
@@ -315,55 +353,64 @@ The dispatcher canonical prelude file additionally contains a `<!-- BEGIN option
 
 ## Validation plan
 
-1. **Parity check.** Read each Claude/Antigravity pair side-by-side; confirm parity. Sub-checks: the prelude is the first H2 in every file; no free-form prose in mapping cells; notation legend applied consistently.
+1. **Parity check.** Read each Claude/Antigravity pair side-by-side; confirm parity. Sub-checks:
+   - The prelude is the first H2 in every file.
+   - No free-form prose in mapping cells; notation legend applied consistently.
+   - **URL/install-path verification (implementation-blocking, CDR3-M1):** Before any prelude file is written, verify the public superpowers distribution URL and the actual install command. If either differs from the placeholder in the canonical text, update the canonical prelude file and regenerate all command-file embeddings via the drift script before commit.
+   - **`subagent-driven-development` interaction check (implementation-blocking, CDR3-M6):** Read `superpowers:subagent-driven-development` at the version installed (per the baseline file). Confirm that prepending the manifest as the first paragraph of the worker prompt does not conflict with that skill's own prompt-construction requirements. If a conflict exists, adjust the manifest insertion rule accordingly.
+   - **Dispatcher prelude correctness:** for `/fix-loop` and `/modernize`, confirm the prelude correctly describes manifest construction (template reference + intersection rule + first-paragraph rule).
 2. **Drift check.** Run `scripts/check-optional-skills-drift.sh`; both passes should report no drift. Also runnable as pre-commit/CI.
 3. **Degraded-mode smoke test.** For each of the six commands, run with **zero optional skills installed**. Confirm:
    (a) command completes via inline protocol, (b) for commands referencing `superpowers:*` skills, exactly one up-front recommendation line appears, (c) no error or failure messages from missing skills, (d) no behavior differs from the pre-integration version.
-4. **Enhanced-mode smoke test.** Repeat with all optional skills installed; confirm at least one optional skill fires per command (where applicable) and that mid-run failures (manually triggered by denying a Skill tool call) surface visibly.
-5. **Drift sanity check.** Modify the canonical prelude file and a per-command mapping; confirm the drift script detects both.
+4. **Enhanced-mode smoke test.** Repeat with all optional skills installed; confirm at least one optional skill fires per command (where applicable) and that mid-run failures (manually triggered by denying a Skill tool call) surface visibly, and that any visible advisory failure is acknowledged in the command's success summary.
+5. **Drift sanity check.** Modify the canonical prelude file and a per-command mapping; confirm the drift script detects both and exits non-zero.
 6. **Skill contract drift check (post-shipping).** When a tracked skill's plugin is upgraded, diff installed versions against `2026-04-30-skills-baseline.txt`; manually exercise one command per changed skill and confirm chain behavior.
+7. **Manifest end-to-end check (dispatcher commands only, CDR3-C3 revised).** Run `/fix-loop` and `/modernize` in enhanced mode (all skills installed) with a trivial work assignment. Confirm a worker invokes at least one skill that appears **only in the per-worker mapping** — not in the dispatcher's own mapping. The skill firing is evidence that the worker received and acted on the manifest. For `/fix-loop`, the per-worker-only skill is `superpowers:finishing-a-development-branch`. For `/modernize`, the per-worker-only skill is whichever skill the worker invokes in service of executing-plans (e.g., a coder worker invoking `superpowers:test-driven-development`). If no per-worker-only skill fires, the manifest plumbing is suspect.
 
-## Success criteria (CDR2-M5)
+## Success signal (CDR3-M2 + CDR3-M3 replaces CDR2-M5)
 
-After one month of post-rollout use with skills installed, at least one optional skill should fire in **≥60% of `/fix` and `/plan` runs**. Measurement: each of the six commands appends a one-line entry to `HISTORY.md` per run, naming which optional skills were invoked (or "none"). Threshold revisited after the first measurement window; this is a starting signal, not a permanent metric.
+This integration is working when, with all skills installed, optional skills are observably firing in real `/fix` and `/plan` runs — visible in the agent's normal output during command execution. There is no per-run instrumentation, no metrics collection, no threshold. If after a few weeks of post-rollout use the user does not notice optional skills firing, treat that as a signal that the integration is broken or trivially defeated, and investigate via the validation plan.
 
 ## Out of scope, future rounds
 
 - **Agent-level files** (`coder.md`, `tester.md`, `architect.md`, `migration-coordinator.md`, `security.md`, `documentation.md`).
+- **Manifest sub-system retirement** (CDR3-AAC). When agent-level integration is taken up in a future round, the worker skills manifest sub-system can be retired. Workers running as specialist agents will see optional skills via their own prelude blocks the same way top-level commands do. Dispatcher commands simplify accordingly: no intersection computation, no first-paragraph insertion, no conflict-resolution rule with `superpowers:subagent-driven-development`. The manifest sub-system in this round is explicitly transitional. Trigger condition: the round that introduces agent-level integration.
 - **Other commands** with weaker but real skill mappings: `/assess`, `/retro`, `/retro-apply`, `/full-regression-test`, `/review-blocked`, `/improve-test-coverage`.
 - **Marketplace + plugin version bumps** (handled when this change ships).
 - **Skill-routing layer** (CDR1-AAC) — A future migration to a single canonical routing layer was considered and deferred. Trigger conditions: (a) prelude-block count grows beyond ~10 commands, (b) drift is detected despite the sync check, or (c) skill-naming/version policy needs to evolve faster than per-file edits can keep up.
-- **Declarative skill-application descriptors** (CDR2-AAC) — Replacing prose mapping tables with machine-readable YAML/JSON descriptors plus a parser was considered and deferred. Trigger conditions: (a) prose tables become demonstrably more fragile than schema-validated descriptors in this codebase or a sibling project, or (b) the routing-layer trigger above also fires (the descriptor approach pairs naturally with a routing layer).
+- **Declarative skill-application descriptors** (CDR2-AAC) — Replacing prose mapping tables with machine-readable YAML/JSON descriptors plus a parser was considered and deferred. Trigger conditions: (a) prose tables become demonstrably more fragile than schema-validated descriptors in this codebase or a sibling project, or (b) the routing-layer trigger above also fires.
 - **Opt-in "skills as gates" mode** — H3 establishes that skills are advisory in this round; an opt-in gating mode is deferred until demonstrated demand.
+- **Quantitative success measurement** — replaced in v4 by qualitative observation (CDR3-M2 + M3). If quantitative measurement later becomes valuable, it can be added as a separate concern (e.g., a `/measure-skill-usage` command) without retrofitting instrumentation into every command.
 - **Automated smoke tests.** The drift check is automated; the smoke tests remain manual. Automating them is out of scope.
 
 ## Open questions
 
-None at design time. Implementation may surface details (e.g., a mirror file that has drifted from its Claude Code counterpart in unrelated ways, or a command file whose existing structure makes the H2 placement rule ambiguous); those will be flagged rather than silently reconciled.
+None at design time. Implementation may surface details (e.g., a mirror file that has drifted from its Claude Code counterpart in unrelated ways, or a command file whose existing structure makes the H2 placement rule ambiguous); those will be flagged rather than silently reconciled. Implementation order (canonical prelude file first or command-file edits first) is left to the implementation plan.
 
 ## Changelog
 
-### v3 (2026-04-30) — addresses critical-design-review-2
+### v4 (2026-04-30) — addresses critical-design-review-3
 
 **Critical issues:**
-- **CDR2-C1** Skills manifest under-specified: Added "Worker skills manifest" subsection with a sentinel-versioned canonical text (held in `plugins/shared/optional-skills-prelude.md`), insertion rule (first paragraph of worker prompt), per-role policy (full intersection passed to all workers; workers filter), and conflict resolution with `superpowers:subagent-driven-development` (manifest is wrapper text around that skill's prompt body).
-- **CDR2-C2** Drift check covered only boilerplate, not mapping tables: Added a second sentinel scope (`<!-- BEGIN optional-skills-mapping <command> v1 -->`) and extended the drift-check pipeline to a Pass 2 verifying Claude/Antigravity mirrors of the same command are byte-identical inside mapping sentinels. Pipeline packaged as `scripts/check-optional-skills-drift.sh`.
-- **CDR2-C3** Notation rules inconsistently applied: Audited every mapping cell. Rewrote `/modernize`'s dispatch row with `+`; pulled `/approve-proposal`'s sequence into row cells with leading `→`; removed `/fix-loop`'s empty manifest-pass row in favor of the dedicated subsection; condensed `/modernize`'s closing prose to a one-line cross-reference; simplified `/fix`'s "Proposing new tasks" cell. Added the leading-`→` row-spanning convention to the notation legend. Stated explicitly: free-form prose in mapping cells is not permitted.
-- **CDR2-C4** `/fix` step composition unspecified: Added "Composition rule" subsection above the three tables — Step 2 ∪ Step 3 with stronger-wins reconciliation; Step 1 is a routing input only. `/fix-loop`'s per-worker section inherits the rule by reference.
+- **CDR3-C1** Drift-check shared-bug blind spot: Added "Known limitation" subsection beneath the drift-check pipeline stating that Pass 2 catches one-sided drift only; smoke and parity checks remain the safety nets for content correctness.
+- **CDR3-C2** `/fix` composition order across steps: Extended the Composition rule with an "Ordering across steps" paragraph naming three attachment points — provisioning facets at spine entry, verification facets at spine exit, wrap-up facets after spine exit — with "spine exit" as the default for unclassified facets.
+- **CDR3-C3** No manifest verification in validation plan (revised): Added validation step 7 as an infrastructure-free observational check ("a per-worker-only skill fires when running dispatcher commands in enhanced mode"). Static prelude-correctness review folded into validation step 1.
 
 **Alternative architectural challenge:**
-- **CDR2-AAC** Declarative descriptors: Considered and deferred to "Out of scope, future rounds" with explicit trigger conditions.
+- **CDR3-AAC** Skip manifest sub-system in favor of agent-level preludes: Considered and deferred. Manifest sub-system explicitly documented as transitional, with a "retire when agent-level integration is taken up" note in "Out of scope, future rounds."
 
 **Minor issues:**
-- **CDR2-M1** Recommendation text was a placeholder: Pinned in the canonical prelude as a single ~120-char informational line linking to the public superpowers repo and naming the install path.
-- **CDR2-M2** "Always applied" / "advisory" tension: Added clarifying sentence in the H3 subsection and at `/fix`'s Step 2 — "always" means invoked at the right step; outcomes remain advisory.
-- **CDR2-M3** Version baseline not machine-readable: Extracted to `docs/superpowers/specs/2026-04-30-skills-baseline.txt` (one fully-qualified-name + version per line); validation step 6 diffs against it.
-- **CDR2-M4** Validation plan fully manual: Drift check packaged as `scripts/check-optional-skills-drift.sh`, runnable manually and as pre-commit/CI. Smoke tests remain manual; smoke-test automation explicitly out of scope.
-- **CDR2-M5** No success criteria: Added "Success criteria" subsection — ≥60% of `/fix` and `/plan` runs invoke at least one optional skill within one month of rollout, measured via per-run `HISTORY.md` entries; threshold revisited after first window.
-- **~30 threshold tunability:** Reworded `/modernize`'s `create-handoff` row to label ~30 as a heuristic adjustable based on observed pressure.
+- **CDR3-M1** Recommendation URL unverified: Added explicit HTML-comment placeholder marker in the canonical prelude text and an implementation-blocking pre-flight URL/install-path verification sub-bullet to validation step 1.
+- **CDR3-M2 + M3** Success-criterion measurement undefined and HISTORY.md scope creep: Downgraded the criterion from a "≥60% of runs" quantitative metric to a qualitative "Success signal" — skills observably firing in normal use, no instrumentation. HISTORY.md emission removed entirely; additive-only constraint preserved.
+- **CDR3-M4** Drift-script fragility: Replaced `find ... -print -quit` with a hard-failing count assertion; added proper exit-code logic so the script exits non-zero on any drift or structural problem (CI-safe by default).
+- **CDR3-M5** Advisory-failure + inline-success UX: Added one sentence to the H3 subsection requiring success summaries to acknowledge any visible advisory failures, with recommended phrasing as a non-strict template.
+- **CDR3-M6** `subagent-driven-development` interaction unverified: Added an implementation-time pre-flight sub-bullet to validation step 1 requiring a read of that skill at the installed version to confirm the manifest insertion rule does not conflict.
+
+### v3 (2026-04-30) — addressed critical-design-review-2
+(See review-2 changelog history.)
 
 ### v2 (2026-04-30) — addressed critical-design-review-1
-(See review-1 changelog at the bottom of this document for details.)
+(See review-1 changelog history.)
 
 ### v1 (2026-04-30)
 Initial design.
