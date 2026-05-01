@@ -12,6 +12,8 @@ Goal: have commands **opportunistically** use these skills when present, without
 
 Non-goal: redesign the commands or replace any existing protocol content.
 
+**Non-goal: vendor any external skill.** This integration references external skills by name and relies on the user to install them via their normal channels (Claude Code plugin marketplace for `superpowers`; the user's own toolkit setup for personal skills). It does not copy, transclude, embed, or duplicate any external skill's content into this repo. If a user uninstalls a referenced skill, no part of that skill remains here by virtue of this integration. Future maintainers tempted to "include the brainstorming protocol inline so the command works without the plugin" are explicitly out of scope — the answer to "what if the skill isn't installed" is the inline fallback already present in each command's existing protocol body.
+
 ## Detection mechanism
 
 Claude already receives the full list of available skills in the session-start system-reminder. A command therefore does not need a filesystem probe, try/catch, or shell call — it can simply instruct the agent:
@@ -389,7 +391,12 @@ None at design time. Implementation may surface details (e.g., a mirror file tha
 
 ## Changelog
 
-### v4 (2026-04-30) — addresses critical-design-review-3
+### v4 (2026-04-30 — 2026-05-01) — addresses critical-design-review-3 plus reference-only guardrail
+
+**Guardrail addition (post-review-3, on user request):**
+- Added "Non-goal: vendor any external skill" paragraph to the Problem section. Codifies the reference-only principle so future maintainers don't drift toward inlining external skill content.
+
+
 
 **Critical issues:**
 - **CDR3-C1** Drift-check shared-bug blind spot: Added "Known limitation" subsection beneath the drift-check pipeline stating that Pass 2 catches one-sided drift only; smoke and parity checks remain the safety nets for content correctness.
