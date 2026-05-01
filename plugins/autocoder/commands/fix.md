@@ -2,6 +2,68 @@
 
 Analyze all open GitHub issues, prioritize them, and begin systematically fixing or implementing them starting with the highest priority.
 
+## Optional skill enhancements
+
+<!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->
+
+If a named skill appears in your available skills list (delivered in the session-start system-reminder), invoke it via the `Skill` tool at the indicated step. Otherwise, follow the inline protocol below — it remains the source of truth and is unchanged by this section.
+
+In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the `Skill` tool; the mapping is otherwise identical.
+
+**Skill-name matching.** Match each table entry as an exact string. Mapping tables use fully-qualified names (`<plugin>:<skill>`) for plugin-installed skills and bare names for personal toolkit skills.
+
+**Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
+
+**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for personal toolkit skills.
+
+**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
+
+**Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
+
+<!-- END optional-skills-prelude v1 -->
+
+<!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+
+`/fix` accepts heterogeneous work — bug fixes, feature implementation, refactoring, increasing test coverage, docs/config/chore, or proposing new tasks. The agent classifies the work after reading the issue and applies the matching skills along two axes: deliverable type and kind of work.
+
+**Composition rule.** Step 2 and Step 3 compose by **union**: apply every skill named in either step. Where both steps name the same skill, apply it once. Where the two steps disagree on whether a skill is required vs. optional, the **stronger requirement wins** (a skill marked required in one step is required overall). Step 1 (deliverable classification) is purely a routing input to Step 2 and produces no skills of its own.
+
+**Ordering across steps.** When Step 3 contributes a sequence (`A → B → C`), that sequence defines the spine. Step 2 facets attach at conventional points:
+- **Provisioning facets** (e.g., `superpowers:using-git-worktrees`) attach at spine entry — before the first sequence step runs.
+- **Verification facets** (e.g., `superpowers:verification-before-completion`) attach at spine exit — after the last sequence step.
+- **Wrap-up facets** (e.g., `completion-review`, `superpowers:requesting-code-review` → `superpowers:receiving-code-review`) attach after spine exit and after verification.
+
+Where Step 3 contributes only a single skill or no sequence, treat it as a one-step spine and apply the same attachment points. Where a facet has no obvious attachment category, attach at spine exit.
+
+**Step 1: classify the deliverable.**
+
+| Deliverable type | Examples |
+|---|---|
+| **Branch** (code merged to main) | bug fix, new feature, refactor, increasing test coverage, docs/config/chore committed to the repo |
+| **Document** (proposal, report, analysis) | proposing new tasks, investigation findings |
+| **Throwaway** (spike, experiment) | rare; ad-hoc evaluation work that won't be merged |
+
+**Step 2: apply the matching skills based on deliverable type.** "Always" below means the skill is invoked when installed; outcomes remain advisory.
+
+| Applies when deliverable is... | Skill mapping |
+|---|---|
+| **Branch** | `superpowers:using-git-worktrees` + `superpowers:verification-before-completion` + `completion-review` (always); `superpowers:requesting-code-review` → `superpowers:receiving-code-review` (when seeking merge) |
+| **Document** | `completion-review` only |
+| **Throwaway** | none of the above are required |
+
+**Step 3: apply the matching skills based on kind of work.**
+
+| If the work is... | Use these skills |
+|---|---|
+| Bug / unexpected behavior | `superpowers:systematic-debugging` → `superpowers:test-driven-development` |
+| New feature / unclear requirement | `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:test-driven-development` (optional `critical-design-review` after brainstorming, `critical-implementation-review` after writing-plans) |
+| Refactor / restructuring | `superpowers:test-driven-development` (characterization tests) → refactor under green |
+| Increasing test coverage | `autocoder:improve-test-coverage` → `superpowers:test-driven-development` for new tests |
+| Proposing new tasks | `superpowers:brainstorming` → `critical-design-review` |
+| Docs / config / chore | TDD optional |
+
+<!-- END optional-skills-mapping fix v1 -->
+
 ## Usage
 
 ```bash
