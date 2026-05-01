@@ -13,6 +13,41 @@
 
 ---
 
+## Optional skill enhancements
+
+<!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->
+
+If a named skill appears in your available skills list (delivered in the session-start system-reminder), invoke it via the `Skill` tool at the indicated step. Otherwise, follow the inline protocol below — it remains the source of truth and is unchanged by this section.
+
+In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the `Skill` tool; the mapping is otherwise identical.
+
+**Skill-name matching.** Match each table entry as an exact string. Mapping tables use fully-qualified names (`<plugin>:<skill>`) for plugin-installed skills and bare names for personal toolkit skills.
+
+**Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
+
+**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for personal toolkit skills.
+
+**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
+
+**Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
+
+<!-- END optional-skills-prelude v1 -->
+
+<!-- BEGIN optional-skills-mapping modernize v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+
+| Step | Skill mapping |
+|---|---|
+| Execute PLAN.md phase-by-phase with checkpoints | `superpowers:executing-plans` (primary) |
+| Dispatch coder/tester/etc. agents | `superpowers:subagent-driven-development` + `superpowers:dispatching-parallel-agents` (when 2+ independent worker tasks) |
+| Isolate per-stage work | `superpowers:using-git-worktrees` (independent facet) |
+| Verify before declaring a phase complete | `superpowers:verification-before-completion` (independent facet) |
+| Per-phase wrap-up | `completion-review` |
+| Hand off project state | `create-handoff` (invoke at one of: end of each completed phase as part of phase wrap-up; ~30 tool calls without a phase boundary — heuristic, adjust based on observed context pressure in early runs; or explicit user signal) |
+
+**Worker dispatch.** When dispatching coder/tester/etc. agents, prepend the `optional-skills-manifest v1` block (held in `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker mapping for the agent role being dispatched (per-worker mappings appear in the agent files when agent-level integration is taken up; for now, include `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch` as the candidate set for code-producing workers).
+
+<!-- END optional-skills-mapping modernize v1 -->
+
 ## Prerequisites Check
 
 **Before starting, this command checks for**:
