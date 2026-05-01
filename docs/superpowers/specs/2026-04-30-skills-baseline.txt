@@ -1,0 +1,27 @@
+# Skill versions installed at design time (2026-04-30, recorded 2026-05-01).
+# Format: <fully-qualified-name>=<version>
+# Used by validation step 6 (skill contract drift check) for diff against future installs.
+
+superpowers:brainstorming=5.0.7
+superpowers:writing-plans=5.0.7
+superpowers:executing-plans=5.0.7
+superpowers:subagent-driven-development=5.0.7
+superpowers:dispatching-parallel-agents=5.0.7
+superpowers:using-git-worktrees=5.0.7
+superpowers:verification-before-completion=5.0.7
+superpowers:systematic-debugging=5.0.7
+superpowers:test-driven-development=5.0.7
+superpowers:requesting-code-review=5.0.7
+superpowers:receiving-code-review=5.0.7
+superpowers:finishing-a-development-branch=5.0.7
+
+autocoder:improve-test-coverage=3.8.0
+
+critical-design-review=1.4.0
+critical-implementation-review=1.6.0
+update-design-doc=1.0.0
+update-implementation-plan=1.1.0
+arch-review=1.1.0
+security-review=1.0.0
+completion-review=1.4.0
+create-handoff=1.0.0
