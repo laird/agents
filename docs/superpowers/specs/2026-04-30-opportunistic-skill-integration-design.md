@@ -6,7 +6,7 @@
 
 ## Problem
 
-The autocoder and modernize plugins encode protocols inline in each command file. When the user has Peter Steinberger's `superpowers` toolkit (or related personal toolkit skills like `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan`, `arch-review`, `security-review`, `completion-review`, `create-handoff`, `autocoder:improve-test-coverage`) installed, those skills encode discipline that overlaps and would sharpen specific phases of the existing protocols. Today the commands ignore them.
+The autocoder and modernize plugins encode protocols inline in each command file. When the user has Jesse Vincent's `superpowers` toolkit (the public plugin at https://github.com/obra/superpowers) — and/or a personal fork of it that adds toolkit skills like `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan`, `arch-review`, `security-review`, `completion-review`, `create-handoff`, plus `autocoder:improve-test-coverage` — installed, those skills encode discipline that overlaps and would sharpen specific phases of the existing protocols. Today the commands ignore them.
 
 Goal: have commands **opportunistically** use these skills when present, without taking a hard dependency. If a skill isn't installed, the existing inline protocol runs unchanged.
 
@@ -395,6 +395,9 @@ None at design time. Implementation may surface details (e.g., a mirror file tha
 
 **Guardrail addition (post-review-3, on user request):**
 - Added "Non-goal: vendor any external skill" paragraph to the Problem section. Codifies the reference-only principle so future maintainers don't drift toward inlining external skill content.
+
+**Attribution correction (during implementation Task 0.1):**
+- Corrected "Peter Steinberger's superpowers toolkit" to name Jesse Vincent as the author of the public superpowers plugin (verified via `~/.claude/plugins/cache/.../superpowers/5.0.7/.claude-plugin/plugin.json`). The bare-name personal toolkit skills come from a personal fork that extends Jesse's superpowers; the design no longer attributes them to a specific person, since the integration treats them generically as "personal toolkit skills" (silent if absent, per failure-semantics rule). Recommendation text in the canonical prelude points users to the public superpowers plugin only.
 
 
 
