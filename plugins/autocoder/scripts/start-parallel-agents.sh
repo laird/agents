@@ -157,9 +157,9 @@ case "$AGENT" in
       echo "❌ Error: codex command is not installed" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD=""
-    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
-    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-manage-workers-loop.sh'"
+    AGENT_LAUNCH_CMD="codex"
+    WORKER_CMD="/goal Work the issue queue: pull the next available GitHub issue, fix it, open a PR, and repeat until the queue is empty or you are paused."
+    MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
     ;;
   droid)
     if ! command -v droid &> /dev/null; then
