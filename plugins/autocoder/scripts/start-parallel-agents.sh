@@ -158,8 +158,16 @@ case "$AGENT" in
       exit 1
     fi
     AGENT_LAUNCH_CMD="codex"
-    WORKER_CMD="/goal Work the issue queue: pull the next available GitHub issue, fix it, open a PR, and repeat until the queue is empty or you are paused."
-    MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
+    PROBE_SCRIPT="$AGENTS_REPO_ROOT/scripts/probe-codex-goals.sh"
+    if [ -f "$PROBE_SCRIPT" ] && bash "$PROBE_SCRIPT" 2>/dev/null; then
+      echo "✅ Codex /goal available — using native goal loop"
+      WORKER_CMD="/goal Work the issue queue: pull the next available GitHub issue, fix it, open a PR, and repeat until the queue is empty or you are paused."
+      MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
+    else
+      echo "⚠️  Codex /goal not available — using shell loop fallback"
+      WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
+      MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-manage-workers-loop.sh'"
+    fi
     ;;
   droid)
     if ! command -v droid &> /dev/null; then
