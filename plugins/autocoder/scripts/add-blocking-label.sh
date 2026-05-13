@@ -23,11 +23,38 @@ for label in "needs-approval:Architectural decisions, major changes, security im
   fi
 done
 
+# Reject placeholder-laden reasons (especially important for needs-design).
+# A reason like "Need design phase to evaluate: [list options]" means the worker
+# left the template unfilled. Refuse it so the worker has to write real content.
+if echo "$BLOCKING_REASON" | grep -qE '\[[a-z][^]]*\]'; then
+  echo "ERROR: BLOCKING_REASON contains unfilled placeholder text: $BLOCKING_REASON" >&2
+  echo "  Fill in concrete details before adding the blocking label." >&2
+  exit 2
+fi
+
 # Add blocking label
 gh issue edit "$ISSUE_NUM" --add-label "$BLOCKING_LABEL"
 
-# Add comment explaining why it's blocked
-gh issue comment "$ISSUE_NUM" --body "🚫 **Blocked - Requires Human Input**
+# Build the comment body. needs-design gets a specialized template that
+# explicitly captures *what* needs designing.
+if [ "$BLOCKING_LABEL" = "needs-design" ]; then
+  COMMENT_BODY="🎨 **Blocked — Needs Design**
+
+This issue cannot be implemented autonomously because the design space is not yet resolved. A human designer/architect needs to make decisions before a worker can proceed.
+
+### What needs design
+
+${BLOCKING_REASON}
+
+### Next steps
+
+- Resolve the design questions above (in this comment thread, an ADR, or a spec doc).
+- Link the design artifact in a follow-up comment.
+- Remove the \`needs-design\` label once decisions are recorded — autocoder will then pick the issue up.
+
+🤖 Autonomous fix workflow"
+else
+  COMMENT_BODY="🚫 **Blocked - Requires Human Input**
 
 **Blocking Reason**: ${BLOCKING_LABEL}
 
@@ -37,11 +64,12 @@ gh issue comment "$ISSUE_NUM" --body "🚫 **Blocked - Requires Human Input**
 - Use \`/review-blocked\` in a separate session to review and approve this issue
 - Once approved (blocking label removed), fix-loop will automatically work on this issue
 
-**Why This Was Blocked**: ${BLOCKING_REASON}
-
 Moving to next priority issue.
 
 🤖 Autonomous fix workflow"
+fi
+
+gh issue comment "$ISSUE_NUM" --body "$COMMENT_BODY"
 
 # Remove 'working' label to release the issue
 gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true

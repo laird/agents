@@ -1008,9 +1008,42 @@ if [issue description is vague or missing critical information]; then
 fi
 
 # Example: Issue requires design decisions
+#
+# IMPORTANT: when applying `needs-design`, BLOCKING_REASON MUST explain
+# *what specifically* needs designing. Do not leave placeholder text — the
+# script rejects reasons containing unfilled brackets like `[list options]`.
+#
+# Write a multi-line reason covering, at minimum:
+#   - The specific design questions that are open (1–N concrete questions)
+#   - The candidate approaches you considered and why none is the clear winner
+#   - What artifact would unblock the work (ADR? spec doc? a decision from a named owner?)
+#
+# Example of a good reason:
+#   "Issue asks for 'real-time notifications' but doesn't specify transport.
+#    Open questions:
+#    1. SSE (we use it elsewhere) vs WebSocket vs polling?
+#    2. Who is the audience — engagement participants only, or all users?
+#    3. Persistence semantics — at-least-once? best-effort?
+#    Approaches considered:
+#    - SSE: matches existing infra but only server-push.
+#    - WebSocket: bidirectional but new infra surface.
+#    Needs an ADR or a decision from the platform owner before implementation."
 if [multiple approaches possible, no clear winner]; then
   BLOCKING_LABEL="needs-design"
-  BLOCKING_REASON="Multiple valid approaches exist. Need design phase to evaluate: [list options]"
+  BLOCKING_REASON="$(cat <<'NEEDS_DESIGN_REASON'
+<one-paragraph summary of what is undecided>
+
+Open questions:
+1. <specific question>
+2. <specific question>
+
+Approaches considered:
+- <approach>: <pros/cons>
+- <approach>: <pros/cons>
+
+Unblocks when: <ADR/spec/decision-owner that needs to land>
+NEEDS_DESIGN_REASON
+)"
 fi
 
 # Example: Issue requires architectural approval
