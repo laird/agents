@@ -548,6 +548,60 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 ---
 
+## Adding a Custom Issue Backend
+
+The issue system is pluggable. Any executable that implements the backend contract can be used as an issue source.
+
+### Backend Contract
+
+Your backend must accept these subcommands:
+
+| Subcommand | Args | Output |
+|-----------|------|--------|
+| `list` | `[--label L] [--state open\|closed\|all] [--limit N]` | JSON array — `gh issue list` schema |
+| `get` | `<number>` | JSON object — `gh issue view` schema |
+| `update` | `<number> [--add-label L] [--remove-label L] [--status S]` | exit code |
+| `comment` | `<number> --body "..."` | exit code |
+| `close` | `<number> [--comment "..."]` | exit code |
+| `create` | `--title "..." --body "..." [--label L]` | `{"number": N}` |
+
+`list` and `get` must output JSON matching `gh issue list --json number,title,body,labels,state` and `gh issue view --json number,title,body,labels,state,comments` respectively.
+
+Note: `--priority` is translated to `--label` by `issue-fns.sh` before reaching backends. Backends only receive `--label`.
+
+### Registering Your Backend
+
+In `.autocoder.json`:
+
+```json
+{
+  "issueSource": "jira",
+  "issueBackend": "./scripts/backends/jira-backend.sh"
+}
+```
+
+### Minimal Template
+
+```bash
+#!/bin/bash
+SUBCOMMAND="$1"; shift
+case "$SUBCOMMAND" in
+  list)    echo "[]" ;;
+  get)     echo "{}" ;;
+  update)  exit 0 ;;
+  comment) exit 0 ;;
+  close)   exit 0 ;;
+  create)  echo '{"number": 1}' ;;
+  *) echo "Unknown: $SUBCOMMAND" >&2; exit 1 ;;
+esac
+```
+
+### Distributed Lock Pattern
+
+For backends that need distributed locking (multiple parallel agents claiming issues), implement `status: open|working|closed` semantics in your `update` subcommand. Agents call `update N --add-label working` to claim and `update N --remove-label working` to release. The `list --state open` call must exclude claimed issues.
+
+---
+
 ## References
 
 - **Repository**: <https://github.com/laird/agents>
