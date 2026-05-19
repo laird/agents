@@ -29,12 +29,12 @@ This command installs the agents framework into your project:
 
 ### 3. Shell Aliases (optional)
 - **File**: Shell rc file for the current shell, typically `~/.bashrc` or `~/.zshrc`
-- **Aliases**:
-  - `start-parallel='bash <framework-path>/.agent/scripts/start-parallel-agents.sh'`
-  - `join-parallel='bash <framework-path>/.agent/scripts/join-parallel-agents.sh'`
-  - `startct='start-parallel --mux tmux --agent codex'`
-  - `startcc='start-parallel --mux cmux --agent codex'`
-- **Purpose**: Quick commands to manage parallel agents
+- **Installed by**: `scripts/install-shell-aliases.sh` (auto-detects agent CLIs)
+- **Claude**: `startclt` (tmux), `startclc` (cmux)
+- **Codex**: `startct` (tmux), `startcc` (cmux)
+- **Gemini**: `startgt` (tmux), `startgc` (cmux)
+- **Droid**: `startdt` (tmux), `startdc` (cmux)
+- **Purpose**: Quick commands to launch parallel agent swarms
 - **Scope**: Global
 
 ## Installation Process
@@ -208,51 +208,41 @@ fi
 Ask if they want shorter aliases:
 
 ```
-Question: "Add shell aliases for convenience?"
+Question: "Install shell aliases for parallel agents?"
 Options:
-- "Yes, add aliases" - "Add 'start' and 'join' aliases to shell config"
-- "No, skip aliases" - "Use full command names (start-parallel, join-parallel)"
+- "Yes, auto-detect" - "Install aliases for agent CLIs that are currently installed"
+- "Yes, install all" - "Install aliases for all agents (claude, codex, gemini, droid)"
+- "No" - "Skip alias installation"
 ```
 
-**If Yes:**
+Show the alias table:
 
 ```bash
-# Detect shell
-SHELL_RC=""
-if [ -n "$ZSH_VERSION" ]; then
-  SHELL_RC="$HOME/.zshrc"
-elif [ -n "$BASH_VERSION" ]; then
-  SHELL_RC="$HOME/.bashrc"
+echo "  Agent      tmux      cmux"
+echo "  ─────────  ────────  ────────"
+echo "  Claude     startclt  startclc"
+echo "  Codex      startct   startcc"
+echo "  Gemini     startgt   startgc"
+echo "  Droid      startdt   startdc"
+```
+
+**If approved:**
+
+```bash
+SCRIPT_DIR=$(
+  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  fi
+)
+
+if [ "$USER_APPROVED_ALIASES" = "auto" ]; then
+  bash "$SCRIPT_DIR/../../../scripts/install-shell-aliases.sh"
+elif [ "$USER_APPROVED_ALIASES" = "all" ]; then
+  bash "$SCRIPT_DIR/../../../scripts/install-shell-aliases.sh" --all
 else
-  SHELL_RC="$HOME/.profile"
+  echo "⏭️  Skipped alias installation"
 fi
-
-# Check for existing aliases
-if grep -q "alias start=" "$SHELL_RC" 2>/dev/null; then
-  echo "⚠️  Alias 'start' already exists in $SHELL_RC"
-  # Ask if they want to overwrite
-fi
-
-if grep -q "alias join=" "$SHELL_RC" 2>/dev/null; then
-  echo "⚠️  Alias 'join' already exists in $SHELL_RC"
-  # Ask if they want to overwrite
-fi
-
-# Add aliases
-cat >> "$SHELL_RC" << 'EOF'
-
-# Antigravity parallel agents
-alias start='start-parallel'
-alias join='join-parallel'
-alias startct='start-parallel --mux tmux --agent codex'
-alias startcc='start-parallel --mux cmux --agent codex'
-EOF
-
-echo "✓ Added aliases to $SHELL_RC"
-echo ""
-echo "Run this to activate:"
-echo "   source $SHELL_RC"
-echo ""
 ```
 
 ### Step 6: Installation Summary
@@ -283,7 +273,7 @@ fi
 
 if [ "$INSTALL_ALIASES" = true ]; then
   echo "   • Shell aliases"
-  echo "     Shortcuts: start, join, startct, startcc"
+  echo "     Shortcuts: startclt/startclc (Claude), startct/startcc (Codex), startgt/startgc (Gemini), startdt/startdc (Droid)"
 fi
 
 echo ""

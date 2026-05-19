@@ -141,6 +141,16 @@ Source the alias files for the platforms you use. Each provides `start` and `joi
 | Gemini (Antigravity) | `startgt` | `startgc` | [gemini-shell-aliases.sh](scripts/gemini-shell-aliases.sh) |
 | Droid (Factory) | `startdt` | `startdc` | [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) |
 
+Install all aliases in one step (auto-detects which agent CLIs are installed):
+
+```bash
+bash /path/to/agents/scripts/install-shell-aliases.sh        # auto-detect
+bash /path/to/agents/scripts/install-shell-aliases.sh --all  # all agents
+source ~/.zshrc  # or ~/.bashrc
+```
+
+Or install via `/autocoder:install` in Claude Code.
+
 All aliases call `start-parallel` with the appropriate `--agent` and `--mux` flags. Example — start 3 Claude workers in tmux:
 
 ```bash

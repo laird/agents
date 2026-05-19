@@ -1,45 +1,67 @@
-# Autocoder Plugin Help
+# Autocoder Help
 
-The **Autocoder** plugin provides autonomous GitHub issue resolution with intelligent testing, proposal management, and continuous quality improvement.
+Start by examining the environment to give contextual guidance:
 
-## Overview
+```bash
+# Issue backend
+ISSUE_SOURCE=$(python3 -c "
+import json, os
+d = json.load(open('.autocoder.json')) if os.path.exists('.autocoder.json') else {}
+print(d.get('issueSource', 'not configured'))
+" 2>/dev/null || echo "not configured")
 
+# Installed agent CLIs
+HAS_CLAUDE=$(command -v claude &>/dev/null && echo yes || echo no)
+HAS_CODEX=$(command -v codex &>/dev/null && echo yes || echo no)
+HAS_GEMINI=$(command -v gemini &>/dev/null && echo yes || echo no)
+HAS_DROID=$(command -v droid &>/dev/null && echo yes || echo no)
+
+# Muxers
+HAS_TMUX=$(command -v tmux &>/dev/null && echo yes || echo no)
+HAS_CMUX=$(command -v cmux &>/dev/null && echo yes || echo no)
+
+# Shell aliases
+ALIASES_INSTALLED=$(grep -l "startclt\|startct\|startgt\|startdt" ~/.zshrc ~/.bashrc ~/.profile 2>/dev/null | head -1)
+
+# Active sessions
+ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "fix-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
+
+echo "Issue backend:  $ISSUE_SOURCE"
+echo "Agents:         $(echo claude=$HAS_CLAUDE codex=$HAS_CODEX gemini=$HAS_GEMINI droid=$HAS_DROID)"
+echo "Muxers:         tmux=$HAS_TMUX cmux=$HAS_CMUX"
+echo "Aliases:        $([ -n "$ALIASES_INSTALLED" ] && echo "installed ($ALIASES_INSTALLED)" || echo "not installed")"
+echo "Active sessions: $ACTIVE_SESSIONS"
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    AUTOCODER WORKFLOW                           │
-│                                                                 │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │  ISSUES      │    │  DESIGN      │    │  PROPOSALS   │      │
-│  │              │    │              │    │              │      │
-│  │ /fix  │    │ /brainstorm  │    │ /list-       │      │
-│  │ /fix  │    │   -issue     │    │  proposals   │      │
-│  │   -loop      │    │              │    │ /approve-    │      │
-│  │ /stop-loop   │    │ /list-needs  │    │  proposal    │      │
-│  │              │    │   -design    │    │              │      │
-│  └──────────────┘    │ /list-needs  │    └──────────────┘      │
-│                      │   -feedback  │                          │
-│  ┌──────────────┐    └──────────────┘                          │
-│  │  TESTING     │                                              │
-│  │              │                                              │
-│  │ /full-       │                                              │
-│  │  regression  │                                              │
-│  │   -test      │                                              │
-│  │ /improve-    │                                              │
-│  │  test-       │                                              │
-│  │  coverage    │                                              │
-│  └──────────────┘                                              │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+Based on what you find, give contextual guidance:
+
+- **If issue source not configured**: "Run `/autocoder:set-issue-source` first to configure the issue backend (file or GitHub)."
+- **If aliases not installed**: "Run `/autocoder:install` and choose to install shell aliases, or run `bash <agents-repo>/scripts/install-shell-aliases.sh`."
+- **If no agent CLIs detected**: List install links for claude, codex, gemini, droid.
+- **If no muxer**: Suggest `brew install tmux` or cmux.
+- **Otherwise**: Show the most relevant next steps based on context (active sessions, issue count, etc.).
+
+---
 
 ## Commands by Category
+
+### Issue Backend
+
+| Command | Purpose |
+|---------|---------|
+| `/set-issue-source` | Switch issue backend (file or GitHub) |
+| `/record-issue` | Create a new issue in the configured backend |
+| `/list-issues` | List issues in the current backend |
+| `/update-issue <number>` | Update an existing issue |
+| `/close-issue <number>` | Close an issue |
 
 ### Issue Resolution
 
 | Command | Purpose |
 |---------|---------|
-| `/fix` | Fix a single issue or start autonomous resolution |
-| `/fix-loop` | Run continuous issue resolution (with sleep between cycles) |
-| `/review-blocked` | Interactive review of blocked issues (run in parallel with fix-loop) |
+| `/fix` | Fix highest-priority issue or a specific issue |
+| `/fix-loop` | Run continuous issue resolution |
+| `/review-blocked` | Interactively review blocked issues (run alongside fix-loop) |
 | `/stop-loop` | Stop the continuous loop |
 
 ### Design & Brainstorming
@@ -68,211 +90,103 @@ The **Autocoder** plugin provides autonomous GitHub issue resolution with intell
 
 | Command | Purpose |
 |---------|---------|
-| `/install` | Install stop hook and parallel agent scripts (interactive setup) |
+| `/install` | Install stop hook, parallel scripts, and shell aliases |
+| `/set-issue-source` | Configure the issue backend |
+
+---
+
+## Parallel Agents — Shell Aliases
+
+All aliases call `start-parallel --mux <mux> --agent <agent>`. Install with `/install` or:
+
+```bash
+bash /path/to/agents/scripts/install-shell-aliases.sh        # auto-detect
+bash /path/to/agents/scripts/install-shell-aliases.sh --all  # all agents
+```
+
+| Agent | tmux | cmux |
+|-------|------|------|
+| Claude Code | `startclt 3` | `startclc 3` |
+| Codex | `startct 3` | `startcc 3` |
+| Gemini (Antigravity) | `startgt 3` | `startgc 3` |
+| Droid (Factory) | `startdt 3` | `startdc 3` |
+
+The number is the worker count. Each swarm starts N worker agents + 1 manager agent.
+
+---
 
 ## Workflow Patterns
 
-### Pattern 1: One-Shot Issue Resolution
+### Pattern 1: Single Issue Fix
 
 ```
 /fix 123
 ```
 
-Fixes issue #123, then stops.
-
-### Pattern 2: Priority-Based Resolution
+### Pattern 2: Continuous Autonomous Mode
 
 ```
+/set-issue-source   # First time: configure file or GitHub backend
+/install            # First time: install stop hook + aliases
+/fix-loop
+```
+
+### Pattern 3: Parallel Swarm (example: 3 Claude workers in tmux)
+
+```bash
+startclt 3
+```
+
+### Pattern 4: Design-First
+
+```
+/list-needs-design
+/brainstorm-issue 45
+/fix 45
+```
+
+### Pattern 5: Proposal Review
+
+```
+/list-proposals
+/approve-proposal 67
 /fix
 ```
 
-Finds the highest priority issue (P0→P1→P2→P3) and fixes it.
-
-### Pattern 3: Continuous Autonomous Mode
+### Pattern 6: Fix-Loop + Parallel Review
 
 ```
-/install    # First time only (approves stop hook)
-/fix-loop
-```
-
-Runs continuously:
-1. Triages unprioritized issues
-2. Fixes bugs in priority order
-3. Runs regression tests when no bugs
-4. Implements approved enhancements
-5. Creates proposals for new improvements
-6. Sleeps when idle, then repeats
-
-Stop with: `/stop-loop`
-
-### Pattern 4: Design-First Workflow
-
-```
-/list-needs-design           # Find issues needing design
-/brainstorm-issue 45         # Brainstorm design for issue #45
-# Review brainstorming results on GitHub
-gh issue edit 45 --remove-label "needs-design"  # Mark design complete
-/fix 45               # Implement the designed solution
-```
-
-### Pattern 5: Proposal Review Workflow
-
-```
-/list-proposals              # See pending AI proposals
-# Review proposals on GitHub
-/approve-proposal 67         # Approve proposal #67
-/fix                  # Implements approved proposals
-```
-
-### Pattern 6: Parallel Planning + Execution
-
-```bash
-# Terminal 1: Run fix-loop continuously
+# Window 1: autonomous worker
 /fix-loop
 
-# Terminal 2: Review blocked issues as they appear (non-blocking)
+# Window 2: unblock stuck issues
 /review-blocked
 ```
 
-When fix-loop encounters issues it can't handle (architectural decisions, unclear requirements, etc.), it adds blocking labels and continues. In a separate session, use `/review-blocked` to interactively:
-1. See overview of all blocked issues by category and priority
-2. Review highest priority blocked issue with 2-3 recommended approaches
-3. Approve (removes blocking label), explore further, reject, or skip
-4. Continue to next blocked issue
-
-This allows continuous autonomous work while you provide guidance on complex decisions.
+---
 
 ## Priority System
 
-Issues are prioritized by labels:
+| Priority | Description |
+|----------|-------------|
+| **P0** | Critical — system down, data loss, security |
+| **P1** | High — major feature broken, no workaround |
+| **P2** | Medium — degraded, workaround exists |
+| **P3** | Low — minor, cosmetic |
 
-| Priority | Description | Examples |
-|----------|-------------|----------|
-| **P0** | Critical | System down, data loss, security vulnerability |
-| **P1** | High | Major feature broken, no workaround |
-| **P2** | Medium | Feature partially broken, workaround exists |
-| **P3** | Low | Minor issues, cosmetic, nice-to-have |
+Unlabeled issues are triaged automatically on first `/fix`.
 
-Unlabeled issues are triaged automatically when `/fix` runs.
+## Blocking Labels
 
-## Label System
-
-### Priority Labels
 | Label | Meaning |
 |-------|---------|
-| `P0` | Critical priority (system down, security, data loss) |
-| `P1` | High priority (major feature broken, no workaround) |
-| `P2` | Medium priority (feature degraded, workaround exists) |
-| `P3` | Low priority (minor issue, cosmetic) |
-
-### Blocking Labels
-These indicate why fix-loop cannot autonomously work on an issue:
-
-| Label | When Applied | Example |
-|-------|--------------|---------|
-| `needs-approval` | Architectural decisions, major changes, security implications | "Should we migrate from REST to GraphQL?" |
-| `needs-design` | Requirements unclear, multiple valid approaches | "Add user dashboard" (what features? layout?) |
-| `needs-clarification` | Incomplete information, missing context | "Fix the bug in checkout" (which bug?) |
-| `too-complex` | Beyond autonomous capability, requires deep expertise | "Refactor entire auth system" |
-
-**Note**: Blocking labels are independent from priority. An issue can have both `P0` + `needs-design`.
-
-### Status Labels
-| Label | Meaning |
-|-------|---------|
-| `proposal` | AI-generated, awaiting human approval |
-| `enhancement` | Feature improvement |
-| `bug` | Something isn't working |
-| `test-failure` | Created from test failure |
-| `working` | Currently claimed by an agent (concurrency lock) |
-
-## Issue Complexity
-
-The plugin automatically detects issue complexity:
-
-**Simple Issues** (direct fix):
-- Single file changes
-- Configuration tweaks
-- Small bug fixes
-- Clear, specific fixes
-
-**Complex Issues** (uses brainstorming/planning skills if available):
-- Multiple test failures (>10)
-- Feature implementations
-- Multi-file refactoring
-- Architecture changes
-
-## Configuration
-
-First run of `/fix` auto-creates configuration in your `CLAUDE.md`:
-
-```markdown
-## Automated Testing & Issue Management
-
-### Regression Test Suite
-```bash
-npm test
-```
-
-### Build Verification
-```bash
-npm run build
-```
-```
-
-Customize these commands for your project.
-
-## Quick Reference
-
-```bash
-# Start fixing issues
-/fix
-
-# Fix specific issue
-/fix 123
-
-# Run continuously
-/fix-loop
-
-# Stop continuous mode
-/stop-loop
-
-# Review blocked issues (run in parallel with fix-loop)
-/review-blocked
-
-# Review proposals
-/list-proposals
-
-# Approve a proposal
-/approve-proposal 45
-
-# Find issues needing design
-/list-needs-design
-
-# Brainstorm an issue
-/brainstorm-issue 67
-
-# Find issues needing feedback
-/list-needs-feedback
-
-# Run full test suite
-/full-regression-test
-
-# Improve test coverage
-/improve-test-coverage
-```
-
-## Tips
-
-1. **Install the stop hook** before using `/fix-loop`
-2. **Run `/review-blocked` in parallel** - fix-loop will add blocking labels when it needs guidance, review them separately without interrupting autonomous work
-3. **Review proposals** regularly - they won't auto-implement
-4. **Use labels** to control what gets worked on
-5. **Customize test commands** in CLAUDE.md for your project
-6. **Brainstorm first** for complex issues needing design
+| `needs-approval` | Architectural decision required |
+| `needs-design` | Requirements unclear |
+| `needs-clarification` | Missing context |
+| `too-complex` | Beyond autonomous capability |
 
 ## See Also
 
-- `/modernize-help` - Help for the Modernize plugin
-- GitHub Labels documentation
-- Project's `CLAUDE.md` for configuration
+- `/autocoder:install` — full interactive setup
+- `/modernize-help` — modernization workflow help
+- Project `CLAUDE.md` for test command configuration

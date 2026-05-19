@@ -35,17 +35,11 @@ This command installs all autocoder plugin components:
 
 ### 3. Shell Aliases (optional)
 - **File**: Shell rc file for the current shell, typically `~/.bashrc` or `~/.zshrc`
-- **Generic aliases**: `start`, `join`, `end` (auto-detect multiplexer)
-- **tmux aliases**: `startt`, `joint`, `stopt`, `endt`
-- **cmux aliases**: `startc`, `joinc`, `stopc`, `endc`
-- **Claude tmux aliases**: `startclt`, `joinclt`
-- **Claude cmux aliases**: `startclc`, `joinclc`
-- **Codex tmux aliases**: `startct`, `joinct`
-- **Codex cmux aliases**: `startcc`, `joincc`
-- **Gemini tmux aliases**: `startgt`, `joingt`
-- **Gemini cmux aliases**: `startgc`, `joingc`
-- **Droid tmux aliases**: `startdt`, `joindt`
-- **Droid cmux aliases**: `startdc`, `joindc`
+- **Installed by**: `scripts/install-shell-aliases.sh` (auto-detects agent CLIs)
+- **Claude**: `startclt` (tmux), `startclc` (cmux)
+- **Codex**: `startct` (tmux), `startcc` (cmux)
+- **Gemini**: `startgt` (tmux), `startgc` (cmux)
+- **Droid**: `startdt` (tmux), `startdc` (cmux)
 - **Purpose**: Shorter multiplexer-specific commands
 - **Action**: Appends aliases to shell config (only for installed multiplexers)
 - **Scope**: Global (available in all terminals after restart)
@@ -529,127 +523,46 @@ echo "  alias end='end-parallel'"
 echo ""
 ```
 
-Check which multiplexers are available and offer mux-specific aliases:
+Show the full alias table:
 
 ```bash
-if [ "$HAS_TMUX" = true ]; then
-  echo "  # tmux-specific"
-  echo "  alias startt='start-parallel --mux tmux'"
-  echo "  alias joint='join-parallel --mux tmux'"
-  echo "  alias stopt='stop-parallel --mux tmux'"
-  echo "  alias endt='end-parallel'"
-fi
-
-if [ "$HAS_CMUX" = true ]; then
-  echo "  # cmux-specific"
-  echo "  alias startc='start-parallel --mux cmux'"
-  echo "  alias joinc='join-parallel --mux cmux'"
-  echo "  alias stopc='stop-parallel --mux cmux'"
-  echo "  alias endc='end-parallel'"
-fi
-
-if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
-  echo "  # Codex + tmux"
-  echo "  alias startct='start-parallel --mux tmux --agent codex'"
-  echo "  alias joinct='join-parallel --mux tmux'"
-fi
-
-if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
-  echo "  # Codex + cmux"
-  echo "  alias startcc='start-parallel --mux cmux --agent codex'"
-  echo "  alias joincc='join-parallel --mux cmux'"
-fi
-
+echo "  Agent      tmux      cmux"
+echo "  ─────────  ────────  ────────"
+echo "  Claude     startclt  startclc"
+echo "  Codex      startct   startcc"
+echo "  Gemini     startgt   startgc"
+echo "  Droid      startdt   startdc"
 echo ""
-echo "⚠️  Warning: Only install if you don't have conflicting aliases."
+echo "install-shell-aliases.sh auto-detects which agent CLIs are installed."
+echo "Use --all to install aliases for all agents regardless."
 echo ""
 echo "Usage after install:"
-echo "  cd ~/src/myproject"
-if [ "$HAS_CMUX" = true ]; then
-  echo "  startc 3   # Launch 3 agents in cmux"
-  echo "  joinc      # Rejoin cmux session"
-  echo "  endc       # End cmux session + cleanup"
-fi
-if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
-  echo "  startcc 3  # Launch 1 manager + 3 Codex workers in cmux"
-  echo "  joincc     # Rejoin/list Codex cmux workspaces"
-fi
-if [ "$HAS_TMUX" = true ]; then
-  echo "  startt 3   # Launch 3 agents in tmux"
-  echo "  joint      # Rejoin tmux session"
-  echo "  endt       # End tmux session + cleanup"
-fi
-if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
-  echo "  startct 3  # Launch 1 manager + 3 Codex workers in tmux"
-  echo "  joinct     # Rejoin Codex tmux session"
-fi
-echo ""
+echo "  startclt 3  # 1 manager + 3 Claude workers in tmux"
+echo "  startct 3   # 1 manager + 3 Codex workers in tmux"
+echo "  startgt 3   # 1 manager + 3 Gemini workers in tmux"
+echo "  startdt 3   # 1 manager + 3 Droid workers in tmux"
 ```
 
 Use AskUserQuestion:
 
 ```
-Question: "Create shell aliases?"
+Question: "Install shell aliases?"
 Header: "Aliases"
 Options:
-  - "Yes, create aliases" - "Multiplexer-specific shortcuts including Codex aliases when Codex is installed"
-  - "No, use full names" - "Keep using 'start-parallel', 'join-parallel', 'end-parallel', and 'stop-parallel'"
+  - "Yes, auto-detect" - "Install aliases for agent CLIs that are currently installed"
+  - "Yes, install all" - "Install aliases for all agents (claude, codex, gemini, droid)"
+  - "No" - "Skip alias installation"
 ```
 
 If approved:
 
 ```bash
-if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
-  # Check for conflicts with generic aliases
-  CONFLICTS=false
-  if alias start 2>/dev/null | grep -qv "start-parallel"; then
-    echo "⚠️  Warning: 'start' alias already exists — skipping generic aliases"
-    CONFLICTS=true
-  fi
-
-  if [ "$CONFLICTS" = false ]; then
-    # Generic aliases
-    echo "" >> "$SHELL_RC"
-    echo "# Autocoder parallel agent aliases" >> "$SHELL_RC"
-    echo "alias start='start-parallel'" >> "$SHELL_RC"
-    echo "alias join='join-parallel'" >> "$SHELL_RC"
-    echo "alias end='end-parallel'" >> "$SHELL_RC"
-    echo "✅ Generic aliases added (start, join, end)"
-  fi
-
-  # tmux-specific aliases (always safe — unique names)
-  if [ "$HAS_TMUX" = true ]; then
-    echo "alias startt='start-parallel --mux tmux'" >> "$SHELL_RC"
-    echo "alias joint='join-parallel --mux tmux'" >> "$SHELL_RC"
-    echo "alias stopt='stop-parallel --mux tmux'" >> "$SHELL_RC"
-    echo "alias endt='end-parallel'" >> "$SHELL_RC"
-    echo "✅ tmux aliases added (startt, joint, stopt, endt)"
-  fi
-
-  # cmux-specific aliases (always safe — unique names)
-  if [ "$HAS_CMUX" = true ]; then
-    echo "alias startc='start-parallel --mux cmux'" >> "$SHELL_RC"
-    echo "alias joinc='join-parallel --mux cmux'" >> "$SHELL_RC"
-    echo "alias stopc='stop-parallel --mux cmux'" >> "$SHELL_RC"
-    echo "alias endc='end-parallel'" >> "$SHELL_RC"
-    echo "✅ cmux aliases added (startc, joinc, stopc, endc)"
-  fi
-
-  if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
-    echo "alias startct='start-parallel --mux tmux --agent codex'" >> "$SHELL_RC"
-    echo "alias joinct='join-parallel --mux tmux'" >> "$SHELL_RC"
-    echo "✅ Codex tmux aliases added (startct, joinct)"
-  fi
-
-  if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
-    echo "alias startcc='start-parallel --mux cmux --agent codex'" >> "$SHELL_RC"
-    echo "alias joincc='join-parallel --mux cmux'" >> "$SHELL_RC"
-    echo "✅ Codex cmux aliases added (startcc, joincc)"
-  fi
-
-  echo "   ⚡ Restart your shell or run: source $SHELL_RC"
+if [ "$USER_APPROVED_ALIASES" = "auto" ]; then
+  bash "$SCRIPT_DIR/install-shell-aliases.sh"
+elif [ "$USER_APPROVED_ALIASES" = "all" ]; then
+  bash "$SCRIPT_DIR/install-shell-aliases.sh" --all
 else
-  echo "⏭️  Skipped alias creation"
+  echo "⏭️  Skipped alias installation"
 fi
 
 echo ""
