@@ -7,6 +7,10 @@
 
 Add support for a file-based issue list (`ISSUES.md`) as an alternative to GitHub Issues, with an extensible backend system so additional sources (Jira, Linear, etc.) can be added by implementing a standard contract. The system auto-detects the available source, confirms with the user, and caches the choice. A `/set-issue-source` command allows switching at any time, with optional migration of existing issues.
 
+All existing commands (`/fix`, `/fix-loop`, `/review-blocked`, etc.) work unchanged against any backend — they route through a shared shell function layer (`issue_list`, `issue_get`, `issue_update`, `issue_comment`, `issue_close`, `issue_create`) that dispatches to the configured backend. No command file knows or cares which backend is active.
+
+New user-facing commands provide explicit issue management: `/record-issue` to create, `/update-issue` to modify labels/status, `/close-issue` to resolve, `/list-issues` to browse — all backend-transparent.
+
 ---
 
 ## Section 1: Detection & Confirmation Flow
@@ -144,9 +148,79 @@ Each of the following sources `issue-config.sh` and branches on `$ISSUE_SOURCE`:
 | `approve-blocked-issue.sh` | Same dispatch pattern |
 | `reject-blocked-issue.sh` | Same dispatch pattern |
 
+### Shell Function Layer (`scripts/issue-fns.sh`)
+
+A shared shell library sourced by all command files and scripts. Defines six functions that dispatch to the configured backend, replacing all raw `gh issue` call sites:
+
+| Function | Equivalent `gh` call | Description |
+|----------|----------------------|-------------|
+| `issue_list [--label L] [--state S] [--limit N]` | `gh issue list` | List issues, output JSON array |
+| `issue_get <number>` | `gh issue view` | Get one issue, output JSON object |
+| `issue_update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | `gh issue edit` | Modify issue metadata |
+| `issue_comment <number> --body "..."` | `gh issue comment` | Append a comment |
+| `issue_close <number> [--comment "..."]` | `gh issue close` | Close/resolve an issue |
+| `issue_create --title "..." --body "..." [--label L] [--priority P]` | `gh issue create` | Create a new issue, returns number |
+
+Every command file and script sources `issue-fns.sh` at entry. No command file contains any direct `gh issue` calls after this migration — the functions are the only call site.
+
 ### Command Files (`fix.md` etc.)
 
-Commands that contain raw `gh issue` calls get a small set of backend-aware shell functions defined at entry (e.g., `issue_list`, `issue_get`, `issue_update`, `issue_comment`, `issue_close`, `issue_create`). These functions source `issue-config.sh` and dispatch accordingly, replacing the raw `gh issue` call sites.
+All raw `gh issue` calls in existing command files are replaced with the corresponding `issue_*` function from `issue-fns.sh`. The command files are otherwise unchanged — they do not know or care which backend is active.
+
+### New User-Facing Issue Management Commands
+
+These commands provide explicit issue management that works transparently against any configured backend:
+
+#### `commands/record-issue.md`
+
+Creates a new issue in the configured backend:
+
+```
+/record-issue
+/record-issue "Fix the login bug"
+/record-issue --priority P1 --label bug
+```
+
+- Prompts for title, body, priority, and labels if not supplied
+- Calls `issue_create` and reports the new issue number
+- Works identically whether the backend is GitHub, ISSUES.md, or Jira
+
+#### `commands/update-issue.md`
+
+Modifies an existing issue's labels, status, or priority:
+
+```
+/update-issue 42 --add-label needs-design
+/update-issue 42 --remove-label working --add-label needs-approval
+/update-issue 42 --priority P0
+```
+
+- Calls `issue_update` with the specified changes
+- Label names are backend-agnostic (same names used in GitHub mode)
+
+#### `commands/close-issue.md`
+
+Resolves and closes an issue with an optional comment:
+
+```
+/close-issue 42
+/close-issue 42 "Fixed in PR #87 by extracting auth module"
+```
+
+- Calls `issue_close`; appends comment if provided
+
+#### `commands/list-issues.md`
+
+Lists open issues, optionally filtered:
+
+```
+/list-issues
+/list-issues --label needs-design
+/list-issues --priority P0
+```
+
+- Calls `issue_list`, formats output for readability
+- Consolidates and replaces the existing `/list-needs-design` and `/list-needs-feedback` commands (those become thin wrappers: `/list-needs-design` = `/list-issues --label needs-design`)
 
 ### New Command: `commands/set-issue-source.md`
 
@@ -170,7 +244,12 @@ Per repository convention, all new scripts and commands must be mirrored:
 | Claude Code | Antigravity |
 |-------------|-------------|
 | `plugins/autocoder/scripts/issue-config.sh` | `.agent/scripts/issue-config.sh` |
+| `plugins/autocoder/scripts/issue-fns.sh` | `.agent/scripts/issue-fns.sh` |
 | `plugins/autocoder/scripts/issues-file.py` | `.agent/scripts/issues-file.py` |
+| `plugins/autocoder/commands/record-issue.md` | `.agent/workflows/record-issue.md` |
+| `plugins/autocoder/commands/update-issue.md` | `.agent/workflows/update-issue.md` |
+| `plugins/autocoder/commands/close-issue.md` | `.agent/workflows/close-issue.md` |
+| `plugins/autocoder/commands/list-issues.md` | `.agent/workflows/list-issues.md` |
 | `plugins/autocoder/commands/set-issue-source.md` | `.agent/workflows/set-issue-source.md` |
 
 ---
