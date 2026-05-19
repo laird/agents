@@ -130,6 +130,33 @@ See [docs/DROID.md](docs/DROID.md) for details.
 
 ---
 
+## Shell Aliases — All Combinations
+
+Source the alias files for the platforms you use. Each provides `start` and `join` aliases for both tmux and cmux.
+
+| Agent | tmux | cmux | Alias file |
+|-------|------|------|------------|
+| Claude Code | `startclt` | `startclc` | [claude-shell-aliases.sh](scripts/claude-shell-aliases.sh) |
+| Codex | `startct` | `startcc` | [codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) |
+| Gemini (Antigravity) | `startgt` | `startgc` | [gemini-shell-aliases.sh](scripts/gemini-shell-aliases.sh) |
+| Droid (Factory) | `startdt` | `startdc` | [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) |
+
+All aliases call `start-parallel` with the appropriate `--agent` and `--mux` flags. Example — start 3 Claude workers in tmux:
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc:
+source /path/to/agents/scripts/claude-shell-aliases.sh
+
+# Then:
+startclt 3   # 1 manager + 3 Claude workers in tmux
+startclc 3   # 1 manager + 3 Claude workers in cmux
+startct 3    # 1 manager + 3 Codex workers in tmux
+startgt 3    # 1 manager + 3 Gemini workers in tmux
+startdt 3    # 1 manager + 3 Droid workers in tmux
+```
+
+---
+
 ## Installation
 
 ### Claude Code
