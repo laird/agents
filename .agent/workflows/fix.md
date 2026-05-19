@@ -56,10 +56,10 @@ Where Step 3 contributes only a single skill or no sequence, treat it as a one-s
 | If the work is... | Use these skills |
 |---|---|
 | Bug / unexpected behavior | `superpowers:systematic-debugging` → `superpowers:test-driven-development` |
-| New feature / unclear requirement | `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:test-driven-development` (optional `critical-design-review` after brainstorming, `critical-implementation-review` after writing-plans) |
+| New feature / unclear requirement | `thorough-brainstorming` → `thorough-writing-plans` → `superpowers:test-driven-development` (fallback: `superpowers:brainstorming` → `superpowers:writing-plans`; optional `critical-design-review` after brainstorming, `critical-implementation-review` after writing-plans) |
 | Refactor / restructuring | `superpowers:test-driven-development` (characterization tests) → refactor under green |
 | Increasing test coverage | `autocoder:improve-test-coverage` → `superpowers:test-driven-development` for new tests |
-| Proposing new tasks | `superpowers:brainstorming` → `critical-design-review` |
+| Proposing new tasks | `thorough-brainstorming` (preferred) or `superpowers:brainstorming` → `critical-design-review` |
 | Docs / config / chore | TDD optional |
 
 <!-- END optional-skills-mapping fix v1 -->
@@ -104,7 +104,7 @@ Where Step 3 contributes only a single skill or no sequence, treat it as a one-s
 
 ### Propose New Enhancements (lowest priority)
 17. **Only when no bugs AND no existing enhancements**: Propose new improvements
-18. Use superpowers:brainstorming to identify valuable enhancements
+18. Use `thorough-brainstorming` (preferred) or `superpowers:brainstorming` to identify valuable enhancements
 19. Create enhancement issue with detailed implementation plan
 20. Loop back to Enhancement Phase to implement
 
@@ -771,10 +771,13 @@ This will:
 If the issue requires new feature design:
 
 ```
-# If superpowers available:
+# If thorough-brainstorming available (preferred):
+Use Skill tool: thorough-brainstorming
+
+# If superpowers available (fallback):
 Use Skill tool: superpowers:brainstorming
 
-# If superpowers NOT available:
+# If neither available:
 # - Explore 2-3 design alternatives
 # - List pros/cons for each approach
 # - Identify open questions and assumptions
@@ -792,10 +795,13 @@ This will:
 After design is complete, create implementation plan:
 
 ```
-# If superpowers available:
+# If thorough-writing-plans available (preferred):
+Use Skill tool: thorough-writing-plans
+
+# If superpowers available (fallback):
 Use Skill tool: superpowers:writing-plans
 
-# If superpowers NOT available:
+# If neither available:
 # - Break work into numbered tasks (5-15 tasks)
 # - Specify exact file paths and changes for each
 # - Include verification command for each task
@@ -954,10 +960,10 @@ Issue #222: Review Management system broken (~30 test failures)
   - Investigate root cause
   - Analyze test failure patterns
   - Identify common issues
-→ Use superpowers:brainstorming
+→ Use thorough-brainstorming (preferred) or superpowers:brainstorming
   - Design fix approach
   - Validate assumptions
-→ Use superpowers:writing-plans
+→ Use thorough-writing-plans (preferred) or superpowers:writing-plans
   - Create implementation plan
   - Break into tasks
 → Use superpowers:executing-plans
@@ -1052,8 +1058,8 @@ For issues too large for autonomous resolution (>100 test failures, major archit
 echo "⚠️  Ultra-complex issue detected: attempting decomposition"
 
 # Use brainstorming skill to analyze and decompose the complex issue
-if [ "$SUPERPOWERS_AVAILABLE" = "true" ]; then
-  echo "📋 Using superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
+if [ "$SUPERPOWERS_AVAILABLE" = "true" ] || [ "$THOROUGH_SKILLS_AVAILABLE" = "true" ]; then
+  echo "📋 Using thorough-brainstorming (preferred) or superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
   # Prompt: "Analyze issue #$ISSUE_NUM and decompose it into 3-8 manageable sub-tasks.
   # Each sub-task should be independently fixable and testable.
   # For each sub-task, provide: title, description, acceptance criteria, and priority."
@@ -1334,9 +1340,13 @@ fi
 
 If coverage is below 80%, use `/improve-test-coverage` to improve it (this uses the fast path when test-coverage.md exists).
 
-**Then use superpowers:brainstorming** to identify other valuable enhancements:
+**Then use `thorough-brainstorming` (preferred) or `superpowers:brainstorming`** to identify other valuable enhancements:
 
 ```
+# If thorough-brainstorming available (preferred):
+Use Skill tool: thorough-brainstorming
+
+# If superpowers available (fallback):
 Use Skill tool: superpowers:brainstorming
 ```
 
@@ -1468,6 +1478,10 @@ Implementation in progress..."
 **Step 2: Design Solution with Brainstorming**
 
 ```
+# If thorough-brainstorming available (preferred):
+Use Skill tool: thorough-brainstorming
+
+# If superpowers available (fallback):
 Use Skill tool: superpowers:brainstorming
 ```
 
@@ -1480,6 +1494,10 @@ This will:
 **Step 3: Create Detailed Implementation Plan**
 
 ```
+# If thorough-writing-plans available (preferred):
+Use Skill tool: thorough-writing-plans
+
+# If superpowers available (fallback):
 Use Skill tool: superpowers:writing-plans
 ```
 
@@ -1496,7 +1514,7 @@ gh issue comment "$ENHANCE_NUM" --body "📋 **Implementation Plan Created**
 
 ## Detailed Implementation Plan
 
-[Paste the implementation plan created by superpowers:writing-plans]
+[Paste the implementation plan created by thorough-writing-plans or superpowers:writing-plans]
 
 Beginning execution..."
 ```
@@ -1789,7 +1807,7 @@ print(len(blocked))
   else
     echo "No pending proposals or blocked issues. Will brainstorm new proposals..."
     # Run /full-regression-test first if not recently run
-    # Then brainstorm proposals using superpowers:brainstorming
+    # Then brainstorm proposals using thorough-brainstorming (preferred) or superpowers:brainstorming
     # After creating proposals, output IDLE_NO_WORK_AVAILABLE
   fi
 fi

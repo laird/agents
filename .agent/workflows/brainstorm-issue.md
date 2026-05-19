@@ -30,7 +30,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 | Step | Skill mapping |
 |---|---|
-| Design exploration / requirements dialogue | `superpowers:brainstorming` |
+| Design exploration / requirements dialogue | `thorough-brainstorming` (preferred) or `superpowers:brainstorming` |
 | Self-review of written spec → apply review findings | `critical-design-review` → `update-design-doc` |
 
 <!-- END optional-skills-mapping brainstorm-issue v1 -->

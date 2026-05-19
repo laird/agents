@@ -40,7 +40,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 | Step | Skill mapping |
 |---|---|
-| Turn spec into implementation plan → review the produced plan → apply review findings | `superpowers:writing-plans` → `critical-implementation-review` → `update-implementation-plan` |
+| Turn spec into implementation plan → review the produced plan → apply review findings | `thorough-writing-plans` (preferred) or `superpowers:writing-plans` → `critical-implementation-review` → `update-implementation-plan` |
 
 <!-- END optional-skills-mapping plan v1 -->
 
