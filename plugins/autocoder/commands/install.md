@@ -38,8 +38,14 @@ This command installs all autocoder plugin components:
 - **Generic aliases**: `start`, `join`, `end` (auto-detect multiplexer)
 - **tmux aliases**: `startt`, `joint`, `stopt`, `endt`
 - **cmux aliases**: `startc`, `joinc`, `stopc`, `endc`
+- **Claude tmux aliases**: `startclt`, `joinclt`
+- **Claude cmux aliases**: `startclc`, `joinclc`
 - **Codex tmux aliases**: `startct`, `joinct`
 - **Codex cmux aliases**: `startcc`, `joincc`
+- **Gemini tmux aliases**: `startgt`, `joingt`
+- **Gemini cmux aliases**: `startgc`, `joingc`
+- **Droid tmux aliases**: `startdt`, `joindt`
+- **Droid cmux aliases**: `startdc`, `joindc`
 - **Purpose**: Shorter multiplexer-specific commands
 - **Action**: Appends aliases to shell config (only for installed multiplexers)
 - **Scope**: Global (available in all terminals after restart)
