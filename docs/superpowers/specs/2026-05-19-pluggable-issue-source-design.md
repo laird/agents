@@ -134,6 +134,22 @@ Comments (equivalents of `gh issue comment`) are appended as Markdown blockquote
 - Setting `status: working` + `assignee: <worktree-name>` is done atomically under the lock, claiming an issue for one agent at a time — equivalent to the GitHub `working` label.
 - Multiple worktrees running simultaneously all resolve the same absolute path (the main worktree's `ISSUES.md`) and coordinate through file locking on that single file. No branch worktree ever has its own copy of the issue list.
 
+### `working` Label / `status` Coupling
+
+The file backend treats the `working` label as a special sentinel that directly controls the `status:` field. This coupling is how callers written for the GitHub backend (which use `--add-label working` / `--remove-label working` to claim and release issues) work correctly against the file backend without any caller changes:
+
+| `issue_update` call | File backend effect |
+|---------------------|---------------------|
+| `--add-label working` | Adds `working` to `labels:` **and** sets `status: working` |
+| `--remove-label working` | Removes `working` from `labels:` **and** sets `status: open` |
+| `--add-label <any-other>` | Adds to `labels:` only; `status:` unchanged |
+| `--status working` (direct) | Sets `status: working` only; `labels:` unchanged |
+| `--status open` (direct) | Sets `status: open` only; `labels:` unchanged |
+
+The `issue_close` call always sets `status: closed` regardless of labels.
+
+This coupling is file-backend-specific. Custom backends are responsible for their own concurrency model (documented in the README extensibility section).
+
 ---
 
 ## Section 3: Script Architecture
@@ -158,7 +174,7 @@ Subcommands:
 |-----------|-------------|
 | `list [--label L] [--state open\|closed]` | Output JSON array |
 | `get <number>` | Output JSON object |
-| `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Modify issue in-place |
+| `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Modify issue in-place. `--add-label working` also sets `status: working`; `--remove-label working` also sets `status: open` (see `working` Label / `status` Coupling in Section 2) |
 | `comment <number> --body "..."` | Append blockquote comment |
 | `close <number> [--comment "..."]` | Set `status: closed`, append comment |
 | `create --title "..." --body "..." [--label L]` | Append new issue, output `{"number": N}` (priority arrives pre-translated as `--label P1` by `issue-fns.sh`) |
