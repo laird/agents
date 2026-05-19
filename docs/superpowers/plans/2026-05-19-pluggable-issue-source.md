@@ -8,6 +8,26 @@
 
 **Tech Stack:** bash 5+, Python 3.8+ stdlib only (no PyYAML — custom frontmatter parser), `gh` CLI (GitHub backend), `fcntl.flock` (per-file locking on macOS + Linux).
 
+**Source spec:** `docs/superpowers/specs/2026-05-19-pluggable-issue-source-design.md` (commit SHA: de4e39c)
+
+---
+
+## Verified plan-level assumptions
+
+These assumptions were verified empirically during plan review (2026-05-19).
+
+| # | Assumption | Evidence |
+|---|-----------|---------|
+| 1 | All 13 migration target files exist in `plugins/autocoder/scripts/` and `plugins/autocoder/commands/` | `ls` confirmed all 13 files present |
+| 2 | All 13 migration targets contain functional `gh issue` calls (counts: add-blocking-label.sh=3, approve-blocked-issue.sh=2, reject-blocked-issue.sh=1, fetch-blocked-issues.sh=1, regression-test.sh=3, fix.md=46, approve-proposal.md=3, brainstorm-issue.md=5, full-regression-test.md=10, list-needs-design.md=7, list-needs-feedback.md=9, list-proposals.md=7, monitor-workers.md=6) | `grep -c "gh issue"` on each file |
+| 3 | Python 3.8+ available as `python3` | `python3 --version` → Python 3.13.7 |
+| 4 | `fcntl` module available in stdlib | `python3 -c "import fcntl"` succeeds |
+| 5 | `argparse` supports `required=True` on subparsers (Python 3.7+) | `python3 -c "import argparse; p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)"` succeeds |
+| 6 | `plugins/autocoder/scripts/`, `plugins/autocoder/commands/`, `.agent/scripts/`, `.agent/workflows/` all exist | `ls` confirmed all directories |
+| 7 | `gh issue list` accepts `--state {open\|closed\|all}` | `gh issue list --help` shows `-s, --state string: Filter by state: {open\|closed\|all} (default "open")` |
+| 8 | `.agent/` mirror convention applies to new scripts and commands | `CLAUDE.md` "Parallel Maintenance Requirement" section confirms |
+| 9 | `"003".isdigit()` returns `True` in Python (zero-padded numerics work) | `python3 -c "print('003'.isdigit())"` → True |
+
 ---
 
 ## File Structure
