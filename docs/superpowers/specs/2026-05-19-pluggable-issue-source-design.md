@@ -23,6 +23,44 @@ These two concepts are distinct and should not be conflated in code, documentati
 
 ---
 
+## Verified Assumptions
+
+Empirically verified facts this design depends on. CDR reviewers treat these as ground truth.
+
+### `gh` CLI flag behavior (verified via `gh --help`)
+
+| Claim | Verified evidence |
+|-------|------------------|
+| `gh issue list` accepts `-l/--label`, `-L/--limit`, `-s/--state` | `gh issue list --help` confirms all three flags |
+| `gh issue list` does NOT accept `--priority` or `--status` | Not present in `gh issue list --help` |
+| `gh issue create` accepts `-l/--label` but NOT `--priority` | `gh issue create --help` confirms `--label`; no `--priority` |
+| `gh issue edit` accepts `--add-label` and `--remove-label` | `gh issue edit --help` confirms both flags |
+| `gh issue edit` does NOT accept `--status` or `--assignee` | Not present in `gh issue edit --help`; edit uses `--add-assignee`/`--remove-assignee` (GitHub logins, not worktree names) |
+| `gh issue close` accepts `-c/--comment` | `gh issue close --help` confirms `-c, --comment string` |
+| `gh issue reopen` exists | `gh issue reopen --help` succeeds |
+| `gh issue list --json` supports fields: `number, title, body, labels, state` | Listed in `gh issue list --help` JSON fields |
+
+### File locking (verified on macOS/darwin)
+
+| Claim | Verified evidence |
+|-------|------------------|
+| Python `fcntl.flock` is available on macOS | `python3 -c "import fcntl"` succeeds on darwin |
+| Shell `flock` command is NOT available on macOS | `which flock` returns nothing on darwin; `flock` is Linux-only |
+
+### Worktree detection (verified in this repo)
+
+| Claim | Verified evidence |
+|-------|------------------|
+| `git worktree list --porcelain \| grep -m1 "^worktree" \| cut -d' ' -f2` returns the main worktree absolute path | Returns `/Users/Laird.Popkin/src/agents` (the repo root) in this repo |
+
+### Migration scope (verified by grepping `plugins/autocoder/`)
+
+| Claim | Verified evidence |
+|-------|------------------|
+| 13 files with functional `gh issue` calls exist in `plugins/autocoder/commands/` and `plugins/autocoder/scripts/` | `grep -rl "gh issue" plugins/autocoder/commands/ plugins/autocoder/scripts/` returns 14 files; `autocoder-help.md` is the 14th but contains only one documentation example (`gh issue edit 45 --remove-label "needs-design"  # Mark design complete`), not a functional call in an executed protocol — excluded from scope |
+
+---
+
 ## Section 1: Detection & Confirmation Flow
 
 When `/fix`, `/fix-loop`, or any issue-consuming command starts, it runs a detection step before doing any issue work.
