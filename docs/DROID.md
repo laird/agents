@@ -214,6 +214,11 @@ When installed as a plugin or via the installer, these slash commands are availa
 | `/brainstorm-issue` | Brainstorm design for an issue |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
+| `/set-issue-source` | Switch issue backend (file or GitHub) |
+| `/record-issue` | Create a new issue in the configured backend |
+| `/list-issues` | List issues in the current backend |
+| `/update-issue` | Update an existing issue |
+| `/close-issue` | Close an issue |
 | `/install` | Install all autocoder plugin components |
 | `/autocoder-help` | Overview of autonomous coding workflow |
 

@@ -15,5 +15,10 @@
 | `/list-needs-design` | Query issues with `needs-design` |
 | `/list-needs-feedback` | Query issues with feedback-related blocking labels |
 | `/brainstorm-issue` | Produce implementation options and recommended direction for one issue |
+| `/set-issue-source` | Switch issue backend (file or GitHub) |
+| `/record-issue` | Create a new issue in the configured backend |
+| `/list-issues` | List issues in the current backend |
+| `/update-issue` | Update an existing issue |
+| `/close-issue` | Close an issue |
 | `/install` | Use repo scripts and local configuration setup steps as needed |
 | `/autocoder-help` | Summarize the workflow and available operating modes |
