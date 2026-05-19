@@ -11,6 +11,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -231,7 +234,7 @@ fi
 echo -e "${YELLOW}Checking for existing GitHub issues...${NC}"
 
 # Fetch all open issues
-gh issue list --state open --json number,title,labels,body --limit 100 > /tmp/gh-issues.json
+issue_list --state open --limit 100 > /tmp/gh-issues.json
 
 # Function to determine priority based on failure type
 determine_priority() {
@@ -288,7 +291,7 @@ if [ "$E2E_FAILED" -gt 0 ]; then
         if [ -n "$EXISTING_ISSUE" ]; then
             # Update existing issue with new failure
             echo -e "${BLUE}Updating issue #${EXISTING_ISSUE}...${NC}"
-            gh issue comment "$EXISTING_ISSUE" --body "## Test Failure (Regression Test)
+            issue_comment "$EXISTING_ISSUE" --body "## Test Failure (Regression Test)
 **Date**: $(date)
 **Test File**: \`$TEST_FILE\`
 **Test**: $TEST_DESC
@@ -315,10 +318,10 @@ This test failure was detected during automated regression testing.
 3. Implement fix
 4. Verify with \`npm run test:e2e\`"
 
-            gh issue create \
+            RESULT=$(issue_create \
                 --title "$ISSUE_TITLE" \
                 --body "$ISSUE_BODY" \
-                --label "bug,automated-test-failure,$PRIORITY"
+                --label "bug" --label "automated-test-failure" --label "$PRIORITY")
         fi
     done
 fi

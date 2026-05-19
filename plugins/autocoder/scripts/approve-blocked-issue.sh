@@ -4,6 +4,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 if [ $# -lt 3 ]; then
   echo "Usage: approve-blocked-issue.sh <issue_number> <blocking_label> <approach_description>" >&2
   exit 1
@@ -14,10 +17,10 @@ BLOCKING_LABEL="$2"
 APPROACH_DESCRIPTION="$3"
 
 # Remove blocking label
-gh issue edit "$ISSUE_NUM" --remove-label "$BLOCKING_LABEL"
+issue_update "$ISSUE_NUM" --remove-label "$BLOCKING_LABEL"
 
 # Add approval comment
-gh issue comment "$ISSUE_NUM" --body "✅ **Approved for Implementation**
+issue_comment "$ISSUE_NUM" --body "✅ **Approved for Implementation**
 
 **Decision**: ${APPROACH_DESCRIPTION}
 

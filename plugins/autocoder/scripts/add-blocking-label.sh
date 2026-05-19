@@ -4,6 +4,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 if [ $# -lt 3 ]; then
   echo "Usage: add-blocking-label.sh <issue_number> <blocking_label> <reason>" >&2
   exit 1
@@ -33,7 +36,7 @@ if echo "$BLOCKING_REASON" | grep -qE '\[[a-z][^]]*\]'; then
 fi
 
 # Add blocking label
-gh issue edit "$ISSUE_NUM" --add-label "$BLOCKING_LABEL"
+issue_update "$ISSUE_NUM" --add-label "$BLOCKING_LABEL"
 
 # Build the comment body. needs-design gets a specialized template that
 # explicitly captures *what* needs designing.
@@ -69,9 +72,9 @@ Moving to next priority issue.
 🤖 Autonomous fix workflow"
 fi
 
-gh issue comment "$ISSUE_NUM" --body "$COMMENT_BODY"
+issue_comment "$ISSUE_NUM" --body "$COMMENT_BODY"
 
 # Remove 'working' label to release the issue
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 
 echo "🚫 Issue #${ISSUE_NUM} blocked with label: ${BLOCKING_LABEL}"
