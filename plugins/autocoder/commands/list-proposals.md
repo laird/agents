@@ -19,11 +19,14 @@ Lists all open GitHub issues with the `proposal` label, showing:
 ## Instructions
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 echo "📋 Fetching pending proposals..."
 echo ""
 
 # Fetch all open issues with the proposal label
-gh issue list --state open --label "proposal" --json number,title,body,labels,createdAt --limit 50 > /tmp/proposals.json
+issue_list --state open --label "proposal" --limit 50 > /tmp/proposals.json
 
 PROPOSAL_COUNT=$(cat /tmp/proposals.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 

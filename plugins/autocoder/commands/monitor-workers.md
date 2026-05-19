@@ -67,11 +67,14 @@ done
 Also check GitHub state:
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 # Open unblocked issues
-gh issue list --state open --json number,title,labels --jq '.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not) | "#\(.number): \(.title)"'
+issue_list --state open | jq -r '.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not) | "#\(.number): \(.title)"'
 
 # Issues currently being worked
-gh issue list --state open --label "working" --json number,title --jq '.[] | "#\(.number): \(.title)"'
+issue_list --state open --label "working" | jq -r '.[] | "#\(.number): \(.title)"'
 ```
 
 ### Step 3: Read Worker Screens
@@ -111,7 +114,7 @@ For each issue with the "working" label, check if work is actually happening:
 
 If approved:
 ```bash
-gh issue edit <number> --remove-label "working"
+issue_update <number> --remove-label "working"
 ```
 
 ### Step 5: Dispatch Work to Idle Workers
@@ -119,7 +122,7 @@ gh issue edit <number> --remove-label "working"
 Find unblocked issues not being worked (no "working" label), sorted by priority:
 
 ```bash
-gh issue list --state open --json number,title,labels --jq '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"]) or contains(["working"])) | not)] | sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
+issue_list --state open | jq -r '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"]) or contains(["working"])) | not)] | sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
 ```
 
 For each idle worker with an unworked issue available, send the fix command:
@@ -250,8 +253,8 @@ for i in $(seq 1 60); do
   sleep 180
 
   git fetch origin --quiet 2>/dev/null
-  WORKING=$(gh issue list --state open --label "working" --json number --jq 'length')
-  UNBLOCKED=$(gh issue list --state open --json number,labels --jq '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not)] | length')
+  WORKING=$(issue_list --state open --label "working" | jq 'length')
+  UNBLOCKED=$(issue_list --state open | jq '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not)] | length')
   INT_HEAD=$(git rev-parse --short origin/integration)
 
   echo "[$(date +%H:%M:%S)] working=$WORKING unblocked=$UNBLOCKED integration=$INT_HEAD"

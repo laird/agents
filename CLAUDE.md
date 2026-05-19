@@ -12,6 +12,10 @@ This is the **Modernize** Claude Code plugin - a production-validated framework 
 - Originally created for .NET Framework migrations but universally applicable
 - Emphasizes continuous improvement through retrospective analysis
 
+## Issue Management
+
+This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend) or via GitHub Issues (github backend) — whichever is configured in `.autocoder.json`.
+
 ## Commands
 
 This plugin provides 5 slash commands that are comprehensive protocol documents:

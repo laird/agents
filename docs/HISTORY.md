@@ -475,3 +475,25 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Shared skills are now portable across Claude, Codex, Antigravity, and Gemini CLI packaging patterns, and the autocoder command and version metadata is aligned across the supported platform surfaces.
 
+
+---
+
+## 2026-05-03 13:29:55 - Install ARI Codex plugin
+
+**What Changed**: Installed tv-ari-skills 1.0.2 from nextgen-CDD ari-plugin bundle into Codex marketplace configuration
+
+**Why Changed**: User requested installation from the integration ari-plugin source
+
+**Impact**: Codex now has the TV ARI Skills marketplace enabled; start with ari_help
+
+
+---
+
+## 2026-05-03 13:32:41 - Install ARI plugin from zip URL
+
+**What Changed**: Downloaded tv-ari-skills-1.0.2.zip via authenticated GitHub API from the integration ari-plugin path, extracted it into a durable Codex marketplace directory, and registered tv-ari-skills from that bundle
+
+**Why Changed**: User requested installation specifically from the tv-ari-skills-1.0.2.zip URL
+
+**Impact**: Codex tv-ari-skills marketplace now points to /Users/Laird.Popkin/.codex/marketplaces/tv-ari-skills-url-1.0.2 with plugin version 1.0.2 enabled
+

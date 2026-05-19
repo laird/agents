@@ -54,13 +54,16 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 ### Step 1: Fetch the Issue
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 ISSUE_NUM="${1:-}"
 
 if [ -z "$ISSUE_NUM" ]; then
   echo "🔍 No issue number provided, finding first needs-design issue..."
 
   # Get first needs-design issue
-  ISSUE_NUM=$(gh issue list --state open --label "needs-design" --json number --jq '.[0].number' 2>/dev/null)
+  ISSUE_NUM=$(issue_list --state open --label "needs-design" | jq -r '.[0].number // empty' 2>/dev/null)
 
   if [ -z "$ISSUE_NUM" ] || [ "$ISSUE_NUM" = "null" ]; then
     echo "✅ No issues need design work!"
@@ -75,7 +78,7 @@ echo "🧠 Brainstorming issue #$ISSUE_NUM..."
 echo ""
 
 # Fetch issue details
-gh issue view "$ISSUE_NUM" --json number,title,body,labels,comments > /tmp/brainstorm-issue.json
+issue_get "$ISSUE_NUM" > /tmp/brainstorm-issue.json
 
 if [ $? -ne 0 ]; then
   echo "❌ Error: Could not fetch issue #$ISSUE_NUM"
@@ -146,7 +149,7 @@ After brainstorming completes, post results as a comment:
 
 ```bash
 # Post brainstorming results to the issue
-gh issue comment "$ISSUE_NUM" --body "$(cat <<'BRAINSTORM_BODY'
+issue_comment "$ISSUE_NUM" --body "$(cat <<'BRAINSTORM_BODY'
 ## 🧠 Brainstorming Results
 
 ### Problem Understanding

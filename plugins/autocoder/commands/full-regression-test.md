@@ -279,12 +279,15 @@ Failures are assigned priority based on impact:
 3. **Add analysis comments**: Document test results on relevant issues
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 echo ""
 echo "📋 Analyzing test results and managing GitHub issues..."
 
 # Fetch ALL test-failure issues (open and closed for analysis)
-gh issue list --state open --label "test-failure" --json number,title,labels,body --limit 200 > /tmp/gh-open-issues.json 2>/dev/null || echo "[]" > /tmp/gh-open-issues.json
-gh issue list --state all --json number,title,labels,body --limit 200 > /tmp/gh-all-issues.json 2>/dev/null || echo "[]" > /tmp/gh-all-issues.json
+issue_list --state open --label "test-failure" --limit 200 > /tmp/gh-open-issues.json 2>/dev/null || echo "[]" > /tmp/gh-open-issues.json
+issue_list --state all --limit 200 > /tmp/gh-all-issues.json 2>/dev/null || echo "[]" > /tmp/gh-all-issues.json
 
 # Count results
 TOTAL_FAILURES=$((UNIT_FAILED + E2E_FAILED))
@@ -344,7 +347,7 @@ if [ -s /tmp/resolved-issues.txt ]; then
     if [ -n "$issue_num" ]; then
       echo "  ✅ Closing #$issue_num: $issue_title"
 
-      gh issue comment "$issue_num" --body "## ✅ Test Now Passing
+      issue_comment "$issue_num" --body "## ✅ Test Now Passing
 
 **Date**: $(date)
 **Report**: \`$REPORT_FILE\`
@@ -359,7 +362,7 @@ Closing this issue as resolved.
 
 🤖 Auto-closed by /full-regression-test" 2>/dev/null || true
 
-      gh issue close "$issue_num" --comment "Verified fixed - test now passes" 2>/dev/null || true
+      issue_close "$issue_num" --comment "Verified fixed - test now passes" 2>/dev/null || true
       ISSUES_CLOSED=$((ISSUES_CLOSED + 1))
     fi
   done < /tmp/resolved-issues.txt
@@ -426,7 +429,7 @@ for i in issues:
 
         if [ -n "$EXISTING" ]; then
           echo "  📝 Updating issue #$EXISTING: $TEST_NAME"
-          gh issue comment "$EXISTING" --body "## 🔴 Regression Test Failure
+          issue_comment "$EXISTING" --body "## 🔴 Regression Test Failure
 
 **Date**: $(date)
 **Test**: \`$TEST_NAME\`
@@ -442,11 +445,11 @@ This test failed during automated regression testing.
 🤖 Updated by /full-regression-test" 2>/dev/null || true
 
           # Reopen if closed
-          gh issue reopen "$EXISTING" 2>/dev/null || true
+          issue_update "$EXISTING" --status open 2>/dev/null || true
           ISSUES_UPDATED=$((ISSUES_UPDATED + 1))
         else
           echo "  ➕ Creating issue: $TEST_NAME"
-          gh issue create \
+          issue_create \
             --title "Test failure: ${TEST_NAME:0:80}" \
             --body "## Test Failure
 
@@ -468,7 +471,7 @@ This failure was detected during automated regression testing.
 4. Verify with \`/full-regression-test\`
 
 🤖 Created by /full-regression-test" \
-            --label "bug,test-failure,$PRIORITY" 2>/dev/null || true
+            --label "bug" --label "test-failure" --label "$PRIORITY" 2>/dev/null || true
           ISSUES_CREATED=$((ISSUES_CREATED + 1))
         fi
       fi
@@ -505,7 +508,7 @@ for i in issues:
 
         if [ -n "$EXISTING" ]; then
           echo "  📝 Updating issue #$EXISTING: $TEST_NAME"
-          gh issue comment "$EXISTING" --body "## 🔴 E2E Regression Test Failure
+          issue_comment "$EXISTING" --body "## 🔴 E2E Regression Test Failure
 
 **Date**: $(date)
 **Test**: \`$TEST_NAME\`
@@ -521,11 +524,11 @@ This E2E test failed during automated regression testing.
 🤖 Updated by /full-regression-test" 2>/dev/null || true
 
           # Reopen if closed
-          gh issue reopen "$EXISTING" 2>/dev/null || true
+          issue_update "$EXISTING" --status open 2>/dev/null || true
           ISSUES_UPDATED=$((ISSUES_UPDATED + 1))
         else
           echo "  ➕ Creating issue: $TEST_NAME"
-          gh issue create \
+          issue_create \
             --title "E2E failure: ${TEST_NAME:0:80}" \
             --body "## E2E Test Failure
 
@@ -547,7 +550,7 @@ This E2E test failure was detected during automated regression testing.
 4. Verify with \`/full-regression-test\`
 
 🤖 Created by /full-regression-test" \
-            --label "bug,test-failure,e2e,$PRIORITY" 2>/dev/null || true
+            --label "bug" --label "test-failure" --label "e2e" --label "$PRIORITY" 2>/dev/null || true
           ISSUES_CREATED=$((ISSUES_CREATED + 1))
         fi
       fi
