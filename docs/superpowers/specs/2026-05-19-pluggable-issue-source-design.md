@@ -219,7 +219,7 @@ A shared shell library sourced by all command files and scripts. Defines six fun
 |----------|----------------------|-------------|
 | `issue_list [--label L] [--state S] [--limit N] [--priority P]` | `gh issue list` | List issues, output JSON array |
 | `issue_get <number>` | `gh issue view` | Get one issue, output JSON object |
-| `issue_update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | `gh issue edit` / `gh issue close` / `gh issue reopen` | Modify issue metadata |
+| `issue_update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | `gh issue edit` / `gh issue close` / `gh issue reopen` | Modify issue metadata; `--assignee A` is file-backend-only (stripped for GitHub) |
 | `issue_comment <number> --body "..."` | `gh issue comment` | Append a comment |
 | `issue_close <number> [--comment "..."]` | `gh issue close` | Close/resolve an issue |
 | `issue_create --title "..." --body "..." [--label L] [--priority P]` | `gh issue create` | Create a new issue, returns number |
@@ -235,6 +235,8 @@ A shared shell library sourced by all command files and scripts. Defines six fun
 | `working` | `gh issue edit <number> --add-label working` |
 
 For the file backend, `--status S` is passed through to `issues-file.py update`, which modifies the `status:` field directly.
+
+**`--assignee` is file-backend-only:** `issue-fns.sh` strips `--assignee A` when the GitHub backend is active. GitHub ownership is already tracked via the `working` label; worktree names (e.g., `feat-login`) have no meaningful GitHub equivalent. The `--assignee` parameter is not part of the backend contract — backends other than `issues-file.py` do not need to implement it.
 
 Every command file and script sources `issue-fns.sh` at entry. No command file contains any direct `gh issue` calls after this migration — the functions are the only call site.
 
@@ -341,7 +343,7 @@ A backend is any executable (shell script, Python, binary) that accepts the foll
 |-----------|------|--------|
 | `list` | `[--label L] [--state open\|closed] [--limit N]` | JSON array — gh `issue list` schema |
 | `get` | `<number>` | JSON object — gh `issue view` schema |
-| `update` | `<number> --add-label L \| --remove-label L \| --status S \| --assignee A` | exit code only |
+| `update` | `<number> [--add-label L] [--remove-label L] [--status S]` | exit code only |
 | `comment` | `<number> --body "..."` | exit code only |
 | `close` | `<number> [--comment "..."]` | exit code only |
 | `create` | `--title "..." --body "..." [--label L]` | `{"number": N}` |
