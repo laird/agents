@@ -5,12 +5,12 @@
 
 # Bootstrap: source issue-config.sh if not already loaded
 if [ -z "$ISSUE_SOURCE" ]; then
-  _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
   # shellcheck source=issue-config.sh
   source "${_ifns_DIR}/issue-config.sh"
 fi
 
-_ifns_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/issues-file.py"
+_ifns_PY="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/issues-file.py"
 
 # ── Internal: dispatch to file backend ────────────────────────────────────
 _ifns_file() {

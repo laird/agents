@@ -82,14 +82,12 @@ For each blocked issue, the command:
 Start the interactive review session now:
 
 ```bash
-# Determine script location (portable across different plugin install locations)
-PLUGIN_DIR="${BASH_SOURCE[0]%/*}"
-SCRIPT_DIR="$PLUGIN_DIR/../scripts"
-
-# If running via Claude Code plugin system, use the plugin path
-if [ -d "$HOME/.claude/plugins/autocoder/scripts" ]; then
-  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
-fi
+SCRIPT_DIR=$(
+  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  fi
+)
 
 echo "🏷️  Checking blocking labels..."
 echo "🔍 Scanning for blocked issues..."

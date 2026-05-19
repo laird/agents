@@ -52,7 +52,12 @@ Removes the `proposal` label from specified GitHub issues, allowing `/fix-loop` 
 ## Instructions
 
 ```bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+SCRIPT_DIR=$(
+  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  fi
+)
 source "${SCRIPT_DIR}/issue-fns.sh"
 
 # Parse arguments
