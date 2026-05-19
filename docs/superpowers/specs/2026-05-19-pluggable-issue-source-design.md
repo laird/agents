@@ -13,6 +13,14 @@ New user-facing commands provide explicit issue management: `/record-issue` to c
 
 The system works across all supported agent frameworks: Claude Code, Antigravity, Factory.ai/Droid, and OpenAI/Codex. The shell function layer and backend contract are framework-agnostic; framework-specific wiring is limited to command registration.
 
+### Terminology
+
+**Issue** (this document): a large developer-facing work item — equivalent to a GitHub Issue, Jira ticket, or Linear task. These are the units of work a dev team plans and tracks: "Add dark mode," "Fix login bug." Managed by this system.
+
+**Task** (agent-internal): the fine-grained coordination primitives Claude Code and other agent frameworks use internally while executing a single issue (e.g., `TaskCreate`, `TaskUpdate`). Tasks are ephemeral, scoped to one agent session, and are not persisted by this system.
+
+These two concepts are distinct and should not be conflated in code, documentation, or conversation.
+
 ---
 
 ## Section 1: Detection & Confirmation Flow
@@ -142,7 +150,7 @@ Runs the detection flow described in Section 1. Sources by all issue-consuming s
 
 #### `scripts/issues-file.py`
 
-Python script implementing all ISSUES.md read/write operations. Uses `flock` for safe concurrent access across worktrees.
+Python script implementing all ISSUES.md read/write operations. Uses Python's `fcntl.flock(fd, fcntl.LOCK_EX)` for safe concurrent access across worktrees — no external tools required.
 
 Subcommands:
 
@@ -153,7 +161,7 @@ Subcommands:
 | `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Modify issue in-place |
 | `comment <number> --body "..."` | Append blockquote comment |
 | `close <number> [--comment "..."]` | Set `status: closed`, append comment |
-| `create --title "..." --body "..." [--label L] [--priority P]` | Append new issue, output `{"number": N}` |
+| `create --title "..." --body "..." [--label L]` | Append new issue, output `{"number": N}` (priority arrives pre-translated as `--label P1` by `issue-fns.sh`) |
 | `find-main-worktree` | Print absolute path to main worktree |
 | `import-from-gh` | Pull open GH issues and append as ISSUES.md entries |
 | `export-to-gh` | Create GH issues from open ISSUES.md entries |
