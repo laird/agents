@@ -19,17 +19,22 @@ Lists all open GitHub issues with the `needs-design` label, showing:
 ## Instructions
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 echo "🎨 Fetching issues needing design..."
 echo ""
 
-# Ensure the needs-design label exists
-if ! gh label list --json name --jq '.[].name' 2>/dev/null | grep -qFx "needs-design"; then
-  echo "Creating 'needs-design' label..."
-  gh label create "needs-design" --description "Issue requires design/architecture work before implementation" --color "7057ff" 2>/dev/null || true
+# Ensure the needs-design label exists (GitHub backend only)
+if [ "$ISSUE_SOURCE" = "github" ]; then
+  if ! gh label list --json name --jq '.[].name' 2>/dev/null | grep -qFx "needs-design"; then
+    echo "Creating 'needs-design' label..."
+    gh label create "needs-design" --description "Issue requires design/architecture work before implementation" --color "7057ff" 2>/dev/null || true
+  fi
 fi
 
 # Fetch all open issues with the needs-design label
-gh issue list --state open --label "needs-design" --json number,title,body,labels,createdAt --limit 50 > /tmp/needs-design.json
+issue_list --state open --label "needs-design" --limit 50 > /tmp/needs-design.json
 
 ISSUE_COUNT=$(cat /tmp/needs-design.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 

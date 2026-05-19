@@ -1,7 +1,3 @@
----
-description: Approve proposals for implementation
----
-
 # Approve Proposals
 
 Approve one or more AI-generated proposals for implementation by removing the `proposal` label.
@@ -56,6 +52,9 @@ Removes the `proposal` label from specified GitHub issues, allowing `/fix-loop` 
 ## Instructions
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 # Parse arguments
 ISSUE_NUMBERS=()
 APPROVE_ALL=false
@@ -77,7 +76,7 @@ done
 # Handle --all flag
 if [ "$APPROVE_ALL" = true ]; then
   echo "📋 Fetching all pending proposals..."
-  ISSUE_NUMBERS=($(gh issue list --state open --label "proposal" --json number --jq '.[].number'))
+  ISSUE_NUMBERS=($(issue_list --state open --label "proposal" | jq -r '.[].number'))
 
   if [ ${#ISSUE_NUMBERS[@]} -eq 0 ]; then
     echo "✅ No pending proposals to approve."
@@ -111,7 +110,7 @@ FAILED=0
 
 for num in "${ISSUE_NUMBERS[@]}"; do
   # Verify the issue exists and has the proposal label
-  ISSUE_INFO=$(gh issue view "$num" --json number,title,labels,state 2>/dev/null)
+  ISSUE_INFO=$(issue_get "$num" 2>/dev/null)
 
   if [ -z "$ISSUE_INFO" ]; then
     echo "❌ #$num - Issue not found"
@@ -137,7 +136,7 @@ for num in "${ISSUE_NUMBERS[@]}"; do
   TITLE=$(echo "$ISSUE_INFO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('title',''))")
 
   # Remove the proposal label
-  if gh issue edit "$num" --remove-label "proposal" >/dev/null 2>&1; then
+  if issue_update "$num" --remove-label "proposal" >/dev/null 2>&1; then
     echo "✅ #$num - $TITLE"
     ((APPROVED++))
   else

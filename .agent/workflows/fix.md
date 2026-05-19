@@ -272,6 +272,12 @@ Each issue should start with a fresh, compacted context. Never carry over detail
 Start working on GitHub issues now:
 
 ```bash
+# Source issue function layer (routes to GitHub or file backend)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+```
+
+```bash
 # Load project-specific configuration from CLAUDE.md
 if [ -f "CLAUDE.md" ]; then
   echo "📋 Reading project configuration from CLAUDE.md"
@@ -406,7 +412,7 @@ fi
 
 # Step 0: Review and prioritize any unprioritized issues
 echo "🔍 Checking for unprioritized issues..."
-gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-open-issues.json
+issue_list --state open --limit 100 > /tmp/all-open-issues.json
 
 # Find issues without any priority label (P0-P3), excluding issues already being worked on
 UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
@@ -438,7 +444,7 @@ SPECIFIED_ISSUE="${1:-}"
 if [ -n "$SPECIFIED_ISSUE" ]; then
   # Specific issue provided - fetch it directly
   echo "🎯 Targeting specific issue #$SPECIFIED_ISSUE"
-  gh issue view "$SPECIFIED_ISSUE" --json number,title,body,labels > /tmp/top-issue.json 2>/dev/null
+  issue_get "$SPECIFIED_ISSUE" > /tmp/top-issue.json 2>/dev/null
 
   if [ $? -ne 0 ] || [ ! -s /tmp/top-issue.json ]; then
     echo "❌ Error: Issue #$SPECIFIED_ISSUE not found or not accessible"
@@ -470,7 +476,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
 else
   # No specific issue - get highest priority issue (using labels only)
-  gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
+  issue_list --state open --limit 100 > /tmp/all-issues.json
 
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
@@ -536,12 +542,12 @@ else
     fi
 
     # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-    gh issue edit "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
     sleep 1
 
     # Re-fetch the issue to verify we won the race
     # Check if another agent already posted a "work started" comment
-    RECENT_COMMENTS=$(gh issue view "$ISSUE_NUM" --json comments --jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
 
     if [ "$RECENT_COMMENTS" -gt 0 ]; then
       echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
@@ -594,7 +600,7 @@ git checkout -b "feature/issue-${ISSUE_NUM}" 2>/dev/null || git checkout "featur
 # 'working' label was already added during claim-then-verify above
 
 # Post comment that work started
-gh issue comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
+issue_comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
 
 Starting automated fix for this issue.
 
@@ -649,7 +655,7 @@ Remove it in ALL exit paths:
 
 ```bash
 # ALWAYS run this before moving to the next issue:
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
 
 **Never add a blocking label without also removing the `working` label.** If you use `gh issue edit` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
@@ -711,7 +717,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
   # Remove 'working' label (PR is ready for review)
-  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
 else
   # Auto-merge: switch back to parent branch and merge
@@ -726,8 +732,8 @@ else
   git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
 
   # Remove 'working' label and close issue
-  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 [Detailed explanation of fix]
 
@@ -901,7 +907,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
   # Remove 'working' label (PR is ready for review)
-  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
 else
   # Auto-merge: switch back to parent branch and merge
@@ -916,8 +922,8 @@ else
   git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
 
   # Remove 'working' label and close issue with detailed explanation
-  gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  gh issue close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ## Root Cause
 [Detailed analysis]
@@ -1014,9 +1020,42 @@ if [issue description is vague or missing critical information]; then
 fi
 
 # Example: Issue requires design decisions
+#
+# IMPORTANT: when applying `needs-design`, BLOCKING_REASON MUST explain
+# *what specifically* needs designing. Do not leave placeholder text — the
+# script rejects reasons containing unfilled brackets like `[list options]`.
+#
+# Write a multi-line reason covering, at minimum:
+#   - The specific design questions that are open (1–N concrete questions)
+#   - The candidate approaches you considered and why none is the clear winner
+#   - What artifact would unblock the work (ADR? spec doc? a decision from a named owner?)
+#
+# Example of a good reason:
+#   "Issue asks for 'real-time notifications' but doesn't specify transport.
+#    Open questions:
+#    1. SSE (we use it elsewhere) vs WebSocket vs polling?
+#    2. Who is the audience — engagement participants only, or all users?
+#    3. Persistence semantics — at-least-once? best-effort?
+#    Approaches considered:
+#    - SSE: matches existing infra but only server-push.
+#    - WebSocket: bidirectional but new infra surface.
+#    Needs an ADR or a decision from the platform owner before implementation."
 if [multiple approaches possible, no clear winner]; then
   BLOCKING_LABEL="needs-design"
-  BLOCKING_REASON="Multiple valid approaches exist. Need design phase to evaluate: [list options]"
+  BLOCKING_REASON="$(cat <<'NEEDS_DESIGN_REASON'
+<one-paragraph summary of what is undecided>
+
+Open questions:
+1. <specific question>
+2. <specific question>
+
+Approaches considered:
+- <approach>: <pros/cons>
+- <approach>: <pros/cons>
+
+Unblocks when: <ADR/spec/decision-owner that needs to land>
+NEEDS_DESIGN_REASON
+)"
 fi
 
 # Example: Issue requires architectural approval
@@ -1070,8 +1109,8 @@ if [ "$SUPERPOWERS_AVAILABLE" = "true" ] || [ "$THOROUGH_SKILLS_AVAILABLE" = "tr
 
   # Example sub-task creation (repeat for each decomposed task):
   # for SUBTASK in "${SUBTASKS[@]}"; do
-  SUBTASK_NUM=$(gh issue create \
-    --label "bug,P2,subtask" \
+  SUBTASK_RESULT=$(issue_create \
+    --label "bug" --label "P2" --label "subtask" \
     --title "Subtask: [Brief description]" \
     --body "$(cat <<SUBTASK_BODY
 ## Sub-task of #${ISSUE_NUM}
@@ -1097,14 +1136,15 @@ This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
 
 🤖 Auto-decomposed from #${ISSUE_NUM} by autonomous fix workflow
 SUBTASK_BODY
-)" | grep -oP '#\K[0-9]+')
+)")
+  SUBTASK_NUM=$(echo "$SUBTASK_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
 
   SUBTASK_NUMBERS+=("$SUBTASK_NUM")
   echo "✅ Created sub-task #$SUBTASK_NUM"
   # done
 
   # Update original issue to reference all sub-tasks
-  gh issue comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
+  issue_comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
 
 This complex issue has been broken down into manageable sub-tasks:
 
@@ -1117,7 +1157,7 @@ $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
 🤖 Auto-decomposed by autonomous fix workflow"
 
   # Add label to indicate decomposition
-  gh issue edit "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
 
   echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
   echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"
@@ -1166,17 +1206,17 @@ When processing issues in the main loop, check for decomposed issues where all s
 ```bash
 # After fixing each issue, check if it was a sub-task that completes a decomposed issue
 # Get parent issue if this was a subtask
-PARENT_ISSUE=$(gh issue view "$ISSUE_NUM" --json body --jq '.body' | grep -oP 'Sub-task of #\K[0-9]+' || echo "")
+PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | grep -oP 'Sub-task of #\K[0-9]+' || echo "")
 
 if [ -n "$PARENT_ISSUE" ]; then
   echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
 
   # Check if all sub-tasks of parent are closed
-  PARENT_SUBTASKS=$(gh issue view "$PARENT_ISSUE" --json body --jq '.body' | grep -oP '#\K[0-9]+' || echo "")
+  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oP '#\K[0-9]+' || echo "")
   ALL_CLOSED=true
 
   for SUBTASK_NUM in $PARENT_SUBTASKS; do
-    SUBTASK_STATE=$(gh issue view "$SUBTASK_NUM" --json state --jq '.state')
+    SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
     if [ "$SUBTASK_STATE" != "CLOSED" ]; then
       ALL_CLOSED=false
       break
@@ -1185,7 +1225,7 @@ if [ -n "$PARENT_ISSUE" ]; then
 
   if [ "$ALL_CLOSED" = "true" ]; then
     echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
-    gh issue close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+    issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
 
 All sub-tasks have been completed and verified:
 
@@ -1237,7 +1277,7 @@ Check newly created issues:
 
 ```bash
 # View issues created by regression test
-gh issue list --label "test-failure" --state open --json number,title,labels --limit 20
+issue_list --state open --label "test-failure" --limit 20
 ```
 
 ### Step 3: Continue Workflow
@@ -1257,7 +1297,7 @@ If regression tests pass completely (no new bug issues created), shift focus to 
 
 ```bash
 # Check for open enhancement issues that are NOT proposals (approved for implementation)
-gh issue list --state open --label "enhancement" --json number,title,body,labels --limit 50 > /tmp/all-enhancements.json
+issue_list --state open --label "enhancement" --limit 50 > /tmp/all-enhancements.json
 
 # Filter out proposals, blocked issues, and issues being worked on - only get available approved enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
@@ -1359,8 +1399,8 @@ Focus areas for enhancement proposals:
 **Create Enhancement Proposal** (tagged with `proposal` label for human review):
 
 ```bash
-gh issue create \
-  --label "enhancement,proposal,P3" \
+PROPOSAL_RESULT=$(issue_create \
+  --label "enhancement" --label "proposal" --label "P3" \
   --title "Proposal: [Brief description]" \
   --body "$(cat <<'ENHANCEMENT_BODY'
 ## Proposed Enhancement
@@ -1424,9 +1464,10 @@ gh issue close <issue_number> --comment "Rejected: [reason]"
 
 🤖 Proposed by autonomous improvement workflow
 ENHANCEMENT_BODY
-)"
+)")
+PROPOSAL_NUM=$(echo "$PROPOSAL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
 
-echo "✅ Created proposal issue. Awaiting human approval before implementation."
+echo "✅ Created proposal issue #${PROPOSAL_NUM}. Awaiting human approval before implementation."
 echo "💡 Use '/list-proposals' to view all pending proposals"
 echo ""
 
@@ -1454,18 +1495,18 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
 
 # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-gh issue edit "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
+issue_update "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
 sleep 1
 
 # Re-fetch to verify we won the race (check for existing work-started comments)
-RACE_CHECK=$(gh issue view "$ENHANCE_NUM" --json comments --jq '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+RACE_CHECK=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
 if [ "$RACE_CHECK" -gt 0 ]; then
   echo "⚠️  Race condition: another agent already claimed enhancement #$ENHANCE_NUM. Skipping."
   git checkout "$PARENT_BRANCH"
   # Continue to next iteration or exit
 fi
 
-gh issue comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**
+issue_comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**
 
 Starting automated implementation of this enhancement.
 
@@ -1510,7 +1551,7 @@ This will:
 **Update the GitHub issue** with the implementation plan:
 
 ```bash
-gh issue comment "$ENHANCE_NUM" --body "📋 **Implementation Plan Created**
+issue_comment "$ENHANCE_NUM" --body "📋 **Implementation Plan Created**
 
 ## Detailed Implementation Plan
 
@@ -1581,8 +1622,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   git push origin --delete "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || true
 
   # Remove 'working' label and close enhancement with details
-  gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-  gh issue close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
+  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
 
 ## Summary
 [What was implemented]
@@ -1616,8 +1657,8 @@ if [ $TEST_EXIT_CODE -ne 0 ]; then
   # Parse test failures and create issues for each
   # Extract failing test names and create individual issues
 
-  gh issue create \
-    --label "bug,test-failure,P1" \
+  issue_create \
+    --label "bug" --label "test-failure" --label "P1" \
     --title "Test failure during enhancement #${ENHANCE_NUM}: [Test name]" \
     --body "$(cat <<FAILURE_BODY
 ## Test Failure
@@ -1648,7 +1689,7 @@ FAILURE_BODY
 )"
 
   # Comment on enhancement issue about the failure
-  gh issue comment "$ENHANCE_NUM" --body "⚠️ **Implementation Blocked by Test Failures**
+  issue_comment "$ENHANCE_NUM" --body "⚠️ **Implementation Blocked by Test Failures**
 
 Test failures occurred during implementation. Bug issues have been created:
 - [List created bug issue numbers]
@@ -1661,7 +1702,7 @@ Enhancement implementation paused. Will resume after bugs are fixed.
   echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
 
   # Remove 'working' label to release the enhancement
-  gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
   # Switch back to main
   git checkout main
@@ -1678,9 +1719,9 @@ Skip an enhancement and move to the next if:
 
 ```bash
 # Remove 'working' label to release the enhancement for others
-gh issue edit "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
-gh issue comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
+issue_comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
 
 This enhancement cannot be automatically implemented because:
 [Reason]
@@ -1692,7 +1733,7 @@ Moving to next enhancement or proposing new improvements.
 🤖 Autonomous enhancement workflow"
 
 # Add 'needs-review' label
-gh issue edit "$ENHANCE_NUM" --add-label "needs-review"
+issue_update "$ENHANCE_NUM" --add-label "needs-review"
 ```
 
 ---
@@ -1733,7 +1774,7 @@ After every issue is resolved, skipped, or when checking for work:
 
 ```bash
 # Fetch all open issues
-gh issue list --state open --json number,title,body,labels --limit 100 > /tmp/all-issues.json
+issue_list --state open --limit 100 > /tmp/all-issues.json
 
 # Count priority bug issues (P0-P3, excluding proposals, blocked, decomposed, and issues being worked on)
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
@@ -1907,6 +1948,6 @@ gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
 
 **REMINDER**: Before moving to the next issue, ALWAYS remove the `working` label from the current issue:
 ```bash
-gh issue edit "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
 This applies to ALL outcomes: fixed, skipped, deferred, blocked, or errored. Failing to remove this label will prevent any agent from working on the issue.

@@ -19,17 +19,22 @@ Lists all open GitHub issues with the `needs-feedback` label, showing:
 ## Instructions
 
 ```bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../scripts" 2>/dev/null && pwd || echo "plugins/autocoder/scripts")"
+source "${SCRIPT_DIR}/issue-fns.sh"
+
 echo "💬 Fetching issues needing feedback..."
 echo ""
 
-# Ensure the needs-feedback label exists
-if ! gh label list --json name --jq '.[].name' 2>/dev/null | grep -qFx "needs-feedback"; then
-  echo "Creating 'needs-feedback' label..."
-  gh label create "needs-feedback" --description "Issue requires human feedback or clarification" --color "d876e3" 2>/dev/null || true
+# Ensure the needs-feedback label exists (GitHub backend only)
+if [ "$ISSUE_SOURCE" = "github" ]; then
+  if ! gh label list --json name --jq '.[].name' 2>/dev/null | grep -qFx "needs-feedback"; then
+    echo "Creating 'needs-feedback' label..."
+    gh label create "needs-feedback" --description "Issue requires human feedback or clarification" --color "d876e3" 2>/dev/null || true
+  fi
 fi
 
 # Fetch all open issues with the needs-feedback label
-gh issue list --state open --label "needs-feedback" --json number,title,body,labels,createdAt --limit 50 > /tmp/needs-feedback.json
+issue_list --state open --label "needs-feedback" --limit 50 > /tmp/needs-feedback.json
 
 ISSUE_COUNT=$(cat /tmp/needs-feedback.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 
