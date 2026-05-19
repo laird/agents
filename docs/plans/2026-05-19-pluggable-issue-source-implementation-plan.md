@@ -900,7 +900,7 @@ assert_eq() {
 }
 
 # Test: script is sourceable without errors
-assert_eq "script is sourceable" "0" "$(bash -c "source $SCRIPT; echo 0" 2>/dev/null || echo 1)"
+assert_eq "script is sourceable" "0" "$(ISSUE_SOURCE=github bash -c "source $SCRIPT; echo 0" 2>/dev/null || echo 1)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
@@ -1302,10 +1302,18 @@ issue_close() {
 }
 
 issue_create() {
+  local args=() priority=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --priority) priority="$2"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  [ -n "$priority" ] && args+=(--label "$priority")
   case "$ISSUE_SOURCE" in
-    github) _ifns_gh_create "$@" ;;
-    file)   _ifns_file create "$@" ;;
-    *)      "$ISSUE_BACKEND" create "$@" ;;
+    github) _ifns_gh_create "${args[@]}" ;;
+    file)   _ifns_file create "${args[@]}" ;;
+    *)      "$ISSUE_BACKEND" create "${args[@]}" ;;
   esac
 }
 ```
