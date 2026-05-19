@@ -5,7 +5,7 @@
 
 ## Summary
 
-Add support for a file-based issue list (`ISSUES.md`) as an alternative to GitHub Issues, with an extensible backend system so additional sources (Jira, Linear, etc.) can be added by implementing a standard contract. The system auto-detects the available source, confirms with the user, and caches the choice. A `/set-issue-source` command allows switching at any time, with optional migration of existing issues.
+Add support for a file-based issue store (`.issues/` directory, one file per issue) as an alternative to GitHub Issues, with an extensible backend system so additional sources (Jira, Linear, etc.) can be added by implementing a standard contract. The system auto-detects the available source, confirms with the user, and caches the choice. A `/set-issue-source` command allows switching at any time, with optional migration of existing issues.
 
 All existing commands (`/fix`, `/fix-loop`, `/review-blocked`, etc.) work unchanged against any backend — they route through a shared shell function layer (`issue_list`, `issue_get`, `issue_update`, `issue_comment`, `issue_close`, `issue_create`) that dispatches to the configured backend. No command file knows or cares which backend is active.
 
@@ -31,16 +31,16 @@ When `/fix`, `/fix-loop`, or any issue-consuming command starts, it runs a detec
 
 1. **Check `.autocoder.json`** — if present and contains `issueSource`, skip detection entirely and use the cached choice.
 
-2. **Check for a local issues file** — look for `ISSUES.md` (case-insensitive) in the main worktree root (`git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`), or at the path specified by `issueFile` in `.autocoder.json` if present.
-   - If found: inform the user (`"Found ISSUES.md — using it as the issue source"`) and ask for confirmation.
-   - On confirmation: cache to `.autocoder.json` (with `issueSource: "file"` and `issueFile: "<path>"`) and proceed.
+2. **Check for a local issues directory** — look for a `.issues/` directory in the main worktree root (`git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`), or at the path specified by `issueDir` in `.autocoder.json` if present.
+   - If found: inform the user (`"Found .issues/ — using it as the issue source"`) and ask for confirmation.
+   - On confirmation: cache to `.autocoder.json` (with `issueSource: "file"` and `issueDir: "<path>"`) and proceed.
 
-3. **Check for a GitHub remote** — only if no local file found. Check if the repo has a `github.com` remote.
-   - If found: inform the user (`"No local issues file found. This repo is on GitHub — using gh issues"`) and confirm.
+3. **Check for a GitHub remote** — only if no local directory found. Check if the repo has a `github.com` remote.
+   - If found: inform the user (`"No local issues directory found. This repo is on GitHub — using gh issues"`) and confirm.
    - On confirmation: cache to `.autocoder.json` and proceed.
 
 4. **Neither found** — ask the user to choose:
-   - Brainstorm what to work on and create issues in a new `ISSUES.md`
+   - Brainstorm what to work on and create issues in a new `.issues/` directory
    - Brainstorm and push issues to GitHub (only offered if repo has a `github.com` remote)
 
 ### Non-Interactive Behavior
@@ -60,14 +60,15 @@ After the user confirms a source, the choice is saved to `.autocoder.json` at th
 
 ---
 
-## Section 2: ISSUES.md Format
+## Section 2: Per-File Issue Format
 
-Each issue is wrapped in `<!-- issue -->` / `<!-- /issue -->` HTML comment tags. Inside, a YAML frontmatter block (delimited by `---`) is followed by a Markdown body. The HTML comment tags are the unambiguous issue boundary; `---` appears only as the YAML frontmatter delimiter within that boundary and cannot be confused with a body thematic break. The file is human-readable and hand-editable.
+Each issue is stored as a separate Markdown file inside a `.issues/` directory at the main worktree root. Files are named `NNN.md` where `NNN` is the zero-padded issue number (e.g., `001.md`, `042.md`). Each file contains a YAML frontmatter block followed by a Markdown body — no separator tags, no shared file to parse. Issues are human-readable and hand-editable.
 
 ### Example
 
+`.issues/001.md`:
+
 ```markdown
-<!-- issue -->
 ---
 number: 1
 title: Fix the login bug
@@ -79,10 +80,12 @@ Users report they can't log in when using SSO. Steps to reproduce: ...
 
 ---
 
-This horizontal rule is part of the body — the parser ignores it because only `<!-- /issue -->` ends the issue.
-<!-- /issue -->
+This horizontal rule is part of the body — unambiguous because the file ends here.
+```
 
-<!-- issue -->
+`.issues/002.md`:
+
+```markdown
 ---
 number: 2
 title: Add dark mode
@@ -94,9 +97,11 @@ assignee: feat-darkmode
 We need dark mode support across all UI components.
 
 > **2026-05-19 14:32** 🤖 Automated Fix Started — working on dark mode
-<!-- /issue -->
+```
 
-<!-- issue -->
+`.issues/003.md`:
+
+```markdown
 ---
 number: 3
 title: Refactor auth module
@@ -105,14 +110,13 @@ labels: [needs-design]
 status: closed
 ---
 Completed: extracted auth into standalone package.
-<!-- /issue -->
 ```
 
 ### Field Reference
 
 | Field | Values | Purpose |
 |-------|--------|---------|
-| `number` | integer | Unique ID; auto-incremented on create |
+| `number` | integer | Unique ID; matches filename (e.g., file `042.md` has `number: 42`) |
 | `title` | string | Issue title |
 | `priority` | `P0`–`P3` | Priority, same semantics as GitHub labels |
 | `labels` | YAML list | Same label names as GitHub (`needs-design`, `needs-approval`, `bug`, etc.) |
@@ -129,10 +133,11 @@ Comments (equivalents of `gh issue comment`) are appended as Markdown blockquote
 
 ### Worktree Coordination
 
-- `ISSUES.md` lives at the **main worktree root** (found via `git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`). Every branch worktree resolves this path at startup and operates on the single shared file — never a local copy.
-- All read-modify-write operations inside `issues-file.py` use `fcntl.flock(fd, fcntl.LOCK_EX)` for atomic access. This is part of Python's standard library on both macOS and Linux — no external tools required. The shell scripts never write to `ISSUES.md` directly; all writes go through `issues-file.py`.
-- Setting `status: working` + `assignee: <worktree-name>` is done atomically under the lock, claiming an issue for one agent at a time — equivalent to the GitHub `working` label.
-- Multiple worktrees running simultaneously all resolve the same absolute path (the main worktree's `ISSUES.md`) and coordinate through file locking on that single file. No branch worktree ever has its own copy of the issue list.
+- `.issues/` lives at the **main worktree root** (found via `git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`). Every branch worktree resolves this path at startup and operates on the shared directory — never a local copy.
+- Locking is **per-file**: `issues-file.py` acquires `fcntl.flock(fd, fcntl.LOCK_EX)` on the individual issue file (`NNN.md`) for each read-modify-write operation. Parallel agents working different issues never contend; only agents touching the same issue file block each other. This is part of Python's standard library on both macOS and Linux — no external tools required.
+- The only operation that requires cross-file coordination is `create` (allocating the next issue number). `issues-file.py` handles this by acquiring a lock on a sentinel file (`.issues/.seq`) before reading the highest-numbered filename and writing the new file.
+- Setting `status: working` + `assignee: <worktree-name>` is done atomically under the per-file lock, claiming an issue for one agent at a time — equivalent to the GitHub `working` label.
+- Shell scripts never write to `.issues/` directly; all writes go through `issues-file.py`.
 
 ### `working` Label / `status` Coupling
 
@@ -158,29 +163,29 @@ This coupling is file-backend-specific. Custom backends are responsible for thei
 
 #### `scripts/issue-config.sh`
 
-Runs the detection flow described in Section 1. Sources by all issue-consuming scripts at startup. Exports:
+Runs the detection flow described in Section 1. Sourced by all issue-consuming scripts at startup. Exports:
 
 - `ISSUE_SOURCE` — `github`, `file`, or custom backend name
-- `ISSUE_FILE_PATH` — resolved absolute path to `ISSUES.md` (file mode only)
+- `ISSUE_DIR_PATH` — resolved absolute path to `.issues/` directory (file mode only)
 - `ISSUE_BACKEND` — path to the backend script
 
 #### `scripts/issues-file.py`
 
-Python script implementing all ISSUES.md read/write operations. Uses Python's `fcntl.flock(fd, fcntl.LOCK_EX)` for safe concurrent access across worktrees — no external tools required.
+Python script implementing all `.issues/` directory read/write operations. Uses Python's `fcntl.flock(fd, fcntl.LOCK_EX)` per-file for safe concurrent access across worktrees — no external tools required. See Section 2 for the locking model.
 
 Subcommands:
 
 | Subcommand | Description |
 |-----------|-------------|
-| `list [--label L] [--state open\|closed]` | Output JSON array |
-| `get <number>` | Output JSON object |
-| `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Modify issue in-place. `--add-label working` also sets `status: working`; `--remove-label working` also sets `status: open` (see `working` Label / `status` Coupling in Section 2) |
-| `comment <number> --body "..."` | Append blockquote comment |
-| `close <number> [--comment "..."]` | Set `status: closed`, append comment |
-| `create --title "..." --body "..." [--label L]` | Append new issue, output `{"number": N}` (priority arrives pre-translated as `--label P1` by `issue-fns.sh`) |
+| `list [--label L] [--state open\|closed]` | Scan `.issues/*.md`, output JSON array |
+| `get <number>` | Read `.issues/NNN.md`, output JSON object |
+| `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Lock `.issues/NNN.md`, modify in-place, release. `--add-label working` also sets `status: working`; `--remove-label working` also sets `status: open` (see `working` Label / `status` Coupling in Section 2) |
+| `comment <number> --body "..."` | Lock `.issues/NNN.md`, append blockquote comment |
+| `close <number> [--comment "..."]` | Lock `.issues/NNN.md`, set `status: closed`, append comment |
+| `create --title "..." --body "..." [--label L]` | Lock `.issues/.seq`, allocate next number, write new `.issues/NNN.md`, output `{"number": N}` (priority arrives pre-translated as `--label P1` by `issue-fns.sh`) |
 | `find-main-worktree` | Print absolute path to main worktree |
-| `import-from-gh` | Pull open GH issues and append as ISSUES.md entries |
-| `export-to-gh` | Create GH issues from open ISSUES.md entries |
+| `import-from-gh` | Pull open GH issues and write as `.issues/NNN.md` files |
+| `export-to-gh` | Create GH issues from open `.issues/` entries |
 
 All `list`/`get` output uses the same JSON schema as `gh issue list/view` so downstream parsing is backend-agnostic.
 
@@ -212,14 +217,24 @@ A shared shell library sourced by all command files and scripts. Defines six fun
 
 | Function | Equivalent `gh` call | Description |
 |----------|----------------------|-------------|
-| `issue_list [--label L] [--state S] [--limit N]` | `gh issue list` | List issues, output JSON array |
+| `issue_list [--label L] [--state S] [--limit N] [--priority P]` | `gh issue list` | List issues, output JSON array |
 | `issue_get <number>` | `gh issue view` | Get one issue, output JSON object |
-| `issue_update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | `gh issue edit` | Modify issue metadata |
+| `issue_update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | `gh issue edit` / `gh issue close` / `gh issue reopen` | Modify issue metadata |
 | `issue_comment <number> --body "..."` | `gh issue comment` | Append a comment |
 | `issue_close <number> [--comment "..."]` | `gh issue close` | Close/resolve an issue |
 | `issue_create --title "..." --body "..." [--label L] [--priority P]` | `gh issue create` | Create a new issue, returns number |
 
-**`--priority` translation:** `issue-fns.sh` translates `--priority P` to `--label P` before dispatching to any backend. The GitHub backend never receives a `--priority` flag (which `gh issue create` does not support); backends only see `--label`. The `file` and custom backends may use either; `issue-fns.sh` normalizes both.
+**`--priority` translation:** `issue-fns.sh` translates `--priority P` to `--label P` before dispatching to any backend. This applies to both `issue_list` and `issue_create`. The GitHub backend never receives a `--priority` flag (which `gh issue list` and `gh issue create` do not support); backends only see `--label`. The `file` and custom backends may use either; `issue-fns.sh` normalizes both.
+
+**`--status` translation for GitHub backend:** `issue-fns.sh` translates `issue_update N --status S` as follows when the GitHub backend is active — `gh issue edit` has no `--status` flag:
+
+| `--status` value | GitHub dispatch |
+|-----------------|----------------|
+| `closed` | `gh issue close <number>` |
+| `open` | `gh issue reopen <number>` |
+| `working` | `gh issue edit <number> --add-label working` |
+
+For the file backend, `--status S` is passed through to `issues-file.py update`, which modifies the `status:` field directly.
 
 Every command file and script sources `issue-fns.sh` at entry. No command file contains any direct `gh issue` calls after this migration — the functions are the only call site.
 
@@ -404,17 +419,17 @@ The shell function layer and backend contract are framework-agnostic. All agent 
 
 ### Worktree Coordination Across Many Agents
 
-When `start-parallel-agents.sh` launches N agents across N git worktrees, all N agents share a single `ISSUES.md` located in the main worktree. The coordination sequence for each agent is:
+When `start-parallel-agents.sh` launches N agents across N git worktrees, all N agents share a single `.issues/` directory located in the main worktree. The coordination sequence for each agent is:
 
 1. Agent starts in its branch worktree (e.g., `/repo-feat-login`)
 2. Sources `issue-fns.sh`, which sources `issue-config.sh`
 3. `issue-config.sh` resolves the main worktree path via `git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2` → e.g., `/repo`
-4. `ISSUE_FILE_PATH` is set to `/repo/ISSUES.md` — the same absolute path for every agent regardless of which worktree it runs in
-5. When the agent calls `issue_list`, `issues-file.py` acquires `fcntl.LOCK_EX` on `/repo/ISSUES.md`, reads open issues, and returns them
-6. When the agent claims an issue, `issues-file.py` acquires the lock, atomically sets `status: working` + `assignee: <worktree-name>`, and releases the lock
-7. Other agents that call `issue_list` concurrently block on the lock, then receive the already-updated file — they skip the claimed issue because `status != open`
+4. `ISSUE_DIR_PATH` is set to `/repo/.issues/` — the same absolute path for every agent regardless of which worktree it runs in
+5. When the agent calls `issue_list`, `issues-file.py` scans `/repo/.issues/*.md` and returns open issues
+6. When the agent claims an issue, `issues-file.py` acquires `fcntl.LOCK_EX` on the specific issue file (e.g., `/repo/.issues/007.md`), atomically sets `status: working` + `assignee: <worktree-name>`, and releases the lock
+7. Other agents that call `issue_list` concurrently read other files without contention — they skip claimed issues because `status != open`
 
-There is one shared task list regardless of how many agents or worktrees are active.
+There is one shared issue list regardless of how many agents or worktrees are active. Parallel agents working different issues never contend on file locks.
 
 ### Supported Frameworks
 
@@ -435,7 +450,8 @@ Each framework's root instruction file (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`) g
 ## Issue Management
 This project uses a pluggable issue source. Run /set-issue-source (or equivalent)
 before running autonomous agents for the first time. Issue state is shared across
-all agents via ISSUES.md at the repo root.
+all agents via .issues/ at the repo root (file backend) or via GitHub Issues
+(github backend) — whichever is configured in .autocoder.json.
 ```
 
 ---
