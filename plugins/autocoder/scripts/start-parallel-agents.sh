@@ -138,7 +138,7 @@ case "$AGENT" in
       echo "   Install Claude Code: https://claude.ai/download" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD="claude code --dangerously-skip-permissions ."
+    AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
     WORKER_CMD="/autocoder:fix-loop"
     MANAGER_CMD="/autocoder:monitor-loop"
     ;;
