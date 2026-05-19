@@ -177,7 +177,7 @@ Subcommands:
 
 | Subcommand | Description |
 |-----------|-------------|
-| `list [--label L] [--state open\|closed]` | Scan `.issues/*.md`, output JSON array |
+| `list [--label L] [--state open\|closed] [--limit N]` | Scan `.issues/*.md`, output JSON array |
 | `get <number>` | Read `.issues/NNN.md`, output JSON object |
 | `update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | Lock `.issues/NNN.md`, modify in-place, release. `--add-label working` also sets `status: working`; `--remove-label working` also sets `status: open` (see `working` Label / `status` Coupling in Section 2) |
 | `comment <number> --body "..."` | Lock `.issues/NNN.md`, append blockquote comment |
