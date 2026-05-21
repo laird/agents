@@ -1,11 +1,21 @@
 ---
-model: claude-haiku-4-5
+model: haiku
 ---
 <!--
 Phase 3 fix-loop token-efficiency (spec §5.3, §10 Phase 3, §7.1.1 verified
 2026-05-21). Haiku gate; fix work dispatched to Sonnet/Opus via Task `model=`.
-`model:` is short alias; full verified id `claude-haiku-4-5-20251001`. First
-repo command using `model:` frontmatter. Opt in via `LOOP_MODEL_SPLIT=1`.
+
+`model:` frontmatter convention verified 2026-05-21 against the official
+Claude Code slash-commands docs (code.claude.com/docs/en/slash-commands —
+"Frontmatter reference") and the bundled plugin-dev `command-development`
+skill: valid values are the short aliases `haiku`, `sonnet`, `opus`, or
+`inherit`. Dated model IDs like `claude-haiku-4-5-20251001` are NOT a
+documented value here. The Task-tool `model="haiku"` call inside the body
+is the actually-load-bearing routing path (§7.1.1); this frontmatter is a
+belt-and-braces pin for the slash-command invocation itself.
+
+First repo command using `model:` frontmatter. Opt in via `LOOP_MODEL_SPLIT=1`.
+See docs/notes/2026-05-21-frontmatter-model-convention.md.
 -->
 
 # Fix-Loop Dispatch (Haiku gate, Sonnet/Opus worker)
