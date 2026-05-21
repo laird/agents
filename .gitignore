@@ -23,4 +23,14 @@ Thumbs.db
 *.tmp
 *.log
 
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# Machine-local autocoder config (issue source, etc.)
+.autocoder.json
+
 !.agent/rules/*.md

@@ -74,7 +74,7 @@ if [ -z "$ISSUE_NUM" ]; then
     echo "✅ No issues need design work!"
     echo ""
     echo "Use '/list-needs-design' to see all issues needing design."
-    echo "Use 'gh issue edit <number> --add-label needs-design' to flag an issue."
+    echo "Use '/update-issue <number> --add-label needs-design' to flag an issue."
     exit 0
   fi
 fi
@@ -203,7 +203,7 @@ issue_comment "$ISSUE_NUM" --body "$(cat <<'BRAINSTORM_BODY'
 🤖 Brainstormed by `/brainstorm-issue`
 
 **Actions**:
-- To approve this design: `gh issue edit ISSUE_NUM --remove-label "needs-design"`
+- To approve this design: `/update-issue ISSUE_NUM --remove-label "needs-design"`
 - To request changes: Comment on this issue with feedback
 - To brainstorm again: `/brainstorm-issue ISSUE_NUM`
 BRAINSTORM_BODY

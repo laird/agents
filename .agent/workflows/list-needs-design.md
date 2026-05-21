@@ -1,6 +1,6 @@
 # List Issues Needing Design
 
-Display all open GitHub issues that require design work before implementation.
+Display all open issues that require design work before implementation. Uses the configured issue source (file or GitHub).
 
 ## Usage
 
@@ -10,7 +10,7 @@ Display all open GitHub issues that require design work before implementation.
 
 ## What This Does
 
-Lists all open GitHub issues with the `needs-design` label, showing:
+Lists all open issues with the `needs-design` label, showing:
 - Issue number and title
 - Priority level (P0-P3)
 - Creation date
@@ -47,7 +47,7 @@ if [ "$ISSUE_COUNT" -eq 0 ]; then
   echo "✅ No issues need design work!"
   echo ""
   echo "All issues requiring design have been addressed."
-  echo "Use 'gh issue edit <number> --add-label needs-design' to flag an issue for design."
+  echo "Use '/update-issue <number> --add-label needs-design' to flag an issue for design."
   exit 0
 fi
 
@@ -56,12 +56,21 @@ echo "                 ISSUES NEEDING DESIGN ($ISSUE_COUNT)"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
+# Backend-specific view hint (no neutral slash command for single-issue view)
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  VIEW_CMD_TMPL="cat \"${ISSUE_DIR_PATH}/{num}.md\""
+else
+  VIEW_CMD_TMPL="gh issue view {num}"
+fi
+
 # Display each issue
-cat /tmp/needs-design.json | python3 -c "
+cat /tmp/needs-design.json | VIEW_CMD_TMPL="$VIEW_CMD_TMPL" python3 -c "
 import json
+import os
 import sys
 from datetime import datetime
 
+view_cmd_tmpl = os.environ['VIEW_CMD_TMPL']
 issues = json.load(sys.stdin)
 
 for i in issues:
@@ -83,8 +92,8 @@ for i in issues:
     print(f'│')
     print(f'│  Actions:')
     print(f'│    Brainstorm:    /brainstorm-issue {num}')
-    print(f'│    Mark Complete: gh issue edit {num} --remove-label \"needs-design\"')
-    print(f'│    View:          gh issue view {num}')
+    print(f'│    Mark Complete: /update-issue {num} --remove-label \"needs-design\"')
+    print(f'│    View:          {view_cmd_tmpl.format(num=num)}')
     print(f'└────────────────────────────────────────────────────────────')
     print()
 "
@@ -97,13 +106,17 @@ echo "  Brainstorm design for an issue:"
 echo "    /brainstorm-issue <number>"
 echo ""
 echo "  Mark design as complete:"
-echo "    gh issue edit <number> --remove-label \"needs-design\""
+echo "    /update-issue <number> --remove-label \"needs-design\""
 echo ""
 echo "  Flag another issue for design:"
-echo "    gh issue edit <number> --add-label \"needs-design\""
+echo "    /update-issue <number> --add-label \"needs-design\""
 echo ""
 echo "  View full issue details:"
-echo "    gh issue view <number>"
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  echo "    cat \"${ISSUE_DIR_PATH}/<number>.md\""
+else
+  echo "    gh issue view <number>"
+fi
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 ```
