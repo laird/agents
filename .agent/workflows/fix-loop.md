@@ -285,10 +285,10 @@ echo ""
 
 ```
 Use the Skill tool to invoke: loop
-With args: ${IDLE_SLEEP_MINUTES}m /autocoder:fix
+With args: ${IDLE_SLEEP_MINUTES}m /autocoder:gate
 ```
 
-This schedules `/autocoder:fix` to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. No stop hook or settings.json modification needed.
+This schedules `/autocoder:gate` (the slim pre-LLM gate, per spec §5.4) to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. The gate dispatches to `/autocoder:fix` only when there is actual work to do; idle ticks exit cheaply. No stop hook or settings.json modification needed.
 
 ---
 
@@ -354,7 +354,7 @@ deploy_command: $DEPLOY_COMMAND
 started: $(date -Iseconds)
 ---
 
-/autocoder:fix
+/autocoder:gate
 EOF
 
 echo ""
@@ -369,10 +369,10 @@ fi
 echo ""
 ```
 
-**Then execute `/fix` using the Skill tool:**
+**Then execute `/gate` using the Skill tool:**
 
 ```
-Use the Skill tool to invoke: autocoder:fix
+Use the Skill tool to invoke: autocoder:gate
 ```
 
-The stop hook will automatically re-invoke `/autocoder:fix` when Claude exits, creating an infinite loop.
+The stop hook will automatically re-invoke `/autocoder:gate` when Claude exits, creating an infinite loop. The gate dispatches to `/autocoder:fix` only when there is work to do (spec §5.4).
