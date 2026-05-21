@@ -54,7 +54,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 # Limit to 100 iterations (stop hook mode only)
 /fix-loop 100
 
-# Custom idle sleep time (default: 15 minutes)
+# Custom idle sleep time (default: 4 minutes — stays inside the 5-min prompt cache TTL)
 /fix-loop --sleep 30
 
 # Multi-agent coordination with deployment
@@ -184,7 +184,9 @@ Then: Main worktree automatically:
 ```bash
 # Parse arguments
 MAX_ITERATIONS="${1:-0}"  # 0 = unlimited
-IDLE_SLEEP_MINUTES="15"
+# Default 4 min keeps consecutive ticks inside the 5-min prompt cache TTL —
+# see docs/specs/2026-05-21-fix-loop-token-efficiency-design.md §6 for the analysis.
+IDLE_SLEEP_MINUTES="4"
 INTEGRATION_BRANCH="${CLAUDE_CODE_INTEGRATION_BRANCH:-}"
 DEPLOY_COMMAND="${CLAUDE_CODE_DEPLOY_COMMAND:-}"
 
