@@ -33,4 +33,7 @@ __pycache__/
 # Machine-local autocoder config (issue source, etc.)
 .autocoder.json
 
+# Local testing screenshots (do not commit)
+agents-ui-*.png
+
 !.agent/rules/*.md
