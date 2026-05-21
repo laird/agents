@@ -193,7 +193,15 @@ def cmd_update(args):
             labels = list(data.get("labels") or [])
 
             if args.add_label:
-                if args.add_label not in labels:
+                already_set = args.add_label in labels
+                # Atomic claim semantics: if --if-unset, refuse to add a
+                # label that is already present. Exit 9 lets callers (e.g.
+                # fix-loop-gate.sh) detect a lost race without parsing
+                # output. The flock above serializes all writers, so this
+                # check-then-set is race-free.
+                if args.if_unset and already_set:
+                    sys.exit(9)
+                if not already_set:
                     labels.append(args.add_label)
                 if args.add_label == "working":
                     data["status"] = "working"
@@ -358,6 +366,13 @@ def main():
     p_update.add_argument("--remove-label", dest="remove_label")
     p_update.add_argument("--status")
     p_update.add_argument("--assignee")
+    p_update.add_argument(
+        "--if-unset",
+        dest="if_unset",
+        action="store_true",
+        help="With --add-label, fail with exit 9 if the label is already set "
+             "(atomic claim, race-free under the per-issue flock).",
+    )
 
     p_comment = sub.add_parser("comment")
     p_comment.add_argument("number", type=int)
