@@ -118,8 +118,46 @@ would run     : a ${CADENCE}-cadence /loop against fixture '${FIXTURE}' for
                 ${DURATION_MIN} min, configured for cache_control ttl=${CACHE_TTL},
                 tee'ing gate-log records to ${OUTPUT_DIR}/gate.jsonl, then
                 running analyze-gate-log.py to emit report.md.
+EOF
+
+  if [[ -n "$INJECT_AT" && -n "$INJECT_FIXTURE" ]]; then
+    cat <<EOF
+inject step   : Will inject fixture ${INJECT_FIXTURE} at T+${INJECT_AT}s
+                (fires from the runner's PID, not from a separate cron tick;
+                if the runner dies, the inject dies with it.)
+EOF
+  fi
+
+  cat <<EOF
 
 re-run with --execute to actually run (currently stubbed; see below).
+
+# --execute path will (when implemented in Phase 2.0) do roughly:
+#
+#   # start the cadence-driven /loop in foreground
+#   loop_pid_args=( --fixture "$FIXTURE" --cadence "$CADENCE" \\
+#                   --cache-ttl "$CACHE_TTL" --duration "$DURATION_MIN" \\
+#                   --output "$OUTPUT_DIR" )
+EOF
+
+  if [[ -n "$INJECT_AT" && -n "$INJECT_FIXTURE" ]]; then
+    cat <<EOF
+#
+#   # schedule the inject from the runner's PID (not cron):
+#   ( sleep "$INJECT_AT" && bash "$FIXTURE_DIR/queue-state-$INJECT_FIXTURE.sh" setup ) &
+#   inject_bg_pid=\$!
+#
+#   # ^ Timing model: inject fires from the runner's PID, not from a
+#   # separate cron tick. If the runner exits early the background
+#   # sleeper is reaped with it; no orphaned injects.
+EOF
+  fi
+
+  cat <<EOF
+#
+#   loop-runner "\${loop_pid_args[@]}"
+#   python3 plugins/autocoder/scripts/analyze-gate-log.py \\
+#       "$OUTPUT_DIR/gate.jsonl" > "$OUTPUT_DIR/report.md"
 EOF
   exit 0
 fi
