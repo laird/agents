@@ -70,7 +70,7 @@ Newly introduced by this plan and verified at plan-write time:
 | 10 | Consumer | All four `list-X` and `monitor-workers` query lines are mirrored exactly into `.agent/workflows/` at the same line numbers | grep confirms `.agent/workflows/list-needs-feedback.md:42`, `.agent/workflows/monitor-workers.md:82,261` are identical to plugin versions |
 | 11 | Test infrastructure | Tests run via `pytest` (no `package.json`; Python project) | `tests/test_*.py` exist; `ls Makefile pyproject.toml package.json` → no `package.json`; `python3 --version` → 3.13.7 |
 | 12 | Test infrastructure | `tests/test_issues_file_if_unset.py` is dedicated to `--if-unset` (replaceable, not just deletable) | Module docstring: "Tests for the `--if-unset` flag on `issues-file.py update`. Covers Phase 1 of the fix-loop token-efficiency design" (129 lines). |
-| 13 | Commit convention | Recent commits use `category: subject` (lowercase, no Conventional-Commits scope) | `git log --format=%s -10` shows `docs:`, `ci:`, `chore:`, `chore(issues):` — flat prefix style. Plan tasks use the same. |
+| 13 | Commit convention | Recent commits use `category: subject` (lowercase); optional scope in parentheses is also in use | `git log --format=%s -10` shows a mix: `docs:`, `ci:`, `chore:`, plus `docs(spec):`, `chore(issues):`, `docs(autocoder):`. Plan tasks use scoped variants matching the area touched. |
 | 14 | Code-in-plan | Python `os.rename(src, dst)` raises `FileNotFoundError` when `src` doesn't exist | Standard library documented behavior; relied on by spec §2 claim/release snippets. |
 | 15 | Code-in-plan | `find ... -print -quit \| grep -q .` produces exit 0 on any printed line, 1 on empty input | Verified via `echo yes \| grep -q .` (exit 0) and `true \| grep -q .` (exit 1). |
 | 16 | Ordering | Task 1 must precede Tasks 3–7 (they call its new verbs) | `issue_claim`, `issue_release`, `issue_any_claimable` are introduced by Task 1; Tasks 3–6 call them. |
@@ -282,26 +282,36 @@ Newly introduced by this plan and verified at plan-write time:
   Implementation outline added at the end of the existing flocked rmw block in `cmd_update`:
 
   ```python
-  # After write_issue_file_fd(f, data) and before unlock:
-  current_bucket = src.parent.name
-  new_labels = data["labels"]
-  has_blocking = any(l in BLOCKING_LABELS for l in new_labels if l != "working")
-  if current_bucket == "open" and has_blocking:
-      target_bucket = "blocked"
-  elif current_bucket == "blocked" and not has_blocking:
-      target_bucket = "open"
-  else:
-      target_bucket = None
-  # ... unlock first, then rename outside the with-block:
+  # cmd_update obtains the file via resolve_path (per Step 9):
+  bucket, path = resolve_path(issues_dir, args.number)
+  with open(path, "r+") as f:
+      lock_ex(f.fileno())
+      try:
+          data = parse_issue_file_fd(f)
+          # ... apply --add-label / --remove-label / --status / --assignee to data ...
+          write_issue_file_fd(f, data)
+      finally:
+          unlock(f.fileno())
+      # While still inside the with-block (file is closed on exit), compute the
+      # transition target from the post-write labels:
+      new_labels = data["labels"]
+      has_blocking = any(l in BLOCKING_LABELS for l in new_labels if l != "working")
+      if bucket == "open" and has_blocking:
+          target_bucket = "blocked"
+      elif bucket == "blocked" and not has_blocking:
+          target_bucket = "open"
+      else:
+          target_bucket = None
+  # After the with-block exits (fd closed, flock released), rename if needed:
   if target_bucket is not None:
       (issues_dir / target_bucket).mkdir(parents=True, exist_ok=True)
       try:
-          os.rename(src, issue_path(issues_dir, target_bucket, args.number))
+          os.rename(path, issue_path(issues_dir, target_bucket, args.number))
       except FileNotFoundError:
-          pass  # Concurrent claim raced us; the file is in working/ now; ours-was-not-the-write-that-rooted-state-here
+          pass  # Concurrent claim raced us; the file moved to working/ first.
   ```
 
-  Add an explicit error if `--add-label working` is called on an `open/` issue — that path is gone; use `claim` instead. Exit 2 (usage error).
+  `update --add-label working` remains supported on any bucket as a legacy/idempotent label-set operation. It does **not** rename to `working/` — only `claim` does that. Callers that need atomicity must use `claim`; callers that just want the label set (e.g., post-claim re-assertion in `fix-loop-gate.sh:166`, `fix.md:553,1506`) continue to use `update --add-label working` unchanged.
 
 - [ ] **Step 8: Retire `--if-unset`**
 
@@ -356,7 +366,7 @@ Newly introduced by this plan and verified at plan-write time:
       print(json.dumps(results, indent=2))
   ```
 
-  Update `cmd_get`, `cmd_comment`, `cmd_close` to use `resolve_path(issues_dir, args.number)` to find the file regardless of bucket.
+  Update `cmd_get`, `cmd_update`, `cmd_comment`, `cmd_close` to use `resolve_path(issues_dir, args.number)` to find the file regardless of bucket. For `cmd_update` specifically, the resolved `(bucket, path)` tuple is needed inside Step 7's blocking-label transition logic — keep both in scope through the flocked rmw.
 
   Update `cmd_close` to rename to `closed/` after the flocked frontmatter update (same shape as `cmd_release`'s rename-after-flock).
 
@@ -366,6 +376,8 @@ Newly introduced by this plan and verified at plan-write time:
 
   - Rename `tests/test_issues_file_if_unset.py` → `tests/test_issues_file_claim_release.py`. Replace contents with tests for `claim`, `release`, `any-claimable`, and the blocking-label transitions on `cmd_update`. Include the parallel-claim stress test (spec §Testing-plan): N processes call `claim` on the same issue; assert exactly one exits 0.
   - Extend `tests/test_issues_file.py` to cover: `migrate-layout` against a mixed fixture (open/working/blocked-labeled/closed), `resolve_path` probe order, `--state blocked` listing, `cmd_close` lands the file in `closed/`, fd-based I/O preserving a concurrent comment across a rename (spec §2 race 2). Use `tmp_path` fixtures.
+  - Create `tests/test_issues_file_cross_worktree.sh` covering spec Goal #5: bootstrap a temp git repo, add a secondary worktree via `git worktree add`, run `issue_list --state open`, `issue_claim`, `issue_release`, `issue_close` from inside the secondary worktree, and assert every operation targets the main worktree's `.issues/` directory (e.g., the file appears in the main-worktree `working/`, not in the secondary worktree's pwd). Assert `ISSUE_DIR_PATH` resolves identically from both worktrees.
+  - Create `tests/test_fix_loop_idle.sh` covering spec Goal #2: bootstrap a temp `.issues/` whose `open/` is empty, start `fix-loop` with a tight `INTERVAL` (e.g., 1s), let it run ~30s, and assert the `/fix` sub-process was never spawned. Implement via a sentinel file `/fix` would create on entry; assert sentinel absent at end.
 
 - [ ] **Step 11: Run the test suite**
 
@@ -477,10 +489,9 @@ Newly introduced by this plan and verified at plan-write time:
 
 - [ ] **Step 1: Insert preflight at the top of `fix.md`'s executable section**
 
-  Identify the first executable bash block in `fix.md` (currently the CLAUDE.md-reading block at around line 350). Insert this block **above** it, right after the SCRIPT_DIR resolution:
+  In `fix.md`, SCRIPT_DIR is established at line 276 and `source "${SCRIPT_DIR}/issue-fns.sh"` runs at line 282. Insert the preflight block **immediately after line 282** (after the existing `source`), and **before** the CLAUDE.md-reading block that begins around line 286. Do NOT duplicate the `source` line — the preflight starts with `issue_any_claimable`:
 
   ```bash
-  source "${SCRIPT_DIR}/issue-fns.sh"
   issue_any_claimable
   case $? in
     0) ;;  # work exists; fall through
@@ -592,10 +603,19 @@ Newly introduced by this plan and verified at plan-write time:
 - [ ] **Step 2: Update `monitor-workers.md`**
 
   - Lines 82, 261: `issue_list --state open --label "working"` → `issue_list --state working` (the `--label "working"` filter is redundant once the directory partitions).
-  - Lines 79, 130, 262: the jq filter that excludes blocking labels becomes unnecessary once `--state open` is bucket-partitioned. Simplify:
-    ```bash
-    issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
-    ```
+  - Lines 79, 130, 262: the jq filter that excludes blocking labels becomes unnecessary once `--state open` is bucket-partitioned. The three lines have distinct query shapes — replace each one individually:
+    - **Line 79** (display strings):
+      ```bash
+      issue_list --state open | jq -r '.[] | "#\(.number): \(.title)"'
+      ```
+    - **Line 130** (priority-sorted issue numbers):
+      ```bash
+      issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
+      ```
+    - **Line 262** (count assigned to `UNBLOCKED`):
+      ```bash
+      UNBLOCKED=$(issue_list --state open | jq 'length')
+      ```
     The needs-feedback / needs-design / etc. issues now live in `blocked/`, so `--state open` returns only claimable issues by directory.
   - Line ~122 (the recovery step): `issue_update <number> --remove-label "working"` → `issue_release <number>`.
 
