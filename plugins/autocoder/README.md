@@ -229,6 +229,28 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/install` | Install stop hook, parallel agent scripts, shell aliases, and check dependencies |
 | `/autocoder-help` | Show help and workflow overview |
+| `/autocoder:gate` | Slim default for `/loop` cron path — branches on `/tmp/autocoder-work.json` phase, delegates to `/autocoder:fix N` |
+| `/autocoder:dispatch` | Opt-in Haiku-pinned alternative — runs triage cheaply, spawns Sonnet/Opus Task subagent for fix work |
+
+## Token-Efficient Loop Commands
+
+Phase 2 and Phase 3 of the fix-loop token-efficiency work added two new commands used by `/fix-loop` to keep cron-driven iterations cheap. See the design spec at `docs/specs/2026-05-21-fix-loop-token-efficiency-design.md` (§5.3 command split, §13.4 acceptance criteria, §7.1.1 Task `model=` override verification).
+
+### `/autocoder:gate` (default after Phase 2)
+
+The slim replacement for `/autocoder:fix` on the `/loop` cron path. It reads the work descriptor at `/tmp/autocoder-work.json` (written by `fix-loop-gate.sh`), branches on the `phase` field, and delegates to `/autocoder:fix N` for actual fix work. This avoids loading `fix.md`'s full ~75 KB skill body on every cron tick — `gate.md` is only ~2 KB. It is now the default command invoked by `/fix-loop`.
+
+### `/autocoder:dispatch` (opt-in, model-split)
+
+An alternative entry point with `model: haiku` pinned in its frontmatter. Use it to do model-split routing: Haiku runs the cheap triage step, then spawns a `Task` subagent with `model="sonnet"` (or `model="opus"` for P0 issues) to do the actual fix. Opt in by setting `LOOP_MODEL_SPLIT=1` when starting `/fix-loop`. See spec §7.1.1 for the verification that confirms Task's `model=` override actually switches models.
+
+### Configuration
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `LOOP_MODEL_SPLIT` | `0` | When `1`, `/fix-loop` invokes `/autocoder:dispatch` instead of `/autocoder:gate`. |
+| `AUTOCODER_WORK_JSON` | `/tmp/autocoder-work.json` | Path to the work descriptor written by `fix-loop-gate.sh` and read by `/autocoder:gate`. |
+| `IDLE_SLEEP_MINUTES` | `60` | Idle sleep between cron iterations when no work is available (also exposed as `/fix-loop --sleep N`). |
 
 ## Monitor Workers (`/monitor-workers`)
 
