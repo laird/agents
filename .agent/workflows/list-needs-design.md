@@ -39,7 +39,7 @@ if [ "$ISSUE_SOURCE" = "github" ]; then
 fi
 
 # Fetch all open issues with the needs-design label
-issue_list --state open --label "needs-design" --limit 50 > /tmp/needs-design.json
+issue_list --state blocked --label "needs-design" --limit 50 > /tmp/needs-design.json
 
 ISSUE_COUNT=$(cat /tmp/needs-design.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 

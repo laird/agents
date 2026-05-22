@@ -283,6 +283,17 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 ```
 
 ```bash
+# Preflight: cheap check whether there's any claimable work before paying
+# the LLM cost of the full /fix flow. See spec §5.
+issue_any_claimable
+case $? in
+  0) ;;  # work exists; fall through
+  1) echo "No claimable issues. Nothing to do."; exit 0 ;;
+  *) echo "Backend error while checking for claimable issues"; exit 1 ;;
+esac
+```
+
+```bash
 # Load project-specific configuration from CLAUDE.md
 if [ -f "CLAUDE.md" ]; then
   echo "📋 Reading project configuration from CLAUDE.md"

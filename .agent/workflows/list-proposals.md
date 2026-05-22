@@ -31,7 +31,7 @@ echo "📋 Fetching pending proposals..."
 echo ""
 
 # Fetch all open issues with the proposal label
-issue_list --state open --label "proposal" --limit 50 > /tmp/proposals.json
+issue_list --state blocked --label "proposal" --limit 50 > /tmp/proposals.json
 
 PROPOSAL_COUNT=$(cat /tmp/proposals.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 

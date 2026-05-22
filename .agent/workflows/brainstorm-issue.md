@@ -68,7 +68,7 @@ if [ -z "$ISSUE_NUM" ]; then
   echo "🔍 No issue number provided, finding first needs-design issue..."
 
   # Get first needs-design issue
-  ISSUE_NUM=$(issue_list --state open --label "needs-design" | jq -r '.[0].number // empty' 2>/dev/null)
+  ISSUE_NUM=$(issue_list --state blocked --label "needs-design" | jq -r '.[0].number // empty' 2>/dev/null)
 
   if [ -z "$ISSUE_NUM" ] || [ "$ISSUE_NUM" = "null" ]; then
     echo "✅ No issues need design work!"
