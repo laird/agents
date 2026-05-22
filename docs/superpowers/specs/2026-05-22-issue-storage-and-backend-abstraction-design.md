@@ -141,6 +141,8 @@ Today `issue_update --add-label working --if-unset` exits 9 on a lost race. Unde
 
 The `blocked/` bucket is entered and exited via `update`. The blocking label set is exactly: `{needs-design, needs-clarification, needs-feedback, needs-approval, too-complex, future, proposal}`.
 
+Note: the existing `monitor-workers.md:130` filter omits `needs-feedback` from its blocking-label exclusion (verified against the current file). This appears to be an oversight — `needs-feedback` is semantically a blocking label (it gates AI work on human input, matching `needs-design`'s role) and is supported by a dedicated `/list-needs-feedback` slash command. The new design treats `needs-feedback` as blocking, which corrects the omission; the migration plan's `monitor-workers` update inherits the corrected set automatically (the filter goes away once `--state open` excludes the `blocked/` bucket by directory).
+
 Transition rules:
 
 - `update N --add-label X` where X is in the blocking set and `N` is in `open/`: take flock on `open/N.md`, update frontmatter (label appended), then `rename open/N.md → blocked/N.md`. The rename is the last step inside the lock release.
@@ -408,6 +410,36 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 - Does the `--state open` semantics change (now excludes `working`) break any caller other than `monitor-workers`? Audit needed during implementation.
 - For Jira: is the integer-vs-string issue-key question worth resolving in this design, or deferred until someone actually builds Jira support? (Default: defer; pin a placeholder in the README so the discussion happens at that time.)
 - Should `any-claimable` accept filters (e.g., `--label P0`)? Probably yes for symmetry with `list`, but the simple boolean is what `fix.md` needs. Default: simple boolean now; extend if a need arises.
+
+## Verified assumptions
+
+The following load-bearing claims about the current codebase were verified empirically at spec-write time. Subsequent reviews (CDR, implementation planning) may treat them as ground truth without re-verification, unless cited evidence has changed.
+
+| # | Assumption | Evidence |
+|---|---|---|
+| 1 | `plugins/autocoder/scripts/issue-config.sh` exists and resolves the main worktree | `ls` confirms file; `_ic_MAIN_WORKTREE=$(git worktree list --porcelain ... | grep -m1 "^worktree" | cut -d' ' -f2)` at the top of the file |
+| 2 | `plugins/autocoder/scripts/issue-fns.sh` exists and exposes the `issue_*` dispatcher functions | `ls` confirms file; `issue_list`, `issue_get`, `issue_update`, `issue_comment`, `issue_close`, `issue_create` defined in the file |
+| 3 | `plugins/autocoder/scripts/issues-file.py` exists and is the file backend | `ls` confirms file; 416 lines covering parse/write/list/get/update/comment/close/create/import-from-gh/export-to-gh |
+| 4 | `.agent/scripts/` and `.agent/workflows/` exist and mirror plugin paths | `ls .agent/scripts/` and `ls .agent/workflows/` confirm both directories populated per CLAUDE.md parallel-maintenance rule |
+| 5 | `parse_issue_file` / `write_issue_file` re-open by path (motivates the fd refactor in §1) | `issues-file.py:54-56` — `parse_issue_file(path)` calls `path.read_text()`; `:87-100` — `write_issue_file(path, data)` calls `path.write_text(...)` |
+| 6 | `cmd_update` supports `--if-unset` with `sys.exit(9)` on lost race | `issues-file.py:197-203` — `if args.if_unset and already_set: sys.exit(9)`; `:370-375` — flag declared |
+| 7 | `cmd_create` currently globs `*.md` for max number; `.seq` exists only as a lock sentinel, not a counter | `issues-file.py:268-272` — `existing = sorted(int(p.stem) for p in issues_dir.glob("*.md") if p.stem.isdigit()); number = (existing[-1] + 1) if existing else 1`; `.seq` is locked but its content is never read or written |
+| 8 | `issue-fns.sh` contains inline `_ifns_gh_list`, `_ifns_gh_update`, `_ifns_gh_close`, `_ifns_gh_create` to extract | `issue-fns.sh:21,33,58,71` declare these four functions |
+| 9 | `monitor-workers.md` lines 82, 130, 261, 262 are the queries the migration plan targets | `grep -n` confirms `issue_list --state open --label "working"` at 82,261 and the blocking-label jq filter at 130,262 |
+| 10 | `list-needs-design.md`, `list-needs-feedback.md`, `list-proposals.md` use `issue_list --state open --label "<label>"` | Confirmed at `:42`, `:42`, `:34` respectively |
+| 11 | `monitor-workers.md:130`'s blocking-label exclusion set is `{needs-design, needs-clarification, future, proposal, needs-approval, too-complex, working}` — missing `needs-feedback` vs the spec's set | Grep against the file confirms the seven labels; spec §2 notes this omission and corrects it |
+| 12 | `fix-loop-gate.sh` exists and is the consumer of the `--if-unset` exit-9 contract | `find` confirms `plugins/autocoder/scripts/fix-loop-gate.sh` |
+| 13 | `fix.md`, `fix-loop.md`, `set-issue-source.md` all exist as slash command files in `plugins/autocoder/commands/` | `ls` confirms all three |
+| 14 | `gh` CLI is available locally | `which gh` → `/opt/homebrew/bin/gh`; `gh --version` → `gh version 2.92.0 (2026-04-28)` |
+| 15 | `git worktree list --porcelain` returns the main worktree first | Confirmed against this repo: first line `worktree /Users/Laird.Popkin/src/agents` (main), followed by secondary worktrees |
+| 16 | `working` is currently both a status value and a label in `issues-file.py`'s schema | `issues-file.py:206-207,211-212` — `add-label working` sets `status=working`; `remove-label working` resets status to `open` |
+| 17 | `proposal` is treated as a blocking label by the existing fix workflow | `monitor-workers.md:130` includes `contains(["proposal"])` in the excluded set |
+| 18 | POSIX `rename(2)` is atomic within a single filesystem | Documented POSIX guarantee. `.issues/open/`, `working/`, `blocked/`, `closed/` live under one filesystem on supported platforms (macOS APFS, Linux ext4/xfs) — taken on faith for the platforms this project targets |
+| 19 | `fcntl.flock` cooperative locking works on macOS and Linux | Already in use in the existing `issues-file.py`; verified by the file's continued operation in this repo |
+| 20 | `gh issue edit --add-label X` is idempotent on duplicate adds | GitHub API behavior: label adds are set-semantics; documented and matches existing autocoder behavior |
+| 21 | `find -maxdepth 1 -name '*.md' -print -quit` is portable across BSD find (macOS) and GNU find (Linux) | `-maxdepth`, `-name`, `-print`, `-quit` are all in POSIX find or the BSD/GNU shared subset |
+
+Items 18–21 are platform/library guarantees taken on documented evidence rather than read against this repo; items 1–17 were checked against this repo at spec-write time.
 
 ## Cross-references
 
