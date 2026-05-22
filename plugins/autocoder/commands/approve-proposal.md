@@ -81,7 +81,7 @@ done
 # Handle --all flag
 if [ "$APPROVE_ALL" = true ]; then
   echo "📋 Fetching all pending proposals..."
-  ISSUE_NUMBERS=($(issue_list --state open --label "proposal" | jq -r '.[].number'))
+  ISSUE_NUMBERS=($(issue_list --state blocked --label "proposal" | jq -r '.[].number'))
 
   if [ ${#ISSUE_NUMBERS[@]} -eq 0 ]; then
     echo "✅ No pending proposals to approve."
