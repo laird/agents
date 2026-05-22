@@ -387,8 +387,11 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 3. Land `any-claimable` and update `fix.md` / `fix-loop.md` preflight.
 4. Land `README.md` with the contract and Jira walkthrough.
 5. Rewrite `fix-loop-gate.sh` and any other `--if-unset` callers to use `issue_claim`.
-6. Update `monitor-workers.md` to use `--state working` and `issue_release` rather than `--remove-label working`.
-7. Mirror all script changes to `.agent/scripts/` per `CLAUDE.md`.
+6. Update every slash command that queried `--state open --label X` where X is in the blocking set, since those issues now live in `blocked/`:
+   - `list-needs-design.md`, `list-needs-feedback.md`, `list-proposals.md`: change `--state open --label "<blocking>"` to `--state blocked --label "<blocking>"` (the `--label` filter remains in case multiple blocking labels are stacked on one issue).
+   - `monitor-workers.md`: the blocking-label-exclusion jq filters (lines 130, 262 in the current file) become unnecessary — `--state open` already excludes blocked issues by directory. The `--state open --label "working"` queries (lines 82, 261) become `--state working`. The `issue_update --remove-label working` recovery step becomes `issue_release`.
+   - Audit every other slash command for `--state open` queries that implicitly relied on blocked-labeled issues appearing there, and update accordingly.
+7. Mirror all script and command changes to `.agent/workflows/` and `.agent/scripts/` per `CLAUDE.md`.
 
 ## Testing plan
 
