@@ -10,17 +10,19 @@
 # issues-<other>.{sh,py}.
 
 # Bootstrap: source issue-config.sh if ISSUE_SOURCE not yet exported.
-if [ -z "$ISSUE_SOURCE" ]; then
+# Use parameter expansion with default so callers running under `set -u`
+# (e.g., fix-loop-gate.sh) don't trip the unbound-variable check.
+if [ -z "${ISSUE_SOURCE:-}" ]; then
   _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
   # shellcheck source=issue-config.sh
   source "${_ifns_DIR}/issue-config.sh"
 fi
 _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-case "$ISSUE_SOURCE" in
+case "${ISSUE_SOURCE:-}" in
   github) _ifns_BACKEND_SCRIPT="issues-gh.sh"   ;;
   file)   _ifns_BACKEND_SCRIPT="issues-file.py" ;;
-  *)      _ifns_BACKEND_SCRIPT="$ISSUE_BACKEND" ;;
+  *)      _ifns_BACKEND_SCRIPT="${ISSUE_BACKEND:-}" ;;
 esac
 _ifns_BACKEND_BIN="${_ifns_DIR}/${_ifns_BACKEND_SCRIPT}"
 

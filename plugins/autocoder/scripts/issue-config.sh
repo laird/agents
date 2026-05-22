@@ -3,8 +3,10 @@
 # Source this file. Exports: ISSUE_SOURCE, ISSUE_DIR_PATH, ISSUE_BACKEND
 # Non-interactive mode: exits 1 with error if no cached config and no TTY.
 
-# Avoid re-running if already loaded
-if [ -n "$ISSUE_SOURCE" ]; then
+# Avoid re-running if already loaded. Use parameter expansion with default
+# so callers running under `set -u` (e.g., fix-loop-gate.sh) don't trip the
+# unbound-variable check.
+if [ -n "${ISSUE_SOURCE:-}" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
