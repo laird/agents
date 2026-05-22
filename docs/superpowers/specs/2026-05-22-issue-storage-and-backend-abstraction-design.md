@@ -22,7 +22,7 @@
 
 Six structural changes, kept in one design because they are interlocking and migration must land together:
 
-1. File backend layout becomes three buckets: `.issues/open/`, `.issues/working/`, `.issues/closed/`.
+1. File backend layout becomes four buckets: `.issues/open/`, `.issues/working/`, `.issues/blocked/`, `.issues/closed/`. Blocked issues live in their own bucket so the `any-claimable` preflight remains O(1) even when most open work is gated on human input.
 2. Claiming an issue (taking the work) is implemented as an atomic POSIX `rename(2)` between buckets — replacing the flock + `--if-unset` exit-9 contract.
 3. One-shot migration script moves existing flat-layout files into the right buckets. No fallback path.
 4. Each backend is a self-contained script implementing a uniform 8-verb CLI. `issue-fns.sh` becomes a pure dispatcher. The inline `_ifns_gh_*` functions are extracted into `issues-gh.sh`.
@@ -35,6 +35,7 @@ Six structural changes, kept in one design because they are interlocking and mig
 .issues/
 ├── open/         <NNN>.md  — claimable
 ├── working/      <NNN>.md  — claimed by some agent
+├── blocked/      <NNN>.md  — open but carries a blocking label (needs-design, needs-clarification, needs-feedback, needs-approval, too-complex, future, proposal)
 ├── closed/       <NNN>.md  — archival
 └── .seq                    — authoritative monotonic counter (existing file, now the source of truth for issue numbers)
 ```
@@ -49,24 +50,29 @@ The `status` frontmatter field is still written for backward-readability of the 
 |---|---|
 | `--state open` (default) | `open/*.md` only |
 | `--state working` | `working/*.md` only |
+| `--state blocked` | `blocked/*.md` only |
 | `--state closed` | `closed/*.md` only |
-| `--state all` | all three dirs |
+| `--state all` | all four dirs |
 
-This is a behavior change from today: `--state open` used to include `working` issues. Callers that need both must say `--state open` and `--state working` (or `--state all` and filter), or use `--state active` if we choose to add it (we won't, to keep the verb count down — explicitness is cheap and the user opted for simplicity over compat).
+This is a behavior change from today: `--state open` used to include `working` and blocked-labeled issues. Each is now its own state. Callers that need a combined view enumerate the states they want (e.g., `--state open` plus `--state blocked` for "all not-working, not-closed issues"), or use `--state all` and filter. We do not add `--state active` or other meta-states — explicitness is cheap and the user opted for simplicity over compat.
 
 ### Reading and modifying
 
-A helper `resolve_path(number)` probes `open/`, `working/`, `closed/` in that order and returns the first hit. Used by `get`, `update`, `comment`. Returns an error if the number does not exist in any bucket.
+A helper `resolve_path(number)` probes `open/`, `working/`, `blocked/`, `closed/` in that order and returns the first hit. Used by `get`, `update`, `comment`. Returns an error if the number does not exist in any bucket.
 
 `resolve_path` is followed by `open(path)`, which can race with a concurrent rename and fail with `ENOENT` (the file moved buckets between the probe and the open). Callers must retry: `resolve_path` then `open` in a bounded loop (e.g., 3 attempts). After the bound, raise an error. Three attempts is sufficient in practice — a sustained rename storm on the same issue is itself a bug.
 
-All read-modify-write paths continue to take `flock` on the file. `flock` covers contents; `rename` covers location. They compose safely (see §2).
+All read-modify-write paths continue to take `flock` on the file. `flock` covers contents; `rename` covers location.
+
+**Normative requirement: all I/O inside a flock must use the locked file descriptor, never re-open the path.** Reads use `f.seek(0); f.read()`; writes use `f.seek(0); f.truncate(); f.write(...)`. The existing helpers `parse_issue_file(path)` and `write_issue_file(path, data)` open by path and must be refactored to take a file object (e.g., `parse_issue_file_fd(f)` / `write_issue_file_fd(f, data)`) or be inlined into the locked block. Call sites in `cmd_update`, `cmd_comment`, and `cmd_close` all change.
+
+Without this, a concurrent `rename` between the outer `open()` and a path-based re-open inside the lock causes either a `FileNotFoundError` on read or — worse — a `mode="w"` re-create of the file at the now-empty source path, producing two files for the same issue number in different buckets. This refactor is part of this design, not a follow-up.
 
 ### Number allocation
 
 `create` reads `.seq`, increments, writes back — all under `flock` on `.seq`. The result is the new issue number. The new file is always written to `open/`. No directory globbing during `create`.
 
-`.seq` is initialized by the migration step to `max(all existing numbers across all dirs, 0)`. Once initialized, no scan is ever performed for number allocation.
+`.seq` is initialized by the migration step to `max(all existing numbers across all four buckets, 0)`. Once initialized, no scan is ever performed for number allocation.
 
 ## 2. Atomic claim and release
 
@@ -102,7 +108,9 @@ POSIX `rename(2)` is atomic within a single filesystem. `.issues/` and its subdi
 Three race patterns to reason about:
 
 1. **Concurrent claim attempts.** First rename succeeds, second fails. Cleanly resolved by exit code. No flock involved.
-2. **Comment during rename.** Agent A opens `open/042.md`, takes flock, starts an rmw. Agent B renames `open/042.md` → `working/042.md`. A's file descriptor still points to the inode (now at the new path); A's writes land at the new location. A's flock blocks no one because the inode is the same. Result: A's bytes are preserved, B's directory change is preserved. Safe.
+2. **Comment during rename.** Agent A opens `open/042.md`, takes flock, starts an rmw using fd-based I/O (per §1's normative requirement). Agent B renames `open/042.md` → `working/042.md`. A's file descriptor still points to the inode (now at the new path); A's reads and writes go through the fd, so they land at the new location. A's flock and B's rename do not contend (rename operates on the directory entry, flock on the inode). Result: A's bytes are preserved, B's directory change is preserved.
+
+   **This safety property is contingent on the §1 fd-based I/O requirement.** Any future change that re-opens by path inside the lock reintroduces a duplicate-file race and breaks the directory-is-authoritative invariant.
 3. **Close during comment.** Same shape as (2) but the rename target is `closed/`. Same outcome: A's comment is preserved.
 
 The benign-race property requires that the inode is not unlinked. We never `unlink` during state transitions — only `rename`. A future change that unlinks would break this and must be revisited.
@@ -111,16 +119,30 @@ The benign-race property requires that the inode is not unlinked. We never `unli
 
 Today `issue_update --add-label working --if-unset` exits 9 on a lost race. Under the new design the claim verb is `claim`, not `update --add-label working`. The `--if-unset` flag and its exit-9 contract are removed. Callers that used it (`fix-loop-gate.sh` and any sibling scripts) are rewritten to use `issue_claim N` and check its exit code.
 
+### Blocking-label state transitions
+
+The `blocked/` bucket is entered and exited via `update`. The blocking label set is exactly: `{needs-design, needs-clarification, needs-feedback, needs-approval, too-complex, future, proposal}`.
+
+Transition rules:
+
+- `update N --add-label X` where X is in the blocking set and `N` is in `open/`: take flock on `open/N.md`, update frontmatter (label appended), then `rename open/N.md → blocked/N.md`. The rename is the last step inside the lock release.
+- `update N --remove-label X` where X was the last blocking label and `N` is in `blocked/`: take flock, update frontmatter (label removed), then `rename blocked/N.md → open/N.md`.
+- `update N --add-label X` where `N` is in `working/`: the file stays in `working/` (an active claim takes priority over a blocking label). The frontmatter records the label. When the agent later releases the claim, `release` chooses the target bucket based on labels (see below).
+- `release N` from `working/`: if frontmatter contains any blocking label, target is `blocked/`; otherwise `open/`. Either way it is a single `rename`.
+- `claim N` only succeeds from `open/`. Claiming a `blocked/` issue is a usage error — blocked issues are not claimable by definition.
+
+These transitions preserve the rename-based discipline: each state change is one POSIX `rename` (after frontmatter is settled under flock). The blocking-label set is hardcoded in the backend script (file and gh) and documented in the README so that the slash-command layer and the backend layer share a single source of truth.
+
 ## 3. Migration
 
 A new subcommand: `issues-file.py migrate-layout`.
 
 Steps:
-1. Refuse to run if any of `open/`, `working/`, `closed/` already contain `.md` files (already migrated).
-2. `mkdir -p open/ working/ closed/`.
-3. For each `*.md` at the top level of `.issues/`: parse frontmatter, move to the bucket matching `status` (`closed` → `closed/`, `working` → `working/`, anything else → `open/`).
+1. Refuse to run if any of `open/`, `working/`, `blocked/`, `closed/` already contain `.md` files (already migrated).
+2. `mkdir -p open/ working/ blocked/ closed/`.
+3. For each `*.md` at the top level of `.issues/`: parse frontmatter, classify by precedence — `status: closed` → `closed/`; `status: working` → `working/`; any blocking label present (in the set defined in §2) → `blocked/`; otherwise → `open/`.
 4. Initialize `.seq` to `max(existing numbers, 0)` if `.seq` is missing or below that value.
-5. Print a one-line summary.
+5. Print a one-line summary (counts per bucket).
 
 No fallback: after migration, top-level `*.md` files in `.issues/` are not read. If `migrate-layout` is interrupted, partial state is recoverable by re-running it (only one direction; idempotent re-runs are blocked by step 1 — so partial state requires either manual completion or `rm -rf` on the empty bucket dirs).
 
@@ -164,8 +186,9 @@ All read commands (`list`, `get`) produce JSON matching today's `to_gh_json` sha
 ### Exit-code contract
 
 - `0` — success. For `any-claimable`: at least one claimable issue exists.
-- `1` — generic failure (issue not found, claim lost, etc.). For `any-claimable`: no claimable issues.
+- `1` — clean negative result. For `any-claimable`: no claimable issues. For `claim`: race lost (file not in `open/`). For `get` / `update` / `comment` / `close` / `release`: issue not found.
 - `2` — usage error (bad flags).
+- `3` — backend error (filesystem error, network failure, auth failure, parse error, etc.). Callers must treat this as an error condition, not a clean negative.
 
 Backends must never print to stderr on the success path. The dispatcher relays both streams unmodified.
 
@@ -173,9 +196,22 @@ Backends must never print to stderr on the success path. The dispatcher relays b
 
 | Backend | `claim N` | `release N` | `any-claimable` |
 |---|---|---|---|
-| file | `rename open/NNN.md → working/NNN.md` then flocked frontmatter update | `rename working/NNN.md → open/NNN.md` then flocked frontmatter update | `find open/ -maxdepth 1 -name '*.md' -print -quit` (pure shell) |
-| github | `gh issue edit N --add-label working` then `gh issue view N --json labels` to confirm we set it (best-effort; see note below) | `gh issue edit N --remove-label working` | `gh issue list --state open --search 'no:label "working"' -L 1 --json number --jq 'length \| . > 0'` |
-| jira (future) | `POST /rest/api/3/issue/N/transitions` to "In Progress", set assignee | Transition to "Open", clear assignee | JQL `status=Open AND assignee is EMPTY` with `maxResults=1` |
+| file | Source must be `open/NNN.md`. Flocked frontmatter update, then `rename open/NNN.md → working/NNN.md`. | Flocked frontmatter update (clear `working` label / status). Target bucket chosen from labels: `blocked/` if any blocking label is set, else `open/`. Single `rename working/NNN.md → <target>/NNN.md`. | `find open/ -maxdepth 1 -name '*.md' -print -quit` (pure shell; native exit code `0` if a file was printed, `1` if not). |
+| github | `gh issue edit N --add-label working` then `gh issue view N --json labels` to confirm we set it (best-effort; see note below) | `gh issue edit N --remove-label working` | See block below. |
+| jira (future) | `POST /rest/api/3/issue/N/transitions` to "In Progress", set assignee | Transition to "Open" (or to the project's blocked-equivalent status if any blocking label is set), clear assignee | JQL `status=Open AND assignee is EMPTY AND labels not in (needs-design, …)` with `maxResults=1` |
+
+The github `any-claimable` implementation:
+
+```bash
+count=$(gh issue list --state open \
+  --search 'no:label "working" no:label "needs-design" no:label "needs-clarification" no:label "needs-feedback" no:label "needs-approval" no:label "too-complex" no:label "future" no:label "proposal"' \
+  -L 1 --json number --jq 'length') || exit 3
+[ "$count" -gt 0 ]
+```
+
+The trailing bracket test produces the exit code the dispatcher relays: `0` if at least one claimable issue exists, `1` otherwise. A `gh` failure short-circuits to exit `3` (backend error), per the contract above. The file-backend command in the same table row already produces the right exit code natively (`0` if a file was printed, `1` if not); only the github row needs the explicit count-and-bracket form.
+
+The same blocking-label exclusion applies to `list --state open` on the github backend: since gh has no bucket directories, `issues-gh.sh list --state open` filters out the blocking-label set in the search query to match the file backend's semantics. `list --state blocked` queries with `label:"needs-design" OR label:"needs-clarification" OR …`.
 
 The abstraction is at the verb level; each backend picks its own mechanism. The file backend's `claim` is atomic by rename — exactly one winner under concurrent contention. The github backend's `claim` is **best-effort**: there is no atomic single-writer label edit in the gh API, so two agents racing to claim the same issue can both think they succeeded. This is a known limitation of label-based locking on GitHub and matches today's behavior. The proposed mitigation in `issues-gh.sh` is to re-read the issue immediately after adding the label and check whether the comment timestamp suggests another agent claimed concurrently — but this is heuristic, not atomic. Slash commands that depend on strict single-winner semantics (notably `fix-loop`) should treat the file backend as the strict-correctness path and document that the github backend may occasionally double-assign. A follow-up design for strict gh claim (using issue-comment tokens or a separate lock issue) is out of scope here.
 
@@ -185,7 +221,7 @@ The abstraction is at the verb level; each backend picks its own mechanism. The 
 plugins/autocoder/scripts/
 ├── issue-config.sh     unchanged: detects ISSUE_SOURCE, exports env
 ├── issue-fns.sh        thin dispatcher (no inline backend logic)
-├── issues-file.py      file backend (three-bucket layout)
+├── issues-file.py      file backend (four-bucket layout)
 ├── issues-gh.sh        NEW: gh backend extracted from issue-fns.sh
 ├── issues-file.py-tests.sh    contract tests for file backend
 ├── issues-gh.sh-tests.sh      contract tests for gh backend
@@ -224,10 +260,12 @@ The `_ifns_gh_list`, `_ifns_gh_update`, `_ifns_gh_close`, `_ifns_gh_create` help
 The first executable block in `fix.md` becomes:
 
 ```bash
-if ! issue_any_claimable; then
-  echo "No claimable issues. Nothing to do."
-  exit 0
-fi
+issue_any_claimable
+case $? in
+  0) ;;  # work exists; fall through
+  1) echo "No claimable issues. Nothing to do."; exit 0 ;;
+  *) echo "Backend error while checking for claimable issues"; exit 1 ;;
+esac
 ```
 
 This runs *before* the GitHub-only setup (priority labels, identity switch) — those blocks move below the preflight. When there's no work, the LLM:
@@ -242,11 +280,12 @@ No sub-agent dispatch, no triage, no plugin detection. The heavy logic of `fix.m
 
 ```bash
 while [ -f "$LOOP_STATE_FILE" ]; do
-  if issue_any_claimable; then
-    /fix
-  else
-    echo "[$(date +%H:%M:%S)] idle"
-  fi
+  issue_any_claimable
+  case $? in
+    0) /fix ;;
+    1) echo "[$(date +%H:%M:%S)] idle" ;;
+    *) echo "[$(date +%H:%M:%S)] backend error — see above; will retry next tick" ;;
+  esac
   sleep "$INTERVAL"
 done
 ```
@@ -255,14 +294,14 @@ Idle iterations cost a `find` plus a `sleep`. Active iterations pay the full `/f
 
 ### Why this works given the new layout
 
-The file backend's `any-claimable` is implemented as `find "${ISSUE_DIR_PATH}/open" -maxdepth 1 -name '*.md' -print -quit`. With three buckets, this:
+The file backend's `any-claimable` is implemented as `find "${ISSUE_DIR_PATH}/open" -maxdepth 1 -name '*.md' -print -quit`. With four buckets, this:
 
-- Touches only `open/`, not `working/` or `closed/`.
+- Touches only `open/`, not `working/`, `blocked/`, or `closed/`.
 - Stops at the first match (`-print -quit`).
 - Spawns no python interpreter.
 - Reads zero file contents.
 
-On an idle repo (everything in `closed/`), `find` returns immediately with empty output. On a busy repo with hundreds of `closed/` files, the cost is unchanged — closed files are not in the search path.
+On an idle repo (everything in `closed/` or `blocked/`), `find` returns immediately with empty output. On a busy repo with hundreds of `closed/` or `blocked/` files, the cost is unchanged — those buckets are not in the search path. The `blocked/` bucket exists precisely so this preflight stays O(1) even when most open work is gated on human input.
 
 ## 6. README: how to add a new issue tracker
 
@@ -324,7 +363,7 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 
 ## Migration plan (summary)
 
-1. Land the three-bucket layout and `migrate-layout` subcommand. Existing user repos with flat `.issues/` are migrated by running the new command (or by invoking `/set-issue-source file` which detects and prompts).
+1. Land the four-bucket layout (`open/`, `working/`, `blocked/`, `closed/`) and `migrate-layout` subcommand. Existing user repos with flat `.issues/` are migrated by running the new command (or by invoking `/set-issue-source file` which detects and prompts).
 2. Land `issues-gh.sh` extracted from `issue-fns.sh`. `issue-fns.sh` shrinks to dispatcher-only.
 3. Land `any-claimable` and update `fix.md` / `fix-loop.md` preflight.
 4. Land `README.md` with the contract and Jira walkthrough.
@@ -337,7 +376,8 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 - Unit-level: the `<backend>-tests.sh` contract suites, run once per backend in CI.
 - Concurrency: a parallel-claim stress test for the file backend — N processes attempt to claim the same issue; assert exactly one succeeds and the others exit 1.
 - Race shape (3): a comment-during-rename test that asserts the comment ends up in the post-rename file.
-- Migration: a fixture with mixed open/working/closed flat-layout files; run `migrate-layout`; assert the bucket placement.
+- Migration: a fixture with mixed open / working / blocked-labeled / closed flat-layout files; run `migrate-layout`; assert the bucket placement.
+- Blocking transitions: starting from an `open/` issue, `update --add-label needs-design` ⇒ file is in `blocked/`; subsequent `update --remove-label needs-design` ⇒ file is back in `open/`. Same sequence from `working/` keeps the file in `working/` until `release`, then `release` lands it in `blocked/` because the label is still set.
 - End-to-end: `fix-loop` over an empty `open/` for 30 seconds — assert no LLM invocations occurred (i.e., no `/fix` sub-process was spawned).
 
 ## Open questions for review
