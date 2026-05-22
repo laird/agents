@@ -33,6 +33,9 @@ __pycache__/
 # Machine-local autocoder config (issue source, etc.)
 .autocoder.json
 
+# Local issue tracker data — repo-local, not source code.
+.issues/
+
 # Local testing screenshots (do not commit)
 agents-ui-*.png
 
