@@ -20,10 +20,10 @@
 #   2   configuration error (e.g. missing issue source)
 #
 # Race safety:
-#   File backend: atomic claim via `issue_update --add-label working
-#                 --if-unset` which exits 9 if another gate beat us;
+#   File backend: atomic claim via `issue_claim` (rename open/NNN.md →
+#                 working/NNN.md). Loser of the rename race gets exit 1;
 #                 we then try the next candidate.
-#   GitHub backend: same `--add-label working` (idempotent) plus the
+#   GitHub backend: best-effort `issue_claim` (label-add) plus the
 #                 existing comment-scan race detector in /autocoder:fix.
 #
 set -euo pipefail
@@ -147,23 +147,23 @@ case "$PHASE" in
 
   FIX|ENHANCE)
     # Try to atomically claim the chosen issue. For file backend we get
-    # CAS via --if-unset; for github backend the label-add is idempotent
-    # so we fall back to the existing comment-scan race detector in
-    # /autocoder:fix.
+    # CAS via the rename in `issue_claim`; for github backend the
+    # label-add is idempotent so we fall back to the existing comment-scan
+    # race detector in /autocoder:fix.
     set -- $REST
     ISSUE_NUM="$1"
     PRIORITY="${2:-}"
 
-    if [ "$ISSUE_SOURCE" = "file" ]; then
-      # Atomic claim: exit 9 if already claimed (lost race).
-      if ! issue_update "$ISSUE_NUM" --add-label working --if-unset 2>/dev/null; then
-        # Lost race — another gate beat us. Re-run on next tick.
-        exit 1
-      fi
-    else
-      # GitHub backend: idempotent add + downstream comment-scan handles
-      # cross-host racers.
-      issue_update "$ISSUE_NUM" --add-label working 2>/dev/null || true
+    # Atomic claim via rename-based issue_claim. File backend: exactly one
+    # winner. GitHub backend: best-effort (gh API has no atomic label CAS);
+    # the comment-scan race detector in /autocoder:fix handles cross-host
+    # racers.
+    issue_claim "$ISSUE_NUM" 2>/dev/null
+    claim_rc=$?
+    if [ "$claim_rc" -ne 0 ]; then
+      # exit 1 = lost race (file backend) or backend error (gh).
+      # Either way: don't proceed; re-run on next tick.
+      exit 1
     fi
 
     if [ "$PHASE" = "FIX" ]; then
