@@ -11,6 +11,7 @@
 2. Make the "no work to do" path near-zero LLM token cost.
 3. Make the gh and file backends *structurally parallel* so adding a new backend (Jira, Linear, …) is a drop-in, not a refactor.
 4. Keep race-free concurrent claiming across parallel agents.
+5. Operate correctly when multiple agents work across multiple git worktrees of the same repository. All agents must coordinate against a single shared `.issues/` directory located in the main (primary) worktree, regardless of which worktree each agent runs in.
 
 ## Non-goals
 
@@ -39,6 +40,10 @@ Six structural changes, kept in one design because they are interlocking and mig
 ├── closed/       <NNN>.md  — archival
 └── .seq                    — authoritative monotonic counter (existing file, now the source of truth for issue numbers)
 ```
+
+**Cross-worktree coordination.** `.issues/` always lives in the **main worktree** of the repository, never inside a secondary worktree's checkout. Agents working in secondary worktrees must resolve `ISSUE_DIR_PATH` to the main worktree's `.issues/` so that every agent — regardless of which worktree it runs in — shares a single set of bucket directories, a single `.seq` counter, and a single set of flock files.
+
+`issue-config.sh` resolves the main worktree via `git worktree list --porcelain | head -1` and exports the resulting absolute path as `ISSUE_DIR_PATH`. All backend scripts (`issues-file.py`, `issues-gh.sh`, future `issues-jira.py`) MUST treat `ISSUE_DIR_PATH` as the single source of truth for the issue store. They MUST NOT construct alternate paths from `pwd`, the calling agent's worktree, or any environment variable other than `ISSUE_DIR_PATH`. The atomic-rename and flock invariants in §2 compose across worktrees only because every agent references the same on-disk paths; an agent that opened a worktree-local `.issues/` would silently fork the issue store and break claim atomicity for the whole fleet.
 
 Each `<NNN>.md` retains today's frontmatter-plus-body shape (`number`, `title`, `labels`, `status`, `assignee`, `body`).
 
@@ -89,17 +94,30 @@ except FileNotFoundError:
 # (status: working, labels gets "working" appended).
 ```
 
-Release (inverse):
+Release (target depends on labels, so flock-update precedes rename):
 
 ```python
 src = issues_dir / "working" / f"{n:03d}.md"
-dst = issues_dir / "open"    / f"{n:03d}.md"
+with open(src, "r+") as f:
+    lock_ex(f.fileno())
+    try:
+        data = parse_issue_file_fd(f)
+        labels = data.get("labels") or []
+        target_bucket = "blocked" if any(l in BLOCKING_LABELS for l in labels) else "open"
+        # Clear the working label/status before renaming, via fd-based I/O.
+        data["labels"] = [l for l in labels if l != "working"]
+        data["status"] = "blocked" if target_bucket == "blocked" else "open"
+        write_issue_file_fd(f, data)
+    finally:
+        unlock(f.fileno())
+dst = issues_dir / target_bucket / f"{n:03d}.md"
 try:
     os.rename(src, dst)
 except FileNotFoundError:
-    sys.exit(1)
-# Then: open under flock, clear the "working" label and status.
+    sys.exit(1)  # another agent already released; not racing for single-winner
 ```
+
+`claim` is rename-first because it must enforce atomic single-winner under contention (§4 file row). `release` is flock-update-then-rename because the destination depends on labels that must be read under lock, and there is no single-winner contention to resolve at this step — `FileNotFoundError` on `os.rename` simply means another agent already released.
 
 ### Concurrency analysis
 
@@ -155,7 +173,7 @@ A new slash command `/migrate-issues-layout` exposes the subcommand. `/set-issue
 Every backend script (`issues-file.py`, `issues-gh.sh`, future `issues-jira.py`) implements:
 
 ```
-<backend> list          [--state open|working|closed|all] [--label L] [--limit N]
+<backend> list          [--state open|working|blocked|closed|all] [--label L] [--limit N]
 <backend> get            <number>
 <backend> update         <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]
 <backend> comment        <number> --body "..."
@@ -196,7 +214,7 @@ Backends must never print to stderr on the success path. The dispatcher relays b
 
 | Backend | `claim N` | `release N` | `any-claimable` |
 |---|---|---|---|
-| file | Source must be `open/NNN.md`. Flocked frontmatter update, then `rename open/NNN.md → working/NNN.md`. | Flocked frontmatter update (clear `working` label / status). Target bucket chosen from labels: `blocked/` if any blocking label is set, else `open/`. Single `rename working/NNN.md → <target>/NNN.md`. | `find open/ -maxdepth 1 -name '*.md' -print -quit` (pure shell; native exit code `0` if a file was printed, `1` if not). |
+| file | `rename open/NNN.md → working/NNN.md` (atomic; on `FileNotFoundError`, exit 1 — race lost). On success, flock the file at its new path and update frontmatter (set `status: working`, append `working` label) via fd-based I/O. | Flock `working/NNN.md`, read labels via fd-based I/O, choose target (`blocked/` if any blocking label is set, else `open/`), clear `working` label and status in frontmatter, write via fd, unlock. Then `rename working/NNN.md → <target>/NNN.md`. `release` is not racing for atomic single-winner — `FileNotFoundError` here means another agent already released; exit 1. | `[ -d "${ISSUE_DIR_PATH}/open" ] \|\| exit 3; find "${ISSUE_DIR_PATH}/open" -maxdepth 1 -name '*.md' -print -quit \| grep -q .` (exit 0 if any file was printed, 1 if not, 3 if `open/` is missing). |
 | github | `gh issue edit N --add-label working` then `gh issue view N --json labels` to confirm we set it (best-effort; see note below) | `gh issue edit N --remove-label working` | See block below. |
 | jira (future) | `POST /rest/api/3/issue/N/transitions` to "In Progress", set assignee | Transition to "Open" (or to the project's blocked-equivalent status if any blocking label is set), clear assignee | JQL `status=Open AND assignee is EMPTY AND labels not in (needs-design, …)` with `maxResults=1` |
 
@@ -294,7 +312,7 @@ Idle iterations cost a `find` plus a `sleep`. Active iterations pay the full `/f
 
 ### Why this works given the new layout
 
-The file backend's `any-claimable` is implemented as `find "${ISSUE_DIR_PATH}/open" -maxdepth 1 -name '*.md' -print -quit`. With four buckets, this:
+The file backend's `any-claimable` is implemented as the guarded form shown in §4 (`[ -d "${ISSUE_DIR_PATH}/open" ] || exit 3; find ... -print -quit | grep -q .`). With four buckets, this:
 
 - Touches only `open/`, not `working/`, `blocked/`, or `closed/`.
 - Stops at the first match (`-print -quit`).
@@ -356,7 +374,8 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 
 - Round-trip: `create`, `get`, `list`, `close`, `list --state closed`.
 - Label ops: `update --add-label`, `update --remove-label`, idempotent add.
-- Claim semantics: `claim` succeeds, second `claim` fails with exit 1, `release` succeeds.
+- Claim semantics (file backend, strict): `claim` succeeds, second `claim` on the same issue fails with exit 1, `release` succeeds. Single-winner is mandatory.
+- Claim semantics (github backend, best-effort): `claim` succeeds; `release` round-trips the `working` label. Single-winner under concurrent contention is not asserted — see §4 ("github backend's `claim` is best-effort") for rationale. Any future backend whose native API supports atomic claim must pass the strict variant; a backend documenting a best-effort claim (like gh) passes only the round-trip variant.
 - Comment append: `comment` then `get` returns the comment in `body`.
 - Empty case: fresh repo, `any-claimable` exits 1 with empty stdout.
 - Non-empty case: with one `open` issue, `any-claimable` exits 0.
@@ -379,6 +398,7 @@ Each backend ships a `<backend>-tests.sh` that exercises:
 - Migration: a fixture with mixed open / working / blocked-labeled / closed flat-layout files; run `migrate-layout`; assert the bucket placement.
 - Blocking transitions: starting from an `open/` issue, `update --add-label needs-design` ⇒ file is in `blocked/`; subsequent `update --remove-label needs-design` ⇒ file is back in `open/`. Same sequence from `working/` keeps the file in `working/` until `release`, then `release` lands it in `blocked/` because the label is still set.
 - End-to-end: `fix-loop` over an empty `open/` for 30 seconds — assert no LLM invocations occurred (i.e., no `/fix` sub-process was spawned).
+- Cross-worktree: create a secondary worktree via `git worktree add`, then from inside it invoke `issue_list --state open`, `issue_claim`, `issue_release`, and `issue_close`. Assert every operation targets the main worktree's `.issues/` directory (e.g., file appears in the main worktree's `.issues/working/`, not in the secondary worktree's pwd). Assert `ISSUE_DIR_PATH` resolves identically from both worktrees.
 
 ## Open questions for review
 
