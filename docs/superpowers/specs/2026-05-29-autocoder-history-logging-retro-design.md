@@ -1,8 +1,18 @@
 # Autocoder History Logging + Retro Command Design
 
 **Date**: 2026-05-29  
-**Status**: Draft  
+**Status**: Approved  
 **Scope**: History logging across autocoder (and shared with modernize), issue-source enforcement, and new `/retro` command
+
+---
+
+## Verified Assumptions
+
+- `fix.md` and `fix-loop.md` already source `issue-fns.sh`; `full-regression-test.md` does not.
+- `gh issue create --label <name>` fails if the label does not pre-exist on the repo.
+- `fix-loop.md` dispatches parallel agents in isolated git worktrees; each worktree is a separate directory on disk.
+- `git worktree list --porcelain` reliably identifies the main worktree path from any worktree.
+- `gh issue comment` is atomic server-side; parallel agents can post to the same issue without conflict.
 
 ---
 
@@ -35,9 +45,10 @@ append-to-history.sh [--backend file|github|auto] [--history-file PATH] TITLE WH
 - `--history-file PATH` — override default path (default: `docs/HISTORY.md`, preserved for modernize compat)
 
 **GitHub backend behavior:**
-1. Looks for an open issue labeled `history-log`: `gh issue list --label history-log --state open --limit 1`
-2. If none exists, creates one: `gh issue create --label history-log --title "Autocoder History Log" --body "Auto-created by autocoder to track agent activity. Each comment is one history entry."`
-3. Posts a comment with the structured entry
+1. Ensures the `history-log` label exists: `gh label create history-log --description "Autocoder history log" --color "0075ca" 2>/dev/null || true`
+2. Looks for an open issue labeled `history-log`: `gh issue list --label history-log --state open --limit 1`
+3. If none exists, creates one: `gh issue create --label history-log --title "Autocoder History Log" --body "Auto-created by autocoder to track agent activity. Each comment is one history entry."`
+4. Posts a comment with the structured entry
 
 **Backward compat:** calling the script with no flags behaves exactly as today — writes to `docs/HISTORY.md`.
 
@@ -49,8 +60,10 @@ One canonical file, copied to three locations (kept in sync manually or via a fu
 |---|---|
 | `scripts/append-to-history.sh` | Canonical source |
 | `plugins/autocoder/scripts/append-to-history.sh` | Autocoder commands (via `SCRIPT_DIR`) |
-| `plugins/modernize/scripts/append-to-history.sh` | Modernize (replaces inline creation in protocols-overview.md) |
+| `plugins/modernize/scripts/append-to-history.sh` | Modernize plugin copy |
 | `.agent/scripts/append-to-history.sh` | Antigravity mirror |
+
+**Modernize deployment:** `protocols-overview.md` continues to create `./scripts/append-to-history.sh` in target projects via its existing inline heredoc — no runtime change. `plugins/modernize/scripts/append-to-history.sh` serves as the maintainer's canonical source; the heredoc in `protocols-overview.md` must be kept in sync with it manually whenever the script changes. A sync reminder comment is added to both files.
 
 ---
 
@@ -105,6 +118,21 @@ Commands that need this added (currently missing it):
 | Issue skipped | `Skipped #N: <title>` | `Skipped: <reason>` | `Not actionable autonomously` | `Moving to next issue` |
 
 These calls are inserted at the **end** of each resolution path, just before moving to the next issue — after the `issue_update --remove-label "working"` call.
+
+### History collection in git worktrees (`fix-loop`)
+
+`fix-loop.md` runs each issue fix in an isolated git worktree. Each worker writes to its own `HISTORY.md` (relative path resolves to that worktree's root). Before the worktree is cleaned up — immediately after the branch merge or PR creation and before `git branch -d` — the worker appends its `HISTORY.md` to the main worktree's `HISTORY.md`:
+
+```bash
+MAIN_WT=$(git worktree list --porcelain | grep -m1 '^worktree' | cut -d' ' -f2)
+if [ -f "HISTORY.md" ] && [ "$(pwd)" != "$MAIN_WT" ]; then
+  cat HISTORY.md >> "${MAIN_WT}/HISTORY.md"
+fi
+```
+
+By the time each fix-loop iteration completes, all worker history is consolidated in the main worktree's `HISTORY.md`. The retro always reads from one place.
+
+For the GitHub backend, no merge step is needed — `gh issue comment` is atomic server-side and parallel agents can post to the same `history-log` issue concurrently without conflict.
 
 ### Logging in `full-regression-test.md`
 
