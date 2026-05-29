@@ -738,6 +738,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "PR created on branch feature/issue-${ISSUE_NUM}." \
+    "${ISSUE_BODY:0:150}" \
+    "Awaiting code review."
 else
   # Auto-merge: switch back to parent branch and merge
   git checkout "$PARENT_BRANCH"
@@ -763,6 +769,12 @@ else
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "${ISSUE_BODY:0:150}" \
+    "All tests passing. Branch merged and deleted."
 fi
 ```
 
@@ -928,6 +940,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "PR created on branch feature/issue-${ISSUE_NUM}." \
+    "${ISSUE_BODY:0:150}" \
+    "Awaiting code review."
 else
   # Auto-merge: switch back to parent branch and merge
   git checkout "$PARENT_BRANCH"
@@ -964,6 +982,12 @@ else
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "${ISSUE_BODY:0:150}" \
+    "All tests passing. Branch merged and deleted."
 fi
 ```
 
@@ -1095,6 +1119,12 @@ if [ -n "$BLOCKING_LABEL" ]; then
   SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
 
   bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "$BLOCKING_LABEL" "$BLOCKING_REASON"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Blocked #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Added label: ${BLOCKING_LABEL}." \
+    "${BLOCKING_REASON:0:200}" \
+    "Requires human review before proceeding."
 
   echo "⏭️  Skipping to next issue..."
   echo ""
