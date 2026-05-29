@@ -448,8 +448,14 @@ Expected: the `echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"` 
 
 - [ ] **Step 2: Add logging after the simple PR creation**
 
-Find this exact string:
+Find this exact string (the `[Detailed explanation of fix]` line is unique to the simple-path PR body — the complex path uses `## Root Cause` instead):
 ```
+[Detailed explanation of fix]
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+  # Remove 'working' label (PR is ready for review)
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
 else
   # Auto-merge: switch back to parent branch and merge
@@ -459,6 +465,12 @@ else
 
 Replace with:
 ```
+[Detailed explanation of fix]
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+  # Remove 'working' label (PR is ready for review)
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -482,15 +494,22 @@ Expected: the agents-ui status file write line followed by `fi`.
 
 - [ ] **Step 4: Add logging after the simple merge completion**
 
-Find this exact string (inside the simple fix block):
+Find this exact string (`🤖 Auto-resolved by autonomous fix workflow"` — without "with superpowers" — is unique to the simple path):
 ```
+🤖 Auto-resolved by autonomous fix workflow"
+
+# Write completion status file for agents-ui TUI monitoring
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 fi
 ```
 
-**Important**: there are two similar `fi` blocks in fix.md (simple and complex). This is the first one, inside Step 2A. Use enough surrounding context in the old_string to be unambiguous. Add immediately before the `fi`:
-
+Replace with:
 ```
+🤖 Auto-resolved by autonomous fix workflow"
+
+# Write completion status file for agents-ui TUI monitoring
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -712,17 +731,9 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 **Files:**
 - Create: `plugins/autocoder/commands/retro.md`
 
-- [ ] **Step 1: Read fix.md's optional-skills prelude block to copy it exactly**
+- [ ] **Step 1: Create retro.md**
 
-```bash
-sed -n '1,25p' plugins/autocoder/commands/fix.md
-```
-
-Copy the `<!-- BEGIN optional-skills-prelude v1 -->` block through `<!-- END optional-skills-prelude v1 -->` for use in Step 2.
-
-- [ ] **Step 2: Create retro.md**
-
-Write `plugins/autocoder/commands/retro.md` with the following content (substitute the exact optional-skills-prelude block from Step 1 in the indicated spot):
+Write `plugins/autocoder/commands/retro.md` with the following content:
 
 ```markdown
 # Autocoder Retrospective Analysis
@@ -732,7 +743,21 @@ Analyze accumulated project history to produce 3–5 specific, evidence-backed r
 ## Optional skill enhancements
 
 <!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->
-[paste exact block from fix.md here]
+
+If a named skill appears in your available skills list (delivered in the session-start system-reminder), invoke it via the `Skill` tool at the indicated step. Otherwise, follow the inline protocol below — it remains the source of truth and is unchanged by this section.
+
+In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the `Skill` tool; the mapping is otherwise identical.
+
+**Skill-name matching.** Match each table entry as an exact string. Mapping tables use fully-qualified names (`<plugin>:<skill>`) for plugin-installed skills and bare names for personal toolkit skills.
+
+**Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
+
+**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for personal toolkit skills.
+
+**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
+
+**Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
+
 <!-- END optional-skills-prelude v1 -->
 
 <!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Claude/Antigravity mirrors of this command -->
@@ -1026,7 +1051,7 @@ then run /retro again in a few weeks to measure improvement.
 ```
 ```
 
-- [ ] **Step 3: Verify the file was created**
+- [ ] **Step 2: Verify the file was created**
 
 ```bash
 wc -l plugins/autocoder/commands/retro.md
@@ -1035,7 +1060,7 @@ head -5 plugins/autocoder/commands/retro.md
 
 Expected: file exists, first line is `# Autocoder Retrospective Analysis`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add plugins/autocoder/commands/retro.md
