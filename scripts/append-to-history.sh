@@ -64,6 +64,10 @@ if [ "$BACKEND" = "github" ]; then
       --title "Autocoder History Log" \
       --body "Auto-created by autocoder to track agent activity. Each comment is one history entry." \
       --json number --jq '.number' 2>/dev/null)
+    if [ -z "$HISTORY_ISSUE" ] || [ "$HISTORY_ISSUE" = "null" ]; then
+      echo "⚠️  Could not create history-log issue — check gh auth and label permissions" >&2
+      exit 1
+    fi
     echo "✅ Created history-log issue #${HISTORY_ISSUE}"
   fi
 
