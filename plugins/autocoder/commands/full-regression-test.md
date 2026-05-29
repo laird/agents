@@ -59,6 +59,16 @@ If no configuration is found, defaults are used.
 ## Instructions
 
 ```bash
+# Source issue config — exits with clear error if not configured
+SCRIPT_DIR=$(
+  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  fi
+)
+source "${SCRIPT_DIR}/issue-fns.sh"
+# ISSUE_SOURCE is now exported (or command has exited with error)
+
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
@@ -625,9 +635,21 @@ EOF
 # Set exit code
 if [ "$BUILD_EXIT" -ne 0 ] || [ "$UNIT_EXIT" -ne 0 ] || [ "$E2E_EXIT" -ne 0 ]; then
   echo "⚠️  Some tests failed. Check GitHub issues for details."
+  # Log failed run to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Regression Test Run (failures)" \
+    "Build: ${BUILD_EXIT:-?}. Unit: ${UNIT_PASS:-?}/${UNIT_TOTAL:-?} passing. E2E: ${E2E_PASS:-?}/${E2E_TOTAL:-?} passing. New issues: ${NEW_ISSUES_COUNT:-0}." \
+    "Scheduled regression run." \
+    "Test failures detected. Issues created for failures."
   exit 1
 else
   echo "✅ All tests passed!"
+  # Log successful run to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Regression Test Run" \
+    "Build: pass. Unit: ${UNIT_PASS:-?}/${UNIT_TOTAL:-?} passing. E2E: ${E2E_PASS:-?}/${E2E_TOTAL:-?} passing. New issues: ${NEW_ISSUES_COUNT:-0}." \
+    "Scheduled regression run." \
+    "All tests passing."
   exit 0
 fi
 ```
