@@ -1,146 +1,313 @@
----
-description: Run a retrospective to identify process improvements
----
+# Autocoder Retrospective Analysis
 
-# Retrospective Process Improvement Protocol
+Analyze accumulated project history to produce 3–5 specific, evidence-backed recommendations for improving the autocoder workflow. Output: `IMPROVEMENTS.md`.
 
-**Version**: 1.0
-**Purpose**: Coordinate agents to review project history and identify process improvements
-**Output**: `IMPROVEMENTS.md` (ADR format with 3-5 specific recommendations)
-**Duration**: 2-4 hours
+## Optional skill enhancements
 
----
+<!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->
 
-## Overview
+If a named skill appears in your available skills list (delivered in the session-start system-reminder), invoke it via the `Skill` tool at the indicated step. Otherwise, follow the inline protocol below — it remains the source of truth and is unchanged by this section.
 
-This protocol orchestrates a **multi-agent retrospective** to analyze project history, identify inefficiencies, bottlenecks, risks, and **agent behavioral issues**, then produce a unified set of **3-5 specific, actionable recommendations** for process improvement.
+In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the `Skill` tool; the mapping is otherwise identical.
 
-**Improvements Target**:
+**Skill-name matching.** Match each table entry as an exact string. Mapping tables use fully-qualified names (`<plugin>:<skill>`) for plugin-installed skills and bare names for personal toolkit skills.
 
-- **Agent Behavior**: Wrong tool usage, wasted effort, requirement misunderstandings.
-- **Protocol Updates**: Process changes, new phases, quality gates.
-- **Automation**: Scripts, hook, CI/CD.
-- **Commands**: Updates to command files.
+**Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
 
-**CRITICAL**: User interruptions and corrections are the strongest signal that agents need behavioral improvement.
+**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for personal toolkit skills.
 
----
+**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
 
-## Retrospective Process
+**Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
 
-### Phase 1: Historical Analysis (60 minutes)
+<!-- END optional-skills-prelude v1 -->
 
-**1.1 Review Project History (Migration Coordinator)**
+<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
-- Analyze `HISTORY.md` for patterns, blockers, delays, and quality gate failures.
+`/retro` produces a **Document** deliverable (IMPROVEMENTS.md). Skill mapping:
 
-**1.2 Review ADRs (Architect Agent)**
+| Step | Skill mapping |
+|---|---|
+| Synthesize findings into recommendations | `completion-review` (always) |
 
-- Analyze `docs/ADR/` for decision outcomes, rework, and alternatives.
+<!-- END optional-skills-mapping retro v1 -->
 
-**1.3 Review Test History (Tester Agent)**
-
-- Analyze test pass rates, flaky tests, and coverage evolution.
-
-**1.4 Review Security History (Security Agent)**
-
-- Analyze vulnerability remediation timelines and scanning frequency.
-
-**1.5 Review Code Changes (Coder Agent)**
-
-- Analyze git history for churn, large commits, and reverts.
+## Usage
 
 ```bash
-git log --all --oneline --graph
-git shortlog -sn
+# Analyze last 12 months of history
+/retro
+
+# Scope to a specific date range
+/retro --since 2026-01-01
 ```
 
-**1.6 Review Documentation (Documentation Agent)**
+## What This Does
 
-- Analyze completeness of CHANGELOG, Migration Guide, and README.
+1. Sources issue configuration — exits immediately if not configured
+2. Reads history log (`HISTORY.md` or `history-log` GitHub issue)
+3. Analyzes git log for user corrections, reverts, repeated fix attempts
+4. Queries issue tracker for blocking patterns and reopened issues
+5. Identifies recurring test failures from history
+6. Synthesizes 3–5 evidence-backed recommendations
+7. Writes `IMPROVEMENTS.md` to the project root
 
-**1.7 Review User Interactions & Agent Errors (CRITICAL - All Agents)**
-Search for user interruptions and corrections:
+## Data Sources
+
+**History log** — primary source of what happened:
+- File backend: `HISTORY.md` in project root (written by `/fix` and `/full-regression-test`)
+- GitHub backend: comments on the `history-log` labeled issue
+
+**Git log** — signals of agent behavior quality:
+- Reverts and correction keywords in commit messages
+- Feature branches attempted more than once for the same issue
+
+**Issue tracker** — patterns across all work:
+- Currently blocked issues, broken down by blocking label
+- Proposal creation and approval rates
+
+**Test failure patterns** — extracted from history log:
+- Regression test entries showing repeated failures on the same area
+
+## Instructions
 
 ```bash
-# Git commit messages with corrections
-bash -c 'git log --all --grep="fix\|correct\|actually\|oops\|mistake"'
+# Parse arguments
+SINCE_DATE=""
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  case ${args[i]} in
+    --since)
+      SINCE_DATE="${args[i+1]}"
+      ((i++))
+      ;;
+  esac
+done
 
-# History for user interventions
-bash -c 'grep -i "user:\|correction\|fix\|reverted\|undo" HISTORY.md'
+# Source issue config (exits with clear error if not configured)
+SCRIPT_DIR=$(
+  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
+  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  fi
+)
+source "${SCRIPT_DIR}/issue-fns.sh"
+# ISSUE_SOURCE is now exported (or command has exited with error)
 
-# Reverted commits
-bash -c 'git log --all --oneline | grep -i "revert\|undo"'
+echo "🔍 Autocoder Retrospective Analysis"
+echo "======================================"
+echo "Issue source: $ISSUE_SOURCE"
+[ -n "$SINCE_DATE" ] && echo "Analyzing since: $SINCE_DATE" || echo "Analyzing: last 12 months"
+echo ""
 ```
 
-**Identify Agent Mistakes**:
+### Phase 1: Collect Data (~15 min)
 
-- **Wrong Tool Usage**: Using `bash cat` instead of `Read`, `find` instead of `Glob`.
-- **Wasted Effort**: Building unrequested features.
-- **Context Ignorance**: Not reading files before editing.
-- **Requirement Misunderstanding**: User corrections needed.
+**1.1 Read history log**
+
+For file backend:
+```bash
+if [ -f "HISTORY.md" ]; then
+  HISTORY_ENTRIES=$(grep -c "^## " HISTORY.md 2>/dev/null || echo "0")
+  echo "📖 Found $HISTORY_ENTRIES history entries in HISTORY.md"
+  cat HISTORY.md
+else
+  echo "⚠️  No HISTORY.md found — history is sparse."
+  echo "    Run /fix or /full-regression-test to begin building history."
+fi
+```
+
+For GitHub backend (`$ISSUE_SOURCE = "github"`):
+```bash
+HISTORY_ISSUE=$(gh issue list --label "history-log" --state open --limit 1 \
+  --json number --jq '.[0].number' 2>/dev/null)
+if [ -n "$HISTORY_ISSUE" ] && [ "$HISTORY_ISSUE" != "null" ]; then
+  echo "📖 Reading history from issue #${HISTORY_ISSUE}..."
+  gh issue view "$HISTORY_ISSUE" --comments --json comments \
+    --jq '.comments[] | "---\n" + .body' 2>/dev/null
+else
+  echo "⚠️  No history-log issue found — history is empty."
+fi
+```
+
+**1.2 Analyze git log**
+
+```bash
+SINCE_FLAG="--since=${SINCE_DATE:-1 year ago}"
+
+echo ""
+echo "📊 Git log analysis"
+echo "==================="
+
+COMMIT_COUNT=$(git log --oneline $SINCE_FLAG | wc -l | tr -d ' ')
+echo "Commits in range: $COMMIT_COUNT"
+
+echo ""
+echo "--- Correction/revert commits ---"
+git log --all --oneline $SINCE_FLAG \
+  --grep="revert\|correct\|actually\|oops\|undo\|mistake" \
+  --regexp-ignore-case | head -20
+
+echo ""
+echo "--- Issues with multiple fix attempts ---"
+git log --all --format="%D" $SINCE_FLAG \
+  | grep -oE "feature/issue-[0-9]+" \
+  | sort | uniq -c | sort -rn \
+  | awk '$1 > 1 {print}' | head -10
+```
+
+**1.3 Analyze issue tracker**
+
+```bash
+echo ""
+echo "📊 Issue tracker analysis"
+echo "========================="
+
+issue_list --state open --limit 200 > /tmp/retro-open.json 2>/dev/null || echo "[]" > /tmp/retro-open.json
+
+python3 << 'PYTHON'
+import json
+
+open_issues = json.load(open('/tmp/retro-open.json'))
+blocking_labels = ['needs-design', 'too-complex', 'needs-clarification', 'needs-approval', 'future']
+
+by_label = {}
+for issue in open_issues:
+    for lbl in issue.get('labels', []):
+        if lbl['name'] in blocking_labels:
+            by_label[lbl['name']] = by_label.get(lbl['name'], 0) + 1
+
+proposals = sum(1 for i in open_issues if any(l['name'] == 'proposal' for l in i.get('labels', [])))
+
+print("Open blocking issues:")
+for k, v in sorted(by_label.items(), key=lambda x: -x[1]):
+    print(f"  {k}: {v}")
+print(f"\nOpen proposals awaiting approval: {proposals}")
+PYTHON
+
+# History-derived stats
+if [ -f "HISTORY.md" ]; then
+  FIXED=$(grep -c "^## .* - Fix #" HISTORY.md 2>/dev/null || echo "0")
+  BLOCKED=$(grep -c "^## .* - Blocked #" HISTORY.md 2>/dev/null || echo "0")
+  PRS=$(grep -c "^## .* - PR #" HISTORY.md 2>/dev/null || echo "0")
+  REGRESSIONS=$(grep -c "^## .* - Regression Test Run" HISTORY.md 2>/dev/null || echo "0")
+  echo ""
+  echo "History stats: fixes=$FIXED, PRs=$PRS, blocked=$BLOCKED, regression-runs=$REGRESSIONS"
+fi
+```
+
+**1.4 Test failure patterns from history**
+
+```bash
+echo ""
+echo "📊 Test failure patterns"
+echo "========================"
+if [ -f "HISTORY.md" ]; then
+  echo "--- Regression test run summaries ---"
+  grep -A 5 "^## .* - Regression Test Run" HISTORY.md | head -60
+fi
+```
+
+### Phase 2: Identify Patterns (~10 min)
+
+Based on the collected data, cluster signals into categories and score each by frequency × impact (both 1–10):
+
+- **Agent behavior**: Wrong approaches, skipped context, requirement misunderstandings, wasted effort
+- **Protocol gaps**: Blocking detection misses, escalation failures, fix strategy weaknesses
+- **Recurring failures**: Tests or issue types that re-appear after being "fixed"
+- **Automation opportunities**: Repeated manual patterns that could be scripted
+
+Select the top 3–5 highest-scoring patterns.
+
+### Phase 3: Develop Recommendations (~15 min)
+
+For each top pattern:
+
+```
+**Problem**: [What goes wrong and how often — include a count if data supports it]
+
+**Evidence**:
+- [Specific example 1: issue number, git commit, or HISTORY.md entry]
+- [Specific example 2]
+
+**Proposed Change**: [Exact change — name the file and section to modify]
+
+**Change Type**: Protocol Update | Agent Behavior | Automation | New Script
+
+**Expected Impact**: [Quantified: e.g., "Reduce needs-clarification blocks by ~30%"]
+
+**Affected Components**:
+- `plugins/autocoder/commands/fix.md` — [which section]
+```
+
+### Phase 4: Write IMPROVEMENTS.md (~5 min)
+
+Write `IMPROVEMENTS.md` to the project root:
+
+```markdown
+# Autocoder Process Improvement Recommendations
+
+**Date**: YYYY-MM-DD
+**Status**: Proposed
+**Retrospective Period**: [start date] – [end date or "present"]
+**Issue Source**: [file|github]
 
 ---
 
-### Phase 2: Agent Insights Gathering (30 minutes)
+## Context
 
-**Objective**: Each agent identifies problems and opportunities from their perspective.
+Following [N] fixes, [N] PRs, [N] blocked issues, and [N] regression test runs,
+the autocoder agent analyzed its history to identify process improvements.
 
-**Template**:
+**Analysis Sources**:
+- History log: [N] entries reviewed
+- Git log: [N] commits from [period]
+- Issue tracker: [N] open issues ([N] blocked), [N] proposals pending
 
-- **What Went Well**: Positive observations.
-- **What Could Be Improved**: Inefficiencies/problems.
-- **Specific Recommendations**: Actionable items.
-
----
-
-### Phase 3: Pattern Identification (30 minutes)
-
-**Active Agent**: Migration Coordinator
-
-Synthesize findings into themes:
-
-- **Agent Behavioral Issues** (CRITICAL): Wrong tools, misunderstood requirements.
-- **Protocol Improvements**: Timing of tests, gates, validation.
-- **LLM-to-Code Opportunities**: Replace LLM calls with scripts (jq, awk, sed).
-- **Context Window Optimization**: Reduce token waste.
+**Key Metrics**:
+- Autonomous fix rate: [N / (N+N+N)] = [X]%
+- Block rate: needs-design=[N], too-complex=[N], needs-clarification=[N]
+- Issues requiring multiple attempts: [N]
 
 ---
 
-### Phase 4: Recommendation Development (45 minutes)
+## Recommendations
 
-**Active Agent**: All Agents (Collaborative)
+### Recommendation 1: [Title]
 
-Develop 3-5 specific, actionable recommendations.
-
-**Criteria**: Specific, Actionable, Measurable, Evidence-based, High-impact.
-
-**Example Recommendations**:
-
-1. **Front-load Dependency Analysis**: To prevent mid-migration blockers.
-2. **Continuous Documentation**: Update docs daily, not in batches.
-3. **Automated Security Scanning**: Add to git hooks.
-4. **"Read before Write" Enforcement**: Prevent file overwrites.
-5. **Replace LLM with Scripts**: Use `jq`/`awk` for deterministic tasks.
+[Body per Phase 3 template]
 
 ---
 
-### Phase 5: ADR Generation (30 minutes)
+[Repeat for each recommendation, separated by `---`]
 
-**Active Agent**: Documentation Agent
+---
 
-Create `IMPROVEMENTS.md` in MADR 3.0.0 format.
+## Summary
 
-After retro is complete, suggest reviewing the suggested IMPROVEMENTS.md and then /retro-apply .
+| # | Recommendation | Impact | Effort | Priority |
+|---|---|---|---|---|
+| 1 | [title] | High | Low | P0 |
+| 2 | [title] | Medium | Low | P1 |
+| 3 | [title] | Medium | Medium | P1 |
 
-**Structure**:
+---
 
-1. **Context**: Analysis sources, key metrics.
-2. **Decision Drivers**: Efficiency, Quality, Risk.
-3. **Recommendations**:
-   - **Problem**: Description and Evidence.
-   - **Proposed Change**: Protocol, Behavior, or Automation update.
-   - **Expected Impact**: Efficiency/Quality gains.
-   - **Implementation**: Steps and Effort.
-4. **Summary**: Priority table.
-5. **Implementation Plan**: Immediate vs Long-term.
+## Next Steps
+
+1. Review each recommendation above
+2. Apply approved changes to `plugins/autocoder/commands/` manually
+3. Run `/retro` again after 20+ more issues to measure improvement
+
+---
+*Generated by `/retro` — autocoder retrospective analysis*
+```
+
+After writing the file, print:
+
+```
+✅ IMPROVEMENTS.md written to project root.
+
+Review the recommendations, apply the approved changes to plugins/autocoder/commands/,
+then run /retro again in a few weeks to measure improvement.
+```
