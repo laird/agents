@@ -1,0 +1,3 @@
+{"ts":"2026-05-21T13:00:00Z","tick_id":"sample-session-0001-1747832400000","outcome":"idle","model":"claude-sonnet-4-6","issues_scanned":12,"stale_swept":0,"claimed":null,"gate_duration_ms":87}
+{"ts":"2026-05-21T13:04:00Z","tick_id":"sample-session-0001-1747832640000","outcome":"triage","model":"claude-sonnet-4-6","issues_scanned":14,"stale_swept":1,"claimed":null,"gate_duration_ms":210}
+{"ts":"2026-05-21T13:08:00Z","tick_id":"sample-session-0001-1747832880000","outcome":"fix","model":"claude-sonnet-4-6","issues_scanned":14,"stale_swept":0,"claimed":"42","gate_duration_ms":150}

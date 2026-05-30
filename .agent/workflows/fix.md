@@ -129,14 +129,14 @@ For each unprioritized issue:
 3. **Assign the priority label**:
 
 ```bash
-# Assign priority to an issue
-gh issue edit <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
+# Assign priority to an issue (backend-neutral)
+issue_update <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
 ```
 
 4. **Add a triage comment** explaining the priority decision:
 
 ```bash
-gh issue comment <ISSUE_NUMBER> --body "🏷️ **Triage Complete**
+issue_comment <ISSUE_NUMBER> --body "🏷️ **Triage Complete**
 
 **Priority Assigned**: P2 (Medium)
 
@@ -283,6 +283,17 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 ```
 
 ```bash
+# Preflight: cheap check whether there's any claimable work before paying
+# the LLM cost of the full /fix flow. See spec §5.
+issue_any_claimable
+case $? in
+  0) ;;  # work exists; fall through
+  1) echo "No claimable issues. Nothing to do."; exit 0 ;;
+  *) echo "Backend error while checking for claimable issues"; exit 1 ;;
+esac
+```
+
+```bash
 # Load project-specific configuration from CLAUDE.md
 if [ -f "CLAUDE.md" ]; then
   echo "📋 Reading project configuration from CLAUDE.md"
@@ -365,13 +376,15 @@ else
   MERGE_MODE="merge"
 fi
 
-# Ensure gh is authenticated as the correct user for this repo
-REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
-if [ -n "$REPO_OWNER" ]; then
-  CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
-  if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
-    echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
-    gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER — ensure 'gh auth login' has been run for this account"
+# Ensure gh is authenticated as the correct user for this repo (GitHub backend only)
+if [ "$ISSUE_SOURCE" = "github" ]; then
+  REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
+  if [ -n "$REPO_OWNER" ]; then
+    CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
+      echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
+      gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER — ensure 'gh auth login' has been run for this account"
+    fi
   fi
 fi
 
@@ -396,8 +409,9 @@ else
   echo "ℹ️  quint plugin not installed - will escalate ultra-complex issues for manual review"
 fi
 
-# Ensure priority labels exist (one-time setup per project)
-if [ ! -f ".github/.priority-labels-configured" ]; then
+# Ensure priority labels exist (one-time setup per project, GitHub backend only —
+# the file backend creates labels on demand)
+if [ "$ISSUE_SOURCE" = "github" ] && [ ! -f ".github/.priority-labels-configured" ]; then
   echo "🏷️  Checking priority labels (one-time setup)..."
   EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
 
@@ -460,7 +474,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
     echo "⚠️  Issue #$SPECIFIED_ISSUE has 'working' label - another agent is working on it"
-    echo "Use 'gh issue edit $SPECIFIED_ISSUE --remove-label working' to force release"
+    echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' to force release"
     exit 1
   fi
 
@@ -653,7 +667,7 @@ echo "✅ Saved merge mode '$MERGE_MODE' to CLAUDE.md"
 
 Remove it in ALL exit paths:
 - **Issue fixed and closed** → remove `working` label
-- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly with `gh issue edit`, you MUST also remove `working`)
+- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly via `issue_update` or `/update-issue`, you MUST also remove `working`)
 - **Issue skipped** → remove `working` label
 - **Error or failure** → remove `working` label
 - **Moving to next issue** → remove `working` label from current issue
@@ -663,7 +677,7 @@ Remove it in ALL exit paths:
 issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
 
-**Never add a blocking label without also removing the `working` label.** If you use `gh issue edit` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
+**Never add a blocking label without also removing the `working` label.** If you use `issue_update` or `/update-issue` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
 
 ## Fixing Strategy
 
@@ -724,6 +738,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "PR created on branch feature/issue-${ISSUE_NUM}." \
+    "${ISSUE_BODY:0:150}" \
+    "Awaiting code review."
 else
   # Auto-merge: switch back to parent branch and merge
   git checkout "$PARENT_BRANCH"
@@ -749,6 +769,12 @@ else
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "${ISSUE_BODY:0:150}" \
+    "All tests passing. Branch merged and deleted."
 fi
 ```
 
@@ -914,6 +940,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "PR created on branch feature/issue-${ISSUE_NUM}." \
+    "${ISSUE_BODY:0:150}" \
+    "Awaiting code review."
 else
   # Auto-merge: switch back to parent branch and merge
   git checkout "$PARENT_BRANCH"
@@ -950,6 +982,12 @@ else
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "${ISSUE_BODY:0:150}" \
+    "All tests passing. Branch merged and deleted."
 fi
 ```
 
@@ -1081,6 +1119,12 @@ if [ -n "$BLOCKING_LABEL" ]; then
   SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
 
   bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "$BLOCKING_LABEL" "$BLOCKING_REASON"
+  # Log to history
+  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
+    "Blocked #${ISSUE_NUM}: ${ISSUE_TITLE}" \
+    "Added label: ${BLOCKING_LABEL}." \
+    "${BLOCKING_REASON:0:200}" \
+    "Requires human review before proceeding."
 
   echo "⏭️  Skipping to next issue..."
   echo ""
@@ -1452,7 +1496,7 @@ PROPOSAL_RESULT=$(issue_create \
 
 To approve and allow automated implementation:
 ```bash
-gh issue edit <issue_number> --remove-label "proposal"
+/update-issue <issue_number> --remove-label "proposal"
 ```
 
 ### How to Provide Feedback
@@ -1462,7 +1506,7 @@ Comment on this issue with your feedback. The AI will incorporate your suggestio
 ### How to Reject This Proposal
 
 ```bash
-gh issue close <issue_number> --comment "Rejected: [reason]"
+/close-issue <issue_number> "Rejected: [reason]"
 ```
 
 ---
@@ -1919,7 +1963,7 @@ Use the `/list-proposals` command to see all pending proposals:
 To approve a proposal for automated implementation, remove the `proposal` label:
 
 ```bash
-gh issue edit <issue_number> --remove-label "proposal"
+/update-issue <issue_number> --remove-label "proposal"
 ```
 
 Once the `proposal` label is removed, the `/fix` workflow will automatically implement the enhancement on its next iteration.
@@ -1934,7 +1978,7 @@ Once the `proposal` label is removed, the `/fix` workflow will automatically imp
 ### How to Reject a Proposal
 
 ```bash
-gh issue close <issue_number> --comment "Rejected: [reason for rejection]"
+/close-issue <issue_number> "Rejected: [reason for rejection]"
 ```
 
 ### Proposal Labels

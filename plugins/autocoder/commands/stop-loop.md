@@ -18,7 +18,7 @@ if [[ -f "$LOOP_STATE_FILE" ]]; then
   ITERATION=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$LOOP_STATE_FILE" | grep '^iteration:' | sed 's/iteration: *//')
 
   rm "$LOOP_STATE_FILE"
-  echo "🛑 Fix-github loop stopped"
+  echo "🛑 Fix loop stopped"
   echo "   Completed iterations: ${ITERATION:-0}"
   echo ""
   echo "   To restart: /fix-loop"

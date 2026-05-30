@@ -1,0 +1,11 @@
+issue_file,expected_priority,rationale
+issues/01.md,P0,"Security row: active exploit — admin auth bypass live on prod with reproduction."
+issues/02.md,P0,"Production impact=Critical/Down + Data risk=Loss/corruption — all writes failing, FK corruption from migration."
+issues/03.md,P1,"Production impact=Major degradation + Workaround=Difficult — default 6-pillar scope broken for ~40% of engagements; workaround is fiddly and loses cross-pillar synthesis."
+issues/04.md,P1,"User scope=Many users + Workaround=Difficult — PDF export broken for everyone at deliverable stage; print-to-PDF loses formatting."
+issues/05.md,P1,"User scope=Many users + Workaround=None — 65%% of users blocked from login; ambiguous — could be P0 if 'login down' counts as Critical/Down, but Google SSO users unaffected so not 'all users'."
+issues/06.md,P2,"Production impact=Partial + Workaround=Available — filtered sort wrong, one-click re-sort fixes it."
+issues/07.md,P2,"Workaround=Available (none needed, nobody blocked) — ambiguous — could be P2 (intermittent perf bug, multiple reporters) or P3 (no repro, nobody affected); leaning P2 because the keyword 'slow' + multiple mentions imply a real bug."
+issues/08.md,P2,"User scope=Some users + Workaround=Available — ~5%% of expert notes truncated on read; edit-mode workaround exists but requires edit permission."
+issues/09.md,P3,"Keywords=cosmetic + Production impact=Minimal — hardcoded year in footer."
+issues/10.md,P3,"Keywords=cosmetic — tooltip typo, no functional impact, most users never see it."

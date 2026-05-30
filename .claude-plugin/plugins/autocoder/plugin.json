@@ -1,6 +1,6 @@
 {
   "name": "autocoder",
-  "version": "3.10.0",
+  "version": "4.0.0",
   "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work. Proposals require human approval before implementation.",
   "author": {
     "name": "Agent Protocols Team",
@@ -49,6 +49,8 @@
     "../../../plugins/autocoder/commands/update-issue.md",
     "../../../plugins/autocoder/commands/close-issue.md",
     "../../../plugins/autocoder/commands/list-issues.md",
-    "../../../plugins/autocoder/commands/set-issue-source.md"
+    "../../../plugins/autocoder/commands/set-issue-source.md",
+    "../../../plugins/autocoder/commands/show-issue.md",
+    "../../../plugins/autocoder/commands/migrate-issues-layout.md"
   ]
 }

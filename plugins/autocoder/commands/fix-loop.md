@@ -54,8 +54,13 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 # Limit to 100 iterations (stop hook mode only)
 /fix-loop 100
 
-# Custom idle sleep time (default: 15 minutes)
+# Custom idle sleep time (default: 4 minutes — stays inside the 5-min prompt cache TTL)
 /fix-loop --sleep 30
+
+# Phase 3 opt-in: route loop through /autocoder:dispatch (Haiku gate,
+# Sonnet/Opus worker via Task model= handoff). Default unset → uses
+# /autocoder:gate (same-model, Phase 2). Acceptance criteria in spec §13.4.
+LOOP_MODEL_SPLIT=1 /fix-loop
 
 # Multi-agent coordination with deployment
 /fix-loop --branch main --deploy "deploy.sh staging ."
@@ -184,7 +189,9 @@ Then: Main worktree automatically:
 ```bash
 # Parse arguments
 MAX_ITERATIONS="${1:-0}"  # 0 = unlimited
-IDLE_SLEEP_MINUTES="15"
+# Default 4 min keeps consecutive ticks inside the 5-min prompt cache TTL —
+# see docs/specs/2026-05-21-fix-loop-token-efficiency-design.md §6 for the analysis.
+IDLE_SLEEP_MINUTES="4"
 INTEGRATION_BRANCH="${CLAUDE_CODE_INTEGRATION_BRANCH:-}"
 DEPLOY_COMMAND="${CLAUDE_CODE_DEPLOY_COMMAND:-}"
 
@@ -237,6 +244,15 @@ fi
 export CLAUDE_CODE_INTEGRATION_BRANCH="$INTEGRATION_BRANCH"
 export CLAUDE_CODE_DEPLOY_COMMAND="$DEPLOY_COMMAND"
 
+# Phase 3 opt-in: LOOP_MODEL_SPLIT=1 routes to /autocoder:dispatch
+# (Haiku gate + Sonnet/Opus worker via Task model=). Default → /autocoder:gate.
+# See docs/specs/2026-05-21-fix-loop-token-efficiency-design.md §5.3, §10 Phase 3.
+if [[ "${LOOP_MODEL_SPLIT:-0}" = "1" ]]; then
+  LOOP_TARGET="/autocoder:dispatch"
+else
+  LOOP_TARGET="/autocoder:gate"
+fi
+
 mkdir -p .claude
 ```
 
@@ -283,10 +299,10 @@ echo ""
 
 ```
 Use the Skill tool to invoke: loop
-With args: ${IDLE_SLEEP_MINUTES}m /autocoder:fix
+With args: ${IDLE_SLEEP_MINUTES}m ${LOOP_TARGET}
 ```
 
-This schedules `/autocoder:fix` to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. No stop hook or settings.json modification needed.
+This schedules `${LOOP_TARGET}` (the slim pre-LLM gate, per spec §5.4; `/autocoder:dispatch` when `LOOP_MODEL_SPLIT=1`) to run every `IDLE_SLEEP_MINUTES` minutes using the native CronCreate mechanism. The gate dispatches to `/autocoder:fix` only when there is actual work to do; idle ticks exit cheaply. No stop hook or settings.json modification needed.
 
 ---
 
@@ -352,7 +368,7 @@ deploy_command: $DEPLOY_COMMAND
 started: $(date -Iseconds)
 ---
 
-/autocoder:fix
+${LOOP_TARGET}
 EOF
 
 echo ""
@@ -367,10 +383,10 @@ fi
 echo ""
 ```
 
-**Then execute `/fix` using the Skill tool:**
+**Then execute `/gate` using the Skill tool:**
 
 ```
-Use the Skill tool to invoke: autocoder:fix
+Use the Skill tool to invoke: autocoder:${LOOP_TARGET#/autocoder:}
 ```
 
-The stop hook will automatically re-invoke `/autocoder:fix` when Claude exits, creating an infinite loop.
+The stop hook will automatically re-invoke `${LOOP_TARGET}` when Claude exits, creating an infinite loop. The gate dispatches to `/autocoder:fix` only when there is work to do (spec §5.4).

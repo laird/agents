@@ -75,11 +75,12 @@ SCRIPT_DIR=$(
 )
 source "${SCRIPT_DIR}/issue-fns.sh"
 
-# Open unblocked issues
-issue_list --state open | jq -r '.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not) | "#\(.number): \(.title)"'
+# Open unblocked issues (--state open returns only the open/ bucket;
+# blocked-labeled issues live in blocked/ and are excluded by directory).
+issue_list --state open | jq -r '.[] | "#\(.number): \(.title)"'
 
-# Issues currently being worked
-issue_list --state open --label "working" | jq -r '.[] | "#\(.number): \(.title)"'
+# Issues currently being worked (lives in working/ bucket)
+issue_list --state working | jq -r '.[] | "#\(.number): \(.title)"'
 ```
 
 ### Step 3: Read Worker Screens
@@ -119,15 +120,16 @@ For each issue with the "working" label, check if work is actually happening:
 
 If approved:
 ```bash
-issue_update <number> --remove-label "working"
+issue_release <number>
 ```
 
 ### Step 5: Dispatch Work to Idle Workers
 
-Find unblocked issues not being worked (no "working" label), sorted by priority:
+Find unblocked claimable issues sorted by priority (the `--state open`
+bucket already excludes blocked and working issues by directory):
 
 ```bash
-issue_list --state open | jq -r '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"]) or contains(["working"])) | not)] | sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
+issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
 ```
 
 For each idle worker with an unworked issue available, send the fix command:
@@ -258,8 +260,8 @@ for i in $(seq 1 60); do
   sleep 180
 
   git fetch origin --quiet 2>/dev/null
-  WORKING=$(issue_list --state open --label "working" | jq 'length')
-  UNBLOCKED=$(issue_list --state open | jq '[.[] | select(.labels | map(.name) | (contains(["needs-design"]) or contains(["needs-clarification"]) or contains(["future"]) or contains(["proposal"]) or contains(["needs-approval"]) or contains(["too-complex"])) | not)] | length')
+  WORKING=$(issue_list --state working | jq 'length')
+  UNBLOCKED=$(issue_list --state open | jq 'length')
   INT_HEAD=$(git rev-parse --short origin/integration)
 
   echo "[$(date +%H:%M:%S)] working=$WORKING unblocked=$UNBLOCKED integration=$INT_HEAD"

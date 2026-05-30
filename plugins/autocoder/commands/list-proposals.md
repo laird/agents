@@ -1,6 +1,6 @@
 # List Pending Proposals
 
-Display all AI-generated enhancement proposals awaiting human review and approval.
+Display all AI-generated enhancement proposals awaiting human review and approval. Uses the configured issue source (file or GitHub).
 
 ## Usage
 
@@ -10,7 +10,7 @@ Display all AI-generated enhancement proposals awaiting human review and approva
 
 ## What This Does
 
-Lists all open GitHub issues with the `proposal` label, showing:
+Lists all open issues with the `proposal` label, showing:
 - Issue number and title
 - Priority level (P0-P3)
 - Creation date
@@ -31,7 +31,7 @@ echo "📋 Fetching pending proposals..."
 echo ""
 
 # Fetch all open issues with the proposal label
-issue_list --state open --label "proposal" --limit 50 > /tmp/proposals.json
+issue_list --state blocked --label "proposal" --limit 50 > /tmp/proposals.json
 
 PROPOSAL_COUNT=$(cat /tmp/proposals.json | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
 
@@ -48,12 +48,24 @@ echo "                    PENDING PROPOSALS ($PROPOSAL_COUNT)"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
+# Backend-specific hints (no neutral slash command for comment / single-issue view)
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  COMMENT_CMD_TMPL="Edit \"${ISSUE_DIR_PATH}/{num}.md\" to add your feedback"
+  VIEW_CMD_TMPL="cat \"${ISSUE_DIR_PATH}/{num}.md\""
+else
+  COMMENT_CMD_TMPL="gh issue comment {num} --body \"Your feedback here\""
+  VIEW_CMD_TMPL="gh issue view {num}"
+fi
+
 # Display each proposal
-cat /tmp/proposals.json | python3 -c "
+cat /tmp/proposals.json | COMMENT_CMD_TMPL="$COMMENT_CMD_TMPL" VIEW_CMD_TMPL="$VIEW_CMD_TMPL" python3 -c "
 import json
+import os
 import sys
 from datetime import datetime
 
+comment_cmd_tmpl = os.environ['COMMENT_CMD_TMPL']
+view_cmd_tmpl = os.environ['VIEW_CMD_TMPL']
 proposals = json.load(sys.stdin)
 
 for p in proposals:
@@ -75,9 +87,9 @@ for p in proposals:
     print(f'│')
     print(f'│  Actions:')
     print(f'│    Approve:  /approve-proposal {num}')
-    print(f'│    Feedback: gh issue comment {num} --body \"Your feedback here\"')
-    print(f'│    Reject:   gh issue close {num} --comment \"Rejected: reason\"')
-    print(f'│    View:     gh issue view {num}')
+    print(f'│    Feedback: {comment_cmd_tmpl.format(num=num)}')
+    print(f'│    Reject:   /close-issue {num} \"Rejected: reason\"')
+    print(f'│    View:     {view_cmd_tmpl.format(num=num)}')
     print(f'└────────────────────────────────────────────────────────────')
     print()
 "
@@ -90,14 +102,22 @@ echo "  Approve a proposal (allow implementation):"
 echo "    /approve-proposal <number>"
 echo ""
 echo "  Provide feedback (AI will refine):"
-echo "    gh issue comment <number> --body \"Your feedback\""
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  echo "    Edit \"${ISSUE_DIR_PATH}/<number>.md\" with your feedback"
+else
+  echo "    gh issue comment <number> --body \"Your feedback\""
+fi
 echo "    /refine-proposal <number>"
 echo ""
 echo "  Reject a proposal:"
-echo "    gh issue close <number> --comment \"Rejected: reason\""
+echo "    /close-issue <number> \"Rejected: reason\""
 echo ""
 echo "  View full proposal details:"
-echo "    gh issue view <number>"
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  echo "    cat \"${ISSUE_DIR_PATH}/<number>.md\""
+else
+  echo "    gh issue view <number>"
+fi
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 ```

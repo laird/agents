@@ -52,6 +52,19 @@ This plugin provides 5 slash commands that are comprehensive protocol documents:
 
 **Recommended Workflow**: `/assess` → `/plan` → `/modernize` → `/retro` → `/retro-apply`
 
+### Retrospective
+
+```bash
+# Analyze accumulated history and produce workflow improvement recommendations
+/retro
+
+# Scope to a specific date range
+/retro --since 2026-01-01
+# Output: IMPROVEMENTS.md with 3-5 evidence-backed recommendations
+```
+
+**Recommended cadence**: Run after every 20–30 issues processed. Apply approved recommendations to `plugins/autocoder/commands/` manually.
+
 ## Architecture
 
 ### Directory Structure

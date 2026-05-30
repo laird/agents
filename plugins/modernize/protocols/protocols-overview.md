@@ -286,6 +286,9 @@ mkdir -p scripts
 cat > scripts/append-to-history.sh << 'EOF'
 #!/bin/bash
 # append-to-history.sh - Universal history logging
+#
+# SYNC NOTE: This inline copy must match plugins/modernize/scripts/append-to-history.sh
+# and scripts/append-to-history.sh (canonical source). When either changes, update here.
 
 HISTORY_FILE="docs/HISTORY.md"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
