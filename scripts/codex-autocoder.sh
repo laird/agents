@@ -37,6 +37,7 @@ done
 SCRIPT_DIR=$(cd "$(dirname "$SOURCE_PATH")" && pwd)
 AGENTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 START_ISSUE_WORK="$AGENTS_ROOT/plugins/autocoder/scripts/start-issue-work.sh"
+MERGE_TO_INTEGRATION="$AGENTS_ROOT/plugins/autocoder/scripts/merge-to-integration.sh"
 COMMAND="$1"
 shift
 
@@ -65,7 +66,8 @@ build_fix_prompt() {
     "- Use existing repo scripts where appropriate, especially plugins/autocoder/scripts/regression-test.sh and scripts/append-to-history.sh." \
     "- If you make code changes, run the most relevant tests you can without weakening repo standards." \
     "- If you make code changes, create a git commit with a concise message after tests pass." \
-    "- After committing successful code changes, push the current HEAD to the appropriate remote branch unless repo rules explicitly forbid that push target." \
+    "- To land the work, run: bash '$MERGE_TO_INTEGRATION' --feature feature/issue-N --issue N --integration main --test-cmd '<the repo regression test command>' (use enhancement/issue-N-auto for enhancements)." \
+    "- That helper is worktree-safe: it merges origin/main into your feature branch, re-runs tests on the combined tree, and pushes to origin/main with retry. Do NOT merge into or push the per-worktree branch (main-wt-N) — that strands work off main." \
     "- Log significant work with scripts/append-to-history.sh." \
     "- Stop after one actionable unit of work and summarize the outcome." \
     "" \

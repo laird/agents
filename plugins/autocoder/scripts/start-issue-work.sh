@@ -102,7 +102,15 @@ if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
       exit 1
     fi
   else
-    if ! git switch -c "$BRANCH" >/dev/null 2>&1; then
+    # Base the new branch on the latest shared integration branch (default main, override
+    # with INTEGRATION_BRANCH) instead of the worktree's current branch. In a parallel-
+    # worktree swarm each worktree sits on its own main-wt-N; branching from
+    # origin/<integration> means work starts from — and later merges back to — the same
+    # shared branch rather than stranding on main-wt-N.
+    INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+    git fetch origin "$INTEGRATION_BRANCH" >/dev/null 2>&1 || true
+    if ! git switch -c "$BRANCH" "origin/${INTEGRATION_BRANCH}" >/dev/null 2>&1 \
+       && ! git switch -c "$BRANCH" >/dev/null 2>&1; then
       echo "Could not create branch ${BRANCH}." >&2
       exit 1
     fi

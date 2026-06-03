@@ -337,7 +337,13 @@ npm run build
 ```
 merge
 ```
-Options: `merge` (auto-merge to parent branch and push) or `pr` (push feature branch and create a pull request, then stop).
+Options: `merge` (auto-merge to the integration branch and push) or `pr` (push feature branch and create a pull request, then stop).
+
+### Integration Branch
+```
+main
+```
+The shared branch all completed work is merged into. In a parallel-worktree swarm this MUST be the real shared branch (e.g. `main`), never a per-worktree branch — otherwise fixes strand on `main-wt-N` and never converge.
 
 AUTOCODER_CONFIG
 
@@ -369,11 +375,19 @@ AUTOCODER_CONFIG
     MERGE_MODE=""
     echo "MERGE_MODE_NOT_CONFIGURED=true"
   fi
+  # Extract the integration branch (the shared branch all work merges into).
+  # Defaults to 'main'. In a worktree swarm this MUST be the shared branch, not main-wt-N.
+  if grep -q "### Integration Branch" CLAUDE.md; then
+    INTEGRATION_BRANCH=$(sed -n "/### Integration Branch/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  fi
+  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+  echo "✅ Integration branch: $INTEGRATION_BRANCH"
 else
   echo "⚠️  No CLAUDE.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
   MERGE_MODE="merge"
+  INTEGRATION_BRANCH="main"
 fi
 
 # Ensure gh is authenticated as the correct user for this repo (GitHub backend only)
@@ -634,18 +648,19 @@ echo ""
 echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
 
-# Save parent branch before creating feature branch
-PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-# Pull latest changes from origin before branching
-git pull origin "$PARENT_BRANCH" 2>/dev/null || echo "⚠️  Could not pull from origin — proceeding with local state"
+# Branch from the latest shared integration branch (NOT the worktree's current branch).
+# In a parallel-worktree swarm each worktree sits on its own main-wt-N; basing the fix
+# branch on origin/<integration> instead means every fix starts from — and merges back
+# to — the same shared branch, so work converges on main instead of stranding on main-wt-N.
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || echo "⚠️  Could not fetch origin/${INTEGRATION_BRANCH} — proceeding with local state"
 
 # Create (or switch to) the fix branch, then VERIFY the switch took effect.
 # Never start work on the parent branch: a 'working' label with no matching
 # feature/issue-N branch looks like a stale/abandoned lock to peers and to
 # /monitor-workers, which then try to reclaim the issue out from under you.
 FIX_BRANCH="feature/issue-${ISSUE_NUM}"
-git checkout -b "$FIX_BRANCH" 2>/dev/null || git checkout "$FIX_BRANCH" 2>/dev/null || true
+git checkout -b "$FIX_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null || git checkout "$FIX_BRANCH" 2>/dev/null || true
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$FIX_BRANCH" ]; then
   echo "❌ Could not switch to $FIX_BRANCH (still on $CURRENT_BRANCH) — likely a dirty"
@@ -769,7 +784,7 @@ git push -u origin "feature/issue-${ISSUE_NUM}"
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
   gh pr create \
-    --base "$PARENT_BRANCH" \
+    --base "$INTEGRATION_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
     --title "Fix #${ISSUE_NUM}: Brief description" \
     --body "Closes #${ISSUE_NUM}
@@ -788,16 +803,15 @@ if [ "$MERGE_MODE" = "pr" ]; then
     "${ISSUE_BODY:0:150}" \
     "Awaiting code review."
 else
-  # Auto-merge: switch back to parent branch and merge
-  git checkout "$PARENT_BRANCH"
-  git merge --no-ff "feature/issue-${ISSUE_NUM}"
-
-  # Push parent branch
-  git push
-
-  # Clean up feature branch (local and remote)
-  git branch -d "feature/issue-${ISSUE_NUM}"
-  git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
+  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
+  # integration branch, re-tests the combined tree, retries push on sibling races, and
+  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  "${SCRIPT_DIR}/merge-to-integration.sh" \
+    --feature "feature/issue-${ISSUE_NUM}" \
+    --issue "$ISSUE_NUM" \
+    --integration "$INTEGRATION_BRANCH" \
+    --test-cmd "$TEST_COMMAND" \
+    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
 
   # Remove 'working' label and close issue
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -815,7 +829,7 @@ echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${INTEGRATION_BRANCH}." \
     "${ISSUE_BODY:0:150}" \
     "All tests passing. Branch merged and deleted."
 fi
@@ -961,7 +975,7 @@ git push -u origin "feature/issue-${ISSUE_NUM}"
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
   gh pr create \
-    --base "$PARENT_BRANCH" \
+    --base "$INTEGRATION_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
     --title "Fix #${ISSUE_NUM}: Brief description" \
     --body "Closes #${ISSUE_NUM}
@@ -990,16 +1004,15 @@ if [ "$MERGE_MODE" = "pr" ]; then
     "${ISSUE_BODY:0:150}" \
     "Awaiting code review."
 else
-  # Auto-merge: switch back to parent branch and merge
-  git checkout "$PARENT_BRANCH"
-  git merge --no-ff "feature/issue-${ISSUE_NUM}"
-
-  # Push parent branch
-  git push
-
-  # Clean up feature branch (local and remote)
-  git branch -d "feature/issue-${ISSUE_NUM}"
-  git push origin --delete "feature/issue-${ISSUE_NUM}" 2>/dev/null || true
+  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
+  # integration branch, re-tests the combined tree, retries push on sibling races, and
+  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  "${SCRIPT_DIR}/merge-to-integration.sh" \
+    --feature "feature/issue-${ISSUE_NUM}" \
+    --issue "$ISSUE_NUM" \
+    --integration "$INTEGRATION_BRANCH" \
+    --test-cmd "$TEST_COMMAND" \
+    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
 
   # Remove 'working' label and close issue with detailed explanation
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -1028,7 +1041,7 @@ echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${PARENT_BRANCH}." \
+    "Resolved on feature/issue-${ISSUE_NUM}. Merged to ${INTEGRATION_BRANCH}." \
     "${ISSUE_BODY:0:150}" \
     "All tests passing. Branch merged and deleted."
 fi
@@ -1581,11 +1594,15 @@ For each **approved** enhancement issue (no `proposal` label), follow this workf
 **Step 1: Create Feature Branch**
 
 ```bash
-# Save parent branch before creating feature branch
+# Save parent branch (to return to on a race-abort) and base the enhancement branch on
+# the latest shared integration branch — not the worktree's current branch — so the work
+# starts from and merges back to the same shared branch instead of stranding on main-wt-N.
 PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || echo "⚠️  Could not fetch origin/${INTEGRATION_BRANCH} — proceeding with local state"
 
 ENHANCE_BRANCH="enhancement/issue-${ENHANCE_NUM}-auto"
-git checkout -b "$ENHANCE_BRANCH" 2>/dev/null || git checkout "$ENHANCE_BRANCH" 2>/dev/null || true
+git checkout -b "$ENHANCE_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null || git checkout "$ENHANCE_BRANCH" 2>/dev/null || true
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$ENHANCE_BRANCH" ]; then
   echo "❌ Could not switch to $ENHANCE_BRANCH (still on $CURRENT_BRANCH) — aborting"
@@ -1709,16 +1726,15 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # Push feature branch
   git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"
 
-  # Switch back to parent branch and merge
-  git checkout "$PARENT_BRANCH"
-  git merge --no-ff "enhancement/issue-${ENHANCE_NUM}-auto"
-
-  # Push parent branch
-  git push
-
-  # Clean up feature branch (local and remote)
-  git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
-  git push origin --delete "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || true
+  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
+  # integration branch, re-tests the combined tree, retries push on sibling races, and
+  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  "${SCRIPT_DIR}/merge-to-integration.sh" \
+    --feature "enhancement/issue-${ENHANCE_NUM}-auto" \
+    --issue "$ENHANCE_NUM" \
+    --integration "$INTEGRATION_BRANCH" \
+    --test-cmd "$TEST_COMMAND" \
+    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
 
   # Remove 'working' label and close enhancement with details
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true

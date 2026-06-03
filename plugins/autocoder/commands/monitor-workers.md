@@ -145,6 +145,15 @@ cmux send-key --workspace <ref> Enter
 tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
 ```
 
+**Codex workers:** send the shell wrapper instead of the Claude slash command.
+The wrapper runs the issue-start handshake before launching Codex:
+```bash
+cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
+cmux send-key --workspace <ref> Enter
+
+tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>" Enter
+```
+
 After dispatching, verify the worker started by reading its screen again after a few seconds.
 
 ### Step 5b: Run Review-Blocked When All Issues Are Blocked

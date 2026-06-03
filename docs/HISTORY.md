@@ -508,3 +508,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Codex lists laird-agents at /Users/Laird.Popkin/src/agents with autocoder available/installed and modernize available; validation commands confirmed JSON syntax.
 
+
+---
+
+## 2026-06-03 12:01:01 - Fix Codex worker dispatch handshake
+
+**What Changed**: Updated monitor-workers guidance so Codex worker dispatch uses scripts/codex-autocoder.sh fix N, which runs the issue-start handshake before launching Codex.
+
+**Why Changed**: A Codex worker could otherwise be dispatched with a Claude-only slash command and work from its main-wt-N branch without the feature/issue-N branch or Implementation Started marker peers use to validate locks.
+
+**Impact**: Manager-dispatched Codex workers now route through the wrapper that claims the issue, switches to feature/issue-N, and posts the visible start marker before implementation.
+

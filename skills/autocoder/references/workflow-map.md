@@ -28,6 +28,7 @@
 - Keep GitHub issue state as the source of truth.
 - Before editing files for issue `N`, run `plugins/autocoder/scripts/start-issue-work.sh N` from the shared agents repo or installed plugin path. This claims the issue, switches to `feature/issue-N`, and posts the `Implementation Started` marker that peer workers use to validate the lock.
 - If the issue-start helper fails, do not work that issue; select another claimable issue or report idle.
+- When an issue's work is committed and tests pass, land it on the shared integration branch (default `main`) with `plugins/autocoder/scripts/merge-to-integration.sh --feature feature/issue-N --issue N --integration main --test-cmd "<repo test command>"`. It is worktree-safe (never checks out `main`), re-runs tests on the combined tree, and pushes to `origin/main` with retry. **Never** merge into or push the per-worktree `main-wt-N` branch — that strands work off `main` and fragments the swarm's output.
 - Prefer existing repo scripts for automation-heavy steps.
 - Translate Claude slash commands into direct actions instead of preserving slash syntax.
 - Continuous loops should be implemented with shell/session control, not Claude hooks.
