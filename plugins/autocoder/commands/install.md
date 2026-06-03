@@ -26,10 +26,11 @@ This command installs all autocoder plugin components:
 ### 2. Parallel Agent Scripts (for multi-agent coordination)
 - **Files**: Symlinks in `~/.local/bin/`
   - `start-parallel` → `start-parallel-agents.sh`
+  - `add-worker` → `add-worker.sh`
   - `join-parallel` → `join-parallel-agents.sh`
   - `end-parallel` → `end-parallel-agents.sh`
   - `stop-parallel` → `stop-parallel-agents.sh`
-- **Purpose**: Terminal commands to launch, join, end, and stop parallel agent sessions
+- **Purpose**: Terminal commands to launch, add workers to, join, end, and stop parallel agent sessions
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
 
@@ -415,6 +416,7 @@ else
   echo "📝 Will create these symlinks in $INSTALL_DIR:"
   echo ""
   echo "  start-parallel -> $SCRIPT_DIR/start-parallel-agents.sh"
+  echo "  add-worker     -> $SCRIPT_DIR/add-worker.sh"
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
   echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
   echo "  stop-parallel  -> $SCRIPT_DIR/stop-parallel-agents.sh"
@@ -422,6 +424,7 @@ else
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
   echo "  start-parallel 3    # Launch 3 parallel agents"
+  echo "  add-worker          # Add one more worker to the running fleet"
   echo "  join-parallel       # Rejoin session"
   echo "  end-parallel        # End session and clean up worktrees"
   echo "  stop-parallel       # Stop sessions (no cleanup)"
@@ -480,12 +483,14 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
 
   # Create symlinks
   ln -sf "$SCRIPT_DIR/start-parallel-agents.sh" "$INSTALL_DIR/start-parallel"
+  ln -sf "$SCRIPT_DIR/add-worker.sh" "$INSTALL_DIR/add-worker"
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
   ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
   ln -sf "$SCRIPT_DIR/stop-parallel-agents.sh" "$INSTALL_DIR/stop-parallel"
 
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
+  echo "   $INSTALL_DIR/add-worker"
   echo "   $INSTALL_DIR/join-parallel"
   echo "   $INSTALL_DIR/end-parallel"
   echo "   $INSTALL_DIR/stop-parallel"
