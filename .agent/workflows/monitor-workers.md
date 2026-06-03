@@ -21,8 +21,9 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
 4. **Find unblocked issues** — List open issues without blocking labels
 5. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
-6. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
-7. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
+6. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
+7. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
+8. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
 
 ## Instructions
 
@@ -145,9 +146,43 @@ cmux send-key --workspace <ref> Enter
 tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
 ```
 
+**Codex workers:** send the shell wrapper instead of the Claude slash command.
+The wrapper runs the issue-start handshake before launching Codex:
+```bash
+cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
+cmux send-key --workspace <ref> Enter
+
+tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>" Enter
+```
+
 After dispatching, verify the worker started by reading its screen again after a few seconds.
 
-### Step 5b: Run Review-Blocked When All Issues Are Blocked
+### Step 5b: Add a Worker When the Queue Is Backing Up
+
+If the human asks you to add a worker, or if the unblocked issue queue is significantly larger than the number of active workers, run:
+
+```bash
+add-worker
+```
+
+Or with explicit options:
+
+```bash
+add-worker --agent claude   # or gemini, codex, droid
+add-worker --mux tmux       # or cmux
+```
+
+This creates a new worktree, adds a pane/workspace to the existing session, and focuses it so the new worker is immediately visible. The script is safe to call from within the manager session — it detects it's already inside tmux/cmux and skips re-attaching.
+
+**When to add a worker:**
+- Human explicitly asks ("add a worker", "scale up", "we need more workers")
+- Unblocked issues > active workers and queue isn't draining
+
+**When NOT to add a worker autonomously (require human confirmation):**
+- Queue is draining normally
+- Workers are catching up
+
+### Step 5c: Run Review-Blocked When All Issues Are Blocked
 
 If there are **no unblocked issues available** for workers (all open issues have blocking labels like needs-design, needs-clarification, too-complex, etc.) AND there are **blocked issues that need review**, automatically invoke `/autocoder:review-blocked` using the Skill tool.
 

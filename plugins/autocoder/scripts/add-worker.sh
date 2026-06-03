@@ -162,9 +162,13 @@ if [ "$MUX" = "tmux" ]; then
 
   echo "✅ Worker $WORKER_NUM added to tmux session '$SESSION_NAME' (pane $PANE_INDEX)"
   echo "   Worktree: $WORKER_DIR"
-  echo ""
-  echo "   Attaching to session — new worker is focused."
-  tmux attach-session -t "$SESSION_NAME"
+
+  # Only attach if not already inside a tmux session (e.g. called by the manager agent)
+  if [ -z "${TMUX:-}" ]; then
+    echo ""
+    echo "   Attaching to session — new worker is focused."
+    tmux attach-session -t "$SESSION_NAME"
+  fi
 
 elif [ "$MUX" = "cmux" ]; then
 
