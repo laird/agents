@@ -161,7 +161,7 @@ case "$AGENT" in
     PROBE_SCRIPT="$AGENTS_REPO_ROOT/scripts/probe-codex-goals.sh"
     if [ -f "$PROBE_SCRIPT" ] && bash "$PROBE_SCRIPT" 2>/dev/null; then
       echo "✅ Codex /goal available — using native goal loop"
-      WORKER_CMD="/goal Work the issue queue: pull the next available GitHub issue, fix it, open a PR, and repeat until the queue is empty or you are paused."
+      WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$AGENTS_REPO_ROOT/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, test, commit, push the current HEAD, close or PR according to repo rules, remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
       MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
     else
       echo "⚠️  Codex /goal not available — using shell loop fallback"

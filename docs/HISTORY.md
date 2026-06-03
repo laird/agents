@@ -497,3 +497,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Codex tv-ari-skills marketplace now points to /Users/Laird.Popkin/.codex/marketplaces/tv-ari-skills-url-1.0.2 with plugin version 1.0.2 enabled
 
+
+---
+
+## 2026-06-03 11:53:03 - Install Codex marketplace
+
+**What Changed**: Verified the repository is registered as the laird-agents Codex marketplace and updated the Codex marketplace manifest policy metadata.
+
+**Why Changed**: The user requested this checkout be installed as a plugin marketplace, and current Codex marketplace entries should include authentication policy metadata.
+
+**Impact**: Codex lists laird-agents at /Users/Laird.Popkin/src/agents with autocoder available/installed and modernize available; validation commands confirmed JSON syntax.
+

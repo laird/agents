@@ -28,8 +28,15 @@ if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_PATH" ]; do
+  SOURCE_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+  SOURCE_PATH="$(readlink "$SOURCE_PATH")"
+  [[ "$SOURCE_PATH" != /* ]] && SOURCE_PATH="$SOURCE_DIR/$SOURCE_PATH"
+done
+SCRIPT_DIR=$(cd "$(dirname "$SOURCE_PATH")" && pwd)
 AGENTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+START_ISSUE_WORK="$AGENTS_ROOT/plugins/autocoder/scripts/start-issue-work.sh"
 COMMAND="$1"
 shift
 
@@ -51,6 +58,10 @@ build_fix_prompt() {
     "Execution requirements:" \
     "- Respect the workflow order: triage -> bugs -> regression failures -> approved enhancements -> proposals." \
     "- Respect blocking labels: needs-approval, needs-design, needs-clarification, too-complex." \
+    "- Before editing files for any issue N, run: bash '$START_ISSUE_WORK' N" \
+    "- The issue-start helper is mandatory: it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock." \
+    "- If the helper exits nonzero, do not work that issue; choose another claimable issue or stop with IDLE_NO_WORK_AVAILABLE if none exists." \
+    "- If the wrapper already ran the helper for a targeted issue, verify you are on feature/issue-N and do not rerun it unless you are still on the same branch." \
     "- Use existing repo scripts where appropriate, especially plugins/autocoder/scripts/regression-test.sh and scripts/append-to-history.sh." \
     "- If you make code changes, run the most relevant tests you can without weakening repo standards." \
     "- If you make code changes, create a git commit with a concise message after tests pass." \
@@ -90,7 +101,8 @@ case "$COMMAND" in
   fix)
     ISSUE_NUMBER="${1:-}"
     if [ -n "$ISSUE_NUMBER" ]; then
-      USER_SCOPE="Work issue #$ISSUE_NUMBER specifically."
+      bash "$START_ISSUE_WORK" "$ISSUE_NUMBER"
+      USER_SCOPE="Work issue #$ISSUE_NUMBER specifically. The wrapper has already run the issue-start handshake; verify the current branch is feature/issue-$ISSUE_NUMBER before editing."
     else
       USER_SCOPE="Select the next highest-priority unblocked issue yourself."
     fi

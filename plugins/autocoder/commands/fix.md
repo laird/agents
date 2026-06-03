@@ -470,12 +470,27 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
+  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
+  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
+
   # Check if issue already has 'working' label (being worked on by another agent)
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
-    echo "⚠️  Issue #$SPECIFIED_ISSUE has 'working' label - another agent is working on it"
-    echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' to force release"
-    exit 1
+    TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
+    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
+    if [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+      echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
+      echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
+      exit 1
+    fi
+    echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
+  else
+    issue_claim "$ISSUE_NUM" 2>/dev/null || {
+      echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
+      exit 1
+    }
   fi
 
   # Extract priority from labels (default to P2 if no priority label)
@@ -488,11 +503,18 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     end
   ')
 
-  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
-
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
+
+  # Claim-then-verify: add the 'working' lock IMMEDIATELY. The specified-issue path
+  # previously never set this label (it only checked it above), so dispatched work
+  # (/autocoder:fix <N>) ran with no concurrency lock and could be double-claimed.
+  issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+  sleep 1
+  RACE_CHECK=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+  if [ "$RACE_CHECK" -gt 0 ]; then
+    echo "⚠️  Race: another agent already started issue #$ISSUE_NUM. Aborting."
+    exit 1
+  fi
 else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
@@ -560,13 +582,18 @@ else
       continue
     fi
 
-    # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-    issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
+    # Claim-then-verify: claim IMMEDIATELY, then check for race
+    issue_claim "$ISSUE_NUM" 2>/dev/null
+    claim_rc=$?
+    if [ "$claim_rc" -ne 0 ]; then
+      echo "⚠️  Lost claim race on issue #$ISSUE_NUM. Trying next issue..."
+      continue
+    fi
     sleep 1
 
     # Re-fetch the issue to verify we won the race
     # Check if another agent already posted a "work started" comment
-    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
 
     if [ "$RECENT_COMMENTS" -gt 0 ]; then
       echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
@@ -613,18 +640,32 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Pull latest changes from origin before branching
 git pull origin "$PARENT_BRANCH" 2>/dev/null || echo "⚠️  Could not pull from origin — proceeding with local state"
 
-# Create fix branch
-git checkout -b "feature/issue-${ISSUE_NUM}" 2>/dev/null || git checkout "feature/issue-${ISSUE_NUM}"
+# Create (or switch to) the fix branch, then VERIFY the switch took effect.
+# Never start work on the parent branch: a 'working' label with no matching
+# feature/issue-N branch looks like a stale/abandoned lock to peers and to
+# /monitor-workers, which then try to reclaim the issue out from under you.
+FIX_BRANCH="feature/issue-${ISSUE_NUM}"
+git checkout -b "$FIX_BRANCH" 2>/dev/null || git checkout "$FIX_BRANCH" 2>/dev/null || true
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" != "$FIX_BRANCH" ]; then
+  echo "❌ Could not switch to $FIX_BRANCH (still on $CURRENT_BRANCH) — likely a dirty"
+  echo "   working tree. Releasing the 'working' lock and aborting rather than"
+  echo "   committing to $CURRENT_BRANCH."
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+fi
 
 # 'working' label was already added during claim-then-verify above
 
-# Post comment that work started
+# Post the work-started comment. Together with the branch above, this is the durable
+# proof the lock is live — peers and /monitor-workers key off the branch + this comment
+# to tell an active lock apart from a stale one. Do not skip it for any issue type.
 issue_comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
 
 Starting automated fix for this issue.
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\`
-**Started**: $(date)
+**Implementation Started**: $(date)
 
 Fix in progress..." 2>/dev/null || true
 
@@ -638,6 +679,8 @@ mkdir -p /tmp/agents-ui
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
 echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"started\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 ```
+
+**⚠️ The claim sequence above (working label → `feature/issue-<N>` branch → work-started comment) is mandatory and runs FIRST for every issue — bug OR enhancement.** Do not begin triage analysis, brainstorming, or implementation until all three exist. Priority-labeled enhancements (P0–P3) are handled by this standard path, **not** by the "No Priority Issues Found → 5C" flow (that flow only applies when there are no priority issues left). If you ever notice you are editing files while still on the parent branch (`main`, `main-wt-N`, etc.), stop immediately and run the claim sequence — committing on the parent branch strands the `working` lock with no matching branch and makes peers treat it as stale.
 
 ## First-Run: Configure Merge Mode
 
@@ -1541,7 +1584,14 @@ For each **approved** enhancement issue (no `proposal` label), follow this workf
 # Save parent branch before creating feature branch
 PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
+ENHANCE_BRANCH="enhancement/issue-${ENHANCE_NUM}-auto"
+git checkout -b "$ENHANCE_BRANCH" 2>/dev/null || git checkout "$ENHANCE_BRANCH" 2>/dev/null || true
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" != "$ENHANCE_BRANCH" ]; then
+  echo "❌ Could not switch to $ENHANCE_BRANCH (still on $CURRENT_BRANCH) — aborting"
+  echo "   rather than implementing on the parent branch."
+  exit 1
+fi
 
 # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
 issue_update "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
@@ -1551,8 +1601,8 @@ sleep 1
 RACE_CHECK=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
 if [ "$RACE_CHECK" -gt 0 ]; then
   echo "⚠️  Race condition: another agent already claimed enhancement #$ENHANCE_NUM. Skipping."
-  git checkout "$PARENT_BRANCH"
-  # Continue to next iteration or exit
+  git checkout "$PARENT_BRANCH" 2>/dev/null || true
+  exit 0
 fi
 
 issue_comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**

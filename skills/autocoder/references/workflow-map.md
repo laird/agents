@@ -26,6 +26,8 @@
 ## Execution Notes
 
 - Keep GitHub issue state as the source of truth.
+- Before editing files for issue `N`, run `plugins/autocoder/scripts/start-issue-work.sh N` from the shared agents repo or installed plugin path. This claims the issue, switches to `feature/issue-N`, and posts the `Implementation Started` marker that peer workers use to validate the lock.
+- If the issue-start helper fails, do not work that issue; select another claimable issue or report idle.
 - Prefer existing repo scripts for automation-heavy steps.
 - Translate Claude slash commands into direct actions instead of preserving slash syntax.
 - Continuous loops should be implemented with shell/session control, not Claude hooks.
