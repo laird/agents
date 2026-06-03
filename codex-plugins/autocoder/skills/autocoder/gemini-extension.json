@@ -1,0 +1,6 @@
+{
+  "name": "autocoder",
+  "description": "Use this skill for autonomous GitHub issue resolution, issue triage, regression-test failure handling, proposal review, blocked-issue review, worker monitoring, and continuous fix loops in repositories that use the autocoder workflow.",
+  "version": "3.8.0",
+  "contextFileName": "GEMINI.md"
+}

@@ -23,7 +23,7 @@
         "review",
         "codex"
     ],
-    "skills": "../../../skills/autocoder",
+    "skills": "./skills/",
     "interface": {
         "displayName": "Autocoder",
         "shortDescription": "Autonomous GitHub issue workflows for Codex",

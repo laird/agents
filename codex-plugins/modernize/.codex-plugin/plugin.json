@@ -21,7 +21,7 @@
         "quality-gates",
         "codex"
     ],
-    "skills": "../../../skills/modernize",
+    "skills": "./skills/",
     "interface": {
         "displayName": "Modernize",
         "shortDescription": "Modernization workflows for Codex",
