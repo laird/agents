@@ -29,7 +29,7 @@ Autonomous GitHub issue resolution system with infinite loop support.
 
 The `/install` command will:
 1. Install stop hook for `/fix-loop` (project-local)
-2. Install `start-parallel` and `join-parallel` scripts (global)
+2. Install `start-parallel`, `add-worker`, `join-parallel`, `end-parallel`, and `stop-parallel` scripts (global)
 3. Optionally create shell aliases: `start` and `join`
 
 Each step is explained clearly and requires your approval before making changes.
@@ -217,15 +217,16 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/fix [number]` | Fix a specific issue or highest priority GitHub issue |
 | `/fix-loop` | Start infinite loop that runs `/fix` continuously |
 | `/stop-loop` | Stop the continuous fix loop |
-| `/monitor-workers` | Monitor worker agents, dispatch idle workers, detect stale locks, deploy when done |
+| `/full-regression-test` | Run complete test suite and create issues for failures; logs results to history |
+| `/monitor-workers` | Monitor worker agents, dispatch idle workers, scale fleet with `add-worker`, detect stale locks, deploy when done |
 | `/monitor-loop` | Start continuous monitor-workers loop (default manager session startup command) |
 | `/review-blocked` | Interactive review of blocked issues (auto-triggered by monitor-workers when all issues blocked) |
+| `/retro` | Analyze history log + git log + issue tracker; write `IMPROVEMENTS.md` with 3–5 workflow recommendations |
 | `/list-proposals` | List pending enhancement proposals |
 | `/approve-proposal <number>` | Approve a proposal for implementation |
 | `/list-needs-design` | List issues requiring design/architecture work |
 | `/list-needs-feedback` | List issues requiring human feedback |
 | `/brainstorm-issue [number]` | Brainstorm design for an issue |
-| `/full-regression-test` | Run complete test suite and create issues for failures |
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/install` | Install stop hook, parallel agent scripts, shell aliases, and check dependencies |
 | `/autocoder-help` | Show help and workflow overview |
@@ -436,9 +437,19 @@ The manager session is your control center. Use these commands:
 | Command | Purpose |
 |---------|---------|
 | `/review-blocked` | Review issues that workers can't handle autonomously (needs-design, too-complex, proposal, etc.). Approve, reject, or skip each one. |
-| `/monitor-workers` | Check worker status, detect stale locks, dispatch work to idle workers via cmux/tmux, deploy when all work completes. |
+| `/monitor-workers` | Check worker status, detect stale locks, dispatch work to idle workers via cmux/tmux, scale fleet, deploy when all work completes. |
 | `/list-proposals` | Review AI-generated enhancement proposals. |
 | `/approve-proposal N` | Approve a proposal so workers can implement it. |
+| `/retro` | After a batch of work, analyze history and produce `IMPROVEMENTS.md` with recommendations. |
+
+You can also tell the manager agent directly to scale the fleet:
+
+```
+"add a worker"        → manager runs: add-worker
+"we need more workers" → manager runs: add-worker --agent claude
+```
+
+`add-worker` creates a new git worktree, adds a pane/workspace to the existing session, and focuses it — all without leaving the manager session.
 
 ### Worker Coordination
 
@@ -572,23 +583,25 @@ These are the three key commands for managing the parallel agent lifecycle:
 | Command | Purpose | Usage |
 |---------|---------|-------|
 | `start-parallel-agents.sh` | **Start** parallel agent system | `[num_agents] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
+| `add-worker.sh` | **Add** one worker to a running fleet | `[--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
 | `join-parallel-agents.sh` | **Join** (rejoin) existing session | `[--mux tmux\|cmux] [session_name]` |
 | `end-parallel-agents.sh` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
 | `stop-parallel-agents.sh` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux]` |
 
-**Start** creates worktrees, launches agents, and opens the manager session. **Join** reconnects to an existing session. **End** tears down the session and optionally removes worktrees. **Stop** kills sessions without worktree cleanup.
+**Start** creates worktrees, launches agents, and opens the manager session. **Add-worker** joins one more worker to an already-running fleet without restarting it. **Join** reconnects to an existing session. **End** tears down the session and optionally removes worktrees. **Stop** kills sessions without worktree cleanup.
 
 **Shell aliases** (installed by `/install`):
 
 | Alias | Full Command | Description |
 |-------|-------------|-------------|
 | `startt N` | `start-parallel-agents.sh --mux tmux N` | Start N agents in tmux |
-| `joint` | `join-parallel-agents.sh --mux tmux` | Rejoin tmux session |
-| `stopt` | `stop-parallel-agents.sh --mux tmux` | Kill tmux session |
-| `endt` | `end-parallel-agents.sh` | End tmux session + cleanup |
 | `startc N` | `start-parallel-agents.sh --mux cmux N` | Start N agents in cmux |
+| `add-worker` | `add-worker.sh` | Add one worker to the running fleet |
+| `joint` | `join-parallel-agents.sh --mux tmux` | Rejoin tmux session |
 | `joinc` | `join-parallel-agents.sh --mux cmux` | List/select cmux workspaces |
+| `stopt` | `stop-parallel-agents.sh --mux tmux` | Kill tmux session |
 | `stopc` | `stop-parallel-agents.sh --mux cmux` | Close cmux agent workspaces |
+| `endt` | `end-parallel-agents.sh` | End tmux session + cleanup |
 | `endc` | `end-parallel-agents.sh` | End cmux session + cleanup |
 
 **Examples:**
@@ -680,9 +693,11 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `start-parallel-agents.sh` | Launch multi-agent session (tmux/cmux) | `start-parallel-agents.sh [num_agents] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
+| `add-worker.sh` | Add one worker to a running fleet | `add-worker.sh [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
 | `join-parallel-agents.sh` | Rejoin existing session (tmux/cmux) | `join-parallel-agents.sh [--mux tmux\|cmux] [session_name]` |
 | `end-parallel-agents.sh` | End session and clean up worktrees | `end-parallel-agents.sh [session_name] [--keep-worktrees]` |
 | `stop-parallel-agents.sh` | Stop all agent sessions (tmux/cmux) | `stop-parallel-agents.sh [--mux tmux\|cmux]` |
+| `append-to-history.sh` | Log an event to `HISTORY.md` or GitHub history-log issue | `append-to-history.sh [--backend file\|github\|auto] [--history-file PATH] TITLE WHAT WHY IMPACT` |
 
 ### Blocked Issue Management
 
@@ -720,6 +735,63 @@ bash ~/.claude/plugins/autocoder/scripts/add-blocking-label.sh 456 "needs-approv
 ```
 
 These scripts are called by the commands but can also be used independently for custom workflows or CI/CD integration.
+
+## History Logging and Retrospective
+
+Autocoder agents record what they do so you can review their work over time and improve the workflow.
+
+### What Gets Logged
+
+Every time `/fix` resolves an issue, it appends a structured entry to the history log:
+
+| Event | Entry |
+|-------|-------|
+| Issue fixed, auto-merged | `Fix #N: title` + branch + test result |
+| Issue fixed, PR created | `PR #N: title` + awaiting review |
+| Issue blocked | `Blocked #N: title` + label + reason |
+| Regression test run | Pass/fail counts, new issues created |
+
+### Where History Lives
+
+**File backend** (`ISSUE_SOURCE=file`): `HISTORY.md` in your project root. In parallel-agent setups, all workers resolve to the main worktree's `HISTORY.md` automatically — no merge step needed.
+
+**GitHub backend** (`ISSUE_SOURCE=github`): An issue labeled `history-log` is created on first use; each event becomes a comment. The issue is created automatically.
+
+### `/retro` — Analyze and Improve
+
+After running a batch of fixes, use `/retro` to produce evidence-backed improvement recommendations:
+
+```bash
+/retro                        # analyze last 12 months
+/retro --since 2026-01-01     # scope to a date range
+```
+
+The command reads the history log, git log (reverts, corrections, multiple fix attempts), and issue tracker (blocking-label breakdown, proposal rates), then writes `IMPROVEMENTS.md` to your project root with 3–5 specific recommendations for improving the autocoder workflow.
+
+**Recommended cadence**: run after every 20–30 issues. Review `IMPROVEMENTS.md`, apply approved changes to `plugins/autocoder/commands/` manually, then run `/retro` again to measure improvement.
+
+### `append-to-history.sh`
+
+The shared logging script (also used by the modernize plugin):
+
+```bash
+# File backend
+append-to-history.sh --backend file --history-file HISTORY.md \
+  "Fix #42: Auth timeout" \
+  "Bumped token TTL in config.ts" \
+  "Users logged out after 5 min" \
+  "All tests passing. Merged to main."
+
+# Auto-detect backend from $ISSUE_SOURCE
+append-to-history.sh --backend auto --history-file HISTORY.md \
+  "Blocked #67: Dashboard rewrite" \
+  "Added label: needs-design" \
+  "Multiple valid approaches, unclear which to use" \
+  "Requires human review before proceeding."
+
+# No flags = writes to docs/HISTORY.md (modernize backward compat)
+append-to-history.sh "Title" "What" "Why" "Impact"
+```
 
 ## Infinite Loop Setup
 

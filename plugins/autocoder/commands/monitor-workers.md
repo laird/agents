@@ -19,11 +19,12 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 1. **Check worktree status** — For each worker worktree, report branch, last commit time, and whether actively working
 2. **Read worker screens** — Use cmux/tmux to check if agents are idle or active
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
-4. **Find unblocked issues** — List open issues without blocking labels
-5. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
-6. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
-7. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
-8. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
+4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
+5. **Find unblocked issues** — List open issues without blocking labels
+6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
+7. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
+8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
+9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
 
 ## Instructions
 
@@ -123,6 +124,54 @@ If approved:
 ```bash
 issue_release <number>
 ```
+
+### Step 4b: Restart Unhealthy Workers (High Memory + Stalled)
+
+A long-running worker can wedge — most commonly it exhausts its context window
+and stops making progress while still holding a large resident memory footprint.
+The manager detects this and restarts the worker **in place**: it kills the
+wedged agent process and relaunches a fresh agent in the **same worktree** on the
+**same branch**, so the worker resumes its assigned issue via the existing
+"working" label. Committed progress is preserved; only uncommitted in-memory
+state (already lost on a hung process) is discarded.
+
+Run the health report (read-only). It measures each worker's resident memory by
+matching processes whose working directory is the worktree — that cwd is the
+shared key across both tmux and cmux, so it works regardless of multiplexer:
+
+```bash
+worker-health
+# or, to tune thresholds:
+worker-health --mem-threshold-mb 6000 --stall-min 60
+```
+
+A worker is flagged **UNHEALTHY** only when **BOTH** are true (conservative — a
+busy-but-large worker or an idle-but-lean worker is left alone):
+- **Stalled**: no commits for `--stall-min` minutes (default 60), and its screen
+  shows no active work (reuse the Step 3 screen read to confirm)
+- **High memory**: agent RSS at/above `--mem-threshold-mb` (default 6000 MB)
+
+When memory cannot be measured (RSS shown as `?`), the worker is **never**
+auto-restarted — surface it for manual review instead.
+
+For each worker the report flags `UNHEALTHY`, confirm it is genuinely wedged
+(re-read its screen), then restart it in place:
+
+```bash
+restart-worker --worktree <worktree_path>
+# with explicit options:
+restart-worker --worktree <worktree_path> --mux cmux --agent codex
+```
+
+`restart-worker` finds the worker's pane/workspace by its worktree path,
+kills the hung process (`tmux respawn-pane -k` / `cmux close-workspace`), and
+relaunches the agent's fix-loop in the same worktree. After restarting, re-read
+the worker's screen after a few seconds to confirm it came back up.
+
+**When to restart automatically vs. ask:** during `--watch`, restart `UNHEALTHY`
+workers automatically (they are both wedged and bloated, so there is no progress
+to lose). For one-shot runs, prefer confirming with the human first via
+AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
 
 ### Step 5: Dispatch Work to Idle Workers
 
@@ -301,8 +350,11 @@ for i in $(seq 1 60); do
 
   echo "[$(date +%H:%M:%S)] working=$WORKING unblocked=$UNBLOCKED integration=$INT_HEAD"
 
-  # Check for stale working labels and idle workers on each iteration
-  # (repeat Steps 3-5)
+  # Check for stale working labels, restart unhealthy workers, and dispatch to
+  # idle workers on each iteration (repeat Steps 3, 4, 4b, 5). Auto-restart any
+  # UNHEALTHY worker (stalled AND high memory) via:
+  #   worker-health
+  #   restart-worker --worktree <path>   # for each flagged worktree
 
   # All done? Deploy.
   if [ "$WORKING" -eq 0 ] && [ "$UNBLOCKED" -eq 0 ]; then
@@ -316,6 +368,7 @@ done
 
 - **Use cmux/tmux to dispatch** — Send commands directly to idle workers, don't just report
 - **Detect stale locks** — Ask before removing "working" labels that appear abandoned
+- **Restart wedged workers in place** — A worker that is stalled AND holding high memory has run out of headroom; kill and relaunch it on the same worktree/issue rather than letting it hang
 - **Priority order** — Assign highest priority issues first (P0 > P1 > P2 > P3)
 - **Don't double-assign** — Check "working" label before dispatching
 - **Deploy only when ready** — All workers idle + no unblocked issues + new commits

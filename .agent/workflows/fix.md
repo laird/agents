@@ -261,11 +261,21 @@ Task("coder", "Update package.json to fix dependency conflict...", model="sonnet
 Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
 ```
 
-## Context Management (CRITICAL)
+## Context Management (MANDATORY — NON-NEGOTIABLE)
 
-**Before starting work on ANY new issue, run `/compact` to compress conversation history.** This prevents context overflow when working through multiple issues in a loop.
+> ⛔ **STOP. Before you touch ANY new issue, you MUST compact your context. Every issue. Every time. No exceptions.**
+>
+> - **Claude Code:** run `/compact`.
+> - **Codex / Gemini / other sessions:** clear or compact the session context using your session controls (the equivalent of `/compact`).
+>
+> This is not optional and not a suggestion. A long-running fix-loop **WILL** exhaust the context window and crash the agent mid-issue if you skip this. Compacting between issues is the single most important thing keeping the loop alive — treat skipping it as a defect.
 
-Each issue should start with a fresh, compacted context. Never carry over detailed investigation notes from a previous issue - the compact summary is sufficient.
+**Rules — follow exactly:**
+
+1. **Compact BEFORE fetching or starting every new issue.** Every iteration, without exception.
+2. **Each issue starts from a fresh, compacted context.**
+3. **NEVER carry over detailed investigation notes** from a previous issue — the compacted summary is sufficient.
+4. **If you ever notice you've started a new issue without compacting, compact immediately** before doing anything else.
 
 ## Instructions
 
@@ -1791,9 +1801,11 @@ issue_update "$ENHANCE_NUM" --add-label "needs-review"
 
 **THIS WORKFLOW RUNS FOREVER UNTIL MANUALLY STOPPED.**
 
-### Context Compaction (CRITICAL)
+### Context Compaction (MANDATORY — DO THIS EVERY ITERATION)
 
-**Run `/compact` BEFORE starting each new issue.** This compresses conversation history and prevents context overflow when working through multiple issues.
+> ⛔ **Run `/compact` (Claude Code) — or clear/compact the session context (Codex / Gemini / other) — BEFORE starting each new issue. Every iteration. No exceptions.**
+>
+> The loop runs forever. Without compaction between issues the context window fills and the agent dies mid-fix. Compaction is what makes "runs forever" actually possible. Skipping it is the #1 cause of a fix-loop crashing partway through an issue.
 
 After completing ANY of these actions, you MUST immediately continue:
 

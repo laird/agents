@@ -18,7 +18,10 @@
 - Help and command inventory: `plugins/autocoder/commands/autocoder-help.md`
 - Automation scripts:
   - `plugins/autocoder/scripts/regression-test.sh`
-  - `plugins/autocoder/scripts/start-parallel-agents.sh`
+  - `plugins/autocoder/scripts/start-parallel-agents.sh` (start a swarm; for cmux+Codex: `start-parallel-agents.sh N --mux cmux --agent codex`)
+  - `plugins/autocoder/scripts/add-worker.sh` (add one worker to a running swarm)
+  - `plugins/autocoder/scripts/worker-health.sh` (report worker RSS + stall; flags UNHEALTHY = stalled AND high memory)
+  - `plugins/autocoder/scripts/restart-worker.sh` (restart a wedged worker in place on the same worktree/issue)
   - `plugins/autocoder/scripts/fetch-blocked-issues.sh`
   - `plugins/autocoder/scripts/approve-blocked-issue.sh`
   - `plugins/autocoder/scripts/reject-blocked-issue.sh`
@@ -29,4 +32,5 @@
 - Prefer existing repo scripts for automation-heavy steps.
 - Translate Claude slash commands into direct actions instead of preserving slash syntax.
 - Continuous loops should be implemented with shell/session control, not Claude hooks.
+- When acting as the manager of a swarm, periodically run `worker-health.sh`; for any worker it reports as UNHEALTHY (stalled AND high memory), run `restart-worker.sh --worktree <path> --agent codex` to recover it in place.
 - Do not depend on `agents/`; that tree is reserved for Antigravity / Gemini.

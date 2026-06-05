@@ -63,31 +63,9 @@ if [ -z "$AGENT" ]; then
 fi
 
 # ── Agent launch config ───────────────────────────────────────────────────────
-case "$AGENT" in
-  claude)
-    AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-    WORKER_CMD="/autocoder:fix-loop"
-    ;;
-  gemini)
-    AGENT_LAUNCH_CMD="gemini --sandbox=false"
-    WORKER_CMD="/fix-loop"
-    ;;
-  codex)
-    AGENT_LAUNCH_CMD="codex"
-    PROBE_SCRIPT="$AGENTS_REPO_ROOT/scripts/probe-codex-goals.sh"
-    if [ -f "$PROBE_SCRIPT" ] && bash "$PROBE_SCRIPT" 2>/dev/null; then
-      WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$AGENTS_REPO_ROOT/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, test, commit, push the current HEAD, close or PR according to repo rules, remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
-    else
-      WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
-    fi
-    ;;
-  droid)
-    AGENT_LAUNCH_CMD=""
-    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-fix-loop.sh'"
-    ;;
-  *)
-    echo "❌ Unknown agent: $AGENT" >&2; exit 1 ;;
-esac
+# shellcheck source=worker-launch-lib.sh
+source "$SCRIPT_DIR/worker-launch-lib.sh"
+resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
 
 PROJECT_ROOT=$(pwd)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
