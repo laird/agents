@@ -27,10 +27,11 @@ This command installs all autocoder plugin components:
 - **Files**: Symlinks in `~/.local/bin/`
   - `start-parallel` → `start-parallel-agents.sh`
   - `add-worker` → `add-worker.sh`
+  - `remove-worker` → `remove-worker.sh`
   - `join-parallel` → `join-parallel-agents.sh`
   - `end-parallel` → `end-parallel-agents.sh`
   - `stop-parallel` → `stop-parallel-agents.sh`
-- **Purpose**: Terminal commands to launch, add workers to, join, end, and stop parallel agent sessions
+- **Purpose**: Terminal commands to launch, add/start/remove workers, join, end, and stop parallel agent sessions
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
 
@@ -409,7 +410,7 @@ echo "🔍 Scripts directory: $SCRIPT_DIR"
 echo ""
 
 # Check if already installed
-if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ]; then
+if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/add-worker" ] && [ -f "$INSTALL_DIR/remove-worker" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ]; then
   echo "✅ Parallel agent scripts already installed"
   INSTALL_SCRIPTS=false
 else
@@ -417,6 +418,7 @@ else
   echo ""
   echo "  start-parallel -> $SCRIPT_DIR/start-parallel-agents.sh"
   echo "  add-worker     -> $SCRIPT_DIR/add-worker.sh"
+  echo "  remove-worker  -> $SCRIPT_DIR/remove-worker.sh"
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
   echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
   echo "  stop-parallel  -> $SCRIPT_DIR/stop-parallel-agents.sh"
@@ -424,7 +426,10 @@ else
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
   echo "  start-parallel 3    # Launch 3 parallel agents"
-  echo "  add-worker          # Add one more worker to the running fleet"
+  echo "  start-parallel 5 --agent codex --issue-source github --paused"
+  echo "  add-worker          # Start one idle worker or add/start one worker"
+  echo "  add-worker 2        # Start or add/start two workers"
+  echo "  remove-worker 2     # Stop worker 2"
   echo "  join-parallel       # Rejoin session"
   echo "  end-parallel        # End session and clean up worktrees"
   echo "  stop-parallel       # Stop sessions (no cleanup)"
@@ -470,7 +475,7 @@ Use AskUserQuestion:
 Question: "Install parallel agent scripts?"
 Header: "Scripts"
 Options:
-  - "Yes, install scripts" - "Global terminal commands: start-parallel, join-parallel, end-parallel"
+  - "Yes, install scripts" - "Global terminal commands: start-parallel, add-worker, remove-worker, join-parallel, end-parallel"
   - "No, skip this step" - "You can install later with /install"
 ```
 
@@ -484,6 +489,7 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   # Create symlinks
   ln -sf "$SCRIPT_DIR/start-parallel-agents.sh" "$INSTALL_DIR/start-parallel"
   ln -sf "$SCRIPT_DIR/add-worker.sh" "$INSTALL_DIR/add-worker"
+  ln -sf "$SCRIPT_DIR/remove-worker.sh" "$INSTALL_DIR/remove-worker"
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
   ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
   ln -sf "$SCRIPT_DIR/stop-parallel-agents.sh" "$INSTALL_DIR/stop-parallel"
@@ -491,6 +497,7 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
   echo "   $INSTALL_DIR/add-worker"
+  echo "   $INSTALL_DIR/remove-worker"
   echo "   $INSTALL_DIR/join-parallel"
   echo "   $INSTALL_DIR/end-parallel"
   echo "   $INSTALL_DIR/stop-parallel"
@@ -596,6 +603,8 @@ fi
 if [ "$INSTALL_SCRIPTS" = true ] && [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "  ✅ Parallel agent scripts in ~/.local/bin/"
   echo "     → start-parallel: Launch multi-agent system"
+  echo "     → add-worker: Start idle workers or add/start workers"
+  echo "     → remove-worker: Stop selected workers"
   echo "     → join-parallel: Rejoin existing session"
   echo "     → end-parallel: End session and clean up worktrees"
   echo "     → stop-parallel: Stop sessions (no cleanup)"
@@ -632,30 +641,13 @@ echo ""
 if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "2. From terminal (after restarting shell):"
   echo "   cd ~/src/myproject"
-  if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
-    if [ "$HAS_CMUX" = true ]; then
-      echo "   startc 3     # Launch 3 agents in cmux"
-      echo "   joinc        # Rejoin cmux session"
-      echo "   endc         # End session + cleanup"
-    fi
-    if [ "$HAS_CODEX" = true ] && [ "$HAS_CMUX" = true ]; then
-      echo "   startcc 3    # Launch 1 manager + 3 Codex workers in cmux"
-      echo "   joincc       # Rejoin/list Codex cmux workspaces"
-    fi
-    if [ "$HAS_TMUX" = true ]; then
-      echo "   startt 3     # Launch 3 agents in tmux"
-      echo "   joint        # Rejoin tmux session"
-      echo "   endt         # End session + cleanup"
-    fi
-    if [ "$HAS_CODEX" = true ] && [ "$HAS_TMUX" = true ]; then
-      echo "   startct 3    # Launch 1 manager + 3 Codex workers in tmux"
-      echo "   joinct       # Rejoin Codex tmux session"
-    fi
-  else
-    echo "   start-parallel 3    # Launch 3 parallel agents"
-    echo "   join-parallel       # Rejoin session"
-    echo "   end-parallel        # End session + cleanup"
-  fi
+  echo "   start-parallel 3 --mux tmux --agent claude"
+  echo "   start-parallel 5 --mux tmux --agent codex --issue-source github --paused"
+  echo "   add-worker --agent codex"
+  echo "   add-worker 2 --agent codex"
+  echo "   remove-worker 2 --agent codex"
+  echo "   join-parallel       # Rejoin session"
+  echo "   end-parallel        # End session + cleanup"
   echo ""
 fi
 echo "💡 Tip: Run /install again anytime to install skipped components"
@@ -671,7 +663,7 @@ echo ""
    - Merged with existing settings if file exists
    - Creates new file if doesn't exist
 
-2. **`~/.local/bin/start-parallel`** (symlink, global)
+2. **`~/.local/bin/start-parallel`**, **`~/.local/bin/add-worker`**, **`~/.local/bin/remove-worker`** (symlinks, global)
    - Only if scripts approved
    - Points to plugin script, stays updated with plugin
 
@@ -705,6 +697,8 @@ rm .claude/settings.json
 
 # Remove scripts
 rm ~/.local/bin/start-parallel
+rm ~/.local/bin/add-worker
+rm ~/.local/bin/remove-worker
 rm ~/.local/bin/join-parallel
 
 # Remove PATH (edit manually)

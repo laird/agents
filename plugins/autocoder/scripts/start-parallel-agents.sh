@@ -7,6 +7,9 @@
 # Options:
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --issue-source file|github  Issue backend for this swarm run
+#   --issue-dir PATH       File issue directory when --issue-source file
+#   --paused, --no-start   Create the swarm but do not start worker loops
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
@@ -14,6 +17,7 @@
 #   start-parallel-agents.sh 4 --mux cmux --agent gemini
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused
 #   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
@@ -28,11 +32,23 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# shellcheck source=worker-launch-lib.sh
+source "$SCRIPT_DIR/worker-launch-lib.sh"
+# shellcheck source=issue-source-lib.sh
+source "$SCRIPT_DIR/issue-source-lib.sh"
+# shellcheck source=swarm-manifest-lib.sh
+source "$SCRIPT_DIR/swarm-manifest-lib.sh"
+# shellcheck source=mux-send-lib.sh
+source "$SCRIPT_DIR/mux-send-lib.sh"
+
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
 MUX=""
 AGENT=""
+PAUSED=false
+CLI_ISSUE_SOURCE=""
+CLI_ISSUE_DIR=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +65,18 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
+    --paused|--no-start)
+      PAUSED=true
+      shift
+      ;;
+    --issue-source)
+      CLI_ISSUE_SOURCE="$2"
+      shift 2
+      ;;
+    --issue-dir)
+      CLI_ISSUE_DIR="$2"
+      shift 2
+      ;;
     [0-9]*)
       NUM_AGENTS="$1"
       shift
@@ -59,6 +87,9 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --issue-source file|github  Issue backend for this swarm run"
+      echo "  --issue-dir PATH       File issue directory when --issue-source file"
+      echo "  --paused, --no-start   Create swarm but do not start worker or manager loops"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
@@ -66,6 +97,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"
       exit 0
       ;;
     *)
@@ -130,7 +162,7 @@ if [ -z "$AGENT" ]; then
   fi
 fi
 
-# Validate agent choice and set launch command
+# Validate agent choice and set launch/loop commands
 case "$AGENT" in
   claude)
     if ! command -v claude &> /dev/null; then
@@ -138,9 +170,6 @@ case "$AGENT" in
       echo "   Install Claude Code: https://claude.ai/download" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-    WORKER_CMD="/autocoder:fix-loop"
-    MANAGER_CMD="/autocoder:monitor-loop"
     ;;
   gemini)
     if ! command -v gemini &> /dev/null; then
@@ -148,25 +177,11 @@ case "$AGENT" in
       echo "   Install Gemini CLI: https://github.com/google-gemini/gemini-cli" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD="gemini --sandbox=false"
-    WORKER_CMD="/fix-loop"
-    MANAGER_CMD="/monitor-loop"
     ;;
   codex)
     if ! command -v codex &> /dev/null; then
       echo "❌ Error: codex command is not installed" >&2
       exit 1
-    fi
-    AGENT_LAUNCH_CMD="codex"
-    PROBE_SCRIPT="$AGENTS_REPO_ROOT/scripts/probe-codex-goals.sh"
-    if [ -f "$PROBE_SCRIPT" ] && bash "$PROBE_SCRIPT" 2>/dev/null; then
-      echo "✅ Codex /goal available — using native goal loop"
-      WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$AGENTS_REPO_ROOT/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, test, commit, push the current HEAD, close or PR according to repo rules, remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
-      MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
-    else
-      echo "⚠️  Codex /goal not available — using shell loop fallback"
-      WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-fix-loop.sh'"
-      MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/codex-manage-workers-loop.sh'"
     fi
     ;;
   droid)
@@ -175,15 +190,22 @@ case "$AGENT" in
       echo "   Install Droid: https://docs.factory.ai/" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD=""
-    WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-fix-loop.sh'"
-    MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-manage-workers-loop.sh'"
     ;;
   *)
     echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
     exit 1
     ;;
 esac
+
+resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
+if [ "$AGENT" = "codex" ]; then
+  if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    echo "✅ Codex /goal available — using native goal loop"
+  else
+    echo "⚠️  Codex /goal not available — using shell loop fallback"
+  fi
+fi
+resolve_manager_readiness_mode "$AGENT"
 
 # Validate we're in a git repo (if using worktrees)
 if [ "$USE_WORKTREES" = true ]; then
@@ -200,6 +222,8 @@ PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
+resolve_effective_issue_source "$CLI_ISSUE_SOURCE" "$CLI_ISSUE_DIR" "$(resolve_main_worktree)" || exit 1
+
 # Generate shared task list ID for coordination
 TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
 
@@ -209,8 +233,15 @@ echo "   Main path: $PROJECT_ROOT"
 echo "   Num agents: $NUM_AGENTS"
 echo "   Multiplexer: $MUX"
 echo "   Agent framework: $AGENT"
+echo "   Issue source: $ISSUE_SOURCE"
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  echo "   Issue dir: $ISSUE_DIR_PATH"
+fi
 echo "   Task list ID: $TASK_LIST_ID"
 echo "   Branch: $CURRENT_BRANCH"
+if [ "$PAUSED" = true ]; then
+  echo "   Mode: paused (workers will not pull issues yet)"
+fi
 echo ""
 
 # Create worktrees if needed
@@ -264,6 +295,49 @@ else
   echo ""
 fi
 
+READY_REL="$SWARM_STATE_DIR/${SESSION_NAME}.ready.txt"
+READY_FILE="$PROJECT_ROOT/$READY_REL"
+MANIFEST_PATH=$(manifest_path_for_session "$PROJECT_ROOT" "$SESSION_NAME")
+
+write_ready_file() {
+  mkdir -p "$(dirname "$READY_FILE")"
+  cat > "$READY_FILE" <<EOF
+The autocoder swarm is ready and paused.
+
+Workers have been configured, but they are not pulling issues yet.
+The manager agent was not launched because paused mode keeps manager
+instructions visible without submitting a manager prompt.
+
+Issue source: $ISSUE_SOURCE
+Session: $SESSION_NAME
+Readiness file: $READY_REL
+
+From this shell you can start workers:
+- add-worker
+- add-worker 2
+
+To review issues or run manager slash commands, launch the manager agent
+manually in this pane, then use:
+- /list-issues
+- /review-blocked
+- /monitor-loop
+EOF
+}
+
+send_issue_env_tmux() {
+  local target="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_tmux_command "$target" "$line"
+  done < <(issue_env_exports)
+}
+
+send_issue_env_cmux() {
+  local workspace="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_cmux_command "$workspace" "$line"
+  done < <(issue_env_exports)
+}
+
 # ============================================================================
 # TMUX MODE
 # ============================================================================
@@ -280,35 +354,49 @@ if [ "$MUX" = "tmux" ]; then
   # Create tmux session with first window (parallel agents)
   echo "🖥️  Creating tmux session: $SESSION_NAME"
   tmux new-session -d -s "$SESSION_NAME" -n "agents"
+  WORKER_TARGETS=()
+  WORKER_JSONS=()
 
   # First pane (leftmost) - worker 1 in wt-1
   echo "   Setting up worker agent 1..."
+  PANE_ID=$(tmux display-message -p -t "$SESSION_NAME:0.0" '#{pane_id}')
+  WORKER_TARGETS+=("$PANE_ID")
   if [ "$USE_WORKTREES" = true ]; then
-    tmux send-keys -t "$SESSION_NAME:0.0" "cd '${WORKTREE_PATHS[0]}'" C-m
+    send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'"
+    WORKER_DIR="${WORKTREE_PATHS[0]}"
   else
-    tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
+    send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+    WORKER_DIR="$PROJECT_ROOT"
   fi
+  send_issue_env_tmux "$PANE_ID"
 
   # Set environment variables for Claude Code coordination
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
-    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
+    send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+    send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
   fi
+  WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
 
   # Create panes for remaining workers
   for i in $(seq 2 $NUM_AGENTS); do
     echo "   Setting up worker agent $i..."
-    tmux split-window -h -t "$SESSION_NAME:0"
+    PANE_ID=$(tmux split-window -h -t "$SESSION_NAME:0" -P -F '#{pane_id}')
+    WORKER_TARGETS+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '${WORKTREE_PATHS[$((i-1))]}'" C-m
+      send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[$((i-1))]}'"
+      WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
     else
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$PROJECT_ROOT'" C-m
+      send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+      WORKER_DIR="$PROJECT_ROOT"
     fi
+    send_issue_env_tmux "$PANE_ID"
 
     if [ "$AGENT" = "claude" ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+      send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
     fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
   done
 
   # Balance the panes to make them equal width
@@ -320,9 +408,11 @@ if [ "$MUX" = "tmux" ]; then
 
   for i in $(seq 0 $((NUM_AGENTS - 1))); do
     echo "   Starting worker $((i+1))/$NUM_AGENTS..."
-    if [ -n "$AGENT_LAUNCH_CMD" ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$i" "$AGENT_LAUNCH_CMD" C-m
+    target="${WORKER_TARGETS[$i]}"
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
+      send_tmux_command "$target" "$AGENT_LAUNCH_CMD"
       sleep 5
+      WORKER_JSONS[$i]="$(echo "${WORKER_JSONS[$i]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
     fi
   done
 
@@ -330,41 +420,52 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Waiting for all instances to stabilize..."
   sleep 3
 
-  # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
-  echo "   Starting $WORKER_CMD in all agents (sequential)..."
-  for i in $(seq 0 $((NUM_AGENTS - 1))); do
-    echo "   → Agent $((i+1)): sending $WORKER_CMD..."
-    tmux send-keys -t "$SESSION_NAME:0.$i" "$WORKER_CMD"
-    sleep 0.5
-    tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
+  if [ "$PAUSED" = false ]; then
+    # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
+    echo "   Starting $WORKER_CMD in all agents (sequential)..."
+    for i in $(seq 0 $((NUM_AGENTS - 1))); do
+      echo "   → Agent $((i+1)): sending $WORKER_CMD..."
+      send_tmux_text_enter "${WORKER_TARGETS[$i]}" "$WORKER_CMD"
 
-    # Wait for THIS agent to fully process $WORKER_CMD before starting next
-    echo "   → Agent $((i+1)): waiting for initialization..."
-    sleep 10
-  done
-
-  echo "   All agents initialized"
+      # Wait for THIS agent to fully process $WORKER_CMD before starting next
+      echo "   → Agent $((i+1)): waiting for initialization..."
+      sleep 10
+    done
+    echo "   All agents initialized"
+  else
+    echo "   Paused mode: worker loop commands were not sent"
+  fi
 
   # Create second window for review/planning (single pane)
   echo ""
   echo "📋 Setting up review/planning window..."
   tmux new-window -t "$SESSION_NAME:1" -n "review"
+  MANAGER_TARGET=$(tmux display-message -p -t "$SESSION_NAME:1.0" '#{pane_id}')
 
   # Set up review window
   echo "   Starting coordinator..."
-  tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
+  send_tmux_command "$MANAGER_TARGET" "cd '$PROJECT_ROOT'"
+  send_issue_env_tmux "$MANAGER_TARGET"
 
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:1.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    send_tmux_command "$MANAGER_TARGET" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
   fi
 
-  if [ -n "$AGENT_LAUNCH_CMD" ]; then
-    tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
-    sleep 5
+  if [ "$PAUSED" = false ]; then
+    if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
+      send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD"
+      sleep 5
+    fi
+    send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
+  else
+    write_ready_file
+    send_tmux_command "$MANAGER_TARGET" "cat '$READY_FILE'"
+    WORKERS_JSON=$(printf '%s\n' "${WORKER_JSONS[@]}" | json_array_from_lines)
+    MANAGER_JSON=$(manifest_manager_json shell false shell "$READY_REL" "$MANAGER_TARGET" "")
+    write_paused_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+      "$ISSUE_SOURCE" "$ISSUE_SOURCE_ORIGIN" "${ISSUE_BACKEND:-}" "${ISSUE_DIR_PATH:-}" "$TASK_LIST_ID" \
+      "$CURRENT_BRANCH" "$WORKERS_JSON" "$MANAGER_JSON"
   fi
-  tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
-  sleep 0.5
-  tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
 
   # Select the first window (agents) by default
   tmux select-window -t "$SESSION_NAME:0"
@@ -377,8 +478,18 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Multiplexer: tmux"
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
-  echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-  echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  if [ "$PAUSED" = true ]; then
+    echo "   Window 0: $NUM_AGENTS worker agents configured and paused"
+    echo "   Window 1: Manager readiness instructions"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo ""
+    echo "The swarm is ready for issue review and worker start commands:"
+    echo "   add-worker"
+    echo "   add-worker 2"
+  else
+    echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+    echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  fi
   echo ""
   echo "🔧 Useful tmux commands:"
   echo "   Switch windows: Ctrl+b then 0 or 1"
@@ -405,21 +516,13 @@ elif [ "$MUX" = "cmux" ]; then
     exit 1
   fi
 
-  # Helper: send text to a workspace and press enter
-  # Uses --workspace ref to target the right workspace
-  cmux_send_cmd() {
-    local ws_ref="$1"
-    local text="$2"
-    cmux send --workspace "$ws_ref" "$text" >/dev/null
-    cmux send-key --workspace "$ws_ref" enter >/dev/null
-  }
-
   # Extract workspace ref (e.g. "workspace:3") from "OK workspace:3" output
   parse_ws_ref() {
     echo "$1" | grep -o 'workspace:[0-9]*'
   }
 
   WORKER_WS_REFS=()
+  WORKER_JSONS=()
 
   # --- Create one workspace per worker agent ---
   echo "🤖 Starting $AGENT worker sessions..."
@@ -431,8 +534,10 @@ elif [ "$MUX" = "cmux" ]; then
     # Create a new workspace in the worktree directory
     if [ "$USE_WORKTREES" = true ]; then
       WS_OUTPUT=$(cmux new-workspace --cwd "${WORKTREE_PATHS[$((i-1))]}")
+      WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
     else
       WS_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
+      WORKER_DIR="$PROJECT_ROOT"
     fi
     WS_REF=$(parse_ws_ref "$WS_OUTPUT")
     echo "   Created $WS_REF"
@@ -449,28 +554,37 @@ elif [ "$MUX" = "cmux" ]; then
     cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
 
     # Set environment variables for Claude Code coordination
+    send_issue_env_cmux "$WS_REF"
     if [ "$AGENT" = "claude" ]; then
-      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
-      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
       sleep 0.5
     fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "$WS_REF" paused)")
 
     # Launch agent
-    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting $AGENT in worker $i..."
-      cmux_send_cmd "$WS_REF" "$AGENT_LAUNCH_CMD"
+      send_cmux_command "$WS_REF" "$AGENT_LAUNCH_CMD"
       sleep 5
+      WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
     fi
 
-    # Send worker command
-    echo "   → Worker $i: sending $WORKER_CMD..."
-    cmux_send_cmd "$WS_REF" "$WORKER_CMD"
+    if [ "$PAUSED" = false ]; then
+      # Send worker command
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      send_cmux_command "$WS_REF" "$WORKER_CMD"
 
-    echo "   → Worker $i: waiting for initialization..."
-    sleep 10
+      echo "   → Worker $i: waiting for initialization..."
+      sleep 10
+    fi
   done
 
-  echo "   All workers initialized"
+  if [ "$PAUSED" = false ]; then
+    echo "   All workers initialized"
+  else
+    echo "   Paused mode: worker loop commands were not sent"
+  fi
 
   # --- Review Workspace ---
   echo ""
@@ -485,17 +599,30 @@ elif [ "$MUX" = "cmux" ]; then
     cmux rename-workspace --workspace "$MANAGER_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
 
     if [ "$AGENT" = "claude" ]; then
-      cmux_send_cmd "$MANAGER_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_issue_env_cmux "$MANAGER_WS_REF"
+      send_cmux_command "$MANAGER_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
+    else
+      send_issue_env_cmux "$MANAGER_WS_REF"
     fi
 
-    if [ -n "$AGENT_LAUNCH_CMD" ]; then
-      echo "   Starting coordinator..."
-      cmux_send_cmd "$MANAGER_WS_REF" "$AGENT_LAUNCH_CMD"
-      sleep 5
+    if [ "$PAUSED" = false ]; then
+      if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
+        echo "   Starting coordinator..."
+        send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD"
+        sleep 5
+      fi
+      echo "   → Manager: sending $MANAGER_CMD..."
+      send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
+    else
+      write_ready_file
+      send_cmux_command "$MANAGER_WS_REF" "cat '$READY_FILE'"
+      WORKERS_JSON=$(printf '%s\n' "${WORKER_JSONS[@]}" | json_array_from_lines)
+      MANAGER_JSON=$(manifest_manager_json shell false shell "$READY_REL" "" "$MANAGER_WS_REF")
+      write_paused_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+        "$ISSUE_SOURCE" "$ISSUE_SOURCE_ORIGIN" "${ISSUE_BACKEND:-}" "${ISSUE_DIR_PATH:-}" "$TASK_LIST_ID" \
+        "$CURRENT_BRANCH" "$WORKERS_JSON" "$MANAGER_JSON"
     fi
-    echo "   → Manager: sending $MANAGER_CMD..."
-    cmux_send_cmd "$MANAGER_WS_REF" "$MANAGER_CMD"
   else
     echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
   fi
@@ -512,8 +639,18 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Multiplexer: cmux"
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
-  echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
-  echo "   1 manager workspace running $MANAGER_CMD"
+  if [ "$PAUSED" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces configured and paused"
+    echo "   1 manager workspace with readiness instructions"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo ""
+    echo "The swarm is ready for issue review and worker start commands:"
+    echo "   add-worker"
+    echo "   add-worker 2"
+  else
+    echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
+    echo "   1 manager workspace running $MANAGER_CMD"
+  fi
   echo ""
   echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
   if [ -n "$MANAGER_WS_REF" ]; then

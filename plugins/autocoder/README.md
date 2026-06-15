@@ -29,8 +29,8 @@ Autonomous GitHub issue resolution system with infinite loop support.
 
 The `/install` command will:
 1. Install stop hook for `/fix-loop` (project-local)
-2. Install `start-parallel`, `add-worker`, `join-parallel`, `end-parallel`, and `stop-parallel` scripts (global)
-3. Optionally create shell aliases: `start` and `join`
+2. Install `start-parallel`, `add-worker`, `remove-worker`, `join-parallel`, `end-parallel`, and `stop-parallel` scripts (global)
+3. Check required dependencies and report any missing setup
 
 Each step is explained clearly and requires your approval before making changes.
 
@@ -228,7 +228,7 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/list-needs-feedback` | List issues requiring human feedback |
 | `/brainstorm-issue [number]` | Brainstorm design for an issue |
 | `/improve-test-coverage` | Analyze and improve test coverage |
-| `/install` | Install stop hook, parallel agent scripts, shell aliases, and check dependencies |
+| `/install` | Install stop hook, parallel agent scripts, and check dependencies |
 | `/autocoder-help` | Show help and workflow overview |
 | `/autocoder:gate` | Slim default for `/loop` cron path — branches on `/tmp/autocoder-work.json` phase, delegates to `/autocoder:fix N` |
 | `/autocoder:dispatch` | Opt-in Haiku-pinned alternative — runs triage cheaply, spawns Sonnet/Opus Task subagent for fix work |
@@ -340,11 +340,14 @@ See the [architecture diagram](#autocoder-plugin-claude-code) at the top of this
 # 2. Start the swarm (from terminal, in your project)
 cd ~/src/myproject
 
-# Using cmux (native macOS GUI)
-startc 3                # 3 workers + 1 manager
+# 3 workers + 1 manager, using tmux
+start-parallel 3 --mux tmux --agent claude
 
-# Using tmux (headless terminal multiplexer)
-startt 3                # 3 workers + 1 manager
+# Or use cmux
+start-parallel 3 --mux cmux --agent claude
+
+# Start a configured swarm without workers pulling issues yet
+start-parallel 5 --mux tmux --agent codex --issue-source github --paused
 ```
 
 ### End-to-End Walkthrough
@@ -360,17 +363,16 @@ Here's the full narrative of running a swarm. You work primarily through the **m
 Run this first. The installer:
 - Checks dependencies (tmux/cmux, claude/gemini, gh) and suggests how to install anything missing
 - Installs the stop hook for `/fix-loop`
-- Creates terminal commands (`start-parallel`, `join-parallel`, `end-parallel`, `stop-parallel`)
-- Sets up shell aliases (`startt`/`startc`, `joint`/`joinc`, `endt`/`endc`, `stopt`/`stopc`)
+- Creates terminal commands (`start-parallel`, `add-worker`, `remove-worker`, `join-parallel`, `end-parallel`, `stop-parallel`)
 
-After install, restart your shell to pick up the new aliases.
+After install, restart your shell so `start-parallel` is on your `PATH`.
 
 **Step 2: Start the swarm (from your terminal)**
 
 ```bash
 cd ~/src/myproject
-startc 3                # cmux (macOS GUI): 3 workers + 1 manager
-# or: startt 3          # tmux (headless): 3 workers + 1 manager
+start-parallel 3 --mux cmux --agent claude
+# or: start-parallel 3 --mux tmux --agent claude
 ```
 
 This creates 3 git worktrees (`myproject-wt-1`, `myproject-wt-2`, `myproject-wt-3`) as sibling directories, each on its own branch. It launches an agent in each worktree running `/fix-loop`, plus opens a **manager session** in the main project directory. The manager session is where you'll spend your time.
@@ -418,15 +420,14 @@ You don't normally need to interact with individual workers, but you can switch 
 **Step 5: Rejoin later if you step away**
 
 ```bash
-joinc                   # cmux: shows workspace list
-# or: joint             # tmux: reattaches to session
+join-parallel --mux cmux
+# or: join-parallel --mux tmux claude-myproject
 ```
 
 **Step 6: Tear down when done**
 
 ```bash
-endc                    # cmux: end session + clean up worktrees
-# or: endt              # tmux: end session + clean up worktrees
+end-parallel claude-myproject
 # Add --keep-worktrees to preserve worktree directories
 ```
 
@@ -445,11 +446,13 @@ The manager session is your control center. Use these commands:
 You can also tell the manager agent directly to scale the fleet:
 
 ```
-"add a worker"        → manager runs: add-worker
+"add a worker"         → manager runs: add-worker
+"add two workers"      → manager runs: add-worker 2
+"remove worker 2"      → manager runs: remove-worker 2
 "we need more workers" → manager runs: add-worker --agent claude
 ```
 
-`add-worker` creates a new git worktree, adds a pane/workspace to the existing session, and focuses it — all without leaving the manager session.
+`add-worker` creates new git worktree capacity, adds pane/workspace targets to the existing session, and starts the added workers. This is the command the user can ask the manager to run when they want one or more more workers to begin taking tasks.
 
 ### Worker Coordination
 
@@ -486,7 +489,7 @@ This means the manager can detect idle workers and assign them new issues withou
 
 ## Parallel Agent System
 
-Run multiple AI agents in parallel using tmux or cmux and git worktrees for coordinated autonomous work. Supports both Claude Code and Gemini CLI as agent frameworks.
+Run multiple AI agents in parallel using tmux or cmux and git worktrees for coordinated autonomous work. Supports Claude Code, Gemini CLI, Codex CLI, and Droid.
 
 ### Quick Start
 
@@ -497,25 +500,22 @@ Run multiple AI agents in parallel using tmux or cmux and git worktrees for coor
 # Approve when prompted:
 # - Stop hook: Yes (for /fix-loop)
 # - Parallel scripts: Yes (for terminal commands)
-# - Shell aliases: Optional (shorter commands)
 
 # 2. Start parallel agents (from terminal, in your project)
 cd ~/src/myproject
 
 # Using tmux (headless terminal multiplexer)
-startt 3                # 3 workers + 1 review coordinator
-# or: start-parallel-agents.sh --mux tmux 3
+start-parallel 3 --mux tmux --agent claude
 
 # Using cmux (native macOS GUI multiplexer)
-startc 3                # 3 workers + 1 review coordinator
-# or: start-parallel-agents.sh --mux cmux 3
+start-parallel 3 --mux cmux --agent claude
 
 # 3. Detach when done watching (tmux only)
 # Ctrl+b then d
 
 # 4. Rejoin anytime
-joint                   # tmux
-joinc                   # cmux
+join-parallel --mux tmux claude-myproject
+join-parallel --mux cmux
 ```
 
 ### Multiplexer Options
@@ -531,8 +531,10 @@ joinc                   # cmux
 |-----------|---------------|----------------|
 | **Claude Code** | `claude code --dangerously-skip-permissions .` | `/autocoder:fix-loop`, `/autocoder:review-blocked` |
 | **Gemini CLI** | `gemini --sandbox=false` | `/fix-loop`, `/monitor-loop`, `/review-blocked` |
+| **Codex CLI** | `codex` | Codex goal loop or shell-loop fallback |
+| **Droid** | shell-loop wrapper | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
 
-Auto-detection prefers cmux over tmux, and Claude over Gemini. Override with `--mux` and `--agent` flags.
+Auto-detection prefers cmux over tmux, and then checks available agents in order. Override with `--mux` and `--agent`.
 
 ### How It Works
 
@@ -563,68 +565,88 @@ Creates one workspace (tab) per agent:
 - Runs `/monitor-loop`
 - Monitors workers and surfaces blocked issues for review
 
-### Shell Aliases
+### `start-parallel` Command
 
-After adding aliases to `~/.zshrc`:
+`start-parallel` is the primary command for launching a swarm.
 
-| Alias | Purpose |
-|-------|---------|
-| `startt N` | Start N agents in tmux |
-| `joint` | Rejoin tmux session |
-| `stopt` | Kill tmux session |
-| `startc N` | Start N agents in cmux |
-| `joinc` | List/select cmux workspaces |
-| `stopc` | Close cmux agent workspaces |
+```bash
+start-parallel [num_workers] [options]
+```
 
-### Terminal Commands (start, join, end)
+| Option | Values | Purpose |
+|--------|--------|---------|
+| `num_workers` | number | Worker count. Defaults to `3`. |
+| `--mux` | `tmux`, `cmux` | Terminal multiplexer. Auto-detects when omitted. |
+| `--agent` | `claude`, `gemini`, `codex`, `droid` | Agent framework. Auto-detects when omitted. |
+| `--issue-source` | `file`, `github` | Issue backend for this swarm run. |
+| `--issue-dir` | path | File issue directory when using `--issue-source file`. |
+| `--paused`, `--no-start` | flag | Create the swarm but do not start workers pulling issues. |
+| `--no-worktrees` | flag | Run workers in the current directory instead of separate git worktrees. |
 
-These are the three key commands for managing the parallel agent lifecycle:
+When `--issue-source` is omitted, `start-parallel` uses the issue source configured for the project in `.autocoder.json`. This lets a project keep using the backend selected by `/autocoder:set-issue-source` without repeating flags on every launch.
+
+Examples:
+
+```bash
+# Claude workers in tmux
+start-parallel 3 --mux tmux --agent claude
+
+# Gemini workers in cmux
+start-parallel 4 --mux cmux --agent gemini
+
+# Codex workers using GitHub Issues, created paused
+start-parallel 5 --mux tmux --agent codex --issue-source github --paused
+
+# Droid workers without git worktrees
+start-parallel 3 --mux cmux --agent droid --no-worktrees
+```
+
+Paused swarms create the manager session and worker panes/workspaces, but do not start `/fix-loop` or the equivalent shell fallback. The manager pane prints readiness guidance so you can review issues first, then use `add-worker` to start an idle worker or add new running capacity later:
+
+```bash
+add-worker --agent codex
+add-worker 2 --agent codex
+```
+
+### Terminal Commands
+
+These are the key commands for managing the parallel agent lifecycle:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
-| `start-parallel-agents.sh` | **Start** parallel agent system | `[num_agents] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
-| `add-worker.sh` | **Add** one worker to a running fleet | `[--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
-| `join-parallel-agents.sh` | **Join** (rejoin) existing session | `[--mux tmux\|cmux] [session_name]` |
-| `end-parallel-agents.sh` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
-| `stop-parallel-agents.sh` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux]` |
+| `start-parallel` | **Start** parallel agent system | `[num_workers] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused] [--no-worktrees]` |
+| `add-worker` | **Add and start** one or more workers | `[count] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
+| `remove-worker` | **Stop** one or more workers | `WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
+| `join-parallel` | **Join** (rejoin) existing session | `[--mux tmux\|cmux] [session_name]` |
+| `end-parallel` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
+| `stop-parallel` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux]` |
 
-**Start** creates worktrees, launches agents, and opens the manager session. **Add-worker** joins one more worker to an already-running fleet without restarting it. **Join** reconnects to an existing session. **End** tears down the session and optionally removes worktrees. **Stop** kills sessions without worktree cleanup.
-
-**Shell aliases** (installed by `/install`):
-
-| Alias | Full Command | Description |
-|-------|-------------|-------------|
-| `startt N` | `start-parallel-agents.sh --mux tmux N` | Start N agents in tmux |
-| `startc N` | `start-parallel-agents.sh --mux cmux N` | Start N agents in cmux |
-| `add-worker` | `add-worker.sh` | Add one worker to the running fleet |
-| `joint` | `join-parallel-agents.sh --mux tmux` | Rejoin tmux session |
-| `joinc` | `join-parallel-agents.sh --mux cmux` | List/select cmux workspaces |
-| `stopt` | `stop-parallel-agents.sh --mux tmux` | Kill tmux session |
-| `stopc` | `stop-parallel-agents.sh --mux cmux` | Close cmux agent workspaces |
-| `endt` | `end-parallel-agents.sh` | End tmux session + cleanup |
-| `endc` | `end-parallel-agents.sh` | End cmux session + cleanup |
+**Start** creates worktrees, launches agents, and opens the manager session. With `--paused`, it opens the swarm without starting workers. **Add-worker** first starts existing idle workers, then adds and starts new worker capacity if needed. **Remove-worker** stops selected manifest-backed workers and keeps their worktrees unless `--remove-worktree` is passed. **Join** reconnects to an existing session. **End** tears down the session and optionally removes worktrees. **Stop** kills sessions without worktree cleanup.
 
 **Examples:**
 ```bash
 # Starting with explicit options
-start-parallel-agents.sh 3 --mux tmux --agent claude
-start-parallel-agents.sh 4 --mux cmux --agent gemini
-start-parallel-agents.sh 3 --mux tmux --agent codex
-start-parallel-agents.sh 3 --mux cmux --agent droid
-start-parallel-agents.sh 3 --no-worktrees
+start-parallel 3 --mux tmux --agent claude
+start-parallel 4 --mux cmux --agent gemini
+start-parallel 3 --mux tmux --agent codex
+start-parallel 3 --mux cmux --agent droid
+start-parallel 3 --no-worktrees
+start-parallel 5 --mux tmux --agent codex --issue-source github --paused
+add-worker --agent codex
+add-worker 2 --agent codex
+remove-worker 2 --agent codex
 
 # Joining
-joint                           # tmux: auto-detect session
-joinc                           # cmux: list workspaces
+join-parallel --mux tmux claude-myproject
+join-parallel --mux cmux
 
 # Ending (tears down session + cleans worktrees)
-endt                            # tmux: end session for current project
-endc                            # cmux: end session for current project
-endt --keep-worktrees           # End session but keep worktrees
+end-parallel claude-myproject
+end-parallel claude-myproject --keep-worktrees
 
 # Stopping (kills session only, no worktree cleanup)
-stopt                           # tmux: kill session for current project
-stopc                           # cmux: close all agent workspaces for current project
+stop-parallel --mux tmux
+stop-parallel --mux cmux
 ```
 
 ### Git Worktrees
@@ -642,7 +664,7 @@ For each worker agent:
 **tmux session naming**: `<agent>-<project-name>` (e.g. `claude-myproject`)
 
 **tmux workflow:**
-- Stop session: `stopt` (kills tmux session)
+- Stop session: `stop-parallel --mux tmux` (kills tmux session)
 - Detach temporarily: `Ctrl+b` then `d` (session keeps running)
 - Switch windows: `Ctrl+b` then `0` or `1`
 - Manual kill: `tmux kill-session -t claude-<project-name>`
@@ -650,7 +672,7 @@ For each worker agent:
 **cmux workspace naming**: `wt<N>-<project>` (workers), `manager-<project>` (manager)
 
 **cmux workflow:**
-- Stop workspaces: `stopc` (closes all agent workspaces for current project)
+- Stop workspaces: `stop-parallel --mux cmux` (closes all agent workspaces for current project)
 - List workspaces: `cmux list-workspaces`
 - Read screen: `cmux read-screen --workspace <ref>`
 - Send command: `cmux send --workspace <ref> "text"` + `cmux send-key --workspace <ref> enter`
@@ -669,7 +691,7 @@ For each worker agent:
 ```bash
 # Terminal: Start the system with cmux
 cd ~/src/myproject
-startc 3
+start-parallel 3 --mux cmux --agent claude
 
 # [cmux shows 4 workspaces/tabs:]
 # - wt1-myproject: Agent fixing P0 issue #45
@@ -678,10 +700,10 @@ startc 3
 # - manager-myproject: Review manager handling blocked issues
 
 # Later: Check on progress
-joinc
+join-parallel --mux cmux
 
 # Done: Tear down all agent workspaces
-stopc
+stop-parallel --mux cmux
 ```
 
 ## Utility Scripts
@@ -692,11 +714,12 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `start-parallel-agents.sh` | Launch multi-agent session (tmux/cmux) | `start-parallel-agents.sh [num_agents] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
-| `add-worker.sh` | Add one worker to a running fleet | `add-worker.sh [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
-| `join-parallel-agents.sh` | Rejoin existing session (tmux/cmux) | `join-parallel-agents.sh [--mux tmux\|cmux] [session_name]` |
-| `end-parallel-agents.sh` | End session and clean up worktrees | `end-parallel-agents.sh [session_name] [--keep-worktrees]` |
-| `stop-parallel-agents.sh` | Stop all agent sessions (tmux/cmux) | `stop-parallel-agents.sh [--mux tmux\|cmux]` |
+| `start-parallel` | Launch multi-agent session (tmux/cmux) | `start-parallel [num_workers] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused]` |
+| `add-worker` | Add and start one or more workers | `add-worker [count] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
+| `remove-worker` | Stop one or more workers | `remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
+| `join-parallel` | Rejoin existing session (tmux/cmux) | `join-parallel [--mux tmux\|cmux] [session_name]` |
+| `end-parallel` | End session and clean up worktrees | `end-parallel [session_name] [--keep-worktrees]` |
+| `stop-parallel` | Stop all agent sessions (tmux/cmux) | `stop-parallel [--mux tmux\|cmux]` |
 | `append-to-history.sh` | Log an event to `HISTORY.md` or GitHub history-log issue | `append-to-history.sh [--backend file\|github\|auto] [--history-file PATH] TITLE WHAT WHY IMPACT` |
 
 ### Blocked Issue Management

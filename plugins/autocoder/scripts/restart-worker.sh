@@ -74,12 +74,38 @@ fi
 # ── Agent launch config (shared with add-worker.sh) ──────────────────────────
 # shellcheck source=worker-launch-lib.sh
 source "$SCRIPT_DIR/worker-launch-lib.sh"
+# shellcheck source=issue-source-lib.sh
+source "$SCRIPT_DIR/issue-source-lib.sh"
+# shellcheck source=swarm-manifest-lib.sh
+source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
 
-PROJECT_ROOT=$(pwd)
+PROJECT_ROOT=$(resolve_main_worktree)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+CURRENT_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+MANIFEST_PATH=$(manifest_path_for_session "$PROJECT_ROOT" "$SESSION_NAME")
+WORKER_STATE=""
+WORKER_NUM=""
+if [ -f "$MANIFEST_PATH" ]; then
+  ISSUE_SOURCE=$(manifest_get "$MANIFEST_PATH" 'm.get("issueSource")')
+  ISSUE_DIR_PATH=$(manifest_get "$MANIFEST_PATH" 'm.get("issueDir")')
+  ISSUE_BACKEND=$(manifest_get "$MANIFEST_PATH" 'm.get("issueBackend")')
+  export ISSUE_SOURCE ISSUE_DIR_PATH ISSUE_BACKEND
+  WORKER_INFO=$(python3 - "$MANIFEST_PATH" "$WORKTREE" <<'PY'
+import json, sys
+path, worktree = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+for worker in data.get("workers", []):
+    if worker.get("worktree") == worktree:
+        print(f"{worker.get('number')}|{worker.get('state')}")
+        break
+PY
+)
+  WORKER_NUM="${WORKER_INFO%%|*}"
+  WORKER_STATE="${WORKER_INFO#*|}"
+fi
 
 echo "♻️  Restarting worker in worktree: $WORKTREE"
 
@@ -108,6 +134,11 @@ if [ "$MUX" = "tmux" ]; then
   sleep 1
 
   tmux send-keys -t "$PANE" "cd '$WORKTREE'" C-m
+  if [ -n "${ISSUE_SOURCE:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && tmux send-keys -t "$PANE" "$line" C-m
+    done < <(issue_env_exports)
+  fi
 
   if [ "$AGENT" = "claude" ]; then
     TASK_LIST_ID=$(tmux show-environment -t "$SESSION_NAME" CLAUDE_CODE_TASK_LIST_ID 2>/dev/null | cut -d= -f2 || true)
@@ -122,7 +153,12 @@ if [ "$MUX" = "tmux" ]; then
     sleep 5
   fi
 
-  tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
+  if [ "$WORKER_STATE" = "paused" ]; then
+    [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
+    echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  else
+    tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
+  fi
 
   echo "✅ Worker restarted in tmux pane $PANE (worktree: $WORKTREE)"
 
@@ -158,6 +194,12 @@ elif [ "$MUX" = "cmux" ]; then
 
   [ -n "$WT_NUM" ] && cmux rename-workspace --workspace "$WS_REF" "wt${WT_NUM}-${PROJECT_NAME}" >/dev/null || true
 
+  if [ -n "${ISSUE_SOURCE:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && cmux send --workspace "$WS_REF" "$line" >/dev/null && cmux send-key --workspace "$WS_REF" enter >/dev/null
+    done < <(issue_env_exports)
+  fi
+
   if [ "$AGENT" = "claude" ]; then
     cmux send --workspace "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" >/dev/null
     cmux send-key --workspace "$WS_REF" enter >/dev/null
@@ -169,8 +211,13 @@ elif [ "$MUX" = "cmux" ]; then
     sleep 5
   fi
 
-  cmux send --workspace "$WS_REF" "$WORKER_CMD" >/dev/null
-  cmux send-key --workspace "$WS_REF" enter >/dev/null
+  if [ "$WORKER_STATE" = "paused" ]; then
+    [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
+    echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  else
+    cmux send --workspace "$WS_REF" "$WORKER_CMD" >/dev/null
+    cmux send-key --workspace "$WS_REF" enter >/dev/null
+  fi
 
   echo "✅ Worker restarted in cmux workspace $WS_REF (worktree: $WORKTREE)"
 

@@ -20,23 +20,18 @@ HAS_DROID=$(command -v droid &>/dev/null && echo yes || echo no)
 HAS_TMUX=$(command -v tmux &>/dev/null && echo yes || echo no)
 HAS_CMUX=$(command -v cmux &>/dev/null && echo yes || echo no)
 
-# Shell aliases
-ALIASES_INSTALLED=$(grep -l "startclt\|startct\|startgt\|startdt" ~/.zshrc ~/.bashrc ~/.profile 2>/dev/null | head -1)
-
 # Active sessions
 ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "fix-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
 
 echo "Issue backend:  $ISSUE_SOURCE"
 echo "Agents:         $(echo claude=$HAS_CLAUDE codex=$HAS_CODEX gemini=$HAS_GEMINI droid=$HAS_DROID)"
 echo "Muxers:         tmux=$HAS_TMUX cmux=$HAS_CMUX"
-echo "Aliases:        $([ -n "$ALIASES_INSTALLED" ] && echo "installed ($ALIASES_INSTALLED)" || echo "not installed")"
 echo "Active sessions: $ACTIVE_SESSIONS"
 ```
 
 Based on what you find, give contextual guidance:
 
 - **If issue source not configured**: "Run `/autocoder:set-issue-source` first to configure the issue backend (file or GitHub)."
-- **If aliases not installed**: "Run `/autocoder:install` and choose to install shell aliases, or run `bash <agents-repo>/scripts/install-shell-aliases.sh`."
 - **If no agent CLIs detected**: List install links for claude, codex, gemini, droid.
 - **If no muxer**: Suggest `brew install tmux` or cmux.
 - **Otherwise**: Show the most relevant next steps based on context (active sessions, issue count, etc.).
@@ -90,28 +85,25 @@ Based on what you find, give contextual guidance:
 
 | Command | Purpose |
 |---------|---------|
-| `/install` | Install stop hook, parallel scripts, and shell aliases |
+| `/install` | Install stop hook and parallel scripts |
 | `/set-issue-source` | Configure the issue backend |
 
 ---
 
-## Parallel Agents — Shell Aliases
-
-All aliases call `start-parallel --mux <mux> --agent <agent>`. Install with `/install` or:
+## Parallel Agents
 
 ```bash
-bash /path/to/agents/scripts/install-shell-aliases.sh        # auto-detect
-bash /path/to/agents/scripts/install-shell-aliases.sh --all  # all agents
+start-parallel 3 --mux tmux --agent claude
+start-parallel 4 --mux cmux --agent gemini
+start-parallel 5 --mux tmux --agent codex --issue-source github --paused
+add-worker --agent codex
+add-worker 2 --agent codex
+remove-worker 2 --agent codex
 ```
 
-| Agent | tmux | cmux |
-|-------|------|------|
-| Claude Code | `startclt 3` | `startclc 3` |
-| Codex | `startct 3` | `startcc 3` |
-| Gemini (Antigravity) | `startgt 3` | `startgc 3` |
-| Droid (Factory) | `startdt 3` | `startdc 3` |
+`start-parallel` is the primary launcher. It supports `--mux tmux|cmux`, `--agent claude|gemini|codex|droid`, `--issue-source file|github`, `--issue-dir PATH`, `--paused`, and `--no-worktrees`. If `--issue-source` is omitted, it uses the project issue source from `.autocoder.json`.
 
-The number is the worker count. Each swarm starts N worker agents + 1 manager agent.
+Use `--paused` to create the manager session and workers without starting the monitor loop or worker ticket-pulling loops. Use `add-worker [count]` when the user asks the manager to start idle workers or add and start more workers. Use `remove-worker WORKER_NUMBER [...]` when the user asks the manager to shut down selected workers.
 
 ---
 
@@ -127,17 +119,24 @@ The number is the worker count. Each swarm starts N worker agents + 1 manager ag
 
 ```
 /set-issue-source   # First time: configure file or GitHub backend
-/install            # First time: install stop hook + aliases
+/install            # First time: install stop hook + parallel scripts
 /fix-loop
 ```
 
 ### Pattern 3: Parallel Swarm (example: 3 Claude workers in tmux)
 
 ```bash
-startclt 3
+start-parallel 3 --mux tmux --agent claude
 ```
 
-### Pattern 4: Design-First
+### Pattern 4: Paused Parallel Swarm
+
+```bash
+start-parallel 5 --mux tmux --agent codex --issue-source github --paused
+add-worker --agent codex
+```
+
+### Pattern 5: Design-First
 
 ```
 /list-needs-design
@@ -145,7 +144,7 @@ startclt 3
 /fix 45
 ```
 
-### Pattern 5: Proposal Review
+### Pattern 6: Proposal Review
 
 ```
 /list-proposals

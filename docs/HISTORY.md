@@ -519,3 +519,190 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Manager-dispatched Codex workers now route through the wrapper that claims the issue, switches to feature/issue-N, and posts the visible start marker before implementation.
 
+
+---
+
+## 2026-06-15 11:58:18 - Paused swarm issue source spec
+
+**What Changed**: Added a draft spec for paused swarm startup, per-run issue source selection, worker start controls, and Claude/Gemini/Codex/Droid compatibility.
+
+**Why Changed**: Document the design and critical risks before implementation.
+
+**Impact**: Creates an implementation target without changing runtime behavior.
+
+
+---
+
+## 2026-06-15 12:45:36 - Revise paused swarm spec after design review
+
+**What Changed**: Updated the paused swarm spec to add a minimal swarm manifest, safer manager readiness instructions, explicit start-worker/start-workers CLI grammar, lifecycle issue-source inheritance, and stricter bulk-start safeguards.
+
+**Why Changed**: Address critical design review findings before implementation.
+
+**Impact**: The implementation target now covers issue-source continuity, reliable worker targeting, and safer paused-mode semantics across supported agents.
+
+
+---
+
+## 2026-06-15 12:52:51 - Revise paused swarm spec after second review
+
+**What Changed**: Updated the paused swarm spec to require manifest issue-source exports before start-worker commands, Droid-specific interactive-launch wording, durable .ready.txt readiness instructions, atomic manifest writes, and partial start failure states.
+
+**Why Changed**: Address the latest critical design review findings before implementation.
+
+**Impact**: The spec now gives more precise execution semantics for paused worker start, readiness display, and failure handling.
+
+
+---
+
+## 2026-06-15 12:55:23 - Revise paused swarm spec with launch modes
+
+**What Changed**: Updated the paused swarm spec to add worker launchMode and agentLaunched fields, conditional manager launch based on no-submit readiness display, serialized manifest locks, and shell-only issue-source export rules.
+
+**Why Changed**: Address critical design review issues around interactive REPL panes, manager readiness visibility, and concurrent manifest updates.
+
+**Impact**: Implementation now has explicit rules for when shell commands can be sent safely and how manifest updates must be protected.
+
+
+---
+
+## 2026-06-15 12:59:11 - Refine paused swarm readiness design
+
+**What Changed**: Updated the paused swarm spec with separate shell and agent readiness templates, manager readiness manifest fields, explicit command-delivery semantics for worker state, flock-based manifest locking, and corrected launch-mode wording.
+
+**Why Changed**: Resolve the latest design review findings and remove contradictory wording before implementation.
+
+**Impact**: The spec is more internally consistent and exposes the remaining implementation risks clearly.
+
+
+---
+
+## 2026-06-15 13:19:57 - Finalize paused swarm manifest design updates
+
+**What Changed**: Updated the paused swarm spec to require manifests for paused worker starts, add worker commandMode, make normal startup manifest-free for v1, add manager.readyFile, and remove no-manifest target inference.
+
+**Why Changed**: Resolve the latest critical design review issues around unsafe fallback targeting and shell-vs-agent command delivery.
+
+**Impact**: The spec now defines a tighter v1 scope with fewer ambiguous runtime paths.
+
+
+---
+
+## 2026-06-15 13:21:32 - Update paused swarm spec after latest review
+
+**What Changed**: Updated the paused swarm spec to require manifests for paused worker starts, add commandMode, clarify normal non-paused issue-source continuity limits, define paused add-worker behavior, and require shared launch/readiness mode helpers.
+
+**Why Changed**: Resolve review findings around unsafe no-manifest fallback, shell-vs-agent command delivery, and unclear add-worker semantics.
+
+**Impact**: The spec now has a narrower v1 scope and a clearer implementation contract for lifecycle scripts.
+
+
+---
+
+## 2026-06-15 13:24:38 - Focus README swarm docs on start-parallel
+
+**What Changed**: Updated autocoder README swarm documentation to lead with start-parallel commands and option tables, replacing alias-led quick starts and lifecycle examples.
+
+**Why Changed**: Users should see the canonical start-parallel command and options instead of being pushed toward bundled aliases.
+
+**Impact**: README now documents swarm startup through explicit commands; users can define their own aliases if desired.
+
+
+---
+
+## 2026-06-15 13:29:01 - Update paused swarm spec and review
+
+**What Changed**: Refined paused swarm spec for read-only issue-source resolution, manifest issueSourceOrigin, restart-worker paused semantics, fail-closed target handling, and environment-origin file backend validation; cleaned README command references to focus on start-parallel and installed commands.
+
+**Why Changed**: The design review found remaining ambiguity around config mutation, incomplete file backend env, restart starting behavior, and stale alias/script-name documentation.
+
+**Impact**: Spec now has clearer implementation constraints and CDR findings; README no longer points users at shell aliases or internal start/join/end/stop script names.
+
+
+---
+
+## 2026-06-15 13:45:27 - Write paused swarm implementation plans
+
+**What Changed**: Added a dedicated implementation-plans section to the paused swarm spec covering shared helpers, paused start, delayed worker start commands, lifecycle integration, documentation, validation sequence, rollback notes, and dry-run seams.
+
+**Why Changed**: The design was ready for implementation but needed concrete phased plans tied to current files and test gates.
+
+**Impact**: Future implementation can proceed in bounded phases with explicit exit criteria and lower risk around mux command delivery.
+
+
+---
+
+## 2026-06-15 13:50:03 - Review paused swarm implementation plans
+
+**What Changed**: Performed a critical review of the paused swarm implementation plan against the current launcher, helper scripts, installer docs, autocoder help, and test layout.
+
+**Why Changed**: The implementation plan needed scrutiny before coding because paused start affects command delivery, issue-source resolution, manifests, lifecycle scripts, and install surfaces.
+
+**Impact**: Identified plan risks around default behavior changes, concurrent start races, stable tmux targets, manifest lookup, installer/help gaps, test gating, and backend compatibility.
+
+
+---
+
+## 2026-06-15 13:54:31 - Update and review paused swarm plan
+
+**What Changed**: Updated the paused swarm spec and implementation plans so omitted --issue-source uses the project's last-used .autocoder.json source before environment fallback; added stable tmux pane IDs, locked starting-state worker start, stale starting recovery, custom ISSUE_BACKEND preservation, installer relink requirements, and per-plan test gates; performed another critical plan review.
+
+**Why Changed**: The prior review found ambiguity around default issue-source behavior, double-start races, tmux target identity, manifest lookup, installer coverage, staged testing, helper compatibility, and custom backend handling.
+
+**Impact**: The plan is more implementation-ready, with remaining review risks narrowed to bounded command-send timeouts, exact stale thresholds, and manual smoke examples that still use pane-index inspection for convenience.
+
+
+---
+
+## 2026-06-15 13:59:21 - Update and review paused swarm plan again
+
+**What Changed**: Updated paused swarm implementation plans with timeout-wrapped tmux/cmux send helpers, portable stale-age helper requirements, a 5-minute stale starting threshold, manifest-derived smoke inspection, explicit source-preflight rollback, and CDR findings for lock bottlenecks, stale recovery, rollback scope, and macOS portability.
+
+**Why Changed**: The prior critical review found remaining risks around unbounded mux sends while locked, unspecified stale recovery, pane-index smoke examples, rollback scope, and nonportable timeout/date assumptions.
+
+**Impact**: The plan now has clearer safety bounds and portability requirements; remaining risks are limited to implementation discipline around lock duration, large-swarm startup latency, and installer test isolation.
+
+
+---
+
+## 2026-06-15 13:59:38 - Tighten paused swarm validation plan
+
+**What Changed**: Added validation-plan requirements for multi-worker bounded-lock testing and isolated installer tests using temporary HOME, PATH, and install directories.
+
+**Why Changed**: The final critical review found that timeout behavior and installer relink behavior need realistic test harness constraints, not just single-command checks.
+
+**Impact**: Implementation has clearer validation expectations for lock duration under worker batches and safe installer testing without mutating the operator environment.
+
+
+---
+
+## 2026-06-15 14:16:46 - Implement paused swarm startup
+
+**What Changed**: Added paused start-parallel mode, read-only issue-source CLI resolution, paused swarm manifests, delayed start-workers/start-worker commands, lifecycle inheritance for add/restart worker, installer links, docs, and focused tests.
+
+**Why Changed**: Users need to create Claude/Gemini/Codex/Droid swarms that are ready for issue review without immediately pulling tickets, while preserving the project issue source by default.
+
+**Impact**: start-parallel now supports --paused/--no-start and --issue-source/--issue-dir; paused swarms can later start all or selected workers with manifest-backed safeguards.
+
+
+---
+
+## 2026-06-15 14:25:26 - Make add-worker the start scale command
+
+**What Changed**: Changed add-worker to start existing idle manifest workers before creating new workers, support add-worker [count], start newly added manifest workers through the internal delivery helper, remove start-worker/start-workers from user-facing docs/installers, and install pytest into /private/tmp/agents-pytest for Python test execution.
+
+**Why Changed**: The manager should have one user-facing command for starting or scaling worker capacity; users should tell the manager to add workers, and idle workers should be used before creating new capacity.
+
+**Impact**: Paused swarms now surface add-worker as the command to begin work or scale up; tests can run Python coverage with PYTHONPATH=/private/tmp/agents-pytest.
+
+
+---
+
+## 2026-06-15 14:42:14 - Add remove-worker command
+
+**What Changed**: Added plugins/autocoder/scripts/remove-worker.sh, manifest removal support, installer links, README/help/install documentation, and tests for remove-worker help and manifest worker removal.
+
+**Why Changed**: Users need a manager-facing way to shut down one or more selected swarm workers without tearing down the entire swarm.
+
+**Impact**: remove-worker WORKER_NUMBER [...] now closes manifest-backed tmux panes or cmux workspaces, removes workers from the manifest, and preserves worktrees by default unless --remove-worktree is passed.
+
