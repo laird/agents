@@ -706,3 +706,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: remove-worker WORKER_NUMBER [...] now closes manifest-backed tmux panes or cmux workspaces, removes workers from the manifest, and preserves worktrees by default unless --remove-worktree is passed.
 
+
+---
+
+## 2026-06-16 09:42:49 - Bump autocoder plugin version
+
+**What Changed**: Updated Autocoder plugin metadata to 4.3.0 across Claude, Factory, and Codex plugin manifests; bumped Claude marketplace to 3.22.0 and Factory marketplace to 3.19.0; fixed ignored local issue YAML front matter titles.
+
+**Why Changed**: Release the paused swarm lifecycle controls and keep marketplace update detection aligned with plugin metadata.
+
+**Impact**: Plugin consumers can receive the new Autocoder release metadata; local file issue parsing no longer trips over unquoted title colons in ignored .issues files.
+
