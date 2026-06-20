@@ -284,7 +284,8 @@ Start working on GitHub issues now:
 ```bash
 # Source issue function layer (routes to GitHub or file backend)
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
   else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
@@ -312,6 +313,10 @@ if [ -f "CLAUDE.md" ]; then
   if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
     echo "⚠️  No autocoder configuration found in CLAUDE.md"
     echo "📝 Adding autocoder configuration section to CLAUDE.md..."
+
+    # Auto-detect the repo's default branch (works for main, master, integration, etc.)
+    DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 
     # Append autocoder configuration to CLAUDE.md
     cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
@@ -351,7 +356,9 @@ Options: `merge` (auto-merge to the integration branch and push) or `pr` (push f
 
 ### Integration Branch
 ```
-main
+AUTOCODER_CONFIG
+    echo "${DEFAULT_BRANCH}" >> CLAUDE.md
+    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
 ```
 The shared branch all completed work is merged into. In a parallel-worktree swarm this MUST be the real shared branch (e.g. `main`), never a per-worktree branch — otherwise fixes strand on `main-wt-N` and never converge.
 
@@ -386,10 +393,11 @@ AUTOCODER_CONFIG
     echo "MERGE_MODE_NOT_CONFIGURED=true"
   fi
   # Extract the integration branch (the shared branch all work merges into).
-  # Defaults to 'main'. In a worktree swarm this MUST be the shared branch, not main-wt-N.
+  # Falls back to auto-detecting the repo default branch (supports main, master, integration, etc.)
   if grep -q "### Integration Branch" CLAUDE.md; then
     INTEGRATION_BRANCH=$(sed -n "/### Integration Branch/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
   fi
+  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
   INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
   echo "✅ Integration branch: $INTEGRATION_BRANCH"
 else
@@ -397,7 +405,8 @@ else
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
   MERGE_MODE="merge"
-  INTEGRATION_BRANCH="main"
+  INTEGRATION_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
 fi
 
 # Ensure gh is authenticated as the correct user for this repo (GitHub backend only)
@@ -662,20 +671,37 @@ echo ""
 # In a parallel-worktree swarm each worktree sits on its own main-wt-N; basing the fix
 # branch on origin/<integration> instead means every fix starts from — and merges back
 # to — the same shared branch, so work converges on main instead of stranding on main-wt-N.
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
 INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
-git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || echo "⚠️  Could not fetch origin/${INTEGRATION_BRANCH} — proceeding with local state"
+git fetch origin "$INTEGRATION_BRANCH" || {
+  echo "❌ Cannot fetch origin/${INTEGRATION_BRANCH} — refusing to start work from stale state."
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+}
 
-# Create (or switch to) the fix branch, then VERIFY the switch took effect.
+# Create (or switch to) the fix branch, then pull the latest integration state into it.
 # Never start work on the parent branch: a 'working' label with no matching
 # feature/issue-N branch looks like a stale/abandoned lock to peers and to
 # /monitor-workers, which then try to reclaim the issue out from under you.
 FIX_BRANCH="feature/issue-${ISSUE_NUM}"
-git checkout -b "$FIX_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null || git checkout "$FIX_BRANCH" 2>/dev/null || true
+if git checkout -b "$FIX_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null; then
+  echo "✅ Created $FIX_BRANCH from origin/${INTEGRATION_BRANCH}"
+elif git checkout "$FIX_BRANCH" 2>/dev/null; then
+  # Branch already exists — pull latest integration changes into it before resuming
+  echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${INTEGRATION_BRANCH}..."
+  git pull --rebase origin "$INTEGRATION_BRANCH" || {
+    echo "❌ Rebase of $FIX_BRANCH onto origin/${INTEGRATION_BRANCH} failed — resolve conflicts manually."
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    exit 1
+  }
+else
+  echo "❌ Could not create or switch to $FIX_BRANCH."
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+fi
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$FIX_BRANCH" ]; then
-  echo "❌ Could not switch to $FIX_BRANCH (still on $CURRENT_BRANCH) — likely a dirty"
-  echo "   working tree. Releasing the 'working' lock and aborting rather than"
-  echo "   committing to $CURRENT_BRANCH."
+  echo "❌ Branch switch verification failed (still on $CURRENT_BRANCH)."
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 fi
@@ -822,6 +848,9 @@ else
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
     || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+
+  # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
+  git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
   # Remove 'working' label and close issue
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -1023,6 +1052,9 @@ else
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
     || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+
+  # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
+  git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
   # Remove 'working' label and close issue with detailed explanation
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -1608,11 +1640,29 @@ For each **approved** enhancement issue (no `proposal` label), follow this workf
 # the latest shared integration branch — not the worktree's current branch — so the work
 # starts from and merges back to the same shared branch instead of stranding on main-wt-N.
 PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
 INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
-git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || echo "⚠️  Could not fetch origin/${INTEGRATION_BRANCH} — proceeding with local state"
+git fetch origin "$INTEGRATION_BRANCH" || {
+  echo "❌ Cannot fetch origin/${INTEGRATION_BRANCH} — refusing to start enhancement from stale state."
+  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+}
 
 ENHANCE_BRANCH="enhancement/issue-${ENHANCE_NUM}-auto"
-git checkout -b "$ENHANCE_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null || git checkout "$ENHANCE_BRANCH" 2>/dev/null || true
+if git checkout -b "$ENHANCE_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null; then
+  echo "✅ Created $ENHANCE_BRANCH from origin/${INTEGRATION_BRANCH}"
+elif git checkout "$ENHANCE_BRANCH" 2>/dev/null; then
+  echo "ℹ️  Branch $ENHANCE_BRANCH already exists; pulling latest from origin/${INTEGRATION_BRANCH}..."
+  git pull --rebase origin "$INTEGRATION_BRANCH" || {
+    echo "❌ Rebase of $ENHANCE_BRANCH onto origin/${INTEGRATION_BRANCH} failed."
+    issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+    exit 1
+  }
+else
+  echo "❌ Could not create or switch to $ENHANCE_BRANCH."
+  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+fi
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$ENHANCE_BRANCH" ]; then
   echo "❌ Could not switch to $ENHANCE_BRANCH (still on $CURRENT_BRANCH) — aborting"
@@ -1745,6 +1795,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
     || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+
+  # Clean up the local enhancement branch (merge-to-integration.sh already removed the remote)
+  git branch -d "$ENHANCE_BRANCH" 2>/dev/null || git branch -D "$ENHANCE_BRANCH" 2>/dev/null || true
 
   # Remove 'working' label and close enhancement with details
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
