@@ -191,7 +191,7 @@ This directory contains **universal agent protocol templates** designed to work 
 
 ## Model Selection Guide (Opus 4.5)
 
-When spawning agents via Claude Code's Task tool, use the `model` parameter to optimize for task complexity and cost:
+When spawning agents via Antigravity's Task tool, use the `model` parameter to optimize for task complexity and cost:
 
 ### Quick Reference
 
@@ -287,7 +287,7 @@ cp GENERIC-DOCUMENTATION-PLAN-TEMPLATE.md ../DOCUMENTATION-PLAN.md
 
 #### Option B: Reference Directly
 
-Add to your `CLAUDE.md` or agent instructions:
+Add to your `GEMINI.md` or agent instructions:
 
 ```markdown
 ## Agent Protocols
@@ -383,7 +383,7 @@ EOF
 
 ### Step 4: Configure Agent Instructions
 
-Add to your project's `CLAUDE.md` or equivalent:
+Add to your project's `GEMINI.md` or equivalent:
 
 ```markdown
 ## Agent Protocols (MANDATORY)

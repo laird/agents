@@ -353,7 +353,7 @@ Documentation specialist responsible for creating comprehensive, accurate, and m
 
 ## Model Recommendation
 
-When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+When spawning this agent via Antigravity's Task tool, use the `model` parameter to optimize for task complexity:
 
 ### Use Opus (model="opus")
 - **Migration guides** - Complex multi-step guides with code examples and edge cases

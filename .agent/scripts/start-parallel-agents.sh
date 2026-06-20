@@ -1,6 +1,6 @@
 #!/bin/bash
 # Start parallel AI agents using a terminal multiplexer and git worktrees
-# Supports both tmux and cmux multiplexers, and Claude, Gemini, and Codex agent frameworks
+# Supports both tmux and cmux multiplexers, and Antigravity, Gemini, and Codex agent frameworks
 #
 # Usage: start-parallel-agents.sh [num_agents] [options]
 #
@@ -121,7 +121,7 @@ if [ -z "$AGENT" ]; then
     echo "❌ Error: No agent framework found" >&2
     echo "" >&2
     echo "Install one of the following:" >&2
-    echo "  Claude Code: https://claude.ai/download" >&2
+    echo "  Antigravity: https://claude.ai/download" >&2
     echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
     echo "  Codex CLI:   codex" >&2
     echo "  Droid CLI:   https://docs.factory.ai/" >&2
@@ -135,12 +135,12 @@ case "$AGENT" in
   claude)
     if ! command -v claude &> /dev/null; then
       echo "❌ Error: claude command is not installed" >&2
-      echo "   Install Claude Code: https://claude.ai/download" >&2
+      echo "   Install Antigravity: https://claude.ai/download" >&2
       exit 1
     fi
-    AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-    WORKER_CMD="/autocoder:fix-loop"
-    MANAGER_CMD="/autocoder:monitor-loop"
+    AGENT_LAUNCH_CMD="gemini --sandbox=false"
+    WORKER_CMD="/fix-loop"
+    MANAGER_CMD="/monitor-loop"
     ;;
   gemini)
     if ! command -v gemini &> /dev/null; then
@@ -281,10 +281,10 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
   fi
 
-  # Set environment variables for Claude Code coordination
+  # Set environment variables for Antigravity coordination
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
-    tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
+    tmux send-keys -t "$SESSION_NAME:0.0" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    tmux send-keys -t "$SESSION_NAME:0.0" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
   fi
 
   # Create panes for remaining workers
@@ -299,7 +299,7 @@ if [ "$MUX" = "tmux" ]; then
     fi
 
     if [ "$AGENT" = "claude" ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
     fi
   done
 
@@ -347,7 +347,7 @@ if [ "$MUX" = "tmux" ]; then
   tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
 
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:1.0" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    tmux send-keys -t "$SESSION_NAME:1.0" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
@@ -440,10 +440,10 @@ elif [ "$MUX" = "cmux" ]; then
     # Rename workspace: wt<N>-<project>
     cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
 
-    # Set environment variables for Claude Code coordination
+    # Set environment variables for Antigravity coordination
     if [ "$AGENT" = "claude" ]; then
-      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
-      cmux_send_cmd "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      cmux_send_cmd "$WS_REF" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
+      cmux_send_cmd "$WS_REF" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
       sleep 0.5
     fi
 
@@ -477,7 +477,7 @@ elif [ "$MUX" = "cmux" ]; then
     cmux rename-workspace --workspace "$REVIEW_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
 
     if [ "$AGENT" = "claude" ]; then
-      cmux_send_cmd "$REVIEW_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      cmux_send_cmd "$REVIEW_WS_REF" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
     fi
 

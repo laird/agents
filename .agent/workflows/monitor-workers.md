@@ -21,7 +21,7 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
-6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
+6. **Dispatch idle workers** — Send `/fix <issue_number>` to idle workers via cmux/tmux
 7. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
@@ -70,9 +70,10 @@ Also check GitHub state:
 
 ```bash
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 source "${SCRIPT_DIR}/issue-fns.sh"
@@ -186,16 +187,16 @@ For each idle worker with an unworked issue available, send the fix command:
 
 **cmux:**
 ```bash
-cmux send --workspace <ref> "/autocoder:fix <issue_number>"
+cmux send --workspace <ref> "/fix <issue_number>"
 cmux send-key --workspace <ref> Enter
 ```
 
 **tmux:**
 ```bash
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "/fix <issue_number>" Enter
 ```
 
-**Codex workers:** send the shell wrapper instead of the Claude slash command.
+**Codex workers:** send the shell wrapper instead of the Antigravity slash command.
 The wrapper runs the issue-start handshake before launching Codex:
 ```bash
 cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
@@ -233,7 +234,7 @@ This creates a new worktree, adds a pane/workspace to the existing session, and 
 
 ### Step 5c: Run Review-Blocked When All Issues Are Blocked
 
-If there are **no unblocked issues available** for workers (all open issues have blocking labels like needs-design, needs-clarification, too-complex, etc.) AND there are **blocked issues that need review**, automatically invoke `/autocoder:review-blocked` using the Skill tool.
+If there are **no unblocked issues available** for workers (all open issues have blocking labels like needs-design, needs-clarification, too-complex, etc.) AND there are **blocked issues that need review**, automatically invoke `/review-blocked` using the Skill tool.
 
 This lets the human manager approve, reject, or skip blocked issues — potentially unblocking work for idle workers on the next monitoring cycle.
 
@@ -328,8 +329,8 @@ Idle workers available: K
 Stale "working" labels: S
 
 Actions taken:
-- Sent `/autocoder:fix 1234` to wt-1
-- Sent `/autocoder:fix 5678` to wt-3
+- Sent `/fix 1234` to wt-1
+- Sent `/fix 5678` to wt-3
 - Removed stale "working" label from #9999
 
 Deploy status: 21 commits since last deploy, waiting for workers to complete

@@ -11,7 +11,7 @@ Stops the infinite `/fix-loop` by removing the state file.
 ## Instructions
 
 ```bash
-LOOP_STATE_FILE=".claude/fix-loop.local.md"
+LOOP_STATE_FILE=".agent/fix-loop.local.md"
 
 if [[ -f "$LOOP_STATE_FILE" ]]; then
   # Extract current iteration for status message

@@ -10,14 +10,14 @@ set -euo pipefail
 # ACTIVITY DETECTION FUNCTIONS
 # ============================================================
 
-# Check if Claude Code task system has active work
+# Check if Antigravity task system has active work
 # Returns 0 if tasks active, 1 if idle
 check_active_tasks() {
-    # Look for .claude/tasks/*.json files
-    if [[ -d ".claude/tasks" ]]; then
+    # Look for .agent/tasks/*.json files
+    if [[ -d ".agent/tasks" ]]; then
         # Check for any pending or in_progress tasks
         if grep -l '"status":"pending"\|"status":"in_progress"' \
-            .claude/tasks/*.json 2>/dev/null | grep -q .; then
+            .agent/tasks/*.json 2>/dev/null | grep -q .; then
             return 0  # Tasks active
         fi
     fi
@@ -52,9 +52,9 @@ check_transcript_activity() {
 check_file_activity() {
     local threshold_minutes=5
 
-    # Find files modified in last N minutes (exclude .claude/, .git/)
+    # Find files modified in last N minutes (exclude .agent/, .git/)
     if find . -type f -mmin -$threshold_minutes \
-        ! -path './.claude/*' \
+        ! -path './.agent/*' \
         ! -path './.git/*' \
         -print -quit 2>/dev/null | grep -q .; then
         return 0  # Recent file changes
@@ -71,7 +71,7 @@ check_file_activity() {
 HOOK_INPUT=$(cat)
 
 # Check if fix loop is active
-LOOP_STATE_FILE=".claude/fix-loop.local.md"
+LOOP_STATE_FILE=".agent/fix-loop.local.md"
 
 if [[ ! -f "$LOOP_STATE_FILE" ]]; then
     # No active loop - allow exit
@@ -143,7 +143,7 @@ if check_file_activity; then
     exit 0
 fi
 
-# All checks passed - Claude is idle, safe to continue loop
+# All checks passed - Antigravity is idle, safe to continue loop
 echo "✅ Fix-github loop: Idle detected, continuing..." >&2
 
 # ============================================================

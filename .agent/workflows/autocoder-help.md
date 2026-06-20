@@ -35,8 +35,8 @@ echo "Active sessions: $ACTIVE_SESSIONS"
 
 Based on what you find, give contextual guidance:
 
-- **If issue source not configured**: "Run `/autocoder:set-issue-source` first to configure the issue backend (file or GitHub)."
-- **If aliases not installed**: "Run `/autocoder:install` and choose to install shell aliases, or run `bash <agents-repo>/scripts/install-shell-aliases.sh`."
+- **If issue source not configured**: "Run `/set-issue-source` first to configure the issue backend (file or GitHub)."
+- **If aliases not installed**: "Run `/install` and choose to install shell aliases, or run `bash <agents-repo>/scripts/install-shell-aliases.sh`."
 - **If no agent CLIs detected**: List install links for claude, codex, gemini, droid.
 - **If no muxer**: Suggest `brew install tmux` or cmux.
 - **Otherwise**: Show the most relevant next steps based on context (active sessions, issue count, etc.).
@@ -106,7 +106,7 @@ bash /path/to/agents/scripts/install-shell-aliases.sh --all  # all agents
 
 | Agent | tmux | cmux |
 |-------|------|------|
-| Claude Code | `startclt 3` | `startclc 3` |
+| Antigravity | `startclt 3` | `startclc 3` |
 | Codex | `startct 3` | `startcc 3` |
 | Gemini (Antigravity) | `startgt 3` | `startgc 3` |
 | Droid (Factory) | `startdt 3` | `startdc 3` |
@@ -131,7 +131,7 @@ The number is the worker count. Each swarm starts N worker agents + 1 manager ag
 /fix-loop
 ```
 
-### Pattern 3: Parallel Swarm (example: 3 Claude workers in tmux)
+### Pattern 3: Parallel Swarm (example: 3 Antigravity workers in tmux)
 
 ```bash
 startclt 3
@@ -187,6 +187,6 @@ Unlabeled issues are triaged automatically on first `/fix`.
 
 ## See Also
 
-- `/autocoder:install` — full interactive setup
+- `/install` — full interactive setup
 - `/modernize-help` — modernization workflow help
-- Project `CLAUDE.md` for test command configuration
+- Project `GEMINI.md` for test command configuration
