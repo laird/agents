@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts/start-parallel-agents.sh"
 HELP=$("$SCRIPT" --help)
 
-for expected in "--paused" "--no-start" "--issue-source file|github" "--issue-dir PATH" "start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"; do
+for expected in "--paused" "--no-start" "--issue-source file|github" "--issue-dir PATH" "--route self|manager" "--manager-routing" "start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"; do
   if ! grep -Fq -- "$expected" <<<"$HELP"; then
     echo "FAIL: help missing '$expected'" >&2
     exit 1
