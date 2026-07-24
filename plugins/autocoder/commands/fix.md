@@ -507,6 +507,16 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
   ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
 
+  # Remote branch is the strongest lock — check it before the working label.
+  # A peer may have pushed the branch before the label propagated, or a manager
+  # may have cleared a stale label without realising work was still in flight.
+  REMOTE_BRANCH_SPEC=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
+    echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — another agent owns this issue."
+    echo "    To take over an abandoned branch, delete it from origin first."
+    exit 1
+  fi
+
   # Check if issue already has 'working' label (being worked on by another agent)
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
@@ -538,15 +548,34 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
 
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
 
-  # Claim-then-verify: add the 'working' lock IMMEDIATELY. The specified-issue path
-  # previously never set this label (it only checked it above), so dispatched work
-  # (/autocoder:fix <N>) ran with no concurrency lock and could be double-claimed.
-  issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
-  sleep 1
-  RACE_CHECK=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
-  if [ "$RACE_CHECK" -gt 0 ]; then
-    echo "⚠️  Race: another agent already started issue #$ISSUE_NUM. Aborting."
-    exit 1
+  # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
+  # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
+  # for competing workers to surface before proceeding.
+  if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+    issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+    sleep 3
+    CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+      2>/dev/null || echo "0")
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+      2>/dev/null || echo "0")
+    if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM. Releasing and aborting."
+      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
+  else
+    # File backend: check for orphaned start comments from prior abandoned runs.
+    sleep 1
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+      2>/dev/null || echo "0")
+    if [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and aborting."
+      issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
   fi
 else
   # No specific issue - get highest priority issue (using labels only)
@@ -615,22 +644,58 @@ else
       continue
     fi
 
+    # Remote branch is a stronger lock than the working label: a worker may have pushed
+    # the branch before the label propagated, or the label may have been cleaned by a
+    # manager who thought the issue was stale. Skip immediately if the branch exists.
+    REMOTE_BRANCH_EXISTS=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$REMOTE_BRANCH_EXISTS" -gt "0" ]; then
+      echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — skipping issue #$ISSUE_NUM"
+      continue
+    fi
+
     # Claim-then-verify: claim IMMEDIATELY, then check for race
     issue_claim "$ISSUE_NUM" 2>/dev/null
     claim_rc=$?
     if [ "$claim_rc" -ne 0 ]; then
-      echo "⚠️  Lost claim race on issue #$ISSUE_NUM. Trying next issue..."
+      echo "⚠️  Lost claim race on issue #$ISSUE_NUM (file backend: atomic rename lost). Trying next issue..."
       continue
     fi
-    sleep 1
 
-    # Re-fetch the issue to verify we won the race
-    # Check if another agent already posted a "work started" comment
-    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
+    # For file backend: the atomic rename above is the definitive lock — skip the
+    # extended race check. For GitHub backend (non-atomic label add), post an early
+    # marker comment NOW so concurrent workers can detect the collision within the
+    # settlement window, then sleep long enough for their markers to appear.
+    if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+      issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+      sleep 3
 
-    if [ "$RECENT_COMMENTS" -gt 0 ]; then
-      echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
-      continue
+      # Count autocoder-claim markers. If more than one exists, two workers raced.
+      # Both back off — the issue returns to open/ and gets claimed cleanly next tick.
+      CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+        2>/dev/null || echo "0")
+      # Also check for existing work-started comments from a prior abandoned run.
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+        2>/dev/null || echo "0")
+
+      if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED). Releasing and trying next..."
+        issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
+    else
+      # File backend: brief pause to detect orphaned start comments from prior abandoned runs.
+      sleep 1
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+        2>/dev/null || echo "0")
+      if [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and trying next..."
+        # File backend: release moves the file back from working/ to open/
+        issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
     fi
 
     ISSUE_CLAIMED=true
@@ -666,6 +731,38 @@ echo "════════════════════════�
 echo ""
 echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
+
+# ── Task scope gate ──────────────────────────────────────────────────────────
+# MANDATORY: Before creating the branch, assess whether this task fits in one
+# agent context window and whether it can run safely in a worktree swarm.
+#
+# Ask yourself:
+#   1. CONTEXT FIT: Can all required reading, reasoning, and implementation
+#      complete in a single conversation without hitting context limits?
+#      Red flags: "rewrite the authentication system", "migrate all API calls",
+#      "audit every file in src/", tasks described in >1000 chars with no
+#      clear single deliverable.
+#
+#   2. WORKTREE INDEPENDENCE: Can this work in an isolated worktree without
+#      conflicting with other parallel worktrees working other issues?
+#      Red flags: changes to shared config files (tsconfig.json, package.json,
+#      migrations, schema files) that other agents might also need to change;
+#      or changes that require knowing the final state of another in-flight issue.
+#      A sub-task that touches the same file as a sibling sub-task is NOT
+#      independent — it must be sequenced, not parallelized.
+#
+# If this issue FAILS either test → DECOMPOSE IT NOW (before branch creation):
+#   - Decompose into 3-8 sub-tasks, each satisfying both criteria above
+#   - Create each sub-task as a new issue with `subtask` label and a
+#     "Sub-task of #${ISSUE_NUM}" line in the body
+#   - Add the `decomposed` label to this parent issue and release the claim
+#   - Exit; workers will pick up the independent sub-tasks on the next tick
+#
+# If this issue PASSES both tests → proceed to branch creation immediately.
+#
+# See "Ultra-Complex Issues - Decompose into Sub-Tasks" later in this document
+# for the full decomposition protocol including sub-task body template.
+# ────────────────────────────────────────────────────────────────────────────
 
 # Branch from the latest shared integration branch (NOT the worktree's current branch).
 # In a parallel-worktree swarm each worktree sits on its own main-wt-N; basing the fix
@@ -1236,19 +1333,32 @@ If no blocking conditions detected, continue with the normal fix workflow (simpl
 
 ### Ultra-Complex Issues - Decompose into Sub-Tasks
 
-For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions):
+This section is triggered both by the **task scope gate** (above, at claim time) and by the
+complexity assessment (Step 1) when you discover mid-implementation that the scope is larger than expected.
+
+For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions, or issues that fail the scope gate):
+
+**Decomposition rules — each sub-task MUST satisfy ALL of these:**
+
+1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
+2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body.
+3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
+4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
 
 **First, attempt to decompose the issue into manageable sub-tasks:**
 
 ```bash
-echo "⚠️  Ultra-complex issue detected: attempting decomposition"
+echo "⚠️  Issue requires decomposition: attempting breakdown"
 
 # Use brainstorming skill to analyze and decompose the complex issue
 if [ "$SUPERPOWERS_AVAILABLE" = "true" ] || [ "$THOROUGH_SKILLS_AVAILABLE" = "true" ]; then
   echo "📋 Using thorough-brainstorming (preferred) or superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
-  # Prompt: "Analyze issue #$ISSUE_NUM and decompose it into 3-8 manageable sub-tasks.
-  # Each sub-task should be independently fixable and testable.
-  # For each sub-task, provide: title, description, acceptance criteria, and priority."
+  # Prompt: "Decompose issue #$ISSUE_NUM into 3-8 sub-tasks. Each sub-task must:
+  # (a) fit in one agent context window, (b) touch a DISTINCT set of files from
+  # every other sub-task so they can run in parallel worktrees without merge conflicts,
+  # (c) be independently testable. List any sub-tasks that must run after another
+  # (sequential dependencies). For each, provide: title, description, files affected,
+  # acceptance criteria, priority, and dependencies."
 
   # After decomposition analysis is complete, create GitHub issues for each sub-task
   # Store sub-task numbers for linking
@@ -1267,17 +1377,23 @@ This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
 ## Description
 [What needs to be done in this specific sub-task]
 
+## Files Affected
+[List specific files or directories this sub-task will modify. This MUST NOT overlap
+with the files listed in sibling sub-tasks unless those sub-tasks have a sequential
+dependency (listed below). Overlapping file lists = merge conflict in the worktree swarm.]
+
 ## Acceptance Criteria
 - [ ] Criterion 1
 - [ ] Criterion 2
 - [ ] Criterion 3
 
 ## Dependencies
-- Must be completed as part of #${ISSUE_NUM}
-- [Any dependencies on other sub-tasks]
+- Sub-task of #${ISSUE_NUM}
+- [Depends on: #<sibling-subtask-number> — reason why this must run after that one]
+- [Can run in parallel with: #<sibling-subtask-number>]
 
 ## Testing
-[How to verify this sub-task is complete]
+[How to verify this sub-task is complete in isolation, without sibling sub-tasks merged]
 
 ---
 
@@ -1290,16 +1406,22 @@ SUBTASK_BODY
   echo "✅ Created sub-task #$SUBTASK_NUM"
   # done
 
+  # Release the parent issue claim before exiting — workers will pick up sub-tasks.
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_release "$ISSUE_NUM" 2>/dev/null || true
+
   # Update original issue to reference all sub-tasks
   issue_comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
 
-This complex issue has been broken down into manageable sub-tasks:
+This issue has been broken down into independently-workable sub-tasks that can
+run in parallel worktrees without merge conflicts:
 
 $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
 
-**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
+**Parallel safety**: each sub-task touches different files. Check each sub-task's
+\"Files Affected\" section before assigning to confirm no overlap.
 
-**To track progress**: Check the sub-tasks listed above.
+**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
 
 🤖 Auto-decomposed by autonomous fix workflow"
 
@@ -1309,7 +1431,7 @@ $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
   echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
   echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"
   echo ""
-  echo "⏭️  Moving to next issue. Sub-tasks will be processed in priority order."
+  echo "⏭️  Claim released. Sub-tasks will be picked up by workers on the next tick."
 
 else
   # Fallback: If superpowers not available, add too-complex label
@@ -2072,6 +2194,8 @@ This signals the stop hook to sleep (default 15 minutes) before checking again f
 - Blocked issues reviewed and approved (blocking label removed)
 
 **The only way this workflow stops is if the user manually interrupts it.**
+
+**Do NOT send messages to other sessions when idle.** Do not use `SendMessage` (or any tool) to report your idle status, empty backlog, or completed issues to another session. Silent idle is correct behavior. Only use `SendMessage` if you hit a genuine blocker the manager must resolve.
 
 ---
 

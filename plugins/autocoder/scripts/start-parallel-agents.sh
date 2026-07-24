@@ -412,6 +412,7 @@ if [ "$MUX" = "tmux" ]; then
   if [ "$AGENT" = "claude" ]; then
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+    send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
   fi
   WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
 
@@ -433,6 +434,7 @@ if [ "$MUX" = "tmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
   done
@@ -608,6 +610,7 @@ elif [ "$MUX" = "cmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_cmux_command "$WS_REF" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
       sleep 0.5
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "$WS_REF" paused)")

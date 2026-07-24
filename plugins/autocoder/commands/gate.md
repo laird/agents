@@ -8,6 +8,8 @@ A Haiku-pinned variant (`/autocoder:dispatch`) is Phase 3, not here.
 
 Pre-LLM gate that decides whether the tick has work. Idle: cheap exit. Work: dispatch.
 
+> **MANDATORY — no inter-session messaging:** Do NOT use `SendMessage` (or any tool that contacts another session) at any point in this command — not at startup, not when idle, not after completing work. Silent execution is the correct behavior. The ONLY exception is a genuine blocker the manager must resolve before you can continue.
+
 ## Instructions
 
 ```bash
@@ -25,7 +27,7 @@ bash "$SCRIPT_DIR/fix-loop-gate.sh"; GATE_RC=$?
 
 Branch on `$GATE_RC`:
 
-- **1 (idle):** emit exactly `IDLE_NO_WORK_AVAILABLE` and stop. No further tool calls.
+- **1 (idle):** emit exactly `IDLE_NO_WORK_AVAILABLE` and stop. No further tool calls. Do NOT use `SendMessage` or any other tool to notify another session of your idle status — silent stop is correct.
 - **2 (config error):** emit `GATE_CONFIG_ERROR` and stop.
 - **0 (work):** `PHASE=$(jq -r .phase "$WORK_JSON")` then act:
 
@@ -51,11 +53,26 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
-Invoke the worker via Skill tool (same-model chain, inherits loop model):
+Each issue must run in a **fresh Claude process** for a clean context window. The mechanism
+depends on how the gate was invoked:
+
+**Shell-loop mode** (when `AUTOCODER_NEXT_FIX_FILE` env var is set — i.e., running under
+`claude-worker-loop.sh`): write the issue number to the handoff file and exit. The shell wrapper
+will start a new `claude` process for fix automatically.
+
+```bash
+ISSUE_NUM=$(jq -r .issue "$WORK_JSON")
+if [ -n "${AUTOCODER_NEXT_FIX_FILE:-}" ]; then
+  echo "$ISSUE_NUM" > "$AUTOCODER_NEXT_FIX_FILE"
+  exit 0
+fi
+```
+
+**Inline mode** (fallback when gate is invoked standalone or via `/loop`): dispatch via Skill
+tool in the current session. Context will accumulate across issues in this mode — prefer
+shell-loop mode for multi-issue worker sessions.
 
 ```
 Use the Skill tool to invoke: autocoder:fix
 With args: <issue number from work JSON>
 ```
-
-Worker takes over.

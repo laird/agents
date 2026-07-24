@@ -32,11 +32,16 @@ resolve_worker_launch() {
 
   case "$agent" in
     claude)
-      AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-      WORKER_CMD="/autocoder:fix-loop"
-      WORKER_LAUNCH_MODE="interactive"
-      WORKER_COMMAND_MODE="agent-input"
-      MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
+      # Workers: shell loop that restarts Claude per issue (fresh context per fix).
+      # Each worker is visible as its own tmux pane running claude-worker-loop.sh.
+      # Manager: interactive Claude session using the smarter opus model for coordination.
+      WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
+      MANAGER_MODEL="${MANAGER_MODEL:-claude-opus-5}"
+      AGENT_LAUNCH_CMD=""
+      WORKER_CMD="bash '$repo_root/plugins/autocoder/scripts/claude-worker-loop.sh'"
+      WORKER_LAUNCH_MODE="shell"
+      WORKER_COMMAND_MODE="shell"
+      MANAGER_LAUNCH_CMD="claude --dangerously-skip-permissions --model $MANAGER_MODEL"
       MANAGER_CMD="/autocoder:monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       ;;
