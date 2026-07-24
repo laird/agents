@@ -28,6 +28,28 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 
 ## Instructions
 
+### Step 0: Context pressure check — handoff before compaction
+
+Before doing anything else, check whether this manager session is approaching context limits. Read the manager's own tmux pane:
+
+```bash
+# The manager typically runs in window 1, pane 0 — adjust session/pane if different
+SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+tmux capture-pane -t "${SESSION}:1.0" -p 2>/dev/null | grep -i "auto-compact\|context.*limit\|compressing\|% until" | tail -3
+```
+
+Also look for the `until auto-compact` percentage in any recent output visible in this session.
+
+**If context pressure is detected** (e.g., "N% until auto-compact" where N ≤ 15, or any "compressing context" / "context limit" message):
+
+1. Immediately invoke the handoff skill to save state:
+   ```
+   Use the Skill tool to invoke: autocoder:manager-handoff
+   ```
+2. After handoff completes, stop — do not proceed with the rest of monitor-workers. The user will run `/autocoder:manager-resume` in the fresh session.
+
+**If no context pressure**: continue to Step 1.
+
 ### Step 1: Discover Workers
 
 ```bash

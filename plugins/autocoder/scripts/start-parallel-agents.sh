@@ -152,11 +152,19 @@ if [ -z "$MUX" ]; then
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
   else
-    echo "❌ Error: No terminal multiplexer found" >&2
+    echo "❌ Error: No terminal multiplexer found." >&2
     echo "" >&2
-    echo "Install one of the following:" >&2
-    echo "  tmux:  brew install tmux" >&2
-    echo "  cmux:  brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "Install tmux or cmux, then re-run:" >&2
+    echo "" >&2
+    echo "  tmux  (recommended — available on all platforms)" >&2
+    echo "    macOS:   brew install tmux" >&2
+    echo "    Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+    echo "             sudo dnf install tmux  (Fedora/RHEL)" >&2
+    echo "    Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+    echo "" >&2
+    echo "  cmux  (macOS GUI terminal multiplexer)" >&2
+    echo "    macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "    Info:    https://manaflow.ai/cmux" >&2
     echo "" >&2
     exit 1
   fi
@@ -166,7 +174,25 @@ fi
 case "$MUX" in
   tmux|cmux)
     if ! command -v "$MUX" &> /dev/null; then
-      echo "❌ Error: $MUX is not installed" >&2
+      echo "❌ Error: $MUX is not installed." >&2
+      echo "" >&2
+      case "$MUX" in
+        tmux)
+          echo "Install tmux:" >&2
+          echo "  macOS:   brew install tmux" >&2
+          echo "  Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+          echo "           sudo dnf install tmux  (Fedora/RHEL)" >&2
+          echo "  Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+          ;;
+        cmux)
+          echo "Install cmux:" >&2
+          echo "  macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+          echo "  Info:    https://manaflow.ai/cmux" >&2
+          echo "" >&2
+          echo "  (cmux is macOS-only; use --mux tmux on Linux)" >&2
+          ;;
+      esac
+      echo "" >&2
       exit 1
     fi
     ;;

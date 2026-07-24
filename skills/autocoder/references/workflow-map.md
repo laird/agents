@@ -23,6 +23,22 @@
   - `plugins/autocoder/scripts/approve-blocked-issue.sh`
   - `plugins/autocoder/scripts/reject-blocked-issue.sh`
 
+## Dispatch vs. Self-Select
+
+**When a manager dispatches you to a specific issue, always invoke `/fix <N>` with that exact number.** Running `/fix` without a number self-selects the highest-priority unclaimed issue — that bypasses the manager's assignment and causes workers to collide on the same files or pick up issues already in-flight by peers.
+
+Only self-select (run `/fix` with no number) when you are genuinely idle and have received no explicit assignment.
+
+## Lock Hierarchy
+
+A claim on issue `N` is signalled in three layers, in increasing strength:
+
+1. `working` label on the GitHub issue — weakest; can be cleared by a manager for stale issues.
+2. `Automated Fix Started` comment on the issue with the branch name — durable, but posted after branch creation.
+3. **Remote branch `feature/issue-N` on `origin`** — strongest lock; exists as soon as the worker pushes. Before attempting to claim any issue (both in explicit and self-select paths), check `git ls-remote --heads origin feature/issue-N`. A non-empty result means the issue is owned; skip it.
+
+If the remote branch exists but the `working` label and start comment are absent (e.g. manager cleared a stale label), the branch is still the authoritative lock. To take over such an issue, the manager must explicitly delete the remote branch first.
+
 ## Execution Notes
 
 - Keep GitHub issue state as the source of truth.
