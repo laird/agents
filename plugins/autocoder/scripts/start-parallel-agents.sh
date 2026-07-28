@@ -7,7 +7,7 @@
 # Options:
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
-#   --issue-source file|github|jira  Issue backend for this swarm run
+#   --issue-source file|github|jira|ado  Issue backend for this swarm run
 #   --issue-dir PATH       File issue directory when --issue-source file
 #   --route self|manager   Issue-routing mode (default: self). In manager mode
 #                          workers do NOT self-claim: they idle at a ready prompt
@@ -102,7 +102,7 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
-      echo "  --issue-source file|github|jira  Issue backend for this swarm run"
+      echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
       echo "  --issue-dir PATH       File issue directory when --issue-source file"
       echo "  --route self|manager   Issue-routing mode (default: self). In manager mode"
       echo "                         workers do NOT self-claim — they idle at a ready prompt"

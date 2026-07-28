@@ -34,10 +34,11 @@ echo "Current issue source: $CURRENT"
 2. List available sources:
    - Always offer: `file` (`.issues/` directory)
    - Always offer: `jira` (Jira project via REST API)
+   - Always offer: `ado` (Azure DevOps work items via REST API)
    - Offer `github` only if `git remote -v | grep -q "github.com"`
    - Offer any custom backend found in `.autocoder.json`'s `issueBackend` key
 
-3. Ask: "Switch to which source? [file/github/jira]"
+3. Ask: "Switch to which source? [file/github/jira/ado]"
 
    If the user picks `jira`, collect the non-secret connection settings and
    store them under a `jira` object in `.autocoder.json`. Secrets
@@ -62,6 +63,23 @@ json.dump(d, open(path, 'w'), indent=2)
   echo "ℹ️  Export credentials before running agents:"
   echo "    export JIRA_EMAIL=you@acme.com JIRA_API_TOKEN=<token>"
   echo "    (or, for Server/DC:  export JIRA_AUTH_HEADER='Bearer <PAT>')"
+fi
+
+# ado → collect org URL + project (non-secret; safe to commit)
+if [ "$NEW_SOURCE" = "ado" ]; then
+  read -r -p "Azure DevOps org URL (e.g. https://dev.azure.com/myorg): " ADO_URL
+  read -r -p "Azure DevOps project name: " ADO_PROJ
+  python3 -c "
+import json, os
+path = '$AUTOCODER_JSON'
+d = json.load(open(path)) if os.path.exists(path) else {}
+d.setdefault('ado', {})
+d['ado']['orgUrl'] = '$ADO_URL'
+d['ado']['project'] = '$ADO_PROJ'
+json.dump(d, open(path, 'w'), indent=2)
+"
+  echo "ℹ️  Export the PAT before running agents (never commit it):"
+  echo "    export ADO_PAT=<personal access token with Work Items read/write>"
 fi
 ```
 

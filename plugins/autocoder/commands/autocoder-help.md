@@ -101,7 +101,7 @@ add-worker 2 --agent codex
 remove-worker 2 --agent codex
 ```
 
-`start-parallel` is the primary launcher. It supports `--mux tmux|cmux`, `--agent claude|gemini|codex|droid`, `--issue-source file|github|jira`, `--issue-dir PATH`, `--paused`, and `--no-worktrees`. If `--issue-source` is omitted, it uses the project issue source from `.autocoder.json`.
+`start-parallel` is the primary launcher. It supports `--mux tmux|cmux`, `--agent claude|gemini|codex|droid`, `--issue-source file|github|jira|ado`, `--issue-dir PATH`, `--paused`, and `--no-worktrees`. If `--issue-source` is omitted, it uses the project issue source from `.autocoder.json`.
 
 Use `--paused` to create the manager session and workers without starting the monitor loop or worker ticket-pulling loops. Use `add-worker [count]` when the user asks the manager to start idle workers or add and start more workers. Use `remove-worker WORKER_NUMBER [...]` when the user asks the manager to shut down selected workers.
 

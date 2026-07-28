@@ -14,9 +14,11 @@ This is the **Modernize** Claude Code plugin - a production-validated framework 
 
 ## Issue Management
 
-This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), or via a Jira project (jira backend) — whichever is configured in `.autocoder.json`.
+This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), via a Jira project (jira backend), or via Azure DevOps work items (ado backend) — whichever is configured in `.autocoder.json`.
 
-Each backend is a self-contained script implementing the same 9-verb contract (list, get, update, comment, close, create, claim, release, any-claimable): `issues-file.py`, `issues-gh.sh`, and `issues-jira.sh`. The Jira backend reads non-secret connection settings (`baseUrl`, `project`) from the `jira` object in `.autocoder.json` and credentials from the environment (`JIRA_EMAIL` + `JIRA_API_TOKEN`, or `JIRA_AUTH_HEADER` for a Server/DC personal access token) — secrets are never committed. See `docs/jira-setup.md` for the full Jira setup and testing guide.
+Each backend is a self-contained script implementing the same 9-verb contract (list, get, update, comment, close, create, claim, release, any-claimable): `issues-file.py`, `issues-gh.sh`, `issues-jira.sh`, and `issues-ado.sh`. Non-secret connection settings live in `.autocoder.json` and credentials come from the environment — secrets are never committed:
+- **Jira** reads `baseUrl`/`project` from the `jira` object; credentials via `JIRA_EMAIL` + `JIRA_API_TOKEN` (or `JIRA_AUTH_HEADER` for a Server/DC PAT). See `docs/jira-setup.md`.
+- **Azure DevOps** reads `orgUrl`/`project` from the `ado` object; credentials via `ADO_PAT`. Labels map to work-item Tags. See `docs/ado-setup.md`.
 
 ## Commands
 
@@ -337,12 +339,14 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 - Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
 - Run all shell tests: `for t in tests/test_*.sh; do bash "$t" || exit 1; done`
 - Note: the Python tests require `pytest`, which is not installed in all environments.
-- Jira backend has two complementary shell tests, both hermetic (no network):
-  `test_issues_jira.sh` stubs `curl` to assert request/JQL shape, and
-  `test_issues_jira_integration.sh` drives real HTTP against an in-process
-  stateful fake (`tests/fixtures/fake_jira.py`) for full lifecycle coverage.
-  For a check against a **real** Jira, run `plugins/autocoder/scripts/jira-smoke-test.sh`
-  with `JIRA_*` env vars set (needs egress to your Atlassian site; not part of CI).
+- The Jira and Azure DevOps backends each have two complementary shell tests,
+  all hermetic (no network): `test_issues_jira.sh` / `test_issues_ado.sh` stub
+  `curl` to assert request (JQL / WIQL + JSON-patch) shape, and
+  `test_issues_jira_integration.sh` / `test_issues_ado_integration.sh` drive real
+  HTTP against in-process stateful fakes (`tests/fixtures/fake_jira.py`,
+  `tests/fixtures/fake_ado.py`) for full lifecycle coverage. For a check against
+  a **real** Jira, run `plugins/autocoder/scripts/jira-smoke-test.sh` with
+  `JIRA_*` env vars set (needs egress to your Atlassian site; not part of CI).
 
 **E2E Tests**:
 - Not configured for this repository.
