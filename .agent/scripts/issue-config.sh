@@ -8,6 +8,7 @@
 # .autocoder.json — a stale value silently routes the whole workflow at the
 # wrong backend, where it finds zero issues and idles forever. Config wins;
 # the inherited value only stands when the config supplies nothing.
+# Parameter expansion with a default keeps callers under `set -u` safe.
 _ic_INHERITED_SOURCE="${ISSUE_SOURCE:-}"
 
 _ic_MAIN_WORKTREE=$(git worktree list --porcelain 2>/dev/null | grep -m1 "^worktree" | cut -d' ' -f2)
@@ -54,7 +55,8 @@ fi
 
 # ── 1b. No config value — fall back to the inherited environment ───────────
 # Nothing in .autocoder.json to contradict it, so an exported ISSUE_SOURCE
-# still stands. Must come before the fail-fast below.
+# still stands (repos with no config, and the per-subprocess cache both rely
+# on this). Must come before the fail-fast below.
 if [ -n "$_ic_INHERITED_SOURCE" ]; then
   export ISSUE_SOURCE="$_ic_INHERITED_SOURCE"
   return 0 2>/dev/null || exit 0
