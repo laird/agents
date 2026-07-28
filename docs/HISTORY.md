@@ -798,3 +798,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The /dev line now has claim parity with master, and a red test blocks any future rename from dropping it again. Two lock-leak paths that could strand issues with no worker holding them are closed.
 
+
+---
+
+## 2026-07-28 13:11:54 - Fix #32: CI now runs the shell test suites
+
+**What Changed**: Added scripts/run-shell-suites.sh (runs every tests/*.sh, continues past failures, summarises, exits non-zero on any failure) and wired it into .github/workflows/test.yml as a step alongside pytest. Added tests/test_ci_runs_shell_suites.py (7 assertions) guarding that CI keeps invoking it, that pytest still runs, that fixtures stay excluded, and that a failing suite actually turns the run red.
+
+**Why Changed**: CI ran only 'pytest tests/', which collects Python tests. All 9 tests/*.sh suites — including those covering the claim lock, the issue backend, and the multiplexer probe — were never executed. CI was green and that green said nothing about them.
+
+**Impact**: Shell regressions now fail CI. Also found that the suites are sensitive to an inherited ISSUE_SOURCE: three failed locally purely because the developer shell exported one. The runner scrubs those vars per suite, so local and CI results agree.
+

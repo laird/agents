@@ -15,5 +15,13 @@ jobs:
           cache: pip
       - name: Install pytest
         run: python3 -m pip install --upgrade pip pytest
-      - name: Run tests
+      - name: Run Python tests
         run: python3 -m pytest tests/ -v
+
+      # pytest collects Python tests only, so every tests/*.sh suite used to be
+      # invisible to CI (issue #32). This step runs them and fails the job if any
+      # fail. `!cancelled()` so a pytest failure does not hide the shell results —
+      # you want both reports from one run, not one at a time.
+      - name: Run shell test suites
+        if: ${{ !cancelled() }}
+        run: bash scripts/run-shell-suites.sh
