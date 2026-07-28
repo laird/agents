@@ -165,6 +165,7 @@ git commit -m "update parallel-maintenance map for /dev,/dev-loop,/plan"
 
 **Files:**
 - Create: `plugins/autocoder/commands/plan.md`, `.agent/workflows/autocoder-plan.md`
+- Modify: `plugins/autocoder/commands/dev.md` (auto-close monitor — child-marker enumeration)
 - Modify: `.claude-plugin/plugins/autocoder/plugin.json`, `.factory-plugin/plugins/autocoder/plugin.json` (register `plan.md`)
 
 - [ ] **Step 1: Author `commands/plan.md`.** Start from the optional-skills-prelude block (copy the prelude pattern from an existing command, e.g. the header of `dev-loop.md`) with a mapping table referencing external skills:
@@ -177,19 +178,20 @@ git commit -m "update parallel-maintenance map for /dev,/dev-loop,/plan"
 
 Then encode the pipeline inline (steps 0–6 from spec §3):
   - Step 0: ensure `decomposed`/`subtask` labels exist (reuse the label-bootstrap block from `dev.md`, formerly `fix.md:442`).
-  - Step 1: brainstorm → design doc under `docs/specs/`; **human approves**; commit the doc to the shared integration branch (resolves spec B8 — run in host workspace, `git add` the doc, commit; the manager session's cwd is the host workspace on the integration branch).
-  - Step 2: `issue_create` the spec issue — body = pointer to the doc path + empty story checklist; **keep the body free of stray `#N`** (resolves spec B9 — only `- [ ] #<story>` lines carry issue refs).
+  - Step 1: brainstorm → design doc under `docs/specs/`; **human approves**; commit the doc onto the configured integration branch (`CLAUDE_CODE_INTEGRATION_BRANCH`, default `main`/`master`) **without switching the manager's working tree** (resolves spec B8 + CIR §3.1): build the commit against the integration branch's tree via git plumbing (`git commit-tree` with the integration branch as parent, then `git update-ref refs/heads/<integration>`), so the doc lands on the branch worktrees derive from regardless of the manager's current branch.
+  - Step 2: `issue_create` the spec issue — body = pointer to the doc path (no story checklist in the body; the auto-close monitor no longer reads the parent body — see Step 1b and Step 5).
   - Step 3: spec critical-review loop — `critical-design-review`→`update-design-doc`, stop on empty pass or after 3 passes (spec §3.1); post each pass summary as a spec-issue comment.
   - Step 4: decompose into 3–8 stories.
   - Step 4b: story critical-review loop — `critical-implementation-review`→`update-implementation-plan`, same cap-3 termination (spec §3.4); **human approves** the breakdown.
-  - Step 5: `issue_create` each story — labels `subtask` + priority, body header `## Sub-task of #<SPEC>` (exact string), acceptance criteria + design context; append `- [ ] #<story>` to the spec issue and label it `decomposed`. Copy the issue-body template shape from `dev.md` (formerly `fix.md:1225–1275`).
+  - Step 5: `issue_create` each story — labels `subtask` + priority, body header `## Sub-task of #<SPEC>` (exact string — this child-side marker is the authoritative parent link the monitor enumerates by, per Step 1b), acceptance criteria + design context; label the spec issue `decomposed` and post the `- [ ] #<story>` checklist as a **comment** on the spec issue for human visibility (not the body). Copy the issue-body template shape from `dev.md` (formerly `fix.md:1225–1275`).
   - Step 6: document hand-off — note that the worker fleet running `/dev-loop`→`/dev` will pull the `subtask` stories and that the existing monitor auto-closes the spec when all stories close.
   Use `issue-fns.sh` (`issue_create`, `issue_comment`, `issue_update`) with the same `SCRIPT_DIR` resolution block used by `brainstorm-issue.md:57–63`.
+- [ ] **Step 1b: Modify the auto-close monitor in `dev.md`** (formerly `fix.md:1319–1327`) so it enumerates a spec's stories by the authoritative child-side marker instead of the parent body (resolves CIR §2.1): replace `PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oP '#\K[0-9]+')` with a scan that lists issues (`issue_list --state all`) and selects those whose body contains `Sub-task of #<PARENT>`; and **add a guard that skips closing the parent when zero children are found** (fixes the premature-close bug: an empty enumeration previously left `ALL_CLOSED=true` and closed the parent immediately). This makes auto-close independent of the parent-issue body — no body edit is ever required.
 - [ ] **Step 2: Mirror to `.agent/workflows/autocoder-plan.md`** (identical content; Antigravity skill-activation note per the prelude, matching how other workflow mirrors differ).
 - [ ] **Step 3: Register `plan.md`** in the `commands[]` arrays of `.claude-plugin` + `.factory-plugin` plugin.json, and in the Codex/Gemini `command-mapping.md` + `workflow-map.md` references.
 - [ ] **Step 4: Commit**
 ```bash
-git add plugins/autocoder/commands/plan.md .agent/workflows/autocoder-plan.md \
+git add plugins/autocoder/commands/plan.md plugins/autocoder/commands/dev.md .agent/workflows/autocoder-plan.md \
         .claude-plugin/plugins/autocoder/plugin.json .factory-plugin/plugins/autocoder/plugin.json \
         codex-plugins/autocoder/skills/autocoder/references/command-mapping.md \
         codex-plugins/autocoder/skills/autocoder/references/workflow-map.md \
@@ -234,5 +236,5 @@ Additional plan-level scope exclusions (verified during planning):
 From spec §11 (deferred to this implementation and its review):
 
 - **B6 (parent-close race):** two workers closing the last two stories concurrently both run the parent-complete check; benign — `issue_close` on an already-closed issue is idempotent. No action.
-- **B8 (doc-to-integration-branch commit):** addressed in Task 5 Step 1 (commit the doc from the host workspace on the integration branch).
-- **B9 (clean spec-parent body):** addressed in Task 5 Step 2 (spec issue body limited to doc pointer + `- [ ] #<story>` checklist).
+- **B8 (doc-to-integration-branch commit):** addressed in Task 5 Step 1 (commit the doc onto the integration branch via git plumbing — `commit-tree` + `update-ref` — without switching the manager's working tree; CIR §3.1).
+- **B9 (clean spec-parent body):** moot — the auto-close monitor now enumerates stories via the child-side `Sub-task of #<SPEC>` marker (Task 5 Step 1b), so stray `#N` in the spec issue body no longer affects auto-close.
