@@ -40,15 +40,17 @@ if [ -f "GEMINI.md" ]; then
         UNIT_TEST_DIR=$(grep -A5 "Unit Tests" GEMINI.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
         UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" GEMINI.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
+        # Not configured. Do NOT assume npm — in a repo without package.json
+        # that produces a spurious failure (and, for E2E, auto-filed issues).
         UNIT_TEST_DIR="."
-        UNIT_TEST_CMD="npm test"
+        UNIT_TEST_CMD=""
     fi
 
     # Extract E2E test configuration
     if grep -q "### E2E Tests Only" GEMINI.md; then
         E2E_TEST_CMD=$(grep -A5 "### E2E Tests Only" GEMINI.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
-        E2E_TEST_CMD="npx playwright test --reporter=json"
+        E2E_TEST_CMD=""   # not configured — skip rather than assume playwright
     fi
 
     # Extract test file patterns
@@ -61,8 +63,8 @@ else
     echo -e "${YELLOW}No GEMINI.md found, using defaults${NC}"
     REPORT_DIR="docs/test/regression-reports"
     UNIT_TEST_DIR="."
-    UNIT_TEST_CMD="npm test"
-    E2E_TEST_CMD="npx playwright test --reporter=json"
+    UNIT_TEST_CMD=""
+    E2E_TEST_CMD=""
     E2E_TEST_PATTERN="*.spec.ts"
 fi
 
@@ -87,6 +89,24 @@ cat > "$REPORT_FILE" << EOF
 
 EOF
 
+# ── Portable parsing helpers ───────────────────────────────────────────────
+# BSD/macOS grep has no -P (PCRE). Every stat parser used `grep -oP ... ||
+# echo 0`, so on macOS the parse failed and the `|| echo 0` turned that
+# failure into a zero — a red run became indistinguishable from a green one.
+# These use -oE (ERE, portable) and return EMPTY when nothing matched, so the
+# caller can tell "no data" apart from a genuine zero.
+
+# count_before <file> <keyword>  — matches "<N> <keyword>" (Jest/Playwright text)
+count_before() {
+    grep -oE "[0-9]+[[:space:]]+$2" "$1" 2>/dev/null | grep -oE '^[0-9]+' | tail -1
+}
+
+# json_int <file> <key>  — matches "<key>": <N> in JSON output
+json_int() {
+    grep -oE "\"$2\"[[:space:]]*:[[:space:]]*[0-9]+" "$1" 2>/dev/null \
+        | grep -oE '[0-9]+$' | head -1
+}
+
 # ==========================================
 # STEP 1: Run Unit Tests
 # ==========================================
@@ -98,7 +118,13 @@ if [ "$UNIT_TEST_DIR" != "." ]; then
     cd "$UNIT_TEST_DIR"
 fi
 
-if $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
+if [ -z "$UNIT_TEST_CMD" ]; then
+    echo -e "${YELLOW}No unit test command configured — skipping.${NC}"
+    UNIT_STATUS="⏭️  SKIPPED (not configured)"
+    UNIT_EXIT=0
+    UNIT_SUITE_SKIPPED=true
+    : > "$UNIT_RESULTS"
+elif $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
     UNIT_STATUS="✅ PASSED"
     UNIT_EXIT=0
 else
@@ -111,9 +137,21 @@ if [ "$UNIT_TEST_DIR" != "." ]; then
 fi
 
 # Extract unit test stats (Jest format: "Tests: X failed, Y skipped, Z passed")
-UNIT_PASSED=$(grep -oP 'Tests:.*?(\d+)\s+passed' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
-UNIT_FAILED=$(grep -oP 'Tests:.*?(\d+)\s+failed' "$UNIT_RESULTS" | grep -oP '\d+' | head -1 || echo "0")
-UNIT_TOTAL=$(grep -oP 'Tests:.*?(\d+)\s+total' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
+UNIT_PASSED=$(count_before "$UNIT_RESULTS" passed)
+UNIT_FAILED=$(count_before "$UNIT_RESULTS" failed)
+UNIT_TOTAL=$(count_before "$UNIT_RESULTS" total)
+
+# No parseable summary at all means the runner never produced one — it failed
+# to execute, was not installed, or is not the framework we assumed. That is an
+# ERROR, not "0 tests, 0 failures". Reporting it as a green is how a broken
+# suite hides a broken build.
+if [ -z "${UNIT_PASSED}${UNIT_FAILED}${UNIT_TOTAL}" ] && [ "${UNIT_SUITE_SKIPPED:-false}" != "true" ]; then
+    UNIT_STATUS="❌ FAILED (no parseable test summary — did '$UNIT_TEST_CMD' actually run?)"
+    UNIT_EXIT=1
+fi
+UNIT_PASSED="${UNIT_PASSED:-0}"
+UNIT_FAILED="${UNIT_FAILED:-0}"
+UNIT_TOTAL="${UNIT_TOTAL:-0}"
 
 echo -e "${GREEN}Unit Tests Complete: ${UNIT_PASSED}/${UNIT_TOTAL} passed${NC}"
 echo ""
@@ -136,7 +174,13 @@ E2E_RESULTS="/tmp/e2e-test-results-${TIMESTAMP}.log"
 E2E_JSON="/tmp/e2e-results-${TIMESTAMP}.json"
 
 # Run E2E tests with configured command
-if $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"; then
+if [ -z "$E2E_TEST_CMD" ]; then
+    echo -e "${YELLOW}No E2E test command configured — skipping.${NC}"
+    E2E_STATUS="⏭️  SKIPPED (not configured)"
+    E2E_EXIT=0
+    E2E_SUITE_SKIPPED=true
+    : > "$E2E_RESULTS"
+elif $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"; then
     E2E_STATUS="✅ PASSED"
     E2E_EXIT=0
 else
@@ -147,15 +191,17 @@ fi
 # Parse E2E results from Playwright JSON output
 # Extract from the JSON stats section if available, otherwise try text output
 if grep -q '"stats"' "$E2E_RESULTS"; then
-    E2E_PASSED=$(grep -oP '"expected":\s*(\d+)' "$E2E_RESULTS" | grep -oP '\d+' || echo "0")
-    E2E_FAILED=$(grep -oP '"unexpected":\s*(\d+)' "$E2E_RESULTS" | grep -oP '\d+' || echo "0")
-    E2E_SKIPPED=$(grep -oP '"skipped":\s*(\d+)' "$E2E_RESULTS" | grep -oP '\d+' || echo "0")
+    E2E_PASSED=$(json_int "$E2E_RESULTS" expected)
+    E2E_FAILED=$(json_int "$E2E_RESULTS" unexpected)
+    E2E_SKIPPED=$(json_int "$E2E_RESULTS" skipped)
+    E2E_PASSED="${E2E_PASSED:-0}"; E2E_FAILED="${E2E_FAILED:-0}"; E2E_SKIPPED="${E2E_SKIPPED:-0}"
     E2E_TOTAL=$((E2E_PASSED + E2E_FAILED + E2E_SKIPPED))
 else
     # Fallback to text parsing
-    E2E_PASSED=$(grep -oP '\d+\s+passed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
-    E2E_FAILED=$(grep -oP '\d+\s+failed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
-    E2E_SKIPPED=$(grep -oP '\d+\s+skipped' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
+    E2E_PASSED=$(count_before "$E2E_RESULTS" passed)
+    E2E_FAILED=$(count_before "$E2E_RESULTS" failed)
+    E2E_SKIPPED=$(count_before "$E2E_RESULTS" skipped)
+    E2E_PASSED="${E2E_PASSED:-0}"; E2E_FAILED="${E2E_FAILED:-0}"; E2E_SKIPPED="${E2E_SKIPPED:-0}"
     E2E_TOTAL=$((E2E_PASSED + E2E_FAILED + E2E_SKIPPED))
 fi
 
@@ -186,9 +232,9 @@ if grep -q "SyntaxError" "$E2E_RESULTS"; then
     echo "" >> "$REPORT_FILE"
 
     # Extract syntax error details
-    SYNTAX_FILE=$(grep -oP '"file":\s*"[^"]+"' "$E2E_RESULTS" | grep -oP '/[^"]+\.spec\.ts' | head -1 || echo "unknown")
-    SYNTAX_LINE=$(grep -oP '"line":\s*(\d+)' "$E2E_RESULTS" | grep -oP '\d+' | head -1 || echo "unknown")
-    SYNTAX_MSG=$(grep -oP 'SyntaxError:.*?Unexpected token' "$E2E_RESULTS" | head -1 || echo "Syntax error")
+    SYNTAX_FILE=$(grep -oE '"file"[[:space:]]*:[[:space:]]*"[^"]+"' "$E2E_RESULTS" | grep -oE '/[^"]+\.spec\.ts' | head -1 || echo "unknown")
+    SYNTAX_LINE=$(json_int "$E2E_RESULTS" line); SYNTAX_LINE="${SYNTAX_LINE:-unknown}"
+    SYNTAX_MSG=$(grep -oE 'SyntaxError:.*Unexpected token' "$E2E_RESULTS" | head -1 || echo "Syntax error")
 
     echo "### Syntax Error" >> "$REPORT_FILE"
     echo "- **File**: \`$SYNTAX_FILE\`" >> "$REPORT_FILE"
@@ -205,7 +251,7 @@ if [ "$E2E_FAILED" -gt 0 ]; then
     # Extract failed test names from log
     grep "✘" "$E2E_RESULTS" | while IFS= read -r line; do
         # Extract test file and description
-        TEST_FILE=$(echo "$line" | grep -oP 'tests/e2e/[^ ]+\.spec\.ts' || echo "unknown")
+        TEST_FILE=$(echo "$line" | grep -oE 'tests/e2e/[^ ]+\.spec\.ts' || echo "unknown")
         TEST_DESC=$(echo "$line" | sed -E 's/.*›\s+(.+)\s+\([0-9.]+s\)/\1/' || echo "Unknown test")
 
         echo "### Failed Test" >> "$REPORT_FILE"
@@ -279,7 +325,7 @@ find_matching_issue() {
 # Process E2E failures and create/update issues
 if [ "$E2E_FAILED" -gt 0 ]; then
     grep "✘" "$E2E_RESULTS" | while IFS= read -r line; do
-        TEST_FILE=$(echo "$line" | grep -oP 'tests/e2e/[^ ]+\.spec\.ts' || echo "unknown")
+        TEST_FILE=$(echo "$line" | grep -oE 'tests/e2e/[^ ]+\.spec\.ts' || echo "unknown")
         TEST_DESC=$(echo "$line" | sed -E 's/.*›\s+(.+)\s+\([0-9.]+s\)/\1/' || echo "Unknown test")
 
         # Determine priority

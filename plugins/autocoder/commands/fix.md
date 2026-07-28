@@ -1475,13 +1475,13 @@ When processing issues in the main loop, check for decomposed issues where all s
 ```bash
 # After fixing each issue, check if it was a sub-task that completes a decomposed issue
 # Get parent issue if this was a subtask
-PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | grep -oP 'Sub-task of #\K[0-9]+' || echo "")
+PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | sed -nE 's/.*Sub-task of #([0-9]+).*/\\1/p' || echo "")
 
 if [ -n "$PARENT_ISSUE" ]; then
   echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
 
   # Check if all sub-tasks of parent are closed
-  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oP '#\K[0-9]+' || echo "")
+  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oE '#[0-9]+' | tr -d '#' || echo "")
   ALL_CLOSED=true
 
   for SUBTASK_NUM in $PARENT_SUBTASKS; do
