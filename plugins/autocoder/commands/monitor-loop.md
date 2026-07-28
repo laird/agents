@@ -22,6 +22,26 @@ Schedules `/autocoder:monitor-workers` to run on a recurring interval using the 
 4. Runs `/autocoder:review-blocked` when all issues are blocked
 5. Deploys when all work is complete
 
+## Routing mode (self vs manager)
+
+`start-parallel-agents.sh` records the swarm's issue-routing mode in the
+`AUTOCODER_ROUTE` environment variable exported into this manager session:
+
+- **`AUTOCODER_ROUTE=self`** (default) — workers run their own `/autocoder:fix-loop`
+  and self-claim issues. This manager loop co-monitors: it cleans up stale labels,
+  restarts unhealthy workers, deploys, and dispatches *supplementary* work only.
+- **`AUTOCODER_ROUTE=manager`** — workers were launched **without** the self-claim
+  fix-loop; they idle at a ready prompt. **This manager is the SINGLE assigner.**
+  On each `/autocoder:monitor-workers` iteration it must:
+  1. Read open/claimable issues and prioritize them (P0 > P1 > … > unlabeled).
+  2. Pick **distinct** issues — never route the same issue to two workers.
+  3. Add the `working` label **before** dispatching, so the assignment is durable.
+  4. Dispatch exactly one `/autocoder:fix <N>` (or the codex wrapper) per idle worker.
+
+  Because no worker ever selects its own issue, manager routing structurally
+  eliminates the worker-vs-worker claim races that the best-effort self-claim path
+  can hit. When `AUTOCODER_ROUTE` is unset, treat it as `self`.
+
 ## How It Works
 
 **Mode 1: `/loop` command (preferred, when CronCreate tool is available)**

@@ -54,10 +54,22 @@ dotnet test
 ### 5. Git & Close
 
 ```bash
-git checkout -b feature/enhancement-{number}
+# Auto-detect integration branch (supports main, master, integration, etc.)
+INTEGRATION_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+
+# Claim issue and create feature branch from the integration branch
+bash plugins/autocoder/scripts/start-issue-work.sh {number} --phase enhance
+
+# ... implement ...
+
 git add . && git commit -m "feat: #{number} {title}"
-git push origin feature/enhancement-{number}
-gh pr create --title "feat: {title}" --body "{summary}"
+
+# Merge back to integration branch, push, then delete local feature branch
+bash plugins/autocoder/scripts/merge-to-integration.sh \
+  --feature "enhancement/issue-{number}-auto" --issue {number} \
+  --integration "$INTEGRATION_BRANCH" --test-cmd "<repo test command>"
+git branch -d "enhancement/issue-{number}-auto" 2>/dev/null || git branch -D "enhancement/issue-{number}-auto" 2>/dev/null || true
 ```
 
 ## Quality Checklist

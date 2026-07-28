@@ -11,7 +11,7 @@ This directory contains configuration, rules, and workflows for the **Antigravit
 | Platform | Directory | Guidance File |
 |----------|-----------|---------------|
 | **Antigravity** | `.agent/` | `GEMINI.md` |
-| **Claude Code** | `plugins/` | `CLAUDE.md` |
+| **Antigravity** | `plugins/` | `GEMINI.md` |
 
 **When modifying any workflow, rule, or protocol:**
 

@@ -102,12 +102,43 @@ for attempt in 1 2 3 4 5; do
   fi
 done
 
+# 3b. If the git transport itself is blocked (e.g. a proxy rejecting
+#     git-receive-pack with HTTP 403), retrying cannot help — fall back to
+#     publishing through the GitHub API, which reaches api.github.com instead.
 if [ "$PUSHED" -ne 1 ]; then
-  echo "❌ Could not push to '${INTEGRATION_BRANCH}' after 5 attempts. The fix is safe on '${FEATURE}'."
+  echo "⚠️  git push failed after 5 attempts — trying the GitHub API fallback…"
+  if python3 "${_MTI_DIR}/api-push.py" HEAD \
+       --target "$INTEGRATION_BRANCH" \
+       --base "origin/${INTEGRATION_BRANCH}" \
+       --message "Merge issue #${ISSUE_NUM} (${FEATURE}) into ${INTEGRATION_BRANCH}
+
+Published via the GitHub API because the git transport is blocked."; then
+    PUSHED=1
+  fi
+fi
+
+if [ "$PUSHED" -ne 1 ]; then
+  echo "❌ Could not publish to '${INTEGRATION_BRANCH}' (git push and API fallback both failed)."
+  echo "   The fix is safe on '${FEATURE}'. NOT closing the issue — nothing landed."
   exit 1
 fi
 
-echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and pushed."
+# 3c. Trust nothing: confirm the integration ref actually contains this work.
+#     A zero exit status is not proof, and `git push --dry-run` is worse than
+#     useless here — it succeeds against a blocked transport because it never
+#     sends the pack. Compare the trees.
+git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
+LOCAL_TREE=$(git rev-parse "HEAD^{tree}")
+REMOTE_TREE=$(git rev-parse "origin/${INTEGRATION_BRANCH}^{tree}" 2>/dev/null || echo "")
+if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
+  echo "❌ Publication could not be verified for '${INTEGRATION_BRANCH}'."
+  echo "   local tree  ${LOCAL_TREE}"
+  echo "   remote tree ${REMOTE_TREE:-<none>}"
+  echo "   NOT closing the issue — the tracker must never claim work landed when it did not."
+  exit 1
+fi
+
+echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and verified (tree ${LOCAL_TREE:0:8})."
 
 # 4. Clean up the feature branch now that its work is on the integration branch.
 git push origin --delete "$FEATURE" 2>/dev/null || true

@@ -107,6 +107,7 @@ if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
     # worktree swarm each worktree sits on its own main-wt-N; branching from
     # origin/<integration> means work starts from — and later merges back to — the same
     # shared branch rather than stranding on main-wt-N.
+    INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
     INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
     git fetch origin "$INTEGRATION_BRANCH" >/dev/null 2>&1 || true
     if ! git switch -c "$BRANCH" "origin/${INTEGRATION_BRANCH}" >/dev/null 2>&1 \

@@ -48,7 +48,7 @@ When `test-coverage.md` doesn't exist OR `--refresh` is specified:
 
 ## Configuration
 
-This command reads configuration from `CLAUDE.md`:
+This command reads configuration from `GEMINI.md`:
 
 ```markdown
 ## Automated Testing & Issue Management
@@ -117,12 +117,12 @@ echo ""
 ### Load Configuration
 
 ```bash
-if [ -f "CLAUDE.md" ]; then
-  echo "📋 Loading configuration from CLAUDE.md"
+if [ -f "GEMINI.md" ]; then
+  echo "📋 Loading configuration from GEMINI.md"
 
   # Extract coverage command
-  if grep -q "### Coverage Command" CLAUDE.md; then
-    COVERAGE_COMMAND=$(sed -n "/### Coverage Command/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Coverage Command" GEMINI.md; then
+    COVERAGE_COMMAND=$(sed -n "/### Coverage Command/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Coverage command: $COVERAGE_COMMAND"
   else
     # Try common coverage commands
@@ -145,14 +145,14 @@ if [ -f "CLAUDE.md" ]; then
   fi
 
   # Extract test command for targeted testing
-  if grep -q "### Regression Test Suite" CLAUDE.md; then
-    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Regression Test Suite" GEMINI.md; then
+    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
   else
     TEST_COMMAND="npm test"
   fi
   echo "✅ Test command: $TEST_COMMAND"
 else
-  echo "⚠️  No CLAUDE.md found, using defaults"
+  echo "⚠️  No GEMINI.md found, using defaults"
   COVERAGE_COMMAND="npm test -- --coverage"
   TEST_COMMAND="npm test"
 fi

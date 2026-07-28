@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
 
 `/fix` accepts heterogeneous work — bug fixes, feature implementation, refactoring, increasing test coverage, docs/config/chore, or proposing new tasks. The agent classifies the work after reading the issue and applies the matching skills along two axes: deliverable type and kind of work.
 
@@ -265,7 +265,7 @@ Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
 
 > ⛔ **STOP. Before you touch ANY new issue, you MUST compact your context. Every issue. Every time. No exceptions.**
 >
-> - **Claude Code:** run `/compact`.
+> - **Antigravity:** run `/compact`.
 > - **Codex / Gemini / other sessions:** clear or compact the session context using your session controls (the equivalent of `/compact`).
 >
 > This is not optional and not a suggestion. A long-running fix-loop **WILL** exhaust the context window and crash the agent mid-issue if you skip this. Compacting between issues is the single most important thing keeping the loop alive — treat skipping it as a defect.
@@ -284,9 +284,10 @@ Start working on GitHub issues now:
 ```bash
 # Source issue function layer (routes to GitHub or file backend)
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 source "${SCRIPT_DIR}/issue-fns.sh"
@@ -304,17 +305,17 @@ esac
 ```
 
 ```bash
-# Load project-specific configuration from CLAUDE.md
-if [ -f "CLAUDE.md" ]; then
-  echo "📋 Reading project configuration from CLAUDE.md"
+# Load project-specific configuration from GEMINI.md
+if [ -f "GEMINI.md" ]; then
+  echo "📋 Reading project configuration from GEMINI.md"
 
   # Check if autocoder configuration exists
-  if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
-    echo "⚠️  No autocoder configuration found in CLAUDE.md"
-    echo "📝 Adding autocoder configuration section to CLAUDE.md..."
+  if ! grep -q "## Automated Testing & Issue Management" GEMINI.md; then
+    echo "⚠️  No autocoder configuration found in GEMINI.md"
+    echo "📝 Adding autocoder configuration section to GEMINI.md..."
 
-    # Append autocoder configuration to CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
+    # Append autocoder configuration to GEMINI.md
+    cat >> GEMINI.md << 'AUTOCODER_CONFIG'
 
 ## Automated Testing & Issue Management
 
@@ -351,12 +352,12 @@ Options: `merge` (auto-merge to parent branch and push) or `pr` (push feature br
 
 AUTOCODER_CONFIG
 
-    echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
+    echo "✅ Added autocoder configuration to GEMINI.md - please update with project-specific details"
   fi
 
   # Extract test command
-  if grep -q "### Regression Test Suite" CLAUDE.md; then
-    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Regression Test Suite" GEMINI.md; then
+    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Regression test command: $TEST_COMMAND"
   else
     TEST_COMMAND="npm test"
@@ -364,23 +365,23 @@ AUTOCODER_CONFIG
   fi
 
   # Extract build command
-  if grep -q "### Build Verification" CLAUDE.md; then
-    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Build Verification" GEMINI.md; then
+    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Build command: $BUILD_COMMAND"
   else
     BUILD_COMMAND="npm run build"
     echo "⚠️  No build command found, using default: $BUILD_COMMAND"
   fi
   # Extract merge mode (merge or pr)
-  if grep -q "### Merge Mode" CLAUDE.md; then
-    MERGE_MODE=$(sed -n "/### Merge Mode/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Merge Mode" GEMINI.md; then
+    MERGE_MODE=$(sed -n "/### Merge Mode/,/^###/{/^\`\`\`$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Merge mode: $MERGE_MODE"
   else
     MERGE_MODE=""
     echo "MERGE_MODE_NOT_CONFIGURED=true"
   fi
 else
-  echo "⚠️  No CLAUDE.md found in project, using defaults"
+  echo "⚠️  No GEMINI.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
   MERGE_MODE="merge"
@@ -480,12 +481,35 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
+  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
+  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
+
+  # Remote branch is the strongest lock — check it before the working label.
+  REMOTE_BRANCH_SPEC=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
+    echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — another agent owns this issue."
+    echo "    To take over an abandoned branch, delete it from origin first."
+    exit 1
+  fi
+
   # Check if issue already has 'working' label (being worked on by another agent)
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
-    echo "⚠️  Issue #$SPECIFIED_ISSUE has 'working' label - another agent is working on it"
-    echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' to force release"
-    exit 1
+    TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
+    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
+    if [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+      echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
+      echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
+      exit 1
+    fi
+    echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
+  else
+    issue_claim "$ISSUE_NUM" 2>/dev/null || {
+      echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
+      exit 1
+    }
   fi
 
   # Extract priority from labels (default to P2 if no priority label)
@@ -498,11 +522,37 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     end
   ')
 
-  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
-
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
+
+  # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
+  # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
+  # for competing workers to surface before proceeding.
+  if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+    issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+    sleep 3
+    CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+      2>/dev/null || echo "0")
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+      2>/dev/null || echo "0")
+    if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM. Releasing and aborting."
+      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
+  else
+    # File backend: check for orphaned start comments from prior abandoned runs.
+    sleep 1
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+      2>/dev/null || echo "0")
+    if [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and aborting."
+      issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
+  fi
 else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
@@ -570,17 +620,44 @@ else
       continue
     fi
 
-    # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-    issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
-    sleep 1
-
-    # Re-fetch the issue to verify we won the race
-    # Check if another agent already posted a "work started" comment
-    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
-
-    if [ "$RECENT_COMMENTS" -gt 0 ]; then
-      echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
+    # Claim-then-verify: atomically claim, then verify we won.
+    # issue_claim uses an atomic rename for file backend; label add for GitHub (best-effort).
+    issue_claim "$ISSUE_NUM" 2>/dev/null
+    claim_rc=$?
+    if [ "$claim_rc" -ne 0 ]; then
+      echo "⚠️  Lost claim race on issue #$ISSUE_NUM (atomic rename lost). Trying next issue..."
       continue
+    fi
+
+    # For GitHub backend (non-atomic): post an early marker comment NOW so concurrent
+    # workers can detect the collision within the settlement window.
+    if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+      issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+      sleep 3
+
+      CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+        2>/dev/null || echo "0")
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+        2>/dev/null || echo "0")
+
+      if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED). Releasing and trying next..."
+        issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
+    else
+      # File backend: brief pause to detect orphaned start comments from prior abandoned runs.
+      sleep 1
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+        2>/dev/null || echo "0")
+      if [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and trying next..."
+        issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
     fi
 
     ISSUE_CLAIMED=true
@@ -617,14 +694,64 @@ echo ""
 echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
 
+# ── Task scope gate ──────────────────────────────────────────────────────────
+# MANDATORY: Before creating the branch, assess whether this task fits in one
+# agent context window and whether it can run safely in a worktree swarm.
+#
+# Ask yourself:
+#   1. CONTEXT FIT: Can all required reading, reasoning, and implementation
+#      complete in a single conversation without hitting context limits?
+#      Red flags: "rewrite the authentication system", "migrate all API calls",
+#      "audit every file in src/", tasks described in >1000 chars with no
+#      clear single deliverable.
+#
+#   2. WORKTREE INDEPENDENCE: Can this work in an isolated worktree without
+#      conflicting with other parallel worktrees working other issues?
+#      Red flags: changes to shared config files (tsconfig.json, package.json,
+#      migrations, schema files) that other agents might also need to change;
+#      or changes that require knowing the final state of another in-flight issue.
+#      A sub-task that touches the same file as a sibling sub-task is NOT
+#      independent — it must be sequenced, not parallelized.
+#
+# If this issue FAILS either test → DECOMPOSE IT NOW (before branch creation):
+#   - Decompose into 3-8 sub-tasks, each satisfying both criteria above
+#   - Create each sub-task as a new issue with `subtask` label and a
+#     "Sub-task of #${ISSUE_NUM}" line in the body
+#   - Add the `decomposed` label to this parent issue and release the claim
+#   - Exit; workers will pick up the independent sub-tasks on the next tick
+#
+# If this issue PASSES both tests → proceed to branch creation immediately.
+#
+# See "Ultra-Complex Issues - Decompose into Sub-Tasks" later in this document
+# for the full decomposition protocol including sub-task body template.
+# ────────────────────────────────────────────────────────────────────────────
+
 # Save parent branch before creating feature branch
 PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-# Pull latest changes from origin before branching
-git pull origin "$PARENT_BRANCH" 2>/dev/null || echo "⚠️  Could not pull from origin — proceeding with local state"
+# Pull latest changes from origin before branching — hard failure: stale state produces wrong fixes
+git pull origin "$PARENT_BRANCH" || {
+  echo "❌ Cannot pull from origin/${PARENT_BRANCH} — refusing to start work from stale state."
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+}
 
-# Create fix branch
-git checkout -b "feature/issue-${ISSUE_NUM}" 2>/dev/null || git checkout "feature/issue-${ISSUE_NUM}"
+# Create fix branch, or if it already exists pull the latest parent into it first
+FIX_BRANCH="feature/issue-${ISSUE_NUM}"
+if git checkout -b "$FIX_BRANCH" 2>/dev/null; then
+  echo "✅ Created $FIX_BRANCH from $PARENT_BRANCH"
+elif git checkout "$FIX_BRANCH" 2>/dev/null; then
+  echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${PARENT_BRANCH}..."
+  git pull --rebase origin "$PARENT_BRANCH" || {
+    echo "❌ Rebase of $FIX_BRANCH onto origin/${PARENT_BRANCH} failed — resolve conflicts manually."
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    exit 1
+  }
+else
+  echo "❌ Could not create or switch to $FIX_BRANCH."
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  exit 1
+fi
 
 # 'working' label was already added during claim-then-verify above
 
@@ -655,10 +782,10 @@ When `MERGE_MODE_NOT_CONFIGURED=true` is detected in the output above, you **MUS
 
 1. Use AskUserQuestion to ask: *"How should completed issues be integrated? Options: **merge** (auto-merge feature branch to parent and push — fully autonomous) or **pr** (push feature branch and create a pull request for human review). Enter 'merge' or 'pr':"*
 2. Set `MERGE_MODE` to the user's response (default to `merge` if unclear).
-3. Append the setting to the project's CLAUDE.md (or AGENTS.md if it exists) so it persists:
+3. Append the setting to the project's GEMINI.md (or AGENTS.md if it exists) so it persists:
 
 ```bash
-cat >> CLAUDE.md << MERGE_MODE_CONFIG
+cat >> GEMINI.md << MERGE_MODE_CONFIG
 
 ### Merge Mode
 \`\`\`
@@ -666,10 +793,10 @@ ${MERGE_MODE}
 \`\`\`
 Options: \`merge\` (auto-merge to parent branch and push) or \`pr\` (push feature branch and create a pull request, then stop).
 MERGE_MODE_CONFIG
-echo "✅ Saved merge mode '$MERGE_MODE' to CLAUDE.md"
+echo "✅ Saved merge mode '$MERGE_MODE' to GEMINI.md"
 ```
 
-4. Commit the CLAUDE.md change so all agents share the setting.
+4. Commit the GEMINI.md change so all agents share the setting.
 
 ## CRITICAL: Always Remove 'working' Label
 
@@ -726,12 +853,40 @@ git commit -m "Fix #${ISSUE_NUM}: Brief description
 
 Detailed explanation of what was fixed and how.
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+🤖 Generated with [Antigravity](https://claude.com/claude-code)
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
+Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
 # Push feature branch
-git push -u origin "feature/issue-${ISSUE_NUM}"
+# Publish the branch. `git push` first; if the transport is blocked (e.g. a
+# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+# command's exit status alone, and never from `git push --dry-run`, which
+# succeeds against a blocked transport because it never sends the pack.
+PUSH_OK=false
+if git push -u origin "feature/issue-${ISSUE_NUM}"; then
+  PUSH_OK=true
+else
+  echo "⚠️  git push failed — trying the GitHub API fallback..."
+  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+    PUSH_OK=true
+  fi
+fi
+
+if [ "$PUSH_OK" != true ]; then
+  # The code did not land. Closing now would make the tracker claim something
+  # false, and would strand the work (see #26). Leave the issue open, KEEP the
+  # 'working' label, and say so.
+  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+The issue stays open and keeps its \`working\` label so the work is not lost or
+silently redone.
+
+Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
+  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
+  exit 1
+fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
@@ -743,7 +898,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 [Detailed explanation of fix]
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -759,8 +914,28 @@ else
   git checkout "$PARENT_BRANCH"
   git merge --no-ff "feature/issue-${ISSUE_NUM}"
 
-  # Push parent branch
-  git push
+  # Push parent branch. Fall back to the GitHub API if the git transport is
+  # blocked, and record whether the work ACTUALLY LANDED.
+  MERGE_PUSH_OK=false
+  if git push; then
+    MERGE_PUSH_OK=true
+  else
+    echo "⚠️  git push failed — trying the GitHub API fallback..."
+    if python3 "${SCRIPT_DIR}/api-push.py" HEAD --target "$PARENT_BRANCH" \
+         --base "origin/${PARENT_BRANCH}"; then
+      MERGE_PUSH_OK=true
+    fi
+  fi
+
+  if [ "$MERGE_PUSH_OK" != true ]; then
+    # Nothing landed. Do NOT close, do NOT release the lock (see #26).
+    issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the merge has NOT landed
+on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 2>/dev/null || true
+    echo "❌ Could not publish to ${PARENT_BRANCH} — issue #${ISSUE_NUM} left OPEN"
+    exit 1
+  fi
 
   # Clean up feature branch (local and remote)
   git branch -d "feature/issue-${ISSUE_NUM}"
@@ -918,12 +1093,40 @@ Detailed multi-line explanation of:
 - Changes made
 - Verification results
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+🤖 Generated with [Antigravity](https://claude.com/claude-code)
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
+Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
 # Push feature branch
-git push -u origin "feature/issue-${ISSUE_NUM}"
+# Publish the branch. `git push` first; if the transport is blocked (e.g. a
+# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+# command's exit status alone, and never from `git push --dry-run`, which
+# succeeds against a blocked transport because it never sends the pack.
+PUSH_OK=false
+if git push -u origin "feature/issue-${ISSUE_NUM}"; then
+  PUSH_OK=true
+else
+  echo "⚠️  git push failed — trying the GitHub API fallback..."
+  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+    PUSH_OK=true
+  fi
+fi
+
+if [ "$PUSH_OK" != true ]; then
+  # The code did not land. Closing now would make the tracker claim something
+  # false, and would strand the work (see #26). Leave the issue open, KEEP the
+  # 'working' label, and say so.
+  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+The issue stays open and keeps its \`working\` label so the work is not lost or
+silently redone.
+
+Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
+  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
+  exit 1
+fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
@@ -945,7 +1148,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
 ## Verification
 [Test results and evidence]
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
   # Remove 'working' label (PR is ready for review)
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
@@ -961,8 +1164,28 @@ else
   git checkout "$PARENT_BRANCH"
   git merge --no-ff "feature/issue-${ISSUE_NUM}"
 
-  # Push parent branch
-  git push
+  # Push parent branch. Fall back to the GitHub API if the git transport is
+  # blocked, and record whether the work ACTUALLY LANDED.
+  MERGE_PUSH_OK=false
+  if git push; then
+    MERGE_PUSH_OK=true
+  else
+    echo "⚠️  git push failed — trying the GitHub API fallback..."
+    if python3 "${SCRIPT_DIR}/api-push.py" HEAD --target "$PARENT_BRANCH" \
+         --base "origin/${PARENT_BRANCH}"; then
+      MERGE_PUSH_OK=true
+    fi
+  fi
+
+  if [ "$MERGE_PUSH_OK" != true ]; then
+    # Nothing landed. Do NOT close, do NOT release the lock (see #26).
+    issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the merge has NOT landed
+on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 2>/dev/null || true
+    echo "❌ Could not publish to ${PARENT_BRANCH} — issue #${ISSUE_NUM} left OPEN"
+    exit 1
+  fi
 
   # Clean up feature branch (local and remote)
   git branch -d "feature/issue-${ISSUE_NUM}"
@@ -1007,7 +1230,7 @@ fi
 ```
 Issue #240: TypeScript compilation errors in disabled-features
 → Direct fix: Delete broken test files
-→ Verify: $BUILD_COMMAND (from CLAUDE.md autocoder config)
+→ Verify: $BUILD_COMMAND (from GEMINI.md autocoder config)
 → Commit and close
 ```
 
@@ -1126,7 +1349,7 @@ fi
 # If a blocking label was identified, use the script to add it and skip
 if [ -n "$BLOCKING_LABEL" ]; then
   # Determine script location (portable across different plugin install locations)
-  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+  SCRIPT_DIR="$HOME/.agent/plugins/autocoder/scripts"
 
   bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "$BLOCKING_LABEL" "$BLOCKING_REASON"
   # Log to history
@@ -1148,19 +1371,32 @@ If no blocking conditions detected, continue with the normal fix workflow (simpl
 
 ### Ultra-Complex Issues - Decompose into Sub-Tasks
 
-For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions):
+This section is triggered both by the **task scope gate** (above, at claim time) and by the
+complexity assessment (Step 1) when you discover mid-implementation that the scope is larger than expected.
+
+For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions, or issues that fail the scope gate):
+
+**Decomposition rules — each sub-task MUST satisfy ALL of these:**
+
+1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
+2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body.
+3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
+4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
 
 **First, attempt to decompose the issue into manageable sub-tasks:**
 
 ```bash
-echo "⚠️  Ultra-complex issue detected: attempting decomposition"
+echo "⚠️  Issue requires decomposition: attempting breakdown"
 
 # Use brainstorming skill to analyze and decompose the complex issue
 if [ "$SUPERPOWERS_AVAILABLE" = "true" ] || [ "$THOROUGH_SKILLS_AVAILABLE" = "true" ]; then
   echo "📋 Using thorough-brainstorming (preferred) or superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
-  # Prompt: "Analyze issue #$ISSUE_NUM and decompose it into 3-8 manageable sub-tasks.
-  # Each sub-task should be independently fixable and testable.
-  # For each sub-task, provide: title, description, acceptance criteria, and priority."
+  # Prompt: "Decompose issue #$ISSUE_NUM into 3-8 sub-tasks. Each sub-task must:
+  # (a) fit in one agent context window, (b) touch a DISTINCT set of files from
+  # every other sub-task so they can run in parallel worktrees without merge conflicts,
+  # (c) be independently testable. List any sub-tasks that must run after another
+  # (sequential dependencies). For each, provide: title, description, files affected,
+  # acceptance criteria, priority, and dependencies."
 
   # After decomposition analysis is complete, create GitHub issues for each sub-task
   # Store sub-task numbers for linking
@@ -1179,17 +1415,23 @@ This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
 ## Description
 [What needs to be done in this specific sub-task]
 
+## Files Affected
+[List specific files or directories this sub-task will modify. This MUST NOT overlap
+with the files listed in sibling sub-tasks unless those sub-tasks have a sequential
+dependency (listed below). Overlapping file lists = merge conflict in the worktree swarm.]
+
 ## Acceptance Criteria
 - [ ] Criterion 1
 - [ ] Criterion 2
 - [ ] Criterion 3
 
 ## Dependencies
-- Must be completed as part of #${ISSUE_NUM}
-- [Any dependencies on other sub-tasks]
+- Sub-task of #${ISSUE_NUM}
+- [Depends on: #<sibling-subtask-number> — reason why this must run after that one]
+- [Can run in parallel with: #<sibling-subtask-number>]
 
 ## Testing
-[How to verify this sub-task is complete]
+[How to verify this sub-task is complete in isolation, without sibling sub-tasks merged]
 
 ---
 
@@ -1202,16 +1444,22 @@ SUBTASK_BODY
   echo "✅ Created sub-task #$SUBTASK_NUM"
   # done
 
+  # Release the parent issue claim before exiting — workers will pick up sub-tasks.
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_release "$ISSUE_NUM" 2>/dev/null || true
+
   # Update original issue to reference all sub-tasks
   issue_comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
 
-This complex issue has been broken down into manageable sub-tasks:
+This issue has been broken down into independently-workable sub-tasks that can
+run in parallel worktrees without merge conflicts:
 
 $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
 
-**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
+**Parallel safety**: each sub-task touches different files. Check each sub-task's
+\"Files Affected\" section before assigning to confirm no overlap.
 
-**To track progress**: Check the sub-tasks listed above.
+**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
 
 🤖 Auto-decomposed by autonomous fix workflow"
 
@@ -1221,7 +1469,7 @@ $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
   echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
   echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"
   echo ""
-  echo "⏭️  Moving to next issue. Sub-tasks will be processed in priority order."
+  echo "⏭️  Claim released. Sub-tasks will be picked up by workers on the next tick."
 
 else
   # Fallback: If superpowers not available, add too-complex label
@@ -1246,7 +1494,7 @@ else
 fi)"
 
   # Determine script location (portable across different plugin install locations)
-  SCRIPT_DIR="$HOME/.claude/plugins/autocoder/scripts"
+  SCRIPT_DIR="$HOME/.agent/plugins/autocoder/scripts"
 
   # Use the script to add blocking label
   bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "too-complex" "$COMPLEXITY_REASON"
@@ -1265,13 +1513,13 @@ When processing issues in the main loop, check for decomposed issues where all s
 ```bash
 # After fixing each issue, check if it was a sub-task that completes a decomposed issue
 # Get parent issue if this was a subtask
-PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | grep -oP 'Sub-task of #\K[0-9]+' || echo "")
+PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | sed -nE 's/.*Sub-task of #([0-9]+).*/\\1/p' || echo "")
 
 if [ -n "$PARENT_ISSUE" ]; then
   echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
 
   # Check if all sub-tasks of parent are closed
-  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oP '#\K[0-9]+' || echo "")
+  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oE '#[0-9]+' | tr -d '#' || echo "")
   ALL_CLOSED=true
 
   for SUBTASK_NUM in $PARENT_SUBTASKS; do
@@ -1317,7 +1565,7 @@ Use the `/full-regression-test` command to run the complete test suite:
 ```
 
 This command will:
-- Load test configuration from CLAUDE.md
+- Load test configuration from GEMINI.md
 - Run build verification
 - Run unit tests
 - Run E2E tests (if configured)
@@ -1662,19 +1910,67 @@ Detailed explanation of:
 - Design decisions made
 - Tests added/modified
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+🤖 Generated with [Antigravity](https://claude.com/claude-code)
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
+Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
   # Push feature branch
-  git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"
+  # Publish the branch. `git push` first; if the transport is blocked (e.g. a
+  # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+  # PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+  # command's exit status alone, and never from `git push --dry-run`, which
+  # succeeds against a blocked transport because it never sends the pack.
+  PUSH_OK=false
+  if git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"; then
+    PUSH_OK=true
+  else
+    echo "⚠️  git push failed — trying the GitHub API fallback..."
+    if python3 "${SCRIPT_DIR}/api-push.py" "enhancement/issue-${ENHANCE_NUM}-auto" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+      PUSH_OK=true
+    fi
+  fi
+
+  if [ "$PUSH_OK" != true ]; then
+    # The code did not land. Closing now would make the tracker claim something
+    # false, and would strand the work (see #26). Leave the issue open, KEEP the
+    # 'working' label, and say so.
+    issue_comment "$ENHANCE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+  Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+  The issue stays open and keeps its \`working\` label so the work is not lost or
+  silently redone.
+
+  Local branch: \`enhancement/issue-${ENHANCE_NUM}-auto\`" 2>/dev/null || true
+    echo "❌ Could not publish enhancement/issue-${ENHANCE_NUM}-auto — issue $ENHANCE_NUM left OPEN (nothing was closed)"
+    exit 1
+  fi
 
   # Switch back to parent branch and merge
   git checkout "$PARENT_BRANCH"
   git merge --no-ff "enhancement/issue-${ENHANCE_NUM}-auto"
 
-  # Push parent branch
-  git push
+  # Push parent branch. Fall back to the GitHub API if the git transport is
+  # blocked, and record whether the work ACTUALLY LANDED.
+  MERGE_PUSH_OK=false
+  if git push; then
+    MERGE_PUSH_OK=true
+  else
+    echo "⚠️  git push failed — trying the GitHub API fallback..."
+    if python3 "${SCRIPT_DIR}/api-push.py" HEAD --target "$PARENT_BRANCH" \
+         --base "origin/${PARENT_BRANCH}"; then
+      MERGE_PUSH_OK=true
+    fi
+  fi
+
+  if [ "$MERGE_PUSH_OK" != true ]; then
+    # Nothing landed. Do NOT close, do NOT release the lock (see #26).
+    issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the merge has NOT landed
+on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 2>/dev/null || true
+    echo "❌ Could not publish to ${PARENT_BRANCH} — issue #${ISSUE_NUM} left OPEN"
+    exit 1
+  fi
 
   # Clean up feature branch (local and remote)
   git branch -d "enhancement/issue-${ENHANCE_NUM}-auto"
@@ -1763,8 +2059,8 @@ Enhancement implementation paused. Will resume after bugs are fixed.
   # Remove 'working' label to release the enhancement
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
-  # Switch back to main
-  git checkout main
+  # Switch back to integration branch
+  git checkout "$PARENT_BRANCH"
 fi
 ```
 
@@ -1803,7 +2099,7 @@ issue_update "$ENHANCE_NUM" --add-label "needs-review"
 
 ### Context Compaction (MANDATORY — DO THIS EVERY ITERATION)
 
-> ⛔ **Run `/compact` (Claude Code) — or clear/compact the session context (Codex / Gemini / other) — BEFORE starting each new issue. Every iteration. No exceptions.**
+> ⛔ **Run `/compact` (Antigravity) — or clear/compact the session context (Codex / Gemini / other) — BEFORE starting each new issue. Every iteration. No exceptions.**
 >
 > The loop runs forever. Without compaction between issues the context window fills and the agent dies mid-fix. Compaction is what makes "runs forever" actually possible. Skipping it is the #1 cause of a fix-loop crashing partway through an issue.
 

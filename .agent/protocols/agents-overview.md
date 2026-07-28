@@ -136,7 +136,7 @@ See `agents/*.md` files for complete specifications.
 
 ### Option 1: Agent Spawn Instructions
 
-When spawning agents with Claude Code's Task tool, reference the agent specification:
+When spawning agents with Antigravity's Task tool, reference the agent specification:
 
 Example: Security Agent
 ```

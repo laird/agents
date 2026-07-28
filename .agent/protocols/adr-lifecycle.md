@@ -76,7 +76,7 @@ touch "docs/adr/ADR $NEXT_NUM Your Decision Title.md"
 Agents MUST:
 - Use correct naming when creating ADRs
 - Rename any incorrectly named ADRs discovered
-- Document the naming convention in project README/CLAUDE.md
+- Document the naming convention in project README/GEMINI.md
 
 ---
 

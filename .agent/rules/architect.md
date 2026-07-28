@@ -313,7 +313,7 @@ Examples:
 
 ## Model Recommendation
 
-When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+When spawning this agent via Antigravity's Task tool, use the `model` parameter to optimize for task complexity:
 
 ### Use Opus (model="opus")
 - **ADR creation** - Complex architectural decisions requiring deep trade-off analysis

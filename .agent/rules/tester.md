@@ -265,7 +265,7 @@ Quality assurance specialist focused on comprehensive testing and validation. Ex
 
 ## Model Recommendation
 
-When spawning this agent via Claude Code's Task tool, use the `model` parameter to optimize for task complexity:
+When spawning this agent via Antigravity's Task tool, use the `model` parameter to optimize for task complexity:
 
 ### Use Opus (model="opus")
 - **Complex failure diagnosis** - Root cause analysis of intermittent or multi-factor failures
