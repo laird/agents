@@ -3,12 +3,12 @@
 # Source this file; do not execute it directly.
 # Provides: issue_list, issue_get, issue_update, issue_comment, issue_close, issue_create
 
-# Bootstrap: source issue-config.sh if not already loaded
-if [ -z "$ISSUE_SOURCE" ]; then
-  _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-  # shellcheck source=issue-config.sh
-  source "${_ifns_DIR}/issue-config.sh"
-fi
+# Bootstrap: ALWAYS resolve the backend through issue-config.sh. Skipping this
+# whenever ISSUE_SOURCE happened to be set is what let a stale exported value
+# override the repo's .autocoder.json. issue-config.sh decides precedence.
+_ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-config.sh
+source "${_ifns_DIR}/issue-config.sh"
 
 _ifns_PY="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/issues-file.py"
 
