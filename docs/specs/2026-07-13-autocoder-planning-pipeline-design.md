@@ -1,7 +1,7 @@
 # Design Spec: Autocoder Planning Pipeline + `dev` Rename
 
 **Date:** 2026-07-13
-**Status:** Design approved (pending written-spec review)
+**Status:** Design approved — passed critical-design-review round 1 (✅ approve as-is; 0 literal-wrongness findings, 0 forced decisions). See `docs/criticalreviews/2026-07-13-autocoder-planning-pipeline-design-critical-review-1.md`.
 **Scope:** `plugins/autocoder` (+ mandatory `.agent/` mirror per CLAUDE.md parallel-maintenance rule)
 
 ## 1. Goal
@@ -187,6 +187,17 @@ closes parent specs unchanged on **both** file and github backends.
   run the parent-complete check; benign — `issue_close` on an already-closed issue is
   idempotent. No action.
 - **B7 (label bootstrap):** `/plan` step 0 must ensure `decomposed`/`subtask` labels exist.
+
+Deferred to `critical-implementation-review` (implementation mechanics, not design defects — flagged by CDR round 1):
+
+- **B8 (doc-to-integration-branch commit):** the plan must specify the exact sequence by
+  which `/plan` guarantees the design doc lands on the shared integration branch (checkout
+  / commit / push) so worktrees created or rebased afterward contain it. Outcome is fixed
+  by §3.2; the mechanism is a plan-level detail.
+- **B9 (clean spec-parent body):** the reused auto-close monitor treats *every* `#N` in the
+  spec parent body as a story to wait on (`fix.md` greps `#\K[0-9]+`). `/plan` must keep the
+  spec parent body limited to the doc pointer + the `- [ ] #<story>` checklist and avoid
+  stray issue references, or the spec will never auto-close.
 
 ## 12. Implementation workstreams (rough sequencing)
 
