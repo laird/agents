@@ -1,6 +1,6 @@
 # Autocoder
 
-Shared cross-platform skill entrypoint for autonomous GitHub issue resolution, blocked-work review, worker monitoring, and continuous fix-loop operation.
+Shared cross-platform skill entrypoint for autonomous GitHub issue resolution, blocked-work review, worker monitoring, and continuous dev-loop operation.
 
 ## Installation
 

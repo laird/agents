@@ -11,8 +11,8 @@
 
 ## Reusable Source Material
 
-- Primary protocol: `plugins/autocoder/commands/fix.md`
-- Continuous loop behavior: `plugins/autocoder/commands/fix-loop.md`
+- Primary protocol: `plugins/autocoder/commands/dev.md`
+- Continuous loop behavior: `plugins/autocoder/commands/dev-loop.md`
 - Manager review protocol: `plugins/autocoder/commands/monitor-workers.md`
 - Continuous manager loop: `plugins/autocoder/commands/monitor-loop.md`
 - Help and command inventory: `plugins/autocoder/commands/autocoder-help.md`
