@@ -35,13 +35,13 @@ case "$COMMAND" in
   fix)
     ISSUE_NUMBER="${1:-}"
     if [ -n "$ISSUE_NUMBER" ]; then
-      gemini --sandbox=false "/dev $ISSUE_NUMBER"
+      gemini -p "/dev $ISSUE_NUMBER" --sandbox=false -y
     else
-      gemini --sandbox=false "/dev"
+      gemini -p "/dev" --sandbox=false -y
     fi
     ;;
   monitor-workers)
-    gemini --sandbox=false "/monitor-workers"
+    gemini -p "/monitor-workers" --sandbox=false -y
     ;;
   -h|--help|help)
     usage

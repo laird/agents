@@ -757,6 +757,7 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Pull latest changes from origin before branching — hard failure: stale state produces wrong fixes
 git pull origin "$PARENT_BRANCH" || {
   echo "❌ Cannot pull from origin/${PARENT_BRANCH} — refusing to start work from stale state."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 }
@@ -769,11 +770,13 @@ elif git checkout "$FIX_BRANCH" 2>/dev/null; then
   echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${PARENT_BRANCH}..."
   git pull --rebase origin "$PARENT_BRANCH" || {
     echo "❌ Rebase of $FIX_BRANCH onto origin/${PARENT_BRANCH} failed — resolve conflicts manually."
+    # Terminal outcome only: setup failed before any work began — Releasing and aborting.
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
     exit 1
   }
 else
   echo "❌ Could not create or switch to $FIX_BRANCH."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 fi
@@ -1564,6 +1567,7 @@ SUBTASK_BODY
   # done
 
   # Release the parent issue claim before exiting — workers will pick up sub-tasks.
+  # Terminal outcome only: release it via the explicit-release path below.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   issue_release "$ISSUE_NUM" 2>/dev/null || true
 

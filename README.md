@@ -357,7 +357,19 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 ```bash
 /dev              # Fix highest priority issue
 /install          # One-time setup for continuous mode
-/dev-loop         # Run continuously
+/dev-loop         # Run continuously (single agent)
+```
+
+**Swarm (parallel workers):**
+```bash
+# 1 manager (opus) + 3 workers (sonnet), each in its own tmux pane
+startclt 3
+
+# Override models
+WORKER_MODEL=claude-sonnet-5 MANAGER_MODEL=claude-opus-5 startclt 3
+
+# Manager-routing mode (zero worker-vs-worker claim races)
+start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
 ```
 
 ---
@@ -443,7 +455,27 @@ agents/
 │       │   ├── security.md             # Vulnerability scanning
 │       │   └── tester.md               # Comprehensive testing
 │       └── scripts/
-│           └── regression-test.sh      # Full test suite with GitHub integration
+│           ├── claude-worker-loop.sh   # Shell loop: fresh Claude process per issue (clean context)
+│           ├── start-parallel-agents.sh # Launch manager + N worker panes (tmux/cmux)
+│           ├── join-parallel-agents.sh  # Attach to an existing swarm session
+│           ├── end-parallel-agents.sh   # Tear down the swarm
+│           ├── add-worker.sh            # Add a worker to a running swarm
+│           ├── remove-worker.sh         # Remove a worker from a running swarm
+│           ├── restart-worker.sh        # Restart an unhealthy worker
+│           ├── start-issue-work.sh      # Atomic issue claim + branch setup (used by Codex)
+│           ├── worker-launch-lib.sh     # Per-agent launch/loop configuration
+│           ├── worker-health.sh         # Worker liveness checks for manager
+│           ├── swarm-manifest-lib.sh    # Swarm state tracking
+│           ├── issue-fns.sh             # issue_claim / issue_release / issue_update wrappers
+│           ├── issue-source-lib.sh      # Issue backend detection (file / github)
+│           ├── issues-file.py           # File-backend issue store
+│           ├── issues-gh.sh             # GitHub-backend issue store
+│           ├── merge-to-integration.sh  # Land worktree work on shared integration branch
+│           ├── regression-test.sh       # Full test suite with GitHub integration
+│           ├── fetch-blocked-issues.sh  # List blocked/needs-review issues
+│           ├── add-blocking-label.sh    # Label an issue as blocked
+│           ├── approve-blocked-issue.sh # Approve a blocked issue
+│           └── reject-blocked-issue.sh  # Reject a blocked issue
 └── README.md
 ```
 
@@ -472,6 +504,11 @@ agents/
 - 🔄 **Parallel execution** - Multiple agents work independently on separate tasks
 - 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
 - 📝 **Systematic workflows** - 7-phase migration, 6-phase testing, 8-stage ADR lifecycle
+- 🧠 **Model-tiered swarms** - Manager on `claude-opus-5` (coordination), workers on `claude-sonnet-5` (implementation); overridable via `WORKER_MODEL`/`MANAGER_MODEL`
+- 🆕 **Fresh context per issue** - `claude-worker-loop.sh` restarts Claude for each issue; each worker is a visible tmux pane the user can inspect and interact with
+- 🔒 **Robust issue claiming** - Atomic file-backend rename + GitHub race-detection via `[autocoder-claim]` markers; task scope gate checks CONTEXT FIT and WORKTREE INDEPENDENCE before branching
+- 📐 **Worktree-safe decomposition** - Over-large issues are split into sub-tasks with "Files Affected" fields so parallel workers never collide
+- 🛡️ **Swarm resilience** - Manager monitors worker health, restarts unhealthy workers, and can scale the fleet mid-run with `add-worker.sh`
 
 ### Continuous Improvement
 
@@ -570,8 +607,11 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.24.0 | 2026-07-24 | **Autocoder v4.5.0**: Robust issue claiming — atomic file-backend rename + GitHub race detection via `[autocoder-claim]` markers (3 s settlement, then marker-count check). Task scope gate before branch creation (CONTEXT FIT + WORKTREE INDEPENDENCE); over-large issues decomposed with "Files Affected" field for swarm-safe parallelism. `claude-worker-loop.sh` shell loop gives each issue a fresh Claude process (clean context window) in a visible tmux pane. Model tiers: manager runs `claude-opus-5`, workers run `claude-sonnet-5`; overridable via `WORKER_MODEL`/`MANAGER_MODEL`. tmux/cmux availability check with per-platform install links. |
+| 3.23.0 | 2026-07-23 | **Swarm routing modes**: `--route manager` flag for `start-parallel-agents.sh` — workers idle at a ready prompt, manager dispatches `/autocoder:dev <N>` one at a time, eliminating all worker-vs-worker claim races. `--paused`/`--no-start` flag creates the swarm without launching loops (start them later with `start-workers.sh`). |
+| 3.22.0 | 2026-06-20 | **Swarm resilience & hardened git workflow**: Manager agent monitors worker health and restarts unhealthy workers. `add-worker.sh` lets the manager (or user) scale the fleet mid-run without restarting. Hardened `/dev` git workflow: always creates `feature/issue-N` branch, auto-detects default branch, propagated to Codex, Droid, and OpenCode platforms. Shared integration branch (`merge-to-integration.sh`) for landing parallel worktree work. Codex and Antigravity/Gemini parity updates. |
 | 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, engagement health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/dev` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
-| 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/dev-github` → `/dev`, `/dev-github-loop` → `/dev-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
+| 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/fix-github` → `/dev`, `/fix-github-loop` → `/dev-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
 | 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/dev` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
@@ -635,7 +675,13 @@ esac
 
 ### Distributed Lock Pattern
 
-For backends that need distributed locking (multiple parallel agents claiming issues), implement `status: open|working|closed` semantics in your `update` subcommand. Agents call `update N --add-label working` to claim and `update N --remove-label working` to release. The `list --state open` call must exclude claimed issues.
+For backends that need distributed locking (multiple parallel agents claiming issues), implement `status: open|working|closed` semantics in your `update` subcommand.
+
+The built-in `issue_claim N` wrapper in `issue-fns.sh` is the canonical way to claim an issue:
+- **File backend**: performs an atomic `os.rename(open/N.md, working/N.md)` — only one worker wins
+- **GitHub backend**: calls `update N --add-label working`, then posts an `[autocoder-claim]` marker comment, waits 3 seconds for concurrent workers to surface, and checks marker count — backs off if more than one marker found
+
+Agents call `issue_release N` to unclaim (not `update N --remove-label working`); release moves the file back from `working/` to `open/` and removes the label. The `list --state open` call must exclude claimed issues.
 
 ---
 

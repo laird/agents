@@ -9,15 +9,13 @@
 # are self-contained in issues-file.py, issues-gh.sh, and any future
 # issues-<other>.{sh,py}.
 
-# Bootstrap: source issue-config.sh if ISSUE_SOURCE not yet exported.
-# Use parameter expansion with default so callers running under `set -u`
-# (e.g., fix-loop-gate.sh) don't trip the unbound-variable check.
-if [ -z "${ISSUE_SOURCE:-}" ]; then
-  _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-  # shellcheck source=issue-config.sh
-  source "${_ifns_DIR}/issue-config.sh"
-fi
+# Bootstrap: ALWAYS resolve the backend through issue-config.sh. Skipping this
+# whenever ISSUE_SOURCE happened to be set is what let a stale exported value
+# override the repo's .autocoder.json and point the whole workflow at the wrong
+# backend. issue-config.sh decides precedence (config wins, env is fallback).
 _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-config.sh
+source "${_ifns_DIR}/issue-config.sh"
 
 case "${ISSUE_SOURCE:-}" in
   github) _ifns_BACKEND_SCRIPT="issues-gh.sh"   ;;

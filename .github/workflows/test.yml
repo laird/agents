@@ -12,7 +12,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          # No `cache: pip` — it needs a requirements.txt/pyproject.toml to hash,
+          # and this repo has neither (the suite is stdlib-only). With nothing to
+          # hash the cache step errors out and the job dies before pytest runs.
+          # Add a manifest first if pip caching is ever wanted.
       - name: Install pytest
         run: python3 -m pip install --upgrade pip pytest
       - name: Run Python tests

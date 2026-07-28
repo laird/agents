@@ -41,6 +41,10 @@ Read project-specific settings from guidance file (e.g., `CLAUDE.md`, `gemini.md
 | `Read` | Analyze code and issues |
 | `Write`/`Edit` | Create fixes and tests |
 
+## Dispatch Rule
+
+**When a manager assigns you a specific issue number, always use `/fix <N>` with that exact number — never run `/fix` without an argument.** Running `/fix` without a number lets the agent self-select the highest-priority unclaimed issue, which bypasses the manager's assignment and causes workers to collide on the same files. If you receive an assignment like "take #547", the only correct invocation is `/fix 547`.
+
 ## Workflow Phases
 
 ### 0. Triage (First)

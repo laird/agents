@@ -9,7 +9,12 @@
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
 #   --issue-source file|github  Issue backend for this swarm run
 #   --issue-dir PATH       File issue directory when --issue-source file
-#   --paused, --no-start   Create the swarm but do not start worker loops
+#   --route self|manager   Issue-routing mode (default: self). In manager mode
+#                          workers do NOT self-claim: they idle at a ready prompt
+#                          and only act on a manager-dispatched /autocoder:fix <N>.
+#   --manager-routing      Alias for --route manager
+#   --paused, --no-start, --idle
+#                          Create the swarm but do not start worker loops
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
@@ -18,6 +23,7 @@
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
 #   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused
+#   start-parallel-agents.sh 5 --mux tmux --agent claude --route manager
 #   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
@@ -49,6 +55,7 @@ AGENT=""
 PAUSED=false
 CLI_ISSUE_SOURCE=""
 CLI_ISSUE_DIR=""
+ROUTE="self"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -65,7 +72,7 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
-    --paused|--no-start)
+    --paused|--no-start|--idle)
       PAUSED=true
       shift
       ;;
@@ -76,6 +83,14 @@ while [[ $# -gt 0 ]]; do
     --issue-dir)
       CLI_ISSUE_DIR="$2"
       shift 2
+      ;;
+    --route)
+      ROUTE="$2"
+      shift 2
+      ;;
+    --manager-routing)
+      ROUTE="manager"
+      shift
       ;;
     [0-9]*)
       NUM_AGENTS="$1"
@@ -89,7 +104,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
       echo "  --issue-source file|github  Issue backend for this swarm run"
       echo "  --issue-dir PATH       File issue directory when --issue-source file"
-      echo "  --paused, --no-start   Create swarm but do not start worker or manager loops"
+      echo "  --route self|manager   Issue-routing mode (default: self). In manager mode"
+      echo "                         workers do NOT self-claim — they idle at a ready prompt"
+      echo "                         and only act on a manager-dispatched /autocoder:fix <N>."
+      echo "  --manager-routing      Alias for --route manager"
+      echo "  --paused, --no-start, --idle"
+      echo "                         Create swarm but do not start worker or manager loops"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
@@ -98,6 +118,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
       echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent claude --route manager"
       exit 0
       ;;
     *)
@@ -108,18 +129,48 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Auto-detect multiplexer if not specified
+# Validate routing mode
+case "$ROUTE" in
+  self|manager) ;;
+  *)
+    echo "❌ Error: Unknown route '$ROUTE'. Use 'self' or 'manager'" >&2
+    exit 1
+    ;;
+esac
+
+# In manager-routing mode the manager (`/autocoder:monitor-workers`) is the SINGLE
+# assigner: workers are launched WITHOUT the self-claim fix-loop, so they never
+# select their own issue (zero worker-vs-worker claim races). They idle at a ready
+# prompt and only act on a manager-dispatched `/autocoder:fix <N>`.
+SEND_WORKER_LOOP=true
+if [ "$ROUTE" = "manager" ]; then
+  SEND_WORKER_LOOP=false
+fi
+
+# Auto-detect multiplexer if not specified.
+# Prefer cmux only when it is actually running — see cmux_is_running().
 if [ -z "$MUX" ]; then
-  if command -v cmux &> /dev/null; then
+  if cmux_is_running; then
     MUX="cmux"
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
+    if command -v cmux &> /dev/null; then
+      echo "ℹ️  cmux installed but not running — falling back to tmux"
+    fi
   else
-    echo "❌ Error: No terminal multiplexer found" >&2
+    echo "❌ Error: No terminal multiplexer found." >&2
     echo "" >&2
-    echo "Install one of the following:" >&2
-    echo "  tmux:  brew install tmux" >&2
-    echo "  cmux:  brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "Install tmux or cmux, then re-run:" >&2
+    echo "" >&2
+    echo "  tmux  (recommended — available on all platforms)" >&2
+    echo "    macOS:   brew install tmux" >&2
+    echo "    Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+    echo "             sudo dnf install tmux  (Fedora/RHEL)" >&2
+    echo "    Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+    echo "" >&2
+    echo "  cmux  (macOS GUI terminal multiplexer)" >&2
+    echo "    macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "    Info:    https://manaflow.ai/cmux" >&2
     echo "" >&2
     exit 1
   fi
@@ -129,7 +180,25 @@ fi
 case "$MUX" in
   tmux|cmux)
     if ! command -v "$MUX" &> /dev/null; then
-      echo "❌ Error: $MUX is not installed" >&2
+      echo "❌ Error: $MUX is not installed." >&2
+      echo "" >&2
+      case "$MUX" in
+        tmux)
+          echo "Install tmux:" >&2
+          echo "  macOS:   brew install tmux" >&2
+          echo "  Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+          echo "           sudo dnf install tmux  (Fedora/RHEL)" >&2
+          echo "  Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+          ;;
+        cmux)
+          echo "Install cmux:" >&2
+          echo "  macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+          echo "  Info:    https://manaflow.ai/cmux" >&2
+          echo "" >&2
+          echo "  (cmux is macOS-only; use --mux tmux on Linux)" >&2
+          ;;
+      esac
+      echo "" >&2
       exit 1
     fi
     ;;
@@ -239,6 +308,7 @@ if [ "$ISSUE_SOURCE" = "file" ]; then
 fi
 echo "   Task list ID: $TASK_LIST_ID"
 echo "   Branch: $CURRENT_BRANCH"
+echo "   Routing mode: $ROUTE$([ "$ROUTE" = manager ] && echo " (manager is the sole assigner; workers do not self-claim)")"
 if [ "$PAUSED" = true ]; then
   echo "   Mode: paused (workers will not pull issues yet)"
 fi
@@ -374,6 +444,7 @@ if [ "$MUX" = "tmux" ]; then
   if [ "$AGENT" = "claude" ]; then
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+    send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
   fi
   WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
 
@@ -395,6 +466,7 @@ if [ "$MUX" = "tmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
   done
@@ -420,7 +492,7 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Waiting for all instances to stabilize..."
   sleep 3
 
-  if [ "$PAUSED" = false ]; then
+  if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
     # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
     echo "   Starting $WORKER_CMD in all agents (sequential)..."
     for i in $(seq 0 $((NUM_AGENTS - 1))); do
@@ -432,6 +504,10 @@ if [ "$MUX" = "tmux" ]; then
       sleep 10
     done
     echo "   All agents initialized"
+  elif [ "$PAUSED" = false ]; then
+    # Manager-routing mode: workers stay idle at a ready prompt (no self-claim
+    # fix-loop). The manager dispatches /autocoder:fix <N> to each idle worker.
+    echo "   Manager-routing mode: workers idle at ready prompt (no self-claim loop)"
   else
     echo "   Paused mode: worker loop commands were not sent"
   fi
@@ -446,6 +522,11 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Starting coordinator..."
   send_tmux_command "$MANAGER_TARGET" "cd '$PROJECT_ROOT'"
   send_issue_env_tmux "$MANAGER_TARGET"
+
+  # Thread routing mode to the manager loop so /autocoder:monitor-workers knows
+  # whether it is the sole assigner (manager) or a co-monitor of self-claiming
+  # workers (self). Exported before the REPL launches so the agent inherits it.
+  send_tmux_command "$MANAGER_TARGET" "export AUTOCODER_ROUTE='$ROUTE'"
 
   if [ "$AGENT" = "claude" ]; then
     send_tmux_command "$MANAGER_TARGET" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
@@ -486,9 +567,12 @@ if [ "$MUX" = "tmux" ]; then
     echo "The swarm is ready for issue review and worker start commands:"
     echo "   add-worker"
     echo "   add-worker 2"
-  else
+  elif [ "$SEND_WORKER_LOOP" = true ]; then
     echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
     echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  else
+    echo "   Window 0: $NUM_AGENTS worker agents idle (manager-routing; no self-claim loop)"
+    echo "   Window 1: Manager in main repo running $MANAGER_CMD (sole assigner)"
   fi
   echo ""
   echo "🔧 Useful tmux commands:"
@@ -558,6 +642,7 @@ elif [ "$MUX" = "cmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_cmux_command "$WS_REF" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
       sleep 0.5
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "$WS_REF" paused)")
@@ -570,7 +655,7 @@ elif [ "$MUX" = "cmux" ]; then
       WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
     fi
 
-    if [ "$PAUSED" = false ]; then
+    if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
       # Send worker command
       echo "   → Worker $i: sending $WORKER_CMD..."
       send_cmux_command "$WS_REF" "$WORKER_CMD"
@@ -580,8 +665,12 @@ elif [ "$MUX" = "cmux" ]; then
     fi
   done
 
-  if [ "$PAUSED" = false ]; then
+  if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
     echo "   All workers initialized"
+  elif [ "$PAUSED" = false ]; then
+    # Manager-routing mode: workers idle at a ready prompt; the manager dispatches
+    # /autocoder:fix <N> to each idle worker (no self-claim fix-loop).
+    echo "   Manager-routing mode: workers idle at ready prompt (no self-claim loop)"
   else
     echo "   Paused mode: worker loop commands were not sent"
   fi
@@ -605,6 +694,9 @@ elif [ "$MUX" = "cmux" ]; then
     else
       send_issue_env_cmux "$MANAGER_WS_REF"
     fi
+
+    # Thread routing mode to the manager loop (see tmux path for rationale).
+    send_cmux_command "$MANAGER_WS_REF" "export AUTOCODER_ROUTE='$ROUTE'"
 
     if [ "$PAUSED" = false ]; then
       if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
@@ -647,9 +739,12 @@ elif [ "$MUX" = "cmux" ]; then
     echo "The swarm is ready for issue review and worker start commands:"
     echo "   add-worker"
     echo "   add-worker 2"
-  else
+  elif [ "$SEND_WORKER_LOOP" = true ]; then
     echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
     echo "   1 manager workspace running $MANAGER_CMD"
+  else
+    echo "   $NUM_AGENTS worker workspaces idle (manager-routing; no self-claim loop)"
+    echo "   1 manager workspace running $MANAGER_CMD (sole assigner)"
   fi
   echo ""
   echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"

@@ -30,7 +30,7 @@ This command installs the agents framework into your project:
 ### 3. Shell Aliases (optional)
 - **File**: Shell rc file for the current shell, typically `~/.bashrc` or `~/.zshrc`
 - **Installed by**: `scripts/install-shell-aliases.sh` (auto-detects agent CLIs)
-- **Claude**: `startclt` (tmux), `startclc` (cmux)
+- **Antigravity**: `startclt` (tmux), `startclc` (cmux)
 - **Codex**: `startct` (tmux), `startcc` (cmux)
 - **Gemini**: `startgt` (tmux), `startgc` (cmux)
 - **Droid**: `startdt` (tmux), `startdc` (cmux)
@@ -220,7 +220,7 @@ Show the alias table:
 ```bash
 echo "  Agent      tmux      cmux"
 echo "  ─────────  ────────  ────────"
-echo "  Claude     startclt  startclc"
+echo "  Antigravity     startclt  startclc"
 echo "  Codex      startct   startcc"
 echo "  Gemini     startgt   startgc"
 echo "  Droid      startdt   startdc"
@@ -230,9 +230,10 @@ echo "  Droid      startdt   startdc"
 
 ```bash
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 
@@ -273,7 +274,7 @@ fi
 
 if [ "$INSTALL_ALIASES" = true ]; then
   echo "   • Shell aliases"
-  echo "     Shortcuts: startclt/startclc (Claude), startct/startcc (Codex), startgt/startgc (Gemini), startdt/startdc (Droid)"
+  echo "     Shortcuts: startclt/startclc (Antigravity), startct/startcc (Codex), startgt/startgc (Gemini), startdt/startdc (Droid)"
 fi
 
 echo ""

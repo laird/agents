@@ -9,7 +9,7 @@ WORKFLOW="/dev"
 TARGET_DIR="/home/laird/src/agents"
 RUN_ONCE=false
 ITERATION=0
-STATE_FILE="${TARGET_DIR}/.claude/fix-loop.local.md"
+STATE_FILE="${TARGET_DIR}/.agent/fix-loop.local.md"
 
 # Simple argument parsing
 while [[ "$#" -gt 0 ]]; do

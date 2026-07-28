@@ -53,12 +53,22 @@ for b in bugs:
 ### 4. Git Operations
 
 ```bash
-# Start: pull latest from origin to ensure work starts from current state
-git pull origin $(git rev-parse --abbrev-ref HEAD) 2>/dev/null || git pull origin main
+# Auto-detect integration branch (supports main, master, integration, etc.)
+INTEGRATION_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
+
+# Start: claim issue and create feature branch from the integration branch
 bash plugins/autocoder/scripts/start-issue-work.sh {number}
+
+# ... implement fix ...
+
 git add . && git commit -m "Fix #{number}: {title}"
-# End: push branch to origin so all work is preserved and available for PR
-git push origin feature/issue-{number}
+
+# End: merge back to integration branch, push, then delete local feature branch
+bash plugins/autocoder/scripts/merge-to-integration.sh \
+  --feature "feature/issue-{number}" --issue {number} \
+  --integration "$INTEGRATION_BRANCH" --test-cmd "<repo test command>"
+git branch -d "feature/issue-{number}" 2>/dev/null || git branch -D "feature/issue-{number}" 2>/dev/null || true
 ```
 
 ### 5. Closure

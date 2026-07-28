@@ -11,7 +11,7 @@ Run the complete regression test suite, analyze all results (successes and failu
 
 ## What This Does
 
-1. **Load Configuration** from CLAUDE.md (test commands, report locations)
+1. **Load Configuration** from GEMINI.md (test commands, report locations)
 2. **Run Build Verification** with configured build command
 3. **Run Unit Tests** with configured test command
 4. **Run E2E Tests** with configured E2E command (if available)
@@ -25,7 +25,7 @@ Run the complete regression test suite, analyze all results (successes and failu
 
 ## Configuration
 
-This command reads configuration from `CLAUDE.md`:
+This command reads configuration from `GEMINI.md`:
 
 ```markdown
 ## Automated Testing & Issue Management
@@ -61,9 +61,10 @@ If no configuration is found, defaults are used.
 ```bash
 # Source issue config — exits with clear error if not configured
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 source "${SCRIPT_DIR}/issue-fns.sh"
@@ -72,17 +73,17 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-# Load configuration from CLAUDE.md
-if [ -f "CLAUDE.md" ]; then
-  echo "📋 Loading configuration from CLAUDE.md"
+# Load configuration from GEMINI.md
+if [ -f "GEMINI.md" ]; then
+  echo "📋 Loading configuration from GEMINI.md"
 
   # Check if autocoder configuration exists
-  if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
-    echo "⚠️  No autocoder configuration found in CLAUDE.md"
-    echo "📝 Adding autocoder configuration section to CLAUDE.md..."
+  if ! grep -q "## Automated Testing & Issue Management" GEMINI.md; then
+    echo "⚠️  No autocoder configuration found in GEMINI.md"
+    echo "📝 Adding autocoder configuration section to GEMINI.md..."
 
-    # Append autocoder configuration to CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
+    # Append autocoder configuration to GEMINI.md
+    cat >> GEMINI.md << 'AUTOCODER_CONFIG'
 
 ## Automated Testing & Issue Management
 
@@ -113,12 +114,12 @@ npm run build
 
 AUTOCODER_CONFIG
 
-    echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
+    echo "✅ Added autocoder configuration to GEMINI.md - please update with project-specific details"
   fi
 
   # Extract test command
-  if grep -q "### Regression Test Suite" CLAUDE.md; then
-    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Regression Test Suite" GEMINI.md; then
+    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Regression test command: $TEST_COMMAND"
   else
     TEST_COMMAND="npm test"
@@ -126,8 +127,8 @@ AUTOCODER_CONFIG
   fi
 
   # Extract build command
-  if grep -q "### Build Verification" CLAUDE.md; then
-    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+  if grep -q "### Build Verification" GEMINI.md; then
+    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
     echo "✅ Build command: $BUILD_COMMAND"
   else
     BUILD_COMMAND="npm run build"
@@ -135,15 +136,15 @@ AUTOCODER_CONFIG
   fi
 
   # Extract report directory
-  if grep -q "Location:" CLAUDE.md && grep "Location:" CLAUDE.md | grep -q "regression-reports"; then
-    REPORT_DIR=$(grep "Location:" CLAUDE.md | sed 's/.*`\([^`]*regression-reports[^`]*\)`.*/\1/' | head -1)
+  if grep -q "Location:" GEMINI.md && grep "Location:" GEMINI.md | grep -q "regression-reports"; then
+    REPORT_DIR=$(grep "Location:" GEMINI.md | sed 's/.*`\([^`]*regression-reports[^`]*\)`.*/\1/' | head -1)
     echo "✅ Report directory: $REPORT_DIR"
   else
     REPORT_DIR="docs/test/regression-reports"
     echo "⚠️  No report directory found, using default: $REPORT_DIR"
   fi
 else
-  echo "⚠️  No CLAUDE.md found in project, using defaults"
+  echo "⚠️  No GEMINI.md found in project, using defaults"
   TEST_COMMAND="npm test"
   BUILD_COMMAND="npm run build"
   REPORT_DIR="docs/test/regression-reports"
@@ -212,9 +213,17 @@ else
 fi
 
 # Extract unit test stats (Jest format)
-UNIT_PASSED=$(grep -oP 'Tests:.*?(\d+)\s+passed' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
-UNIT_FAILED=$(grep -oP 'Tests:.*?(\d+)\s+failed' "$UNIT_RESULTS" | grep -oP '\d+' | head -1 || echo "0")
-UNIT_TOTAL=$(grep -oP 'Tests:.*?(\d+)\s+total' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
+UNIT_PASSED=$(grep -oE '[0-9]+[[:space:]]+passed' "$UNIT_RESULTS" | grep -oE '^[0-9]+' | tail -1)
+UNIT_FAILED=$(grep -oE '[0-9]+[[:space:]]+failed' "$UNIT_RESULTS" | grep -oE '^[0-9]+' | tail -1)
+UNIT_TOTAL=$(grep -oE '[0-9]+[[:space:]]+total' "$UNIT_RESULTS" | grep -oE '^[0-9]+' | tail -1)
+
+# An empty parse means the runner produced no summary — it failed to execute.
+# Never let that become "0 failures"; that is how a broken suite reads green.
+if [ -z "${UNIT_PASSED}${UNIT_FAILED}${UNIT_TOTAL}" ]; then
+  echo "❌ No parseable test summary — did the unit test command actually run?" >&2
+  UNIT_EXIT=1
+fi
+UNIT_PASSED="${UNIT_PASSED:-0}"; UNIT_FAILED="${UNIT_FAILED:-0}"; UNIT_TOTAL="${UNIT_TOTAL:-0}"
 
 echo "Unit Tests: ${UNIT_PASSED}/${UNIT_TOTAL} passed"
 
@@ -236,8 +245,8 @@ echo "🌐 [3/3] Running E2E Tests..."
 E2E_RESULTS="/tmp/e2e-test-results-${TIMESTAMP}.log"
 
 # Check if E2E tests are configured
-if grep -q "### E2E Tests Only" CLAUDE.md 2>/dev/null; then
-  E2E_COMMAND=$(sed -n "/### E2E Tests Only/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
+if grep -q "### E2E Tests Only" GEMINI.md 2>/dev/null; then
+  E2E_COMMAND=$(sed -n "/### E2E Tests Only/,/^###/{/^\`\`\`bash$/n;p;}" GEMINI.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
   echo "✅ E2E test command: $E2E_COMMAND"
 
   if $E2E_COMMAND 2>&1 | tee "$E2E_RESULTS"; then
@@ -249,8 +258,8 @@ if grep -q "### E2E Tests Only" CLAUDE.md 2>/dev/null; then
   fi
 
   # Parse E2E results
-  E2E_PASSED=$(grep -oP '\d+\s+passed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
-  E2E_FAILED=$(grep -oP '\d+\s+failed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
+  E2E_PASSED=$(grep -oE '[0-9]+[[:space:]]+passed' "$E2E_RESULTS" | grep -oE '^[0-9]+' | tail -1 || echo "0")
+  E2E_FAILED=$(grep -oE '[0-9]+[[:space:]]+failed' "$E2E_RESULTS" | grep -oE '^[0-9]+' | tail -1 || echo "0")
   E2E_TOTAL=$((E2E_PASSED + E2E_FAILED))
 
   echo "E2E Tests: ${E2E_PASSED}/${E2E_TOTAL} passed"
@@ -290,9 +299,10 @@ Failures are assigned priority based on impact:
 
 ```bash
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 source "${SCRIPT_DIR}/issue-fns.sh"

@@ -794,6 +794,7 @@ INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin
 INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
 git fetch origin "$INTEGRATION_BRANCH" || {
   echo "❌ Cannot fetch origin/${INTEGRATION_BRANCH} — refusing to start work from stale state."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 }
@@ -810,17 +811,20 @@ elif git checkout "$FIX_BRANCH" 2>/dev/null; then
   echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${INTEGRATION_BRANCH}..."
   git pull --rebase origin "$INTEGRATION_BRANCH" || {
     echo "❌ Rebase of $FIX_BRANCH onto origin/${INTEGRATION_BRANCH} failed — resolve conflicts manually."
+    # Terminal outcome only: setup failed before any work began — Releasing and aborting.
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
     exit 1
   }
 else
   echo "❌ Could not create or switch to $FIX_BRANCH."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 fi
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$FIX_BRANCH" ]; then
   echo "❌ Branch switch verification failed (still on $CURRENT_BRANCH)."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 fi
@@ -1579,6 +1583,7 @@ SUBTASK_BODY
   # done
 
   # Release the parent issue claim before exiting — workers will pick up sub-tasks.
+  # Terminal outcome only: release it via the explicit-release path below.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
   issue_release "$ISSUE_NUM" 2>/dev/null || true
 
@@ -1938,6 +1943,7 @@ INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin
 INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
 git fetch origin "$INTEGRATION_BRANCH" || {
   echo "❌ Cannot fetch origin/${INTEGRATION_BRANCH} — refusing to start enhancement from stale state."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 }
@@ -1949,11 +1955,13 @@ elif git checkout "$ENHANCE_BRANCH" 2>/dev/null; then
   echo "ℹ️  Branch $ENHANCE_BRANCH already exists; pulling latest from origin/${INTEGRATION_BRANCH}..."
   git pull --rebase origin "$INTEGRATION_BRANCH" || {
     echo "❌ Rebase of $ENHANCE_BRANCH onto origin/${INTEGRATION_BRANCH} failed."
+    # Terminal outcome only: setup failed before any work began — Releasing and aborting.
     issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
     exit 1
   }
 else
   echo "❌ Could not create or switch to $ENHANCE_BRANCH."
+  # Terminal outcome only: setup failed before any work began — Releasing and aborting.
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
   exit 1
 fi

@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
 
 `/retro` produces a **Document** deliverable (IMPROVEMENTS.md). Skill mapping:
 
@@ -86,9 +86,10 @@ done
 
 # Source issue config (exits with clear error if not configured)
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
+  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
+  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
   elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  else find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
   fi
 )
 source "${SCRIPT_DIR}/issue-fns.sh"

@@ -448,7 +448,7 @@ Project coordinator verifies all logs are present, accurate, and detailed.
    ```
 
 3. **Configure agents**:
-   - Add to CLAUDE.md: "use the append-to-history.sh tool to record activity"
+   - Add to GEMINI.md: "use the append-to-history.sh tool to record activity"
    - Add to agent instructions: "MANDATORY: Log all completed work"
    - Reference this protocol in agent spawn instructions
 
