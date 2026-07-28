@@ -107,7 +107,12 @@ if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
     # worktree swarm each worktree sits on its own main-wt-N; branching from
     # origin/<integration> means work starts from — and later merges back to — the same
     # shared branch rather than stranding on main-wt-N.
-    INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
+    # `|| true` is load-bearing: git exits 128 when refs/remotes/origin/HEAD is
+    # absent (fresh `git init`, or any clone where only `git remote add` ran).
+    # 2>/dev/null hides the message but NOT the status, and under
+    # `set -euo pipefail` a failing command substitution aborts the assignment —
+    # killing the script before the `:-main` fallback below could ever apply.
+    INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)}"
     INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
     git fetch origin "$INTEGRATION_BRANCH" >/dev/null 2>&1 || true
     if ! git switch -c "$BRANCH" "origin/${INTEGRATION_BRANCH}" >/dev/null 2>&1 \
