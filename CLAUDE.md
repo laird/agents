@@ -12,6 +12,18 @@ This is the **Modernize** Claude Code plugin - a production-validated framework 
 - Originally created for .NET Framework migrations but universally applicable
 - Emphasizes continuous improvement through retrospective analysis
 
+## Branches
+
+**Integration branch**: `feat/autocoder-planning-pipeline` — where workers merge completed issues.
+
+**Ship branch**: `feat/autocoder-planning-pipeline` — the branch that defines "shipped" for the close gate (issue #35).
+
+Workers must not close an issue until its commit is an ancestor of the ship branch; `plugins/autocoder/scripts/verify-shipped.sh` enforces this and `/dev` calls it before `issue_close`. Unshipped work is left open with the `awaiting-integration` label.
+
+Ship branch is currently the integration branch, not `master`, deliberately: nothing this swarm produces reaches `master` until the `/dev` line merges (#30), so measuring against `master` would park every fixed issue behind that single merge. **When #30 lands, change this to `master`** in both this file and `.envrc`.
+
+Resolution order: `verify-shipped.sh <commit> <branch>` argument → `CLAUDE_CODE_SHIP_BRANCH` → the **Ship branch** line above → repo default branch → `main`.
+
 ## Issue Management
 
 This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend) or via GitHub Issues (github backend) — whichever is configured in `.autocoder.json`.

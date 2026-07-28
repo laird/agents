@@ -130,3 +130,49 @@ def test_dev_md_uses_the_gate_before_closing(mirror):
     assert "awaiting-integration" in text, (
         f"{mirror.name} does not label unshipped work"
     )
+
+
+# ── Ship-branch resolution (issue #37) ──────────────────────────────────────
+# The swarm's ship line is the integration branch, not master. That has to be
+# fleet-wide, so resolution falls back to CLAUDE.md for headless workers that
+# never source .envrc.
+
+def test_resolves_ship_branch_from_claude_md(repo):
+    """A worker with no env var must still find the ship branch."""
+    r, commit = repo
+    (r / "CLAUDE.md").write_text(
+        "# Project\n\n## Branches\n\n"
+        "**Ship branch**: `integration` — the branch that defines shipped.\n"
+    )
+    env = {k: v for k, v in __import__("os").environ.items()
+           if k != "CLAUDE_CODE_SHIP_BRANCH"}
+    res = subprocess.run(["bash", str(SCRIPT), commit], cwd=str(r),
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 0, (
+        f"should resolve 'integration' from CLAUDE.md and report shipped: "
+        f"{res.stdout}{res.stderr}"
+    )
+    assert "integration" in res.stdout
+
+
+def test_explicit_arg_beats_claude_md(repo):
+    """Precedence: argument wins over the config file."""
+    r, commit = repo
+    (r / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    res = subprocess.run(["bash", str(SCRIPT), commit, "master"], cwd=str(r),
+                         capture_output=True, text=True)
+    assert res.returncode == 1, "explicit master should win and report NOT_SHIPPED"
+
+
+def test_repo_declares_ship_branch_for_the_fleet():
+    """The setting must live somewhere every worker reads, not just one shell."""
+    envrc = (REPO / ".envrc").read_text()
+    assert "CLAUDE_CODE_SHIP_BRANCH" in envrc, (
+        ".envrc must export CLAUDE_CODE_SHIP_BRANCH — it is the tracked, "
+        "fleet-wide env mechanism"
+    )
+    claude_md = (REPO / "CLAUDE.md").read_text()
+    assert "**Ship branch**:" in claude_md, (
+        "CLAUDE.md must declare the ship branch so headless workers and humans "
+        "can resolve it without direnv"
+    )

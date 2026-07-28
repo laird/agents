@@ -820,3 +820,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Closed-but-unshipped issues can no longer accumulate silently. Note the fix deliberately measures against the shipping branch (repo default), NOT the integration branch as issue #35 proposed: when the integration branch is itself a feature line, ancestry of it passes for the unshipped commit, so the literal proposal would not have caught its own example.
 
+
+---
+
+## 2026-07-28 13:36:10 - Set the swarm ship branch to the integration line (fleet-wide)
+
+**What Changed**: Exported CLAUDE_CODE_SHIP_BRANCH=feat/autocoder-planning-pipeline in the tracked .envrc, documented a Branches section in CLAUDE.md, and taught verify-shipped.sh to resolve the ship branch from CLAUDE.md when no env var is set. Resolution order: arg > env > CLAUDE.md > repo default > main. Added 3 tests.
+
+**Why Changed**: The #35 ship gate measured 'shipped' against master. Nothing this swarm produces reaches master until the /dev line merges (#30), so every fixed issue would have parked behind that single merge with an awaiting-integration label.
+
+**Impact**: The close gate now fires on merge to the integration line. #32 and #35 both qualify as shipped and were closed. The env var alone was not fleet-wide — headless workers never source .envrc — hence the CLAUDE.md fallback, whose regex accepts arbitrary branch names unlike the older dev-loop.md extractor that matches only main|master|develop|integration.
+
