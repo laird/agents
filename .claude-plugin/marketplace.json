@@ -65,10 +65,7 @@
         "name": "Agent Protocols Team",
         "email": "[email protected]"
       },
-      "strict": false,
-      "commands": [
-        "retro"
-      ]
+      "strict": false
     }
   ],
   "categories": [
