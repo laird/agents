@@ -313,3 +313,37 @@ This framework has proven results:
 - **Keep a Changelog**: https://keepachangelog.com/ - CHANGELOG format
 - **Repository**: https://github.com/laird/agents
 - **Claude Code Docs**: https://docs.claude.com/en/docs/claude-code/
+
+## Automated Testing & Issue Management
+
+This section configures the `/fix` command for autonomous issue resolution.
+
+### Regression Test Suite
+```bash
+bash plugins/autocoder/scripts/regression-test.sh
+```
+
+### Build Verification
+```bash
+bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocoder/scripts/*.py
+```
+
+### Test Framework Details
+
+**Unit Tests**:
+- Framework: plain `bash` assertion scripts, plus `pytest` for the Python backend
+- Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
+- Run all shell tests: `for t in tests/test_*.sh; do bash "$t" || exit 1; done`
+- Note: the Python tests require `pytest`, which is not installed in all environments.
+
+**E2E Tests**:
+- Not configured for this repository.
+
+**Test Reports**:
+- Location: `docs/test/regression-reports/`
+
+### Merge Mode
+```
+pr
+```
+Options: `merge` (auto-merge to parent branch and push) or `pr` (push feature branch and create a pull request, then stop).

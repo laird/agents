@@ -30,7 +30,11 @@
 
 set -e
 
-BLOCKING_SEARCH='no:label "working" no:label "needs-design" no:label "needs-clarification" no:label "needs-feedback" no:label "needs-approval" no:label "too-complex" no:label "future" no:label "proposal"'
+# Exclude each blocking label with `-label:"X"`. NOT `no:label "X"` — `no:label`
+# is a valueless qualifier meaning "issue has no labels at all", so that form
+# matches only unlabeled issues and silently hides every real issue, leaving the
+# autocoder loop permanently idle. See tests/test_issues_gh_search.sh.
+BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal"'
 BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal"'
 
 # ── list ───────────────────────────────────────────────────────────────────
