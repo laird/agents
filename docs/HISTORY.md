@@ -809,3 +809,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Shell regressions now fail CI. Also found that the suites are sensitive to an inherited ISSUE_SOURCE: three failed locally purely because the developer shell exported one. The runner scrubs those vars per suite, so local and CI results agree.
 
+
+---
+
+## 2026-07-28 13:24:52 - Fix #35: ship gate — don't close issues whose work never reached the shipping branch
+
+**What Changed**: Added plugins/autocoder/scripts/verify-shipped.sh and gated the auto-merge close path in both dev.md mirrors behind it. When the commit has not reached the shipping branch, the issue is left OPEN, labelled awaiting-integration, and given a comment naming what must merge. Added tests/test_verify_shipped.py (9 assertions) using real throwaway git repos. Reopened #32, which I had closed on this exact false premise.
+
+**Why Changed**: #26's PUSH_OK guard answers 'did the push succeed?' but not 'did this reach the branch that ships?'. A worker branching from a feature line pushes, merges and tests successfully, then closes the issue while the shipping branch is untouched — every signal green, tracker wrong.
+
+**Impact**: Closed-but-unshipped issues can no longer accumulate silently. Note the fix deliberately measures against the shipping branch (repo default), NOT the integration branch as issue #35 proposed: when the integration branch is itself a feature line, ancestry of it passes for the unshipped commit, so the literal proposal would not have caught its own example.
+
