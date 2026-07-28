@@ -39,8 +39,25 @@ if [ -z "$COMMIT" ]; then
     exit 2
 fi
 
-# Resolve the shipping branch: explicit arg > env > repo default > main.
+# Resolve the shipping branch:
+#   explicit arg > CLAUDE_CODE_SHIP_BRANCH > CLAUDE.md > repo default > main
+#
+# The CLAUDE.md step matters because headless workers (cron, tmux panes started
+# without direnv) never source .envrc, so the env var alone is not fleet-wide.
+# The regex accepts any branch name — the older extractor in dev-loop.md matches
+# only \b(main|master|develop|integration)\b, which cannot express a branch like
+# feat/autocoder-planning-pipeline.
 SHIP_BRANCH="${2:-${CLAUDE_CODE_SHIP_BRANCH:-}}"
+
+if [ -z "$SHIP_BRANCH" ]; then
+    for cfg in CLAUDE.md claude.md AGENTS.md; do
+        [ -f "$cfg" ] || continue
+        SHIP_BRANCH=$(grep -iE '^\*\*Ship branch\*\*:' "$cfg" 2>/dev/null \
+            | head -1 | sed -E 's/.*`([^`]+)`.*/\1/')
+        [ -n "$SHIP_BRANCH" ] && break
+    done
+fi
+
 if [ -z "$SHIP_BRANCH" ]; then
     SHIP_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
 fi
