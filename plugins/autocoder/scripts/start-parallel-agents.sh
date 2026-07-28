@@ -13,7 +13,8 @@
 #                          workers do NOT self-claim: they idle at a ready prompt
 #                          and only act on a manager-dispatched /autocoder:fix <N>.
 #   --manager-routing      Alias for --route manager
-#   --paused, --no-start   Create the swarm but do not start worker loops
+#   --paused, --no-start, --idle
+#                          Create the swarm but do not start worker loops
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
@@ -71,7 +72,7 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
-    --paused|--no-start)
+    --paused|--no-start|--idle)
       PAUSED=true
       shift
       ;;
@@ -107,7 +108,8 @@ while [[ $# -gt 0 ]]; do
       echo "                         workers do NOT self-claim — they idle at a ready prompt"
       echo "                         and only act on a manager-dispatched /autocoder:fix <N>."
       echo "  --manager-routing      Alias for --route manager"
-      echo "  --paused, --no-start   Create swarm but do not start worker or manager loops"
+      echo "  --paused, --no-start, --idle"
+      echo "                         Create swarm but do not start worker or manager loops"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
