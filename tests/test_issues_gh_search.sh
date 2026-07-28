@@ -55,7 +55,7 @@ capture_search() {
 }
 
 BLOCKING_LABELS=(working needs-design needs-clarification needs-feedback \
-                 needs-approval too-complex future proposal)
+                 needs-approval too-complex future proposal awaiting-integration)
 
 # ── list --state open must exclude each blocking label ─────────────────────
 SEARCH=$(capture_search list --state open --limit 10)
@@ -73,6 +73,11 @@ assert_contains "any-claimable excludes working" '-label:"working"' "$SEARCH"
 SEARCH=$(capture_search list --state blocked --limit 10)
 assert_contains "list --state blocked selects needs-design" 'label:"needs-design"' "$SEARCH"
 assert_not_contains "list --state blocked does not negate needs-design" '-label:"needs-design"' "$SEARCH"
+
+# awaiting-integration means "done, waiting to be merged" — NOT "blocked on a
+# human decision". It must suppress the issue from the claimable queue without
+# showing up in /review-blocked.
+assert_not_contains "blocked search excludes awaiting-integration" 'awaiting-integration' "$SEARCH"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

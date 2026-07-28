@@ -588,7 +588,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
     ) |
     {
       number: .number,
@@ -612,7 +612,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
     ) |
     {
       number: .number,
@@ -923,8 +923,11 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
-  # Remove 'working' label (PR is ready for review)
+  # Hand off from 'working' (concurrency lock) to 'awaiting-integration'
+  # (review gate). Without the second label the issue is immediately claimable
+  # again and the loop re-does the work every iteration until a human merges.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -1173,8 +1176,11 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
-  # Remove 'working' label (PR is ready for review)
+  # Hand off from 'working' (concurrency lock) to 'awaiting-integration'
+  # (review gate). Without the second label the issue is immediately claimable
+  # again and the loop re-does the work every iteration until a human merges.
   issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
   echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -1295,6 +1301,7 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `future` | Idea for future consideration, not ready for implementation | "Expose data via MCP server", research spikes, long-term ideas |
 | `decomposed` | Complex issue broken into sub-tasks (automatically applied, not blocking) | Parent issue tracking sub-task completion |
 | `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
+| `awaiting-integration` | Applied automatically when a PR is opened in `pr` merge mode. Suppresses the issue from the claimable queue so the loop does not redo finished work while review is pending. Not a human-judgement gate, so `/review-blocked` ignores it. | Merging the PR closes the issue and retires the label. If a PR is closed **without** merging, remove the label by hand (`gh issue edit <n> --remove-label awaiting-integration`) or the issue stays invisible to the loop. |
 
 ### Detection Process
 
@@ -1633,7 +1640,7 @@ issue_list --state open --label "enhancement" --limit 50 > /tmp/all-enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
             and not any(l['name'] == 'working' for l in i.get('labels', []))
@@ -1663,7 +1670,7 @@ print(len(proposals))
   BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -2160,7 +2167,7 @@ issue_list --state open --limit 100 > /tmp/all-issues.json
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2173,7 +2180,7 @@ print(len(priority))
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2203,7 +2210,7 @@ else
   BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
