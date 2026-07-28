@@ -746,23 +746,76 @@ echo "✅ Saved merge mode '$MERGE_MODE' to CLAUDE.md"
 
 4. Commit the CLAUDE.md change so all agents share the setting.
 
-## CRITICAL: Always Remove 'working' Label
+## CRITICAL: Release the 'working' Label Only on a Terminal Outcome
 
-**The `working` label MUST be removed when you stop working on an issue, regardless of the outcome.** This is a concurrency lock — if not removed, no other agent can pick up the issue.
+The `working` label is the concurrency lock. It is held for the **whole life of
+the claim**, not per commit. An open issue with no `working` label is, by
+definition, claimable — so dropping the lock while the issue is still open and
+still yours re-exposes it to the pool and invites a peer to duplicate your work.
 
-Remove it in ALL exit paths:
-- **Issue fixed and closed** → remove `working` label
-- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly via `issue_update` or `/update-issue`, you MUST also remove `working`)
-- **Issue skipped** → remove `working` label
-- **Error or failure** → remove `working` label
-- **Moving to next issue** → remove `working` label from current issue
+**Release the lock ONLY when the claim has actually ended:**
+
+| Terminal outcome | Release? | Also required |
+|---|---|---|
+| Issue closed (merged / resolved) | ✅ yes | — |
+| PR opened and the issue is closed by that merge | ✅ yes, at close | — |
+| Blocked (`needs-design`, `needs-clarification`, `needs-approval`, `too-complex`, `future`) | ✅ yes | post a release comment in the same step |
+| Deliberately skipped or abandoned | ✅ yes | post a release comment in the same step |
+| Could not switch to the feature branch (claim never started) | ✅ yes | — |
+
+**NEVER release the lock for any of these:**
+
+- After a **partial** commit, or a commit titled `#N (partial): …`
+- Between batches of an implementation plan
+- Because you are compacting context, pausing, or handing off mid-issue
+- Because you *think* you are done — "done" means the issue is **CLOSED**, not
+  "the last commit landed"
+- Because you are moving on to another issue while this one is still open —
+  that is an abandonment, so release it via the explicit-release path below
+  (with a comment), not silently
 
 ```bash
-# ALWAYS run this before moving to the next issue:
+# Correct: terminal outcome only. Pair the release with the close.
+issue_close "$ISSUE_NUM" --comment "✅ Resolved — <summary>"
 issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
 
-**Never add a blocking label without also removing the `working` label.** If you use `issue_update` or `/update-issue` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
+```bash
+# WRONG — this is issue #14. The issue is still OPEN, so removing the lock
+# hands it straight back to the claimable pool while you still hold the branch.
+git commit -m "#${ISSUE_NUM} (partial): first half of the refactor"
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+### Explicit release (blocked, skipped, or abandoned)
+
+A release that is not a close must be **visible**, so peers and
+`/monitor-workers` can tell a deliberate hand-off from a crashed worker. Always
+comment first, then drop the label:
+
+```bash
+issue_comment "$ISSUE_NUM" --body "🔓 **Releasing claim**
+
+**Reason**: <blocked on X | skipped because Y | abandoning, see below>
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (<pushed | discarded>)
+**State left behind**: <what is done, what remains>
+
+Releasing the \`working\` lock so another agent can pick this up."
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+**Never add a blocking label without also releasing the lock.** `add-blocking-label.sh`
+does both for you; if you add `needs-design`, `too-complex`, `needs-clarification`,
+`needs-approval`, or `future` directly via `issue_update` or `/update-issue`, you
+must remove `working` and post the release comment in the same step.
+
+### Holding the lock across a pause
+
+If you are still working the issue — mid-plan, compacting context, resuming next
+iteration — **keep the label**. The `feature/issue-<N>` branch plus the
+work-started comment are the proof the lock is live. An abandoned lock is not
+your problem to clean up mid-flight: `/monitor-workers` detects locks with no
+agent activity and reclaims them with human confirmation.
 
 ## Fixing Strategy
 
@@ -820,9 +873,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
-  # Remove 'working' label (PR is ready for review)
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # KEEP the 'working' label. The issue is still OPEN until the PR merges, so
+  # releasing the lock here would put it straight back in the claimable pool and
+  # let a peer redo the work the PR already contains (issue #14). The lock is
+  # released when the merge closes the issue; if the PR is abandoned,
+  # /monitor-workers reclaims the stale lock.
+  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review ('working' lock retained until merge)"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -1026,9 +1082,12 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
-  # Remove 'working' label (PR is ready for review)
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
+  # KEEP the 'working' label. The issue is still OPEN until the PR merges, so
+  # releasing the lock here would put it straight back in the claimable pool and
+  # let a peer redo the work the PR already contains (issue #14). The lock is
+  # released when the merge closes the issue; if the PR is abandoned,
+  # /monitor-workers reclaims the stale lock.
+  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review ('working' lock retained until merge)"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -1848,8 +1907,12 @@ Enhancement implementation paused. Will resume after bugs are fixed.
   # Do NOT merge - leave branch for investigation
   echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
 
-  # Remove 'working' label to release the enhancement
-  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  # KEEP the 'working' label. The enhancement is PAUSED, not finished — the
+  # branch is preserved and this worker intends to resume once the bug issues
+  # land. Releasing here would re-expose an issue that already has unmerged work
+  # on a branch (issue #14). Release it only if you are truly abandoning the
+  # enhancement, and then use the explicit-release path (comment + label removal).
+  echo "⏸️  Enhancement #$ENHANCE_NUM paused ('working' lock retained; branch preserved)"
 
   # Switch back to main
   git checkout main
@@ -1865,19 +1928,22 @@ Skip an enhancement and move to the next if:
 - Enhancement requires user decisions not documented
 
 ```bash
-# Remove 'working' label to release the enhancement for others
-issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-
-issue_comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
+# Explicit release: announce the hand-off FIRST, then drop the lock, so peers
+# and /monitor-workers see a deliberate release rather than a vanished lock.
+issue_comment "$ENHANCE_NUM" --body "🔓 **Enhancement Skipped — releasing claim**
 
 This enhancement cannot be automatically implemented because:
 [Reason]
 
 **Recommendation**: [What manual steps are needed]
+**State left behind**: [what exists on the branch, if anything]
 
-Moving to next enhancement or proposing new improvements.
+Releasing the \`working\` lock so another agent can pick this up.
 
 🤖 Autonomous enhancement workflow"
+
+# Terminal outcome only: this is an abandonment, paired with the release comment above.
+issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
 # Add 'needs-review' label
 issue_update "$ENHANCE_NUM" --add-label "needs-review"
@@ -2095,8 +2161,16 @@ Once the `proposal` label is removed, the `/dev` workflow will automatically imp
 
 🤖 **Ready to work on issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
 
-**REMINDER**: Before moving to the next issue, ALWAYS remove the `working` label from the current issue:
+**REMINDER**: The `working` label is released only on a **terminal outcome** —
+the issue is closed, or you explicitly release it (blocked / skipped / abandoned)
+with a release comment in the same step:
+
 ```bash
+# Terminal outcome only. Never after a partial commit, a batch boundary, or a pause.
 issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
-This applies to ALL outcomes: fixed, skipped, deferred, blocked, or errored. Failing to remove this label will prevent any agent from working on the issue.
+
+Dropping it while the issue is still open and still yours re-exposes it to the
+claimable pool and causes a peer to duplicate your work. Leaving it held while
+you are genuinely still working is correct — `/monitor-workers` reclaims locks
+that go stale.
