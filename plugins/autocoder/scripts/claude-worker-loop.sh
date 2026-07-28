@@ -12,7 +12,7 @@
 # Environment:
 #   WORKER_MODEL          Claude model for this worker (default: claude-sonnet-5)
 #   IDLE_SLEEP_MINUTES    Minutes to sleep when no work is found (default: 4)
-#   ISSUE_SOURCE          Issue backend (file|github), passed through to Claude
+#   ISSUE_SOURCE          Issue backend (file|github|jira), passed through to Claude
 #   ISSUE_DIR_PATH        Path to .issues/ directory, passed through to Claude
 
 set -euo pipefail

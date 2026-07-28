@@ -71,9 +71,9 @@ resolve_effective_issue_source() {
 
   if [ -n "$cli_source" ]; then
     case "$cli_source" in
-      file|github) ;;
+      file|github|jira) ;;
       *)
-        echo "❌ Invalid --issue-source '$cli_source'. Use file or github." >&2
+        echo "❌ Invalid --issue-source '$cli_source'. Use file, github, or jira." >&2
         return 2
         ;;
     esac
@@ -108,7 +108,7 @@ resolve_effective_issue_source() {
     fi
   fi
 
-  if [ "$ISSUE_SOURCE" != "file" ] && [ "$ISSUE_SOURCE" != "github" ]; then
+  if [ "$ISSUE_SOURCE" != "file" ] && [ "$ISSUE_SOURCE" != "github" ] && [ "$ISSUE_SOURCE" != "jira" ]; then
     if [ "$ISSUE_SOURCE_ORIGIN" = "environment" ]; then
       ISSUE_BACKEND="$env_backend"
     else

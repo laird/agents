@@ -14,7 +14,9 @@ This is the **Modernize** framework - a production-validated system providing pr
 
 ## Issue Management
 
-This project uses a pluggable issue source. Run the equivalent of `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend) or via GitHub Issues (github backend) — whichever is configured in `.autocoder.json`.
+This project uses a pluggable issue source. Run the equivalent of `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), or via a Jira project (jira backend) — whichever is configured in `.autocoder.json`.
+
+Each backend is a self-contained script implementing the same 9-verb contract (list, get, update, comment, close, create, claim, release, any-claimable): `issues-file.py`, `issues-gh.sh`, and `issues-jira.sh`. The Jira backend reads non-secret connection settings (`baseUrl`, `project`) from the `jira` object in `.autocoder.json` and credentials from the environment (`JIRA_EMAIL` + `JIRA_API_TOKEN`, or `JIRA_AUTH_HEADER` for a Server/DC personal access token) — secrets are never committed.
 
 ## Parallel Maintenance Requirement
 

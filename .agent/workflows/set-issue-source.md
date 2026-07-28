@@ -33,10 +33,37 @@ echo "Current issue source: $CURRENT"
 
 2. List available sources:
    - Always offer: `file` (`.issues/` directory)
+   - Always offer: `jira` (Jira project via REST API)
    - Offer `github` only if `git remote -v | grep -q "github.com"`
    - Offer any custom backend found in `.autocoder.json`'s `issueBackend` key
 
-3. Ask: "Switch to which source? [file/github]"
+3. Ask: "Switch to which source? [file/github/jira]"
+
+   If the user picks `jira`, collect the non-secret connection settings and
+   store them under a `jira` object in `.autocoder.json`. Secrets
+   (`JIRA_EMAIL` + `JIRA_API_TOKEN`, or `JIRA_AUTH_HEADER` for a Server/DC
+   personal access token) are **never** written to the repo — they are read
+   from the environment at runtime.
+
+```bash
+# jira → collect base URL + project key (non-secret; safe to commit)
+if [ "$NEW_SOURCE" = "jira" ]; then
+  read -r -p "Jira base URL (e.g. https://acme.atlassian.net): " JIRA_URL
+  read -r -p "Jira project key (e.g. ENG): " JIRA_PROJ
+  python3 -c "
+import json, os
+path = '$AUTOCODER_JSON'
+d = json.load(open(path)) if os.path.exists(path) else {}
+d.setdefault('jira', {})
+d['jira']['baseUrl'] = '$JIRA_URL'
+d['jira']['project'] = '$JIRA_PROJ'
+json.dump(d, open(path, 'w'), indent=2)
+"
+  echo "ℹ️  Export credentials before running agents:"
+  echo "    export JIRA_EMAIL=you@acme.com JIRA_API_TOKEN=<token>"
+  echo "    (or, for Server/DC:  export JIRA_AUTH_HEADER='Bearer <PAT>')"
+fi
+```
 
 4. If the user selects a different source, offer migration:
 
