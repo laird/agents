@@ -213,9 +213,16 @@ else
 fi
 
 # Extract unit test stats (Jest format)
-UNIT_PASSED=$(grep -oP 'Tests:.*?(\d+)\s+passed' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
-UNIT_FAILED=$(grep -oP 'Tests:.*?(\d+)\s+failed' "$UNIT_RESULTS" | grep -oP '\d+' | head -1 || echo "0")
-UNIT_TOTAL=$(grep -oP 'Tests:.*?(\d+)\s+total' "$UNIT_RESULTS" | grep -oP '\d+' | tail -1 || echo "0")
+# Portable: BSD/macOS grep has no PCRE flag. An empty parse means "could not
+# parse", which must be treated as failure — never as zero failures.
+UNIT_PASSED=$(sed -E -n 's/.*Tests:.*[^0-9]([0-9]+) passed.*/\1/p' "$UNIT_RESULTS" | head -1)
+UNIT_FAILED=$(sed -E -n 's/.*Tests:[^0-9]*([0-9]+) failed.*/\1/p' "$UNIT_RESULTS" | head -1)
+UNIT_TOTAL=$(sed -E -n 's/.*Tests:.*[^0-9]([0-9]+) total.*/\1/p' "$UNIT_RESULTS" | head -1)
+if [ -z "$UNIT_TOTAL" ]; then
+  echo "❌ Unit test output could not be parsed — treating as failure, not 0 failures" >&2
+  UNIT_EXIT=1
+fi
+UNIT_PASSED="${UNIT_PASSED:-0}"; UNIT_FAILED="${UNIT_FAILED:-0}"; UNIT_TOTAL="${UNIT_TOTAL:-0}"
 
 echo "Unit Tests: ${UNIT_PASSED}/${UNIT_TOTAL} passed"
 
@@ -250,8 +257,9 @@ if grep -q "### E2E Tests Only" CLAUDE.md 2>/dev/null; then
   fi
 
   # Parse E2E results
-  E2E_PASSED=$(grep -oP '\d+\s+passed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
-  E2E_FAILED=$(grep -oP '\d+\s+failed' "$E2E_RESULTS" | grep -oP '^\d+' || echo "0")
+  E2E_PASSED=$(sed -E -n 's/.*[^0-9]?([0-9]+) passed.*/\1/p' "$E2E_RESULTS" | head -1)
+  E2E_FAILED=$(sed -E -n 's/.*[^0-9]?([0-9]+) failed.*/\1/p' "$E2E_RESULTS" | head -1)
+  E2E_PASSED="${E2E_PASSED:-0}"; E2E_FAILED="${E2E_FAILED:-0}"
   E2E_TOTAL=$((E2E_PASSED + E2E_FAILED))
 
   echo "E2E Tests: ${E2E_PASSED}/${E2E_TOTAL} passed"
