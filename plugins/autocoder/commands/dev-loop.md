@@ -4,6 +4,8 @@ Wrapper around `/autocoder:dev` that runs it in a loop forever.
 
 Uses the `/loop` command (CronCreate-based) if available in this Claude Code version; falls back to the stop hook mechanism for older versions.
 
+> **Silent-worker rule (MANDATORY):** Do NOT use `SendMessage` at any point during this loop — not to announce startup, not to report idle/available status, not to confirm issue completion. The ONLY time to use `SendMessage` is when you hit a genuine blocker that the manager must resolve before you can continue. All other communication is via GitHub issues and PRs. Sending idle or status pings wastes tokens and triggers a security banner in the manager's session.
+
 ## Optional skill enhancements
 
 <!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->

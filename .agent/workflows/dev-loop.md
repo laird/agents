@@ -2,7 +2,7 @@
 
 Wrapper around `/autocoder:dev` that runs it in a loop forever.
 
-Uses the `/loop` command (CronCreate-based) if available in this Claude Code version; falls back to the stop hook mechanism for older versions.
+Uses the `/loop` command (CronCreate-based) if available in this Antigravity version; falls back to the stop hook mechanism for older versions.
 
 ## Optional skill enhancements
 
@@ -59,7 +59,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 # Custom idle sleep time (default: 4 minutes — stays inside the 5-min prompt cache TTL)
 /dev-loop --sleep 30
 
-# Phase 3 opt-in: route loop through /autocoder:dispatch (Haiku gate,
+# Phase 3 opt-in: route loop through /dispatch (Haiku gate,
 # Sonnet/Opus worker via Task model= handoff). Default unset → uses
 # /autocoder:gate (same-model, Phase 2). Acceptance criteria in spec §13.4.
 LOOP_MODEL_SPLIT=1 /dev-loop
@@ -82,7 +82,7 @@ export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
 3. No settings.json modification needed — cleaner and more reliable
 4. Loop runs until manually cancelled (CronDelete)
 
-**Mode 2: Stop hook (fallback for older Claude Code versions)**
+**Mode 2: Stop hook (fallback for older Antigravity versions)**
 
 1. Installs stop hook in `.claude/settings.json` (if not present)
 2. Creates state file `.claude/fix-loop.local.md`
@@ -96,8 +96,8 @@ When `CLAUDE_CODE_TASK_LIST_ID` is set, `/dev-loop` automatically coordinates wi
 
 **Setup:**
 ```bash
-# 1. Configure deployment in your CLAUDE.md:
-cat >> CLAUDE.md << 'EOF'
+# 1. Configure deployment in your GEMINI.md:
+cat >> GEMINI.md << 'EOF'
 
 ## Deployment
 
@@ -106,7 +106,7 @@ Deploy to staging: deploy.sh staging .
 EOF
 
 # 2. Set shared task list ID in all worktrees
-export CLAUDE_CODE_TASK_LIST_ID="project-$(date +%Y%m%d)"
+export ANTIGRAVITY_TASK_LIST_ID="project-$(date +%Y%m%d)"
 
 # 3. Run /dev-loop in each worktree (same command everywhere)
 # Main worktree
@@ -126,7 +126,7 @@ cd /path/to/project-wt-api
 
 The integration branch and deploy command can be specified:
 
-1. **In CLAUDE.md** (recommended):
+1. **In GEMINI.md** (recommended):
    ```markdown
    ## Deployment
    Integration branch: main
@@ -135,8 +135,8 @@ The integration branch and deploy command can be specified:
 
 2. **Via environment**:
    ```bash
-   export CLAUDE_CODE_INTEGRATION_BRANCH="main"
-   export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
+   export ANTIGRAVITY_INTEGRATION_BRANCH="main"
+   export ANTIGRAVITY_DEPLOY_COMMAND="deploy.sh staging ."
    ```
 
 3. **Via command line**:
@@ -147,7 +147,7 @@ The integration branch and deploy command can be specified:
 4. **Auto-detection**: Defaults to `main` branch and looks for:
    - `scripts/deploy-staging.sh`
    - `deploy.sh staging`
-   - Deployment commands in CLAUDE.md
+   - Deployment commands in GEMINI.md
 
 **Automatic Deployment Trigger:**
 
@@ -172,7 +172,7 @@ Then: Main worktree automatically:
 - Same `/dev-loop` command everywhere
 - Automatic role detection (coordinator vs worker)
 - Safe deployment (only when all work complete and pushed)
-- Project-specific deployment via CLAUDE.md
+- Project-specific deployment via GEMINI.md
 
 ## Stopping the Loop
 
@@ -184,7 +184,7 @@ Then: Main worktree automatically:
 - **Ctrl+C** - Manual interrupt
 - **Output `STOP_FIX_GITHUB_LOOP`** - Explicit stop signal
 - **Max iterations** - If set, stops when reached
-- **Delete state file** - `rm .claude/fix-loop.local.md`
+- **Delete state file** - `rm .agent/fix-loop.local.md`
 
 ## Instructions
 
@@ -194,8 +194,8 @@ MAX_ITERATIONS="${1:-0}"  # 0 = unlimited
 # Default 4 min keeps consecutive ticks inside the 5-min prompt cache TTL —
 # see docs/specs/2026-05-21-fix-loop-token-efficiency-design.md §6 for the analysis.
 IDLE_SLEEP_MINUTES="4"
-INTEGRATION_BRANCH="${CLAUDE_CODE_INTEGRATION_BRANCH:-}"
-DEPLOY_COMMAND="${CLAUDE_CODE_DEPLOY_COMMAND:-}"
+INTEGRATION_BRANCH="${ANTIGRAVITY_INTEGRATION_BRANCH:-}"
+DEPLOY_COMMAND="${ANTIGRAVITY_DEPLOY_COMMAND:-}"
 
 args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
@@ -218,9 +218,9 @@ for ((i=0; i<${#args[@]}; i++)); do
   esac
 done
 
-# If not set, try to extract from CLAUDE.md
+# If not set, try to extract from GEMINI.md
 if [[ -z "$INTEGRATION_BRANCH" ]]; then
-  for claude_file in CLAUDE.md claude.md README.md; do
+  for claude_file in GEMINI.md GEMINI.md README.md; do
     if [[ -f "$claude_file" ]]; then
       INTEGRATION_BRANCH=$(grep -i "integration.*branch\|main.*branch\|merge.*into" "$claude_file" | \
         grep -Eo '\b(main|master|develop|integration)\b' | head -1)
@@ -232,9 +232,9 @@ fi
 # Default to main if still not found
 INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
 
-# If not set, try to extract deploy command from CLAUDE.md
+# If not set, try to extract deploy command from GEMINI.md
 if [[ -z "$DEPLOY_COMMAND" ]]; then
-  for claude_file in CLAUDE.md claude.md README.md; do
+  for claude_file in GEMINI.md GEMINI.md README.md; do
     if [[ -f "$claude_file" ]]; then
       DEPLOY_COMMAND=$(grep -i "deploy.*staging\|staging.*deploy" "$claude_file" | \
         grep -Eo '(\.?/)?[a-zA-Z0-9_/-]+\.sh\s+[a-zA-Z0-9_. /-]*' | head -1)
@@ -243,16 +243,16 @@ if [[ -z "$DEPLOY_COMMAND" ]]; then
   done
 fi
 
-export CLAUDE_CODE_INTEGRATION_BRANCH="$INTEGRATION_BRANCH"
-export CLAUDE_CODE_DEPLOY_COMMAND="$DEPLOY_COMMAND"
+export ANTIGRAVITY_INTEGRATION_BRANCH="$INTEGRATION_BRANCH"
+export ANTIGRAVITY_DEPLOY_COMMAND="$DEPLOY_COMMAND"
 
-# Phase 3 opt-in: LOOP_MODEL_SPLIT=1 routes to /autocoder:dispatch
-# (Haiku gate + Sonnet/Opus worker via Task model=). Default → /autocoder:gate.
+# Phase 3 opt-in: LOOP_MODEL_SPLIT=1 routes to /dispatch
+# (Haiku gate + Sonnet/Opus worker via Task model=). Default → /gate.
 # See docs/specs/2026-05-21-fix-loop-token-efficiency-design.md §5.3, §10 Phase 3.
 if [[ "${LOOP_MODEL_SPLIT:-0}" = "1" ]]; then
-  LOOP_TARGET="/autocoder:dispatch"
+  LOOP_TARGET="/dispatch"
 else
-  LOOP_TARGET="/autocoder:gate"
+  LOOP_TARGET="/gate"
 fi
 
 mkdir -p .claude
@@ -260,17 +260,17 @@ mkdir -p .claude
 
 ### Detect /loop availability and choose mode
 
-**Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).
+**Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Antigravity supports the `/loop` command).
 
 **If CronCreate IS available → Use `/loop` mode (preferred):**
 
 ```bash
 # Remove the stop hook if it was previously installed, since /loop replaces it
-if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
+if [ -f ".agent/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .agent/settings.json 2>/dev/null; then
   echo "🔄 Removing stop hook (replaced by /loop command)..."
   python3 << 'PYTHON_SCRIPT'
 import json
-with open(".claude/settings.json", 'r') as f:
+with open(".agent/settings.json", 'r') as f:
     settings = json.load(f)
 if "hooks" in settings and "Stop" in settings["hooks"]:
     settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h)]
@@ -278,7 +278,7 @@ if "hooks" in settings and "Stop" in settings["hooks"]:
         del settings["hooks"]["Stop"]
     if not settings["hooks"]:
         del settings["hooks"]
-with open(".claude/settings.json", 'w') as f:
+with open(".agent/settings.json", 'w') as f:
     json.dump(settings, f, indent=2)
 PYTHON_SCRIPT
   echo "✅ Stop hook removed"
@@ -287,8 +287,8 @@ fi
 echo ""
 echo "🔄 Starting fix loop using /loop command"
 echo "   Interval: ${IDLE_SLEEP_MINUTES}m"
-if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
-  echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
+if [[ -n "$ANTIGRAVITY_TASK_LIST_ID" ]]; then
+  echo "   Coordination: Enabled (task list: ${ANTIGRAVITY_TASK_LIST_ID:0:20}...)"
   echo "   Integration branch: $INTEGRATION_BRANCH"
   [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
 fi
@@ -314,17 +314,17 @@ This schedules `${LOOP_TARGET}` (the slim pre-LLM gate, per spec §5.4; `/autoco
 # ============================================================
 # Install stop hook if not configured
 # ============================================================
-if [ -f ".claude/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .claude/settings.json 2>/dev/null; then
+if [ -f ".agent/settings.json" ] && grep -q "autocoder/hooks/stop-hook.sh" .agent/settings.json 2>/dev/null; then
   echo "✅ Stop hook already configured"
 else
   echo "📝 Installing stop hook..."
 
-  if [ -f ".claude/settings.json" ]; then
+  if [ -f ".agent/settings.json" ]; then
     python3 << 'PYTHON_SCRIPT'
 import json
-with open(".claude/settings.json", 'r') as f:
+with open(".agent/settings.json", 'r') as f:
     settings = json.load(f)
-stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"}]}
+stop_hook = {"matcher": "", "hooks": [{"type": "command", "command": "bash ~/.agent/plugins/autocoder/hooks/stop-hook.sh"}]}
 if "hooks" not in settings:
     settings["hooks"] = {}
 if "Stop" not in settings["hooks"]:
@@ -334,11 +334,11 @@ CURRENT_PATH = "autocoder/hooks/stop-hook.sh"
 settings["hooks"]["Stop"] = [h for h in settings["hooks"]["Stop"] if "stop-hook" not in str(h) or CURRENT_PATH in str(h)]
 if not any(CURRENT_PATH in str(h) for h in settings["hooks"]["Stop"]):
     settings["hooks"]["Stop"].append(stop_hook)
-with open(".claude/settings.json", 'w') as f:
+with open(".agent/settings.json", 'w') as f:
     json.dump(settings, f, indent=2)
 PYTHON_SCRIPT
   else
-    cat > .claude/settings.json << 'EOF'
+    cat > .agent/settings.json << 'EOF'
 {
   "hooks": {
     "Stop": [
@@ -347,7 +347,7 @@ PYTHON_SCRIPT
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/plugins/autocoder/hooks/stop-hook.sh"
+            "command": "bash ~/.agent/plugins/autocoder/hooks/stop-hook.sh"
           }
         ]
       }
@@ -360,7 +360,7 @@ EOF
 fi
 
 # Create loop state file
-cat > .claude/fix-loop.local.md << EOF
+cat > .agent/fix-loop.local.md << EOF
 ---
 iteration: 0
 max_iterations: $MAX_ITERATIONS
@@ -377,8 +377,8 @@ echo ""
 echo "🔄 Loop initialized (stop hook mode)"
 echo "   Max iterations: $([ "$MAX_ITERATIONS" = "0" ] && echo "unlimited" || echo "$MAX_ITERATIONS")"
 echo "   Idle sleep: $IDLE_SLEEP_MINUTES minutes"
-if [[ -n "$CLAUDE_CODE_TASK_LIST_ID" ]]; then
-  echo "   Coordination: Enabled (task list: ${CLAUDE_CODE_TASK_LIST_ID:0:20}...)"
+if [[ -n "$ANTIGRAVITY_TASK_LIST_ID" ]]; then
+  echo "   Coordination: Enabled (task list: ${ANTIGRAVITY_TASK_LIST_ID:0:20}...)"
   echo "   Integration branch: $INTEGRATION_BRANCH"
   [[ -n "$DEPLOY_COMMAND" ]] && echo "   Deploy command: $DEPLOY_COMMAND"
 fi
@@ -388,7 +388,7 @@ echo ""
 **Then execute `/gate` using the Skill tool:**
 
 ```
-Use the Skill tool to invoke: autocoder:${LOOP_TARGET#/autocoder:}
+Use the Skill tool to invoke: autocoder:${LOOP_TARGET#/}
 ```
 
 The stop hook will automatically re-invoke `${LOOP_TARGET}` when Claude exits, creating an infinite loop. The gate dispatches to `/autocoder:dev` only when there is work to do (spec §5.4).
