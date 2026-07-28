@@ -16,6 +16,23 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 08:22:40 - Autocoder regression pass
+
+**What Changed**: Ran plugins/autocoder/scripts/regression-test.sh, verified the reported pass was false, logged the regression pass, and attempted to open a GitHub bug for the broken regression workflow.
+
+**Why Changed**: The live issue queue was empty, so the next required autocoder step was regression testing. The script failed on this repo's missing test config and macOS grep incompatibility.
+
+**Impact**: Recorded the regression report path for reproduction and identified a P1 workflow bug, but automatic issue creation was blocked by GitHub Enterprise Managed User authorization.
+
+---
+
+## 2026-04-16 08:24:23 - Autocoder single-pass queue check
+
+**What Changed**: Read AGENTS.md and autocoder workflow docs, confirmed there are no open or blocked GitHub issues, ran plugins/autocoder/scripts/regression-test.sh, and captured the false-positive success conditions from the script output and report.
+
+**Why Changed**: The requested one-pass autocoder flow required checking the live queue first, then moving to regression testing because no actionable issue existed.
+
+**Impact**: Validated that the repo currently has no queued work, but the regression harness is not trustworthy in this environment because it treats missing package/test execution and BSD grep failures as a passing run.
 ## 2026-03-16 13:26:14 - Add Codex skill migration plan
 
 **What Changed**: Added a Codex-only migration plan and initial skills/autocoder and skills/modernize scaffolds.
@@ -27,6 +44,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:11:17 - Fix regression runner false-green failures
+
+**What Changed**: Updated plugins/autocoder/scripts/regression-test.sh to preserve test command exit codes, remove grep -P parsing, handle missing matches safely, and honor CLAUDE unit-test commands without requiring a working-directory override.
+
+**Why Changed**: The autocoder workflow was reporting successful regressions even when unit and E2E commands failed on this macOS workspace, which breaks the queue's quality gate.
+
+**Impact**: Regression runs now fail correctly, produce reports without BSD grep errors, and complete their summaries on failing paths.
 ## 2026-03-16 13:33:41 - Add Codex runtime support
 
 **What Changed**: Added Codex-only loop, monitor, stop, and tmux swarm scripts plus Codex integration docs and README updates.
@@ -38,6 +62,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:16:05 - Harden regression failure handling
+
+**What Changed**: Updated plugins/autocoder/scripts/regression-test.sh to record command/setup failures in the report, skip missing labels when filing issues, and treat GitHub issue creation auth failures as non-fatal.
+
+**Why Changed**: The regression workflow was aborting on missing labels and Enterprise Managed User issue-creation limits, and it obscured command failures as 0/0 test runs.
+
+**Impact**: Regression passes now finish with actionable reports and clear warnings instead of crashing mid-run.
 ## 2026-03-16 14:00:58 - Add Codex installer script
 
 **What Changed**: Added scripts/install-codex.sh plus Codex install docs so shared skills, parallel-agent symlinks, and alias sourcing can be installed from the agents repo into a target project.
@@ -49,6 +80,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:21:05 - Make regression failure summaries truthful
+
+**What Changed**: Updated plugins/autocoder/scripts/regression-test.sh so per-suite and final summaries display FAILED in red when the command exits non-zero before any tests are counted; verified with bash -n and a focused output assertion while the full regression harness still reports the existing npm/package setup failures.
+
+**Why Changed**: The autocoder single-pass workflow hit regression command failures with an empty queue, and the runner still emitted green 0/0 passed summaries that understated the failure severity.
+
+**Impact**: Autocoder operators now get unambiguous failure-path output during regression runs, reducing the chance of treating broken test commands as healthy suites.
 ## 2026-03-16 14:45:41 - Install Codex Runtime Wrappers
 
 **What Changed**: Updated install-codex.sh to symlink repo-local codex runtime wrappers into target repos and documented the behavior in Codex install docs.
@@ -60,6 +98,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:23:11 - Autocoder single-pass regression triage
+
+**What Changed**: Read AGENTS.md and autocoder workflow references, checked the open GitHub issue queue, ran plugins/autocoder/scripts/regression-test.sh, and captured the generated regression report.
+
+**Why Changed**: The repo had no open actionable issues, so the workflow advanced to regression testing for one pass.
+
+**Impact**: Identified two blockers: default test commands fail at repo root because no package.json is present there, and GitHub issue creation failed due Enterprise Managed User authorization limits. Report saved under docs/test/regression-reports/.
 ## 2026-03-16 14:47:44 - Make startcc Work In Fresh Worktrees
 
 **What Changed**: Updated Codex loop scripts to resolve sibling helpers from the shared agents repo, and changed the shared parallel launcher to invoke Codex worker and manager loops via absolute shared-script paths. Clarified install docs to match the new behavior.
@@ -71,6 +116,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:39:48 - Autocoder one-pass regression check
+
+**What Changed**: Ran the autocoder workflow in priority order, found no open GitHub issues, executed the full regression script, and captured environment/configuration failures before any tests ran.
+
+**Why Changed**: The repository had no actionable queue items, so the workflow advanced to regression validation as required.
+
+**Impact**: Generated a regression report showing missing local test configuration and npm cache permission blockers; no code changes were made in this pass.
 ## 2026-03-16 14:50:46 - Fix start-parallel Symlink Path Resolution
 
 **What Changed**: Updated the shared parallel launcher to resolve its real script path before deriving the agents repo root, preventing Codex worker and manager commands from collapsing to /Users/scripts when invoked through ~/.local/bin symlinks.
@@ -82,6 +134,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-04-16 09:57:43 - Autocoder regression skip handling
+
+**What Changed**: Updated plugins/autocoder/scripts/regression-test.sh to skip Node-based unit and E2E commands when the configured working directory has no package.json, and to report skip reasons in the regression report.
+
+**Why Changed**: The single-pass autocoder run found false regression failures in a protocol-only repo with no runnable Node test project at the root.
+
+**Impact**: Regression runs now complete without creating bogus command-failure bugs for missing test infrastructure.
 ## 2026-03-16 14:53:25 - Harden Codex Prompt Construction
 
 **What Changed**: Replaced heredoc-based prompt assembly in codex-autocoder.sh with printf-based builders and verified the shared runtime script still parses and prints usage correctly from a target repo.
@@ -716,4 +775,15 @@ This file tracks all significant changes, migrations, and decisions.
 **Why Changed**: Release the paused swarm lifecycle controls and keep marketplace update detection aligned with plugin metadata.
 
 **Impact**: Plugin consumers can receive the new Autocoder release metadata; local file issue parsing no longer trips over unquoted title colons in ignored .issues files.
+
+
+---
+
+## 2026-07-28 11:34:16 - Fix #14: hold the 'working' claim lock until a terminal outcome
+
+**What Changed**: Rewrote the lock-lifecycle rules in plugins/autocoder/commands/dev.md and .agent/workflows/dev.md: replaced the blanket 'remove in ALL exit paths / before moving to the next issue' instruction with a terminal-outcome-only rule, added an explicit anti-pattern example for partial commits, made the PR-creation and paused-enhancement paths retain the lock, and turned the enhancement-skip path into an announced release (comment first, then label removal). Added tests/test_dev_working_lock.py (23 assertions) guarding the wording, the per-site terminal justification, and Claude/Antigravity mirror parity.
+
+**Why Changed**: The 'working' label is the concurrency lock, but the protocol told agents to drop it at any stop — including after a partial commit. The issue stayed OPEN and re-entered the claimable pool while a worker still held the branch, so a peer double-claimed it and the duplicate work was discarded.
+
+**Impact**: Partial progress no longer re-exposes an in-progress issue. Deliberate hand-offs are now visible as release comments rather than a silently vanished lock; abandoned locks remain the responsibility of /monitor-workers stale detection.
 
