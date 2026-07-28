@@ -41,7 +41,23 @@ assert_contains() {
 }
 
 TMP=$(mktemp -d)
-trap "rm -rf $TMP" EXIT
+
+# `set -e` aborts silently, so a command that dies mid-setup produced a bare
+# non-zero exit with no output and no "Results:" line — which reads as "this
+# test just formats its output differently", not "this test never ran". That
+# is exactly how the start-issue-work.sh exit-128 bug (#63) stayed hidden.
+# Announce any exit that did not reach the summary.
+REACHED_SUMMARY=0
+cleanup() {
+  local rc=$?
+  if [ "$REACHED_SUMMARY" -eq 0 ]; then
+    echo ""
+    echo "Results: ABORTED before summary (exit $rc) — assertions did not complete" >&2
+  fi
+  rm -rf "$TMP"
+  exit "$rc"
+}
+trap cleanup EXIT
 MAIN="$TMP/main"
 mkdir -p "$MAIN"
 cd "$MAIN"
@@ -79,6 +95,7 @@ assert_contains "branch included in comment" "$MAIN/.issues/working/011.md" "fea
 bash "$SCRIPT_DIR/start-issue-work.sh" 11
 assert_eq "same branch remains resumable" "feature/issue-11" "$(git branch --show-current)"
 
+REACHED_SUMMARY=1
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

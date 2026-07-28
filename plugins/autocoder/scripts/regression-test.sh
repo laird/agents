@@ -123,7 +123,9 @@ if [ -f "CLAUDE.md" ]; then
     if grep -q "### Unit Tests Only" CLAUDE.md; then
         UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
-        UNIT_TEST_CMD="npm test"
+        # Not configured. Do NOT assume npm — in a repo without package.json
+        # that produces a spurious failure (and, for E2E, auto-filed issues).
+        UNIT_TEST_CMD=""
     fi
 
     if grep -q "Working directory: " CLAUDE.md && grep -A5 "### Unit Tests Only" CLAUDE.md | grep -q "Working directory:"; then
@@ -149,8 +151,9 @@ else
     echo -e "${YELLOW}No CLAUDE.md found, using defaults${NC}"
     REPORT_DIR="docs/test/regression-reports"
     UNIT_TEST_DIR="."
-    UNIT_TEST_CMD="npm test"
-    E2E_TEST_CMD="npx playwright test --reporter=json"
+    # Not configured — skip rather than assume a toolchain this repo may not have.
+    UNIT_TEST_CMD=""
+    E2E_TEST_CMD=""
     E2E_TEST_PATTERN="*.spec.ts"
 fi
 
@@ -222,6 +225,15 @@ detect_skip_reason() {
     local suite_name="$3"
     local resolved_dir="$workdir"
     local suite_name_lower
+    suite_name_lower=$(printf '%s' "$suite_name" | tr '[:upper:]' '[:lower:]')
+
+    # Unconfigured is a skip, not a failure. Defaulting to `npm test` in a repo
+    # with no Node project produced a spurious red — and for E2E, auto-filed
+    # issues off that red.
+    if [ -z "$command" ]; then
+        echo "No ${suite_name_lower} command configured; skipping."
+        return 0
+    fi
 
     if [ -z "$resolved_dir" ] || [ "$resolved_dir" = "." ]; then
         resolved_dir="$(pwd)"
@@ -233,7 +245,6 @@ detect_skip_reason() {
     fi
 
     if is_node_based_command "$command" && [ ! -f "${resolved_dir}/package.json" ]; then
-        suite_name_lower=$(printf '%s' "$suite_name" | tr '[:upper:]' '[:lower:]')
         echo "No package.json found in ${workdir}; skipping ${suite_name_lower} command '${command}'"
         return 0
     fi
@@ -279,9 +290,24 @@ else
     fi
 
     # Extract unit test stats (Jest format: "Tests: X failed, Y skipped, Z passed")
-    UNIT_PASSED=$(extract_stat_or_zero "$(extract_last_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+passed.*')")
-    UNIT_FAILED=$(extract_stat_or_zero "$(extract_first_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+failed.*')")
-    UNIT_TOTAL=$(extract_stat_or_zero "$(extract_last_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+total.*')")
+    # Keep the RAW extraction: empty means "could not parse", which is NOT the same
+    # as a genuine zero. Collapsing the two is what made a red run look green (#20).
+    _UNIT_PASSED_RAW=$(extract_last_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+passed.*')
+    _UNIT_FAILED_RAW=$(extract_first_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+failed.*')
+    _UNIT_TOTAL_RAW=$(extract_last_number "$UNIT_RESULTS" '.*Tests:.*([0-9]+)[[:space:]]+total.*')
+
+    UNIT_PASSED=$(extract_stat_or_zero "$_UNIT_PASSED_RAW")
+    UNIT_FAILED=$(extract_stat_or_zero "$_UNIT_FAILED_RAW")
+    UNIT_TOTAL=$(extract_stat_or_zero "$_UNIT_TOTAL_RAW")
+
+    # No parseable summary at all means the runner never produced one — it failed
+    # to execute, was not installed, or is not the framework we assumed. That is an
+    # ERROR, not "0 tests, 0 failures". Reporting it green is how a broken suite
+    # hides a broken build.
+    if [ -z "${_UNIT_PASSED_RAW}${_UNIT_FAILED_RAW}${_UNIT_TOTAL_RAW}" ]; then
+        UNIT_STATUS="❌ FAILED (no parseable test summary — did '$UNIT_TEST_CMD' actually run?)"
+        UNIT_EXIT=1
+    fi
 fi
 
 print_suite_summary "Unit Tests" "$UNIT_STATUS" "$UNIT_PASSED" "$UNIT_TOTAL"
@@ -339,11 +365,21 @@ else
         E2E_SKIPPED=$(extract_stat_or_zero "$(extract_last_number "$E2E_RESULTS" '.*"skipped":[[:space:]]*([0-9]+).*')")
         E2E_TOTAL=$((E2E_PASSED + E2E_FAILED + E2E_SKIPPED))
     else
-        # Fallback to text parsing
-        E2E_PASSED=$(extract_stat_or_zero "$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+passed.*')")
-        E2E_FAILED=$(extract_stat_or_zero "$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+failed.*')")
-        E2E_SKIPPED=$(extract_stat_or_zero "$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+skipped.*')")
+        # Fallback to text parsing. Keep the RAW values: empty means "could not
+        # parse", which is not the same as a genuine zero (#20).
+        _E2E_PASSED_RAW=$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+passed.*')
+        _E2E_FAILED_RAW=$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+failed.*')
+        _E2E_SKIPPED_RAW=$(extract_last_number "$E2E_RESULTS" '.*([0-9]+)[[:space:]]+skipped.*')
+
+        E2E_PASSED=$(extract_stat_or_zero "$_E2E_PASSED_RAW")
+        E2E_FAILED=$(extract_stat_or_zero "$_E2E_FAILED_RAW")
+        E2E_SKIPPED=$(extract_stat_or_zero "$_E2E_SKIPPED_RAW")
         E2E_TOTAL=$((E2E_PASSED + E2E_FAILED + E2E_SKIPPED))
+
+        if [ -z "${_E2E_PASSED_RAW}${_E2E_FAILED_RAW}${_E2E_SKIPPED_RAW}" ]; then
+            E2E_STATUS="❌ FAILED (no parseable test summary — did '$E2E_TEST_CMD' actually run?)"
+            E2E_EXIT=1
+        fi
     fi
 fi
 

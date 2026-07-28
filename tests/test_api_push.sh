@@ -6,8 +6,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/plugins/autocoder/scripts/api-push.py"
 MIRROR="$ROOT/.agent/scripts/api-push.py"
-FIX_MD="$ROOT/plugins/autocoder/commands/fix.md"
-FIX_MIRROR="$ROOT/.agent/workflows/fix.md"
+# The push/merge protocol lives in dev.md since /fix was renamed to /dev; fix.md
+# is now a thin alias stub with no protocol content of its own.
+FIX_MD="$ROOT/plugins/autocoder/commands/dev.md"
+FIX_MIRROR="$ROOT/.agent/workflows/dev.md"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 

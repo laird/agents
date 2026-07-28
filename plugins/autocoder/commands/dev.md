@@ -146,9 +146,30 @@ For each unprioritized issue:
 3. **Assign the priority label**:
 
 ```bash
-# Assign priority to an issue (backend-neutral)
-issue_update <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
+# Assign priority to an issue (backend-neutral).
+#
+# Apply labels ONE AT A TIME and check each result. `gh issue edit` is
+# all-or-nothing: if any single label is unknown to the repo it rejects the
+# WHOLE edit, so a combined
+#     issue_update "$N" --add-label "P3" --add-label "needs-clarification"
+# applies NEITHER when the blocking label is missing. The issue then keeps zero
+# labels — neither prioritized nor blocked — so it re-enters the claimable pool
+# and every worker re-triages it, fails identically, and moves on. The failure
+# goes to stderr while the workflow continues, so it is silent and repeating.
+apply_label() {  # apply_label <issue> <label>
+  if issue_update "$1" --add-label "$2"; then
+    return 0
+  fi
+  echo "⚠️  Could not apply '$2' to issue #$1 — does the label exist in this repo?" >&2
+  return 1
+}
+
+apply_label <ISSUE_NUMBER> "P2"                    # priority: apply first, on its own
+apply_label <ISSUE_NUMBER> "needs-clarification"   # then each blocking label separately
 ```
+
+Applying the priority first and separately matters: if a later label fails, the
+issue is still correctly prioritized rather than left bare.
 
 4. **Add a triage comment** explaining the priority decision:
 
@@ -603,15 +624,27 @@ else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
 
+  # ── Branch-evidence exclusion (issue #48) ──────────────────────────────────
+  # Filtering on labels alone re-exposes in-flight issues whenever a `working`
+  # label is dropped (issue #14 — still live in workers on older code). The
+  # post-selection arbitration below catches it, but only after a claim/back-off
+  # cycle, and the gap between the two is where a second worker also claims.
+  # A pushed branch is evidence that survives a lost label. ONE ls-remote per
+  # pass, not one API call per candidate. Fails open on a network blip.
+  CLAIMED_BY_BRANCH=$("${SCRIPT_DIR}/claimed-issue-numbers.sh" origin)
+  [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
+  echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
+
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
   # Also filter out decomposed parent issues (work on their sub-tasks instead)
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
@@ -630,12 +663,13 @@ else
 
   # Build ranked list of all candidate issues (for retry on race conflict)
   cat /tmp/top-issue.json > /tmp/top-issue-single.json
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     [.[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
@@ -907,9 +941,16 @@ still yours re-exposes it to the pool and invites a peer to duplicate your work.
   (with a comment), not silently
 
 ```bash
-# Correct: terminal outcome only. Pair the release with the close.
-issue_close "$ISSUE_NUM" --comment "✅ Resolved — <summary>"
-issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+# Correct: terminal outcome only. Pair the release with the close — and only
+# after the work is PUBLISHED. Closing on an unpushed branch loses the work and
+# marks the issue done anyway (#26), so the close stays behind the same PUSH_OK
+# gate the merge path uses.
+if [ "$PUSH_OK" = "true" ]; then
+  issue_close "$ISSUE_NUM" --comment "✅ Resolved — <summary>"
+  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+else
+  echo "⚠️  Push never landed — leaving #${ISSUE_NUM} open and the lock held." >&2
+fi
 ```
 
 ```bash

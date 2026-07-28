@@ -25,9 +25,20 @@ assert_eq() {
 }
 
 resolve_worker_launch claude "$REPO"
-assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Claude launches interactively"
-assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Claude receives agent input"
+# Claude workers run a SHELL LOOP, not an interactive session: 3124b99 made each
+# issue get a fresh Claude process so its context window starts clean. The manager
+# stays interactive because it coordinates across issues.
+assert_eq "$WORKER_LAUNCH_MODE" "shell" "Claude workers launch via the shell loop"
+assert_eq "$WORKER_COMMAND_MODE" "shell" "Claude workers take shell commands"
 assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Claude manager launches interactively"
+# Assert the intent, not just the mode strings — the loop script is what gives
+# each issue a fresh context, and the tiers are what keep workers off opus.
+case "$WORKER_CMD" in
+  *claude-worker-loop.sh*) ;;
+  *) echo "FAIL: Claude worker should run claude-worker-loop.sh, got '$WORKER_CMD'" >&2; exit 1 ;;
+esac
+assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the sonnet tier"
+assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
 
 resolve_worker_launch gemini "$REPO"
 assert_eq "$WORKER_CMD" "/dev-loop" "Gemini worker command"
