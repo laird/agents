@@ -497,12 +497,29 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  # Identify the issue BEFORE claiming — the claim arbitration below references
+  # $ISSUE_NUM, so it must be assigned first.
+  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
+  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
+  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
+
   # Check if issue already has 'working' label (being worked on by another agent)
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
-    echo "⚠️  Issue #$SPECIFIED_ISSUE has 'working' label - another agent is working on it"
-    echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' to force release"
-    exit 1
+    TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
+    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
+    if [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+      echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
+      echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
+      exit 1
+    fi
+    echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
+  else
+    issue_claim "$ISSUE_NUM" 2>/dev/null || {
+      echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
+      exit 1
+    }
   fi
 
   # Extract priority from labels (default to P2 if no priority label)
@@ -515,11 +532,37 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     end
   ')
 
-  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
-
   echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
+
+  # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
+  # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
+  # for competing workers to surface before proceeding.
+  if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+    issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+    sleep 3
+    CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+      2>/dev/null || echo "0")
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+      2>/dev/null || echo "0")
+    if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM. Releasing and aborting."
+      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
+  else
+    # File backend: check for orphaned start comments from prior abandoned runs.
+    sleep 1
+    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+      2>/dev/null || echo "0")
+    if [ "$PRIOR_STARTED" -gt 0 ]; then
+      echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and aborting."
+      issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      exit 1
+    fi
+  fi
 else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
@@ -587,17 +630,58 @@ else
       continue
     fi
 
-    # Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-    issue_update "$ISSUE_NUM" --add-label "working" 2>/dev/null || true
-    sleep 1
-
-    # Re-fetch the issue to verify we won the race
-    # Check if another agent already posted a "work started" comment
-    RECENT_COMMENTS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Automated Fix Started|Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
-
-    if [ "$RECENT_COMMENTS" -gt 0 ]; then
-      echo "⚠️  Race condition detected on issue #$ISSUE_NUM — another agent claimed it first. Trying next issue..."
+    # Remote branch is a stronger lock than the working label: a worker may have pushed
+    # the branch before the label propagated, or the label may have been cleaned by a
+    # manager who thought the issue was stale. Skip immediately if the branch exists.
+    REMOTE_BRANCH_EXISTS=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$REMOTE_BRANCH_EXISTS" -gt "0" ]; then
+      echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — skipping issue #$ISSUE_NUM"
       continue
+    fi
+
+    # Claim-then-verify: claim IMMEDIATELY, then check for race
+    issue_claim "$ISSUE_NUM" 2>/dev/null
+    claim_rc=$?
+    if [ "$claim_rc" -ne 0 ]; then
+      echo "⚠️  Lost claim race on issue #$ISSUE_NUM (file backend: atomic rename lost). Trying next issue..."
+      continue
+    fi
+
+    # For file backend: the atomic rename above is the definitive lock — skip the
+    # extended race check. For GitHub backend (non-atomic label add), post an early
+    # marker comment NOW so concurrent workers can detect the collision within the
+    # settlement window, then sleep long enough for their markers to appear.
+    if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+      issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+      sleep 3
+
+      # Count autocoder-claim markers. If more than one exists, two workers raced.
+      # Both back off — the issue returns to open/ and gets claimed cleanly next tick.
+      CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+        2>/dev/null || echo "0")
+      # Also check for existing work-started comments from a prior abandoned run.
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+        2>/dev/null || echo "0")
+
+      if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED). Releasing and trying next..."
+        issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
+    else
+      # File backend: brief pause to detect orphaned start comments from prior abandoned runs.
+      sleep 1
+      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
+        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
+        2>/dev/null || echo "0")
+      if [ "$PRIOR_STARTED" -gt 0 ]; then
+        echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and trying next..."
+        # File backend: release moves the file back from working/ to open/
+        issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        continue
+      fi
     fi
 
     ISSUE_CLAIMED=true
@@ -1634,16 +1718,40 @@ PARENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 git checkout -b "enhancement/issue-${ENHANCE_NUM}-auto" 2>/dev/null || git checkout "enhancement/issue-${ENHANCE_NUM}-auto"
 
-# Claim-then-verify: add 'working' label IMMEDIATELY, then check for race
-issue_update "$ENHANCE_NUM" --add-label "working" 2>/dev/null || true
-sleep 1
+# Claim-then-verify: claim through issue_claim so the file backend's atomic rename
+# arbitrates, then run the same marker/settlement arbitration as the bug path.
+issue_claim "$ENHANCE_NUM" 2>/dev/null
+claim_rc=$?
+if [ "$claim_rc" -ne 0 ]; then
+  echo "⚠️  Lost claim race on enhancement #$ENHANCE_NUM. Skipping."
+  git checkout "$PARENT_BRANCH" 2>/dev/null || true
+  exit 0
+fi
 
-# Re-fetch to verify we won the race (check for existing work-started comments)
-RACE_CHECK=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' 2>/dev/null || echo "0")
-if [ "$RACE_CHECK" -gt 0 ]; then
-  echo "⚠️  Race condition: another agent already claimed enhancement #$ENHANCE_NUM. Skipping."
-  git checkout "$PARENT_BRANCH"
-  # Continue to next iteration or exit
+if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+  issue_comment "$ENHANCE_NUM" --body "🔒 [autocoder-claim] Starting enhancement #${ENHANCE_NUM} — lock established" 2>/dev/null || true
+  sleep 3
+  CLAIM_MARKER_COUNT=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq \
+    '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
+    2>/dev/null || echo "0")
+  PRIOR_STARTED=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq \
+    '[.comments[] | select(.body | test("Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
+    2>/dev/null || echo "0")
+else
+  sleep 1
+  CLAIM_MARKER_COUNT=0
+  PRIOR_STARTED=$(issue_get "$ENHANCE_NUM" 2>/dev/null | jq \
+    '[.comments[] | select(.body | test("Enhancement Implementation Started"))] | length' \
+    2>/dev/null || echo "0")
+fi
+
+if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
+  echo "⚠️  Race condition on enhancement #$ENHANCE_NUM. Releasing and aborting."
+  # MUST release: we are surrendering a claim we never began work under. Leaving the
+  # label set here would strand the enhancement with no worker holding it.
+  issue_release "$ENHANCE_NUM" 2>/dev/null || issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  git checkout "$PARENT_BRANCH" 2>/dev/null || true
+  exit 0
 fi
 
 issue_comment "$ENHANCE_NUM" --body "🚀 **Enhancement Implementation Started**

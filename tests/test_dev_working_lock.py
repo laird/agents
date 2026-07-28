@@ -106,6 +106,11 @@ def test_every_release_site_is_terminal(path):
         "Terminal outcome only",  # the documented-correct example
         "WRONG",                  # the documented anti-pattern example
         "release it via the explicit-release path",
+        # Lost claim race (issue #15 arbitration). Releasing here is terminal in the
+        # "claim never started" sense: we surrender the lock immediately and never
+        # begin work, so there is no partial progress to protect.
+        "Releasing and aborting",
+        "Releasing and trying next",
     )
 
     offenders = []

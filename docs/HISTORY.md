@@ -787,3 +787,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Partial progress no longer re-exposes an in-progress issue. Deliberate hand-offs are now visible as release comments rather than a silently vanished lock; abandoned locks remain the responsibility of /monitor-workers stale detection.
 
+
+---
+
+## 2026-07-28 12:22:25 - Port master's claim arbitration onto the /dev line (guards #15 against regression)
+
+**What Changed**: Backported the race-safe claim arbitration from origin/master's fix.md (3124b99) into plugins/autocoder/commands/dev.md and .agent/workflows/dev.md — byte-identical block. Additionally fixed three defects not present upstream: a redundant second label-add claim in the specified-issue path that aborted without releasing the lock; a weak enhancement-path claim that leaked the lock (.agent variant did not even exit on race, falling through to implement); and .agent assigning ISSUE_NUM after the claim block that references it. Added tests/test_dev_claim_arbitration.py (23 assertions).
+
+**Why Changed**: The /fix -> /dev rename left fix.md as a 7-line alias stub. Master's hardening lives in fix.md, so merging the integration branch into master would replace it with a dev.md that never had the arbitration — silently regressing #15 after it was closed.
+
+**Impact**: The /dev line now has claim parity with master, and a red test blocks any future rename from dropping it again. Two lock-leak paths that could strand issues with no worker holding them are closed.
+
