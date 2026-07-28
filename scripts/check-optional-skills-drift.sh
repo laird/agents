@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/check-optional-skills-drift.sh
 # Two-pass drift detector for opportunistic-skill-integration prelude blocks.
-# Pass 1: boilerplate identical across all 12 command files + 2 canonical sources.
+# Pass 1: boilerplate identical across all 14 command files + 2 canonical sources.
 # Pass 2: per-command mapping identical between Claude Code and Antigravity mirrors.
 # Exits non-zero on any drift or structural problem (CI-safe).
 #
@@ -24,12 +24,14 @@ boilerplate_files=(
   plugins/autocoder/commands/approve-proposal.md
   plugins/autocoder/commands/dev.md
   plugins/autocoder/commands/dev-loop.md
+  plugins/autocoder/commands/plan.md
   plugins/modernize/commands/plan.md
   plugins/modernize/commands/modernize.md
   .agent/workflows/brainstorm-issue.md
   .agent/workflows/approve-proposal.md
   .agent/workflows/dev.md
   .agent/workflows/dev-loop.md
+  .agent/workflows/autocoder-plan.md
   .agent/workflows/plan.md
   .agent/workflows/modernize.md
 )
@@ -56,18 +58,38 @@ else
 fi
 
 # --- Pass 2: per-command mapping identical between Claude/Antigravity mirrors ---
-for cmd in brainstorm-issue approve-proposal plan modernize dev dev-loop; do
-  matches=$(find plugins/*/commands -name "${cmd}.md" 2>/dev/null)
-  count=$(echo "$matches" | grep -c . || true)
-  if [ "$count" -ne 1 ]; then
-    echo "ERROR: ${cmd}.md matches ${count} files in plugins/*/commands (expected 1):" >&2
-    echo "$matches" >&2
+#
+# Entries are "<marker>|<claude-path>|<antigravity-path>". Paths are explicit
+# rather than discovered by `find plugins/*/commands -name "<cmd>.md"`, because
+# a bare command name is NOT unique across plugins: both autocoder and modernize
+# ship a plan.md. The marker name (not the filename) identifies the mapping
+# block, so autocoder's uses "autocoder-plan" while modernize's uses "plan".
+mapping_specs=(
+  "brainstorm-issue|plugins/autocoder/commands/brainstorm-issue.md|.agent/workflows/brainstorm-issue.md"
+  "approve-proposal|plugins/autocoder/commands/approve-proposal.md|.agent/workflows/approve-proposal.md"
+  "autocoder-plan|plugins/autocoder/commands/plan.md|.agent/workflows/autocoder-plan.md"
+  "plan|plugins/modernize/commands/plan.md|.agent/workflows/plan.md"
+  "modernize|plugins/modernize/commands/modernize.md|.agent/workflows/modernize.md"
+  "dev|plugins/autocoder/commands/dev.md|.agent/workflows/dev.md"
+  "dev-loop|plugins/autocoder/commands/dev-loop.md|.agent/workflows/dev-loop.md"
+)
+
+for spec in "${mapping_specs[@]}"; do
+  IFS='|' read -r cmd cc_file ag_file <<< "$spec"
+  for f in "$cc_file" "$ag_file"; do
+    if [ ! -f "$f" ]; then
+      echo "ERROR: missing $f" >&2
+      exit 1
+    fi
+  done
+  # A marker that matches nothing hashes the empty string on BOTH sides and would
+  # silently "pass". Assert the block actually exists before comparing.
+  if ! grep -q "BEGIN optional-skills-mapping ${cmd} v1" "$cc_file"; then
+    echo "ERROR: $cc_file has no 'optional-skills-mapping ${cmd} v1' block" >&2
     exit 1
   fi
-  cc_file="$matches"
-  ag_file=".agent/workflows/${cmd}.md"
-  if [ ! -f "$ag_file" ]; then
-    echo "ERROR: missing $ag_file" >&2
+  if ! grep -q "BEGIN optional-skills-mapping ${cmd} v1" "$ag_file"; then
+    echo "ERROR: $ag_file has no 'optional-skills-mapping ${cmd} v1' block" >&2
     exit 1
   fi
   cc_hash=$(awk "/BEGIN optional-skills-mapping ${cmd} v1/,/END optional-skills-mapping ${cmd} v1/" "$cc_file" | sha256sum)

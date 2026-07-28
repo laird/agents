@@ -2,6 +2,7 @@
 
 | Claude plugin command | Codex handling |
 |---|---|
+| `/autocoder:plan` | Turn a goal into a reviewed design doc plus linked story issues for the worker fleet |
 | `/dev` | Run the core autocoder workflow against a specific issue or the highest-priority queue item |
 | `/dev-loop` | Re-run the core workflow continuously with explicit shell/session control |
 | `/fix`, `/fix-loop` | Deprecated aliases — forward to `/dev` and `/dev-loop` |

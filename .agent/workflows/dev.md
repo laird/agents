@@ -1465,21 +1465,37 @@ PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | grep -oP 'Sub-task of #\
 if [ -n "$PARENT_ISSUE" ]; then
   echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
 
-  # Check if all sub-tasks of parent are closed
-  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oP '#\K[0-9]+' || echo "")
-  ALL_CLOSED=true
+  # Enumerate the parent's children by the authoritative child-side marker
+  # ("## Sub-task of #<PARENT>") rather than by parsing the parent's body.
+  # This keeps auto-close independent of the parent body, so no body edit is
+  # ever required to register a child.
+  #
+  # --limit is explicit: the gh backend defaults to only 30 results.
+  # The regex trailing (\D|$) prevents #1 from matching "#12".
+  PARENT_SUBTASKS=$(issue_list --state all --limit 1000 \
+    | jq -r --arg p "$PARENT_ISSUE" \
+        '.[] | select(.body // "" | test("Sub-task of #" + $p + "(\\D|$)")) | .number' \
+    || echo "")
 
-  for SUBTASK_NUM in $PARENT_SUBTASKS; do
-    SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
-    if [ "$SUBTASK_STATE" != "CLOSED" ]; then
-      ALL_CLOSED=false
-      break
-    fi
-  done
+  if [ -z "$PARENT_SUBTASKS" ]; then
+    # Guard: zero children found → never close the parent.
+    # Without this, an empty enumeration leaves ALL_CLOSED=true and the parent
+    # is closed on the FIRST child's completion (premature-close bug).
+    echo "ℹ️  No sub-tasks found for #$PARENT_ISSUE — leaving it open"
+  else
+    ALL_CLOSED=true
 
-  if [ "$ALL_CLOSED" = "true" ]; then
-    echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
-    issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+    for SUBTASK_NUM in $PARENT_SUBTASKS; do
+      SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
+      if [ "$SUBTASK_STATE" != "CLOSED" ]; then
+        ALL_CLOSED=false
+        break
+      fi
+    done
+
+    if [ "$ALL_CLOSED" = "true" ]; then
+      echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
+      issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
 
 All sub-tasks have been completed and verified:
 
@@ -1487,7 +1503,8 @@ $(for num in $PARENT_SUBTASKS; do echo "- ✅ #$num"; done)
 
 The decomposed approach successfully resolved this complex issue.
 
-🤖 Auto-closed by autonomous fix workflow"
+🤖 Auto-closed by autonomous dev workflow"
+    fi
   fi
 fi
 ```

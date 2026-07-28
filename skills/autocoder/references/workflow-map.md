@@ -11,6 +11,7 @@
 
 ## Reusable Source Material
 
+- Planning pipeline (goal → design doc → story issues): `plugins/autocoder/commands/plan.md`
 - Primary protocol: `plugins/autocoder/commands/dev.md`
 - Continuous loop behavior: `plugins/autocoder/commands/dev-loop.md`
 - Manager review protocol: `plugins/autocoder/commands/monitor-workers.md`
