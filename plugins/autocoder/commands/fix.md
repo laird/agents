@@ -129,9 +129,30 @@ For each unprioritized issue:
 3. **Assign the priority label**:
 
 ```bash
-# Assign priority to an issue (backend-neutral)
-issue_update <ISSUE_NUMBER> --add-label "P2"  # Use appropriate priority
+# Assign priority to an issue (backend-neutral).
+#
+# Apply labels ONE AT A TIME and check each result. `gh issue edit` is
+# all-or-nothing: if any single label is unknown to the repo it rejects the
+# WHOLE edit, so a combined
+#     issue_update "$N" --add-label "P3" --add-label "needs-clarification"
+# applies NEITHER when the blocking label is missing. The issue then keeps zero
+# labels — neither prioritized nor blocked — so it re-enters the claimable pool
+# and every worker re-triages it, fails identically, and moves on. The failure
+# goes to stderr while the workflow continues, so it is silent and repeating.
+apply_label() {  # apply_label <issue> <label>
+  if issue_update "$1" --add-label "$2"; then
+    return 0
+  fi
+  echo "⚠️  Could not apply '$2' to issue #$1 — does the label exist in this repo?" >&2
+  return 1
+}
+
+apply_label <ISSUE_NUMBER> "P2"                    # priority: apply first, on its own
+apply_label <ISSUE_NUMBER> "needs-clarification"   # then each blocking label separately
 ```
+
+Applying the priority first and separately matters: if a later label fails, the
+issue is still correctly prioritized rather than left bare.
 
 4. **Add a triage comment** explaining the priority decision:
 
@@ -442,24 +463,26 @@ else
   echo "ℹ️  quint plugin not installed - will escalate ultra-complex issues for manual review"
 fi
 
-# Ensure priority labels exist (one-time setup per project, GitHub backend only —
-# the file backend creates labels on demand)
-if [ "$ISSUE_SOURCE" = "github" ] && [ ! -f ".github/.priority-labels-configured" ]; then
-  echo "🏷️  Checking priority labels (one-time setup)..."
-  EXISTING_LABELS=$(gh label list --json name --jq '.[].name' 2>/dev/null || echo "")
+# Ensure the labels this workflow relies on exist (GitHub backend only — the file
+# backend creates labels on demand).
+#
+# This reconciles against `gh label list` on EVERY run rather than gating on a
+# marker file. A marker was used here previously and it was committed to git, so
+# `[ ! -f .github/.priority-labels-configured ]` was false in every clone,
+# worktree and fork — the block had not run for anyone since 2026-02-02, and
+# this repo was missing all seven blocking labels as a result. Reconciling
+# against reality costs one API call, is idempotent, and cannot be defeated by
+# a file landing in the repo.
+if [ "$ISSUE_SOURCE" = "github" ]; then
+  EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
       gh label create "$name" --description "$desc" --color "$color" 2>/dev/null || true
     fi
   done
-
-  # Mark labels as configured
-  mkdir -p .github
-  echo "# Priority labels configured on $(date -I)" > .github/.priority-labels-configured
-  echo "✅ Priority labels configured"
 fi
 
 # Step 0: Review and prioritize any unprioritized issues

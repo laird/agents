@@ -40,3 +40,8 @@ __pycache__/
 agents-ui-*.png
 
 !.agent/rules/*.md
+
+# Never track this: it was a "labels already configured" marker, and once
+# committed it disabled label setup in every clone (see #36). Kept ignored so a
+# stray local copy cannot come back.
+.github/.priority-labels-configured
