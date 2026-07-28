@@ -28,6 +28,9 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# shellcheck source=mux-send-lib.sh
+source "$SCRIPT_DIR/mux-send-lib.sh"
+
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
@@ -76,12 +79,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Auto-detect multiplexer if not specified
+# Auto-detect multiplexer if not specified.
+# Prefer cmux only when it is actually running — see cmux_is_running().
 if [ -z "$MUX" ]; then
-  if command -v cmux &> /dev/null; then
+  if cmux_is_running; then
     MUX="cmux"
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
+    if command -v cmux &> /dev/null; then
+      echo "ℹ️  cmux installed but not running — falling back to tmux"
+    fi
   else
     echo "❌ Error: No terminal multiplexer found" >&2
     echo "" >&2

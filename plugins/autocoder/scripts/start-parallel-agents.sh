@@ -145,12 +145,16 @@ if [ "$ROUTE" = "manager" ]; then
   SEND_WORKER_LOOP=false
 fi
 
-# Auto-detect multiplexer if not specified
+# Auto-detect multiplexer if not specified.
+# Prefer cmux only when it is actually running — see cmux_is_running().
 if [ -z "$MUX" ]; then
-  if command -v cmux &> /dev/null; then
+  if cmux_is_running; then
     MUX="cmux"
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
+    if command -v cmux &> /dev/null; then
+      echo "ℹ️  cmux installed but not running — falling back to tmux"
+    fi
   else
     echo "❌ Error: No terminal multiplexer found." >&2
     echo "" >&2
