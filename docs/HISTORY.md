@@ -831,3 +831,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The close gate now fires on merge to the integration line. #32 and #35 both qualify as shipped and were closed. The env var alone was not fleet-wide — headless workers never source .envrc — hence the CLAUDE.md fallback, whose regex accepts arbitrary branch names unlike the older dev-loop.md extractor that matches only main|master|develop|integration.
 
+
+---
+
+## 2026-07-28 14:32:16 - Fix #48: exclude issues with a live remote branch from the candidate list
+
+**What Changed**: Added plugins/autocoder/scripts/claimed-issue-numbers.sh (one ls-remote per pass, emits a JSON array of issue numbers with live remote branches, fails open) and wired it into both dev.md mirrors via jq --argjson on both the top-issue and candidate-list selects. Added tests/test_claimed_issue_numbers.py (11 assertions) using real bare git remotes.
+
+**Why Changed**: The candidate filter selected on labels alone. A dropped 'working' label re-exposed in-flight issues; the #15 arbitration caught it only after a claim/back-off cycle, and the gap between the two is where a second worker also claimed. Observed four times, including a live double-claim on #30.
+
+**Impact**: Verified against the live queue: #36 (branch feature/issue-36, no working label) is now excluded where the old filter offered it. Documented limitation: cannot see unpushed claims or branches whose name encodes no issue number, so #30's merge/dev-line-to-master claim is still invisible — the post-selection arbitration is retained and a test asserts it stays.
+
