@@ -337,6 +337,12 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 - Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
 - Run all shell tests: `for t in tests/test_*.sh; do bash "$t" || exit 1; done`
 - Note: the Python tests require `pytest`, which is not installed in all environments.
+- Jira backend has two complementary shell tests, both hermetic (no network):
+  `test_issues_jira.sh` stubs `curl` to assert request/JQL shape, and
+  `test_issues_jira_integration.sh` drives real HTTP against an in-process
+  stateful fake (`tests/fixtures/fake_jira.py`) for full lifecycle coverage.
+  For a check against a **real** Jira, run `plugins/autocoder/scripts/jira-smoke-test.sh`
+  with `JIRA_*` env vars set (needs egress to your Atlassian site; not part of CI).
 
 **E2E Tests**:
 - Not configured for this repository.
