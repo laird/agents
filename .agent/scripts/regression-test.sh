@@ -24,23 +24,71 @@ NC='\033[0m' # No Color
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
+# Print the first command line inside the first fenced block following a
+# markdown header. Uses awk rather than a nested sed range, because BSD sed
+# (macOS) rejects `/a/,/b/{/c/,/d/p}` outright.
+extract_fenced_command() {
+    local header="$1" file="$2"
+    [ -f "$file" ] || return 0
+    awk -v hdr="$header" '
+        index($0, hdr) == 1        { in_section = 1; next }
+        in_section && /^### /      { exit }
+        in_section && /^```/       { if (in_fence) exit; in_fence = 1; next }
+        in_section && in_fence     { if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next; print; exit }
+    ' "$file"
+}
+
 # Load configuration from CLAUDE.md if it exists
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
-    # Extract report directory
-    if grep -q "Location: " CLAUDE.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
-    else
+    # Extract report directory.
+    #
+    # Scoped to the "**Test Reports**:" block on purpose. A bare
+    # `grep "Location: "` takes the FIRST match in the whole file, which is the
+    # Unit Tests location (`tests/test_*.sh`) — a glob. mkdir -p then created a
+    # directory whose literal name contained an asterisk, and that directory
+    # subsequently matched `tests/test_*.sh` expansions elsewhere (issue #73).
+    REPORT_DIR=$(awk '
+        /^\*\*Test Reports\*\*:/ { in_block = 1; next }
+        in_block && /^\*\*/      { exit }
+        in_block && /Location: / { print; exit }
+    ' CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/')
+    REPORT_DIR="${REPORT_DIR%/}"
+    if [ -z "$REPORT_DIR" ]; then
         REPORT_DIR="docs/test/regression-reports"
     fi
+    # Never let a glob or a path traversal reach mkdir.
+    case "$REPORT_DIR" in
+        *'*'*|*'?'*|*'['*|*'..'*)
+            echo -e "${YELLOW}Ignoring unusable report directory '${REPORT_DIR}' from CLAUDE.md${NC}"
+            REPORT_DIR="docs/test/regression-reports"
+            ;;
+    esac
 
-    # Extract unit test configuration
+    # Extract unit test configuration. "### Unit Tests Only" is the documented
+    # header but no CLAUDE.md supplied it, so extraction always missed and fell
+    # through to `npm test` — which then got skipped, and the script reported
+    # success having run nothing (issue #73).
     if grep -q "Working directory: " CLAUDE.md && grep -B5 "Working directory:" CLAUDE.md | grep -q "Unit Tests"; then
         UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
-        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
         UNIT_TEST_DIR="."
+    fi
+
+    UNIT_TEST_CMD=$(extract_fenced_command "### Unit Tests Only" CLAUDE.md)
+    if [ -z "$UNIT_TEST_CMD" ]; then
+        UNIT_TEST_CMD=$(extract_fenced_command "### Regression Test Suite" CLAUDE.md)
+    fi
+    # Guard against self-invocation: in the agents repo "### Regression Test
+    # Suite" IS this script, and adopting it would recurse without bound.
+    case "$UNIT_TEST_CMD" in
+        *regression-test.sh*)
+            echo -e "${YELLOW}Ignoring self-referential unit test command '${UNIT_TEST_CMD}'${NC}"
+            UNIT_TEST_CMD=""
+            ;;
+    esac
+    if [ -z "$UNIT_TEST_CMD" ]; then
         UNIT_TEST_CMD="npm test"
     fi
 
@@ -98,7 +146,11 @@ if [ "$UNIT_TEST_DIR" != "." ]; then
     cd "$UNIT_TEST_DIR"
 fi
 
-if $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
+# Clear this script's own issue-backend bootstrap before handing control to the
+# suite: issue-config.sh treats a pre-set ISSUE_SOURCE as authoritative, so
+# leaking it makes tests that build a file-backend fixture talk to GitHub.
+if env -u ISSUE_SOURCE -u ISSUE_DIR_PATH -u ISSUE_BACKEND \
+     bash -lc "$UNIT_TEST_CMD" 2>&1 | tee "$UNIT_RESULTS"; then
     UNIT_STATUS="✅ PASSED"
     UNIT_EXIT=0
 else

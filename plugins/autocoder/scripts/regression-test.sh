@@ -65,10 +65,31 @@ append_command_failure_report() {
     } >> "$report_file"
 }
 
+# Print the first command line inside the first fenced block following a
+# markdown header. Uses awk rather than a nested sed range, because BSD sed
+# (macOS) rejects `/a/,/b/{/c/,/d/p}` outright — which aborted the whole run.
+extract_fenced_command() {
+    local header="$1" file="$2"
+    [ -f "$file" ] || return 0
+    awk -v hdr="$header" '
+        index($0, hdr) == 1        { in_section = 1; next }
+        in_section && /^### /      { exit }
+        in_section && /^```/       { if (in_fence) exit; in_fence = 1; next }
+        in_section && in_fence     { if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next; print; exit }
+    ' "$file"
+}
+
 create_issue_with_existing_labels() {
     local title="$1"
     local body="$2"
     local candidate_csv="$3"
+
+    # Test mode: never touch a real issue tracker.
+    if [ "${REGRESSION_TEST_NO_ISSUES:-0}" = "1" ]; then
+        echo "[no-issues] would create issue: ${title}"
+        return 0
+    fi
+
     local label
     local existing
     local args=()
@@ -112,17 +133,51 @@ TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
-    # Extract report directory
-    if grep -q "Location: " CLAUDE.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
-    else
+    # Extract report directory.
+    #
+    # Scoped to the "**Test Reports**:" block on purpose. A bare
+    # `grep "Location: "` takes the FIRST match in the whole file, which is the
+    # Unit Tests location (`tests/test_*.sh`) — a glob. mkdir -p then created a
+    # directory whose literal name contained an asterisk, and that directory
+    # subsequently matched `tests/test_*.sh` expansions elsewhere (issue #73).
+    REPORT_DIR=$(awk '
+        /^\*\*Test Reports\*\*:/ { in_block = 1; next }
+        in_block && /^\*\*/      { exit }
+        in_block && /Location: / { print; exit }
+    ' CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/')
+    REPORT_DIR="${REPORT_DIR%/}"
+    if [ -z "$REPORT_DIR" ]; then
         REPORT_DIR="docs/test/regression-reports"
     fi
+    # Never let a glob or a path traversal reach mkdir.
+    case "$REPORT_DIR" in
+        *'*'*|*'?'*|*'['*|*'..'*)
+            echo -e "${YELLOW}Ignoring unusable report directory '${REPORT_DIR}' from CLAUDE.md${NC}"
+            REPORT_DIR="docs/test/regression-reports"
+            ;;
+    esac
 
-    # Extract unit test configuration
-    if grep -q "### Unit Tests Only" CLAUDE.md; then
-        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
-    else
+    # Extract unit test configuration.
+    #
+    # "### Unit Tests Only" is the header this script has always documented,
+    # but no CLAUDE.md actually supplied it, so extraction always missed and
+    # fell through to the `npm test` default — which then got skipped, and the
+    # script reported success having run nothing (issue #73). Projects should
+    # supply that header; "### Regression Test Suite" is the fallback.
+    UNIT_TEST_CMD=$(extract_fenced_command "### Unit Tests Only" CLAUDE.md)
+    if [ -z "$UNIT_TEST_CMD" ]; then
+        UNIT_TEST_CMD=$(extract_fenced_command "### Regression Test Suite" CLAUDE.md)
+    fi
+    # Guard against self-invocation. In this repo "### Regression Test Suite"
+    # IS this script, so adopting it as the unit-test command would recurse
+    # until the process table gives out.
+    case "$UNIT_TEST_CMD" in
+        *regression-test.sh*)
+            echo -e "${YELLOW}Ignoring self-referential unit test command '${UNIT_TEST_CMD}'${NC}"
+            UNIT_TEST_CMD=""
+            ;;
+    esac
+    if [ -z "$UNIT_TEST_CMD" ]; then
         UNIT_TEST_CMD="npm test"
     fi
 
@@ -262,7 +317,12 @@ else
     fi
 
     set +e
-    bash -lc "$UNIT_TEST_CMD" 2>&1 | tee "$UNIT_RESULTS"
+    # Clear this script's own issue-backend bootstrap before handing control to
+    # the suite. issue-config.sh treats a pre-set ISSUE_SOURCE as authoritative
+    # and skips reading .autocoder.json, so leaking it here made every test that
+    # builds a file-backend fixture talk to GitHub instead and exit 3.
+    env -u ISSUE_SOURCE -u ISSUE_DIR_PATH -u ISSUE_BACKEND \
+        bash -lc "$UNIT_TEST_CMD" 2>&1 | tee "$UNIT_RESULTS"
     UNIT_CMD_EXIT=${PIPESTATUS[0]}
     set -e
 
@@ -319,7 +379,8 @@ if E2E_SKIP_REASON=$(detect_skip_reason "$E2E_TEST_CMD" "." "E2E Tests"); then
 else
     # Run E2E tests with configured command
     set +e
-    bash -lc "$E2E_TEST_CMD" 2>&1 | tee "$E2E_RESULTS"
+    env -u ISSUE_SOURCE -u ISSUE_DIR_PATH -u ISSUE_BACKEND \
+        bash -lc "$E2E_TEST_CMD" 2>&1 | tee "$E2E_RESULTS"
     E2E_CMD_EXIT=${PIPESTATUS[0]}
     set -e
 
@@ -439,8 +500,15 @@ fi
 # ==========================================
 echo -e "${YELLOW}Checking for existing GitHub issues...${NC}"
 
-# Fetch all open issues
-issue_list --state open --limit 100 > /tmp/gh-issues.json
+# Fetch all open issues. Tolerate a backend that can't answer (no remote, no
+# auth, transient API failure): a tracker lookup failing must not abort a run
+# whose tests already passed, and `set -e` would otherwise do exactly that.
+if [ "${REGRESSION_TEST_NO_ISSUES:-0}" = "1" ]; then
+    echo "[]" > /tmp/gh-issues.json
+elif ! issue_list --state open --limit 100 > /tmp/gh-issues.json 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  Could not query the issue tracker — continuing without issue management${NC}"
+    echo "[]" > /tmp/gh-issues.json
+fi
 
 # Label roster for create_issue_with_existing_labels. Only the github backend
 # rejects labels that don't exist yet; other backends leave the file absent and
@@ -570,18 +638,22 @@ $(sed -n '1,20p' "$results_file")
 
     if [ -n "$existing_issue" ]; then
         echo -e "${BLUE}Updating issue #${existing_issue}...${NC}"
-        gh issue comment "$existing_issue" --body "$issue_body"
+        if [ "${REGRESSION_TEST_NO_ISSUES:-0}" = "1" ]; then
+            echo "[no-issues] would comment on #${existing_issue}"
+        else
+            gh issue comment "$existing_issue" --body "$issue_body"
+        fi
     else
         echo -e "${BLUE}Creating new issue for ${suite_name} command failure...${NC}"
         create_issue_with_existing_labels "$title" "$issue_body" "bug,automated-test-failure,$priority" || true
     fi
 }
 
-if [ "$UNIT_COMMAND_FAILURE" -eq 1 ]; then
+if [ "$UNIT_COMMAND_FAILURE" -eq 1 ] && [ "${REGRESSION_TEST_NO_ISSUES:-0}" != "1" ]; then
     create_command_failure_issue "Unit Tests" "$UNIT_TEST_CMD" "$UNIT_TEST_DIR" "$UNIT_RESULTS" "P1"
 fi
 
-if [ "$E2E_COMMAND_FAILURE" -eq 1 ]; then
+if [ "$E2E_COMMAND_FAILURE" -eq 1 ] && [ "${REGRESSION_TEST_NO_ISSUES:-0}" != "1" ]; then
     create_command_failure_issue "E2E Tests" "$E2E_TEST_CMD" "." "$E2E_RESULTS" "P1"
 fi
 
@@ -603,7 +675,19 @@ echo ""
 if [ "$UNIT_EXIT" -ne 0 ] || [ "$E2E_EXIT" -ne 0 ]; then
     echo -e "${RED}⚠️  Some tests failed. Check GitHub issues for details.${NC}"
     exit 1
-else
-    echo -e "${GREEN}✅ All tests passed!${NC}"
-    exit 0
 fi
+
+# A run that executed nothing is not a pass. Previously every suite could be
+# SKIPPED and the script still printed success and exited 0, so a misconfigured
+# runner looked identical to a green one — and the /fix and /dev protocols
+# treat a green regression run as licence to move on (issue #73).
+if [ "$UNIT_STATUS" = "⏭️ SKIPPED" ] && [ "$E2E_STATUS" = "⏭️ SKIPPED" ]; then
+    echo -e "${RED}⚠️  No tests were executed — every suite was skipped.${NC}"
+    echo -e "${YELLOW}   Unit Tests: ${UNIT_SKIP_REASON:-no reason recorded}${NC}"
+    echo -e "${YELLOW}   E2E Tests:  ${E2E_SKIP_REASON:-no reason recorded}${NC}"
+    echo -e "${YELLOW}   Configure '### Unit Tests Only' in CLAUDE.md so a real suite runs.${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ All tests passed!${NC}"
+exit 0
