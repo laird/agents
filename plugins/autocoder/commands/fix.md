@@ -912,7 +912,35 @@ Detailed explanation of what was fixed and how.
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
 # Push feature branch
-git push -u origin "feature/issue-${ISSUE_NUM}"
+# Publish the branch. `git push` first; if the transport is blocked (e.g. a
+# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+# command's exit status alone, and never from `git push --dry-run`, which
+# succeeds against a blocked transport because it never sends the pack.
+PUSH_OK=false
+if git push -u origin "feature/issue-${ISSUE_NUM}"; then
+  PUSH_OK=true
+else
+  echo "⚠️  git push failed — trying the GitHub API fallback..."
+  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+    PUSH_OK=true
+  fi
+fi
+
+if [ "$PUSH_OK" != true ]; then
+  # The code did not land. Closing now would make the tracker claim something
+  # false, and would strand the work (see #26). Leave the issue open, KEEP the
+  # 'working' label, and say so.
+  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+The issue stays open and keeps its \`working\` label so the work is not lost or
+silently redone.
+
+Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
+  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
+  exit 1
+fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
@@ -1106,7 +1134,35 @@ Detailed multi-line explanation of:
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
 # Push feature branch
-git push -u origin "feature/issue-${ISSUE_NUM}"
+# Publish the branch. `git push` first; if the transport is blocked (e.g. a
+# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+# command's exit status alone, and never from `git push --dry-run`, which
+# succeeds against a blocked transport because it never sends the pack.
+PUSH_OK=false
+if git push -u origin "feature/issue-${ISSUE_NUM}"; then
+  PUSH_OK=true
+else
+  echo "⚠️  git push failed — trying the GitHub API fallback..."
+  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+    PUSH_OK=true
+  fi
+fi
+
+if [ "$PUSH_OK" != true ]; then
+  # The code did not land. Closing now would make the tracker claim something
+  # false, and would strand the work (see #26). Leave the issue open, KEEP the
+  # 'working' label, and say so.
+  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+The issue stays open and keeps its \`working\` label so the work is not lost or
+silently redone.
+
+Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
+  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
+  exit 1
+fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop
@@ -1906,7 +1962,35 @@ Detailed explanation of:
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
   # Push feature branch
-  git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"
+  # Publish the branch. `git push` first; if the transport is blocked (e.g. a
+  # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
+  # PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
+  # command's exit status alone, and never from `git push --dry-run`, which
+  # succeeds against a blocked transport because it never sends the pack.
+  PUSH_OK=false
+  if git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"; then
+    PUSH_OK=true
+  else
+    echo "⚠️  git push failed — trying the GitHub API fallback..."
+    if python3 "${SCRIPT_DIR}/api-push.py" "enhancement/issue-${ENHANCE_NUM}-auto" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+      PUSH_OK=true
+    fi
+  fi
+
+  if [ "$PUSH_OK" != true ]; then
+    # The code did not land. Closing now would make the tracker claim something
+    # false, and would strand the work (see #26). Leave the issue open, KEEP the
+    # 'working' label, and say so.
+    issue_comment "$ENHANCE_NUM" --body "⚠️ **Publication failed — issue left open**
+
+  Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
+  The issue stays open and keeps its \`working\` label so the work is not lost or
+  silently redone.
+
+  Local branch: \`enhancement/issue-${ENHANCE_NUM}-auto\`" 2>/dev/null || true
+    echo "❌ Could not publish enhancement/issue-${ENHANCE_NUM}-auto — issue $ENHANCE_NUM left OPEN (nothing was closed)"
+    exit 1
+  fi
 
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
