@@ -200,7 +200,7 @@ startdt 3    # 1 manager + 3 Droid workers in tmux
 After installation, commands will be available as slash commands in Claude Code:
 
 - **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
-- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
+- **autocoder**: `/dev`, `/dev-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
 
 **Get help anytime:**
 ```bash
@@ -229,7 +229,7 @@ These plugins enhance the capabilities of modernize and autocoder:
 
 **How they're used:**
 
-- **superpowers**: Automatically invoked by `/fix` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
+- **superpowers**: Automatically invoked by `/dev` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
 
 - **quint**: Automatically invoked for ultra-complex issues that exceed autonomous resolution capabilities (>100 test failures, major architecture decisions, irreversible consequences). Guides structured reasoning with human collaboration.
 
@@ -311,8 +311,8 @@ After installation, these workflows are available:
 
 | Workflow | Description |
 |----------|-------------|
-| `/fix` | Autonomous issue resolution |
-| `/fix-loop` | Continuous autonomous resolution |
+| `/dev` | Autonomous issue resolution |
+| `/dev-loop` | Continuous autonomous resolution |
 | `/stop-loop` | Stop the continuous loop |
 | `/list-proposals` | View pending AI-generated proposals |
 | `/approve-proposal` | Approve a proposal for implementation |
@@ -321,7 +321,7 @@ After installation, these workflows are available:
 | `/brainstorm-issue` | Brainstorm design for an issue |
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
-| `/review-blocked` | Review and unblock issues labeled by fix-loop |
+| `/review-blocked` | Review and unblock issues labeled by dev-loop |
 | `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
 | `/install` | Install all autocoder plugin components |
 | `/autocoder-help` | Show autocoder workflow help |
@@ -351,13 +351,13 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 **Get help:** `/autocoder-help`
 
-**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
+**Commands:** `/dev`, `/dev-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
 
 **Quick Start:**
 ```bash
-/fix              # Fix highest priority issue
+/dev              # Fix highest priority issue
 /install          # One-time setup for continuous mode
-/fix-loop         # Run continuously
+/dev-loop         # Run continuously
 ```
 
 ---
@@ -423,7 +423,7 @@ agents/
 │       ├── commands/
 │       │   ├── help.md                 # Plugin help and workflow overview
 │       │   ├── fix.md           # Autonomous issue resolution
-│       │   ├── fix-loop.md      # Continuous autonomous resolution
+│       │   ├── dev-loop.md      # Continuous autonomous resolution
 │       │   ├── stop-loop.md            # Stop the continuous loop
 │       │   ├── list-proposals.md       # View pending proposals
 │       │   ├── approve-proposal.md     # Approve a proposal
@@ -546,10 +546,10 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 **Autocoder Workflow:**
 
 1. Run `/autocoder-help` to see all available commands
-2. Run `/fix` to start autonomous issue resolution
+2. Run `/dev` to start autonomous issue resolution
 3. Use `/list-needs-design` and `/brainstorm-issue` for complex issues
 4. Review proposals with `/list-proposals` and approve with `/approve-proposal`
-5. For continuous operation: `/install` then `/fix-loop`
+5. For continuous operation: `/install` then `/dev-loop`
 
 ---
 
@@ -570,10 +570,10 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, engagement health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/fix` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
-| 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/fix-github` → `/fix`, `/fix-github-loop` → `/fix-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
+| 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, engagement health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/dev` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
+| 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/dev-github` → `/dev`, `/dev-github-loop` → `/dev-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
-| 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
+| 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/dev` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |
 | 2.6.0 | 2025-11-09 | Applied 5 evidence-based improvements from RawRabbit retrospective: front-load test setup, spike-driven ADRs, shift security left, continuous testing, incremental documentation. Impact: 27 hours saved per project |
 | 2.5.0 | 2025-11-01 | Added continuous improvement workflow: `/retro` and `/retro-apply` commands for retrospective analysis and automated application of lessons learned |
 | 2.4.2 | 2025-10-28 | Renamed `/modernize:project` to `/modernize`, removed agents/protocols/scripts in favor of streamlined commands |

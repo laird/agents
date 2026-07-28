@@ -1,4 +1,4 @@
-# Testing Multi-Agent Coordination for /fix-loop
+# Testing Multi-Agent Coordination for /dev-loop
 
 Complete test plan for validating automatic multi-agent coordination across git worktrees.
 
@@ -105,7 +105,7 @@ git worktree add ../test-multi-agent-wt2 -b feature/test-2
    claude
 
    # In Claude Code:
-   /fix-loop
+   /dev-loop
    ```
 
 2. **Worktree 1 (Terminal 2):**
@@ -221,7 +221,7 @@ git worktree add ../test-multi-agent-ui -b feature/ui
 
 **Execution:**
 
-Run `/fix-loop` in main worktree, then simulate work in each feature worktree:
+Run `/dev-loop` in main worktree, then simulate work in each feature worktree:
 
 ```bash
 # Worktree 1: Auth
@@ -269,7 +269,7 @@ Use the state from Test 1 or Test 2 (after deployment has run).
 
 **Execution:**
 
-1. Keep main worktree `/fix-loop` running
+1. Keep main worktree `/dev-loop` running
 2. Don't make any changes
 3. Wait for another idle cycle (~5 minutes)
 
@@ -306,13 +306,13 @@ Use existing worktree setup from Test 2.
 
 **Execution:**
 
-1. Stop `/fix-loop` in main worktree (Ctrl+C)
-2. Start `/fix-loop` in a feature worktree:
+1. Stop `/dev-loop` in main worktree (Ctrl+C)
+2. Start `/dev-loop` in a feature worktree:
    ```bash
    cd ~/test-multi-agent-auth
    export CLAUDE_CODE_TASK_LIST_ID="test-three-agents-20260130"
    claude
-   /fix-loop
+   /dev-loop
    ```
 
 **Expected Behavior:**
@@ -331,7 +331,7 @@ When all agents idle:
 **Validation:**
 
 - Feature worktree should NOT attempt to merge or deploy
-- Should continue its fix-loop normally
+- Should continue its dev-loop normally
 - Should see "worker role" in system message
 
 ### Test 5: Configuration from CLAUDE.md
@@ -360,7 +360,7 @@ git push
 
 **Execution:**
 
-1. Restart `/fix-loop` in main worktree (Ctrl+C, then `/fix-loop` again)
+1. Restart `/dev-loop` in main worktree (Ctrl+C, then `/dev-loop` again)
 2. Make a change in a feature worktree
 3. Push and wait for deployment
 
@@ -397,7 +397,7 @@ export CLAUDE_CODE_DEPLOY_COMMAND="echo 'Deployed via environment variable'"
 
 **Execution:**
 
-1. Start `/fix-loop` with env vars set
+1. Start `/dev-loop` with env vars set
 2. Make change, push, trigger deployment
 
 **Expected Behavior:**
@@ -511,7 +511,7 @@ unset CLAUDE_CODE_INTEGRATION_BRANCH
 
 **Execution:**
 
-1. Start `/fix-loop`
+1. Start `/dev-loop`
 2. Make change, push, trigger coordination
 
 **Expected Behavior:**
@@ -564,7 +564,7 @@ After running all tests, verify:
 - [ ] Missing deployment config handled gracefully
 - [ ] CLAUDE.md configuration parsed correctly
 - [ ] Environment variables override CLAUDE.md
-- [ ] Stop hook feeds /fix back to continue loop
+- [ ] Stop hook feeds /dev back to continue loop
 - [ ] Idle detection works (5 minute threshold)
 - [ ] No duplicate deployments
 

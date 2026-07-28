@@ -188,11 +188,13 @@ Located in `scripts/` directory:
 
 **Key parallel files:**
 - `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
-- `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
-- `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
+- `/dev`: `plugins/autocoder/commands/dev.md` ↔ `.agent/workflows/dev.md`
+- `/dev-loop`: `plugins/autocoder/commands/dev-loop.md` ↔ `.agent/workflows/dev-loop.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
 - `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
 - `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
+
+`/fix` and `/fix-loop` remain as thin alias stubs forwarding to `/dev` and `/dev-loop`, mirrored on both sides (`plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`, and the `-loop` pair). Internal callers use the new names directly.
 
 **Key parallel scripts:**
 - `start-parallel-agents.sh`: `plugins/autocoder/scripts/start-parallel-agents.sh` ↔ `.agent/scripts/start-parallel-agents.sh`

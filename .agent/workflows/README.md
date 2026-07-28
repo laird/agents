@@ -2,8 +2,8 @@
 
 This directory contains workflow definitions that chain multiple agent actions together to perform complex tasks.
 
-- **`/fix`**: An autonomous workflow for resolving GitHub issues.
-- **`/fix-loop`**: Repeats `/fix` until stopped.
+- **`/dev`**: An autonomous workflow for resolving GitHub issues.
+- **`/dev-loop`**: Repeats `/dev` until stopped.
 - **`/monitor-workers`**: Monitors workers, stale locks, and dispatch opportunities.
 - **`/monitor-loop`**: Repeats `/monitor-workers` for the manager session.
 - **`/review-blocked`**: Reviews issues labeled as blocked for human decision.

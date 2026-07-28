@@ -39,8 +39,9 @@ This project uses a pluggable issue source. Run the equivalent of `/set-issue-so
 | Workflow | Antigravity | Claude Code |
 |----------|-------------|-------------|
 | `/improve-test-coverage` | `.agent/workflows/improve-test-coverage.md` | `plugins/autocoder/commands/improve-test-coverage.md` |
-| `/fix` | `.agent/workflows/fix.md` | `plugins/autocoder/commands/fix.md` |
-| `/fix-loop` | `.agent/workflows/fix-loop.md` | `plugins/autocoder/commands/fix-loop.md` |
+| `/dev` | `.agent/workflows/dev.md` | `plugins/autocoder/commands/dev.md` |
+| `/dev-loop` | `.agent/workflows/dev-loop.md` | `plugins/autocoder/commands/dev-loop.md` |
+| `/fix`, `/fix-loop` (aliases) | `.agent/workflows/fix.md`, `fix-loop.md` | `plugins/autocoder/commands/fix.md`, `fix-loop.md` |
 | `/monitor-workers` | `.agent/workflows/monitor-workers.md` | `plugins/autocoder/commands/monitor-workers.md` |
 | `/monitor-loop` | `.agent/workflows/monitor-loop.md` | `plugins/autocoder/commands/monitor-loop.md` |
 | `/full-regression-test` | `.agent/workflows/full-regression-test.md` | `plugins/autocoder/commands/full-regression-test.md` |
@@ -94,10 +95,10 @@ Available workflows in `.agent/workflows/`:
 
 ```bash
 # Autonomous issue resolution
-/fix
+/dev
 
 # Continuous issue resolution loop
-/fix-loop
+/dev-loop
 
 # Test coverage improvement
 /improve-test-coverage
@@ -125,7 +126,7 @@ Available workflows in `.agent/workflows/`:
 │   ├── tester.md                # Tester agent rules
 │   └── ...                      # Other agent rules
 ├── workflows/                    # Executable workflows
-│   ├── fix.md            # Autonomous issue resolution
+│   ├── dev.md            # Autonomous issue resolution (fix.md = alias)
 │   ├── improve-test-coverage.md # Coverage improvement
 │   └── ...                      # Other workflows
 └── scripts/

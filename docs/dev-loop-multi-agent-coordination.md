@@ -1,4 +1,4 @@
-# Multi-Agent Coordination with /fix-loop
+# Multi-Agent Coordination with /dev-loop
 
 Automatic coordination for parallel Claude Code agents across git worktrees with zero manual setup.
 
@@ -8,8 +8,8 @@ Automatic coordination for parallel Claude Code agents across git worktrees with
 # 1. Set shared task list ID (same in all worktrees)
 export CLAUDE_CODE_TASK_LIST_ID="project-$(date +%Y%m%d)"
 
-# 2. Run /fix-loop in each worktree (same command everywhere)
-/fix-loop
+# 2. Run /dev-loop in each worktree (same command everywhere)
+/dev-loop
 
 # That's it! Automatic deployment when all agents idle and work pushed.
 ```
@@ -18,7 +18,7 @@ export CLAUDE_CODE_TASK_LIST_ID="project-$(date +%Y%m%d)"
 
 ### Detection
 
-When `/fix-loop` detects `CLAUDE_CODE_TASK_LIST_ID` is set, it automatically:
+When `/dev-loop` detects `CLAUDE_CODE_TASK_LIST_ID` is set, it automatically:
 
 1. **Identifies role** - Main worktree = coordinator, feature worktrees = workers
 2. **Monitors shared task list** - Sees what all agents are doing
@@ -33,7 +33,7 @@ When `/fix-loop` detects `CLAUDE_CODE_TASK_LIST_ID` is set, it automatically:
 ┌─────────────────────────────────────────────────────────┐
 │  Main Worktree (Coordinator)                            │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │ /fix-loop                                        │  │
+│  │ /dev-loop                                        │  │
 │  │ - Works on issues                                │  │
 │  │ - Monitors: Are all agents idle?                 │  │
 │  │ - Checks: Is integration branch clean & pushed?  │  │
@@ -49,7 +49,7 @@ When `/fix-loop` detects `CLAUDE_CODE_TASK_LIST_ID` is set, it automatically:
 ┌────────▼──────────┐          ┌─────────▼─────────┐
 │ Feature Worktree 1│          │ Feature Worktree 2│
 │ ┌────────────────┐│          │ ┌────────────────┐│
-│ │ /fix-loop      ││          │ │ /fix-loop      ││
+│ │ /dev-loop      ││          │ │ /dev-loop      ││
 │ │ - Works on     ││          │ │ - Works on     ││
 │ │   tasks        ││          │ │   tasks        ││
 │ │ - Pushes       ││          │ │ - Pushes       ││
@@ -116,7 +116,7 @@ export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
 **Option C: Command line arguments**
 
 ```bash
-/fix-loop --branch main --deploy "deploy.sh staging ."
+/dev-loop --branch main --deploy "deploy.sh staging ."
 ```
 
 **Option D: Create standard deployment script**
@@ -144,17 +144,17 @@ chmod +x scripts/deploy-staging.sh
 ```bash
 # Main worktree
 cd /path/to/project
-/fix-loop
+/dev-loop
 # Output: 🔄 iteration 1 | 🔗 Coordinator (will deploy when all idle)
 
 # Feature worktree 1
 cd /path/to/project-wt-auth
-/fix-loop
+/dev-loop
 # Output: 🔄 iteration 1 | 🔗 Worker (myproject-20...)
 
 # Feature worktree 2
 cd /path/to/project-wt-api
-/fix-loop
+/dev-loop
 # Output: 🔄 iteration 1 | 🔗 Worker (myproject-20...)
 ```
 
@@ -246,7 +246,7 @@ If `scripts/append-to-history.sh` exists, deployment is also logged to `HISTORY.
 ## Example Timeline
 
 ```
-00:00 - All worktrees: Start /fix-loop with shared task list
+00:00 - All worktrees: Start /dev-loop with shared task list
 00:01 - Main worktree: Claims GitHub issue #123, starts work
 00:02 - Worktree-auth: Claims GitHub issue #124, starts work
 00:03 - Worktree-api: Claims GitHub issue #125, starts work
@@ -371,14 +371,14 @@ unset CLAUDE_CODE_TASK_LIST_ID
 
 ```bash
 # Sleep 30 minutes when idle (default: 15)
-/fix-loop --sleep 30
+/dev-loop --sleep 30
 ```
 
 ### Max Iterations
 
 ```bash
 # Stop after 100 iterations
-/fix-loop 100
+/dev-loop 100
 ```
 
 ### Multiple Environments
@@ -410,17 +410,17 @@ rm .git/agent-coordination/deployed-*
 
 ## Benefits
 
-✅ **Zero configuration** - Just set `CLAUDE_CODE_TASK_LIST_ID` and run `/fix-loop`
+✅ **Zero configuration** - Just set `CLAUDE_CODE_TASK_LIST_ID` and run `/dev-loop`
 ✅ **Automatic role detection** - Main vs worker determined by worktree location
 ✅ **Safe deployment** - Only when all work complete and pushed
 ✅ **Same command everywhere** - No special coordinator vs worker commands
 ✅ **Audit trail** - Deployment logs and HISTORY.md entries
-✅ **Graceful degradation** - Works as regular `/fix-loop` if task list ID not set
-✅ **Built on fix-loop** - Inherits all stability and idle detection features
+✅ **Graceful degradation** - Works as regular `/dev-loop` if task list ID not set
+✅ **Built on dev-loop** - Inherits all stability and idle detection features
 
 ## See Also
 
-- `/fix-loop` - Main command documentation
-- `/fix` - Single-shot fix command
+- `/dev-loop` - Main command documentation
+- `/dev` - Single-shot fix command
 - `docs/git-worktrees.md` - Git worktree best practices
 - `scripts/deploy-staging-template.sh` - Deployment script template

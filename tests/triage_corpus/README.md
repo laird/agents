@@ -1,14 +1,14 @@
 # Triage corpus — Phase 3 acceptance fixture
 
 Fixed test corpus used by the
-[fix-loop token-efficiency design](../../docs/specs/2026-05-21-fix-loop-token-efficiency-design.md)
+[dev-loop token-efficiency design](../../docs/specs/2026-05-21-fix-loop-token-efficiency-design.md)
 §13.4 Phase 3 acceptance gate:
 
 > Triage-correctness on Haiku ≥ 80% of Sonnet baseline, measured on
 > a fixed test corpus committed to `tests/triage_corpus/`.
 
 The corpus exercises the triage decision matrix in
-[`plugins/autocoder/commands/fix.md`](../../plugins/autocoder/commands/fix.md)
+[`plugins/autocoder/commands/dev.md`](../../plugins/autocoder/commands/dev.md)
 (§ "Triage Decision Matrix"). It is used to validate that swapping
 Sonnet → Haiku for the triage hop does not regress label quality below
 the 80% bar.
@@ -89,7 +89,7 @@ sonnet_acc = sum(r[3] for r in results["sonnet"]) / len(results["sonnet"])
 assert haiku_acc >= 0.80 * sonnet_acc, f"Haiku regression: {haiku_acc:.2f} < 0.80 * {sonnet_acc:.2f}"
 ```
 
-Use the exact triage prompt from `plugins/autocoder/commands/fix.md`
+Use the exact triage prompt from `plugins/autocoder/commands/dev.md`
 § "Triage Instructions" — do not invent a new prompt or the benchmark
 will measure something other than what the gate runs in production.
 

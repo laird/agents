@@ -1,10 +1,10 @@
-# Multi-Worktree Coordination with /fix-loop-coordinated
+# Multi-Worktree Coordination with /dev-loop-coordinated
 
 Complete guide for coordinating parallel Claude Code agents across git worktrees with automatic deployment.
 
 ## Overview
 
-When multiple Claude Code agents work in parallel worktrees, `/fix-loop-coordinated` provides automatic coordination and deployment:
+When multiple Claude Code agents work in parallel worktrees, `/dev-loop-coordinated` provides automatic coordination and deployment:
 
 1. **Work Phase**: Agents in separate worktrees complete tasks independently
 2. **Coordination**: All agents share a task list via `CLAUDE_CODE_TASK_LIST_ID`
@@ -16,7 +16,7 @@ When multiple Claude Code agents work in parallel worktrees, `/fix-loop-coordina
 ```
 Main Worktree (Coordinator)          Worktree 1              Worktree 2
 ┌─────────────────────┐              ┌──────────────┐        ┌──────────────┐
-│ /fix-loop-coordinated│              │ Claude Code  │        │ Claude Code  │
+│ /dev-loop-coordinated│              │ Claude Code  │        │ Claude Code  │
 │ ┌─────────────────┐ │              │              │        │              │
 │ │ Creates Tasks:  │ │              │ Claims       │        │ Claims       │
 │ │ - Work Task 1   │ │◄────────────►│ Task 1       │        │ Task 2       │
@@ -33,7 +33,7 @@ Main Worktree (Coordinator)          Worktree 1              Worktree 2
 │         ↓           │                        Shared Task List
 │ Deploy to Staging   │                    (CLAUDE_CODE_TASK_LIST_ID)
 │         ↓           │
-│ Continue /fix loop  │
+│ Continue /dev loop  │
 └─────────────────────┘
 ```
 
@@ -85,14 +85,14 @@ vim scripts/deploy-staging.sh
 cd /path/to/project
 
 # Start coordinated fix loop
-/fix-loop-coordinated
+/dev-loop-coordinated
 ```
 
 This will:
 1. Check for existing tasks or prompt to create them
 2. Create deployment task blocked by all work tasks
 3. Install coordinated stop hook
-4. Start `/fix` loop
+4. Start `/dev` loop
 
 ### Each Worktree: Claim and Complete Tasks
 
@@ -169,7 +169,7 @@ As work tasks complete, `blockedBy` shrinks to `[]`, triggering deployment.
 
 ## Stop Hook Behavior
 
-The coordinated stop hook (`stop-hook-coordinated.sh`) extends the standard fix-loop behavior:
+The coordinated stop hook (`stop-hook-coordinated.sh`) extends the standard dev-loop behavior:
 
 ### Standard Checks (Inherited)
 - ✅ Active tasks detection (pauses if work in progress)
@@ -230,17 +230,17 @@ rm .claude/fix-loop.local.md
 
 ```bash
 # Sleep 30 minutes when idle instead of default 15
-/fix-loop-coordinated --sleep 30
+/dev-loop-coordinated --sleep 30
 ```
 
 ### Max Iterations
 
 ```bash
 # Stop after 100 iterations
-/fix-loop-coordinated --max 100
+/dev-loop-coordinated --max 100
 
 # Or positional argument
-/fix-loop-coordinated 100
+/dev-loop-coordinated 100
 ```
 
 ### Multiple Deployment Tasks
@@ -321,12 +321,12 @@ export CLAUDE_CODE_TASK_LIST_ID="myproject-2026-01-30"
 ### With /modernize
 
 ```bash
-# Use coordinated fix-loop during modernization
+# Use coordinated dev-loop during modernization
 /modernize
 
 # When coder agents dispatched to worktrees:
-# Main worktree runs /fix-loop-coordinated
-# Each worktree runs /fix
+# Main worktree runs /dev-loop-coordinated
+# Each worktree runs /dev
 ```
 
 ### With /retro
@@ -349,12 +349,12 @@ After deployment completes:
 ✅ **Safe deployment** - Only deploys when ALL work complete
 ✅ **Audit trail** - Deployment logs and HISTORY.md entries
 ✅ **Continuous operation** - Fix loop continues after deployment
-✅ **Built on fix-loop** - Inherits all stability and idle detection
+✅ **Built on dev-loop** - Inherits all stability and idle detection
 
 ## Example Timeline
 
 ```
-00:00 - Main worktree: /fix-loop-coordinated starts
+00:00 - Main worktree: /dev-loop-coordinated starts
 00:01 - Creates tasks 1, 2, 3 (work) and 4 (deploy, blocked by 1,2,3)
 00:02 - Worktree 1 claims task 1, starts feature/auth work
 00:03 - Worktree 2 claims task 2, starts feature/api work
@@ -370,7 +370,7 @@ After deployment completes:
 
 ## See Also
 
-- `/fix-loop` - Standard infinite fix loop (single worktree)
-- `/fix` - Single-shot fix command
+- `/dev-loop` - Standard infinite fix loop (single worktree)
+- `/dev` - Single-shot fix command
 - `superpowers:dispatching-parallel-agents` - Agent coordination skill
 - `docs/git-worktrees.md` - Git worktree best practices

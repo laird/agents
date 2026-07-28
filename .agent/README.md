@@ -24,8 +24,8 @@ This directory contains configuration, rules, and workflows for the **Antigravit
 
 **Key parallel files:**
 - `/improve-test-coverage`: `.agent/workflows/improve-test-coverage.md` ↔ `plugins/autocoder/commands/improve-test-coverage.md`
-- `/fix`: `.agent/workflows/fix.md` ↔ `plugins/autocoder/commands/fix.md`
-- `/fix-loop`: `.agent/workflows/fix-loop.md` ↔ `plugins/autocoder/commands/fix-loop.md`
+- `/dev`: `.agent/workflows/dev.md` ↔ `plugins/autocoder/commands/dev.md`
+- `/dev-loop`: `.agent/workflows/dev-loop.md` ↔ `plugins/autocoder/commands/dev-loop.md`
 - `/review-blocked`: `.agent/workflows/review-blocked.md` ↔ `plugins/autocoder/commands/review-blocked.md`
 - `/install`: `.agent/workflows/install.md` ↔ `plugins/autocoder/commands/install.md`
 - `/stop-loop`: `.agent/workflows/stop-loop.md` ↔ `plugins/autocoder/commands/stop-loop.md`
@@ -36,4 +36,4 @@ This directory contains configuration, rules, and workflows for the **Antigravit
 - **`protocols/`**: Definitions of agent protocols (how agents should behave).
 - **`rules/`**: Custom rules injected into the agent's context.
 - **`scripts/`**: Helper scripts used by the agent configuration (e.g., watchdogs).
-- **`workflows/`**: Workflow definitions (e.g., `/fix`) that chain agent actions.
+- **`workflows/`**: Workflow definitions (e.g., `/dev`) that chain agent actions.
