@@ -267,7 +267,7 @@ Depending on the issue type, the brainstorming will focus on different aspects:
     ▼
 ┌─────────────────┐
 │  Ready for      │
-│  /fix    │
+│  /dev    │
 └─────────────────┘
 ```
 
@@ -275,5 +275,5 @@ Depending on the issue type, the brainstorming will focus on different aspects:
 
 - `/list-needs-design` - List all issues needing design work
 - `/list-needs-feedback` - List issues needing feedback
-- `/fix` - Autonomous issue resolution
+- `/dev` - Autonomous issue resolution
 - `/approve-proposal` - Approve a proposal for implementation

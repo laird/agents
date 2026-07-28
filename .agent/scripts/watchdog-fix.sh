@@ -1,11 +1,11 @@
 #!/bin/bash
 # watchdog-fix.sh
-# Ensures the /fix workflow runs continuously.
+# Ensures the /dev workflow runs continuously.
 # Usage: ./watchdog-fix.sh [agent_command] [--once]
 
 # Defaults
 AGENT_CMD="antigravity"
-WORKFLOW="/fix"
+WORKFLOW="/dev"
 TARGET_DIR="/home/laird/src/agents"
 RUN_ONCE=false
 ITERATION=0

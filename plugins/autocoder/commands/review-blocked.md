@@ -1,6 +1,6 @@
 # Review Blocked Issues
 
-Interactive planning session to review and unblock issues that fix-loop has labeled with blocking tags. This command is designed to run in parallel with `/fix-loop` in a separate terminal session.
+Interactive planning session to review and unblock issues that dev-loop has labeled with blocking tags. This command is designed to run in parallel with `/dev-loop` in a separate terminal session.
 
 ## Usage
 
@@ -37,7 +37,7 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 
 ## Blocking Labels
 
-These labels indicate why fix-loop cannot autonomously work on an issue:
+These labels indicate why dev-loop cannot autonomously work on an issue:
 
 | Label | When Applied | Example Scenario |
 |-------|--------------|------------------|
@@ -56,7 +56,7 @@ For each blocked issue, the command:
 
 1. **Shows Context**
    - Issue title, number, priority, blocking label
-   - Quote from fix-loop's comment explaining why it's blocked
+   - Quote from dev-loop's comment explaining why it's blocked
    - Brief summary of what the issue is asking for
 
 2. **Presents Analysis**
@@ -105,7 +105,7 @@ if [ "$TOTAL_BLOCKED" -eq 0 ]; then
   echo "✅ No blocked issues found!"
   echo ""
   echo "All issues are either:"
-  echo "  - Ready for autonomous fix-loop to work on, or"
+  echo "  - Ready for autonomous dev-loop to work on, or"
   echo "  - Already being worked on (have 'working' label)"
   echo ""
   exit 0
@@ -195,10 +195,10 @@ echo ""
 
 ### Step 2: Analyze the Issue
 
-Read the issue context and look for fix-loop's explanation:
+Read the issue context and look for dev-loop's explanation:
 
 ```bash
-# Check if fix-loop left a comment explaining why it's blocked
+# Check if dev-loop left a comment explaining why it's blocked
 FIXLOOP_COMMENT=$(echo "$CURRENT_ISSUE" | python3 -c "
 import json, sys
 issue = json.load(sys.stdin)
@@ -371,7 +371,7 @@ If user chooses "Yes, continue", repeat the process from Step 1. If "Stop for no
 
 ## Key Behaviors
 
-- **Non-blocking**: This command runs independently from `/fix-loop`
+- **Non-blocking**: This command runs independently from `/dev-loop`
 - **Priority-first**: Always surfaces P0 before P1, P1 before P2, etc.
 - **Lightweight analysis**: Quick recommendations, user can dive deeper with other skills
 - **Clear state transitions**: Issues move from blocked → approved with proper label updates
@@ -381,7 +381,7 @@ If user chooses "Yes, continue", repeat the process from Step 1. If "Stop for no
 
 ## Notes
 
-- This command is designed to run in parallel with `/fix-loop` in a separate terminal
+- This command is designed to run in parallel with `/dev-loop` in a separate terminal
 - Fix-loop will automatically pick up approved issues (blocking label removed) on its next iteration
 - Use filtering options (`--label`, `--priority`) to focus on specific types of blocked issues
 - The "Explore further" option allows you to use other skills like `/brainstorm` or `/q1-hypothesize` before making a decision

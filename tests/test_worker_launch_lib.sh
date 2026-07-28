@@ -30,7 +30,7 @@ assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Claude receives agent input"
 assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Claude manager launches interactively"
 
 resolve_worker_launch gemini "$REPO"
-assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
+assert_eq "$WORKER_CMD" "/dev-loop" "Gemini worker command"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
 
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"

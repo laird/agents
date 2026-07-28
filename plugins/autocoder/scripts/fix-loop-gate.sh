@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# fix-loop-gate.sh — pure-script pre-LLM gate for the fix-loop cron tick.
+# fix-loop-gate.sh — pure-script pre-LLM gate for the dev-loop cron tick.
 #
 # Decides whether there is autonomous work to do, and if so, atomically
 # claims a single issue by adding the `working` label. Exits 0 + writes a
@@ -24,7 +24,7 @@
 #                 working/NNN.md). Loser of the rename race gets exit 1;
 #                 we then try the next candidate.
 #   GitHub backend: best-effort `issue_claim` (label-add) plus the
-#                 existing comment-scan race detector in /autocoder:fix.
+#                 existing comment-scan race detector in /autocoder:dev.
 #
 set -euo pipefail
 
@@ -149,14 +149,14 @@ case "$PHASE" in
     # Try to atomically claim the chosen issue. For file backend we get
     # CAS via the rename in `issue_claim`; for github backend the
     # label-add is idempotent so we fall back to the existing comment-scan
-    # race detector in /autocoder:fix.
+    # race detector in /autocoder:dev.
     set -- $REST
     ISSUE_NUM="$1"
     PRIORITY="${2:-}"
 
     # Atomic claim via rename-based issue_claim. File backend: exactly one
     # winner. GitHub backend: best-effort (gh API has no atomic label CAS);
-    # the comment-scan race detector in /autocoder:fix handles cross-host
+    # the comment-scan race detector in /autocoder:dev handles cross-host
     # racers.
     issue_claim "$ISSUE_NUM" 2>/dev/null
     claim_rc=$?

@@ -39,7 +39,7 @@ if [ "$PROPOSAL_COUNT" -eq 0 ]; then
   echo "✅ No pending proposals!"
   echo ""
   echo "All AI-generated proposals have been reviewed."
-  echo "Run '/fix' to generate new proposals if needed."
+  echo "Run '/dev' to generate new proposals if needed."
   exit 0
 fi
 
@@ -152,7 +152,7 @@ echo "════════════════════════�
     │         │                       │
     ▼         └───────────────────────┘
 ┌─────────────────┐
-│  /fix    │
+│  /dev    │
 │  Implements     │
 └─────────────────┘
 ```
@@ -160,5 +160,5 @@ echo "════════════════════════�
 ## See Also
 
 - `/approve-proposal` - Approve a proposal for implementation
-- `/fix` - Autonomous issue resolution (creates proposals)
+- `/dev` - Autonomous issue resolution (creates proposals)
 - `/refine-proposal` - Incorporate feedback into a proposal

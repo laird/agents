@@ -3,7 +3,7 @@
 #
 # Sourced by launcher/lifecycle scripts so per-agent launch and loop commands
 # live in exactly ONE place. Do not duplicate the Codex /goal string or the
-# fix-loop wiring; change it here and callers stay in sync.
+# dev-loop wiring; change it here and callers stay in sync.
 #
 # Usage:
 #   source "$(dirname "$0")/worker-launch-lib.sh"
@@ -11,7 +11,7 @@
 #   # -> sets globals AGENT_LAUNCH_CMD and WORKER_CMD
 #
 # AGENT_LAUNCH_CMD: command that starts the agent REPL (may be empty for droid).
-# WORKER_CMD:       command sent to the agent to begin the continuous fix loop.
+# WORKER_CMD:       command sent to the agent to begin the continuous dev loop.
 # WORKER_LAUNCH_MODE:  interactive|shell
 # WORKER_COMMAND_MODE: agent-input|shell
 # MANAGER_LAUNCH_CMD:  command that starts the manager agent REPL, or empty.
@@ -33,7 +33,7 @@ resolve_worker_launch() {
   case "$agent" in
     claude)
       AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-      WORKER_CMD="/autocoder:fix-loop"
+      WORKER_CMD="/autocoder:dev-loop"
       WORKER_LAUNCH_MODE="interactive"
       WORKER_COMMAND_MODE="agent-input"
       MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
@@ -42,7 +42,7 @@ resolve_worker_launch() {
       ;;
     gemini)
       AGENT_LAUNCH_CMD="gemini --sandbox=false"
-      WORKER_CMD="/fix-loop"
+      WORKER_CMD="/dev-loop"
       WORKER_LAUNCH_MODE="interactive"
       WORKER_COMMAND_MODE="agent-input"
       MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"

@@ -21,7 +21,7 @@ HAS_TMUX=$(command -v tmux &>/dev/null && echo yes || echo no)
 HAS_CMUX=$(command -v cmux &>/dev/null && echo yes || echo no)
 
 # Active sessions
-ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "fix-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
+ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "dev-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
 
 echo "Issue backend:  $ISSUE_SOURCE"
 echo "Agents:         $(echo claude=$HAS_CLAUDE codex=$HAS_CODEX gemini=$HAS_GEMINI droid=$HAS_DROID)"
@@ -54,9 +54,9 @@ Based on what you find, give contextual guidance:
 
 | Command | Purpose |
 |---------|---------|
-| `/fix` | Fix highest-priority issue or a specific issue |
-| `/fix-loop` | Run continuous issue resolution |
-| `/review-blocked` | Interactively review blocked issues (run alongside fix-loop) |
+| `/dev` | Fix highest-priority issue or a specific issue |
+| `/dev-loop` | Run continuous issue resolution |
+| `/review-blocked` | Interactively review blocked issues (run alongside dev-loop) |
 | `/stop-loop` | Stop the continuous loop |
 
 ### Design & Brainstorming
@@ -112,7 +112,7 @@ Use `--paused` to create the manager session and workers without starting the mo
 ### Pattern 1: Single Issue Fix
 
 ```
-/fix 123
+/dev 123
 ```
 
 ### Pattern 2: Continuous Autonomous Mode
@@ -120,7 +120,7 @@ Use `--paused` to create the manager session and workers without starting the mo
 ```
 /set-issue-source   # First time: configure file or GitHub backend
 /install            # First time: install stop hook + parallel scripts
-/fix-loop
+/dev-loop
 ```
 
 ### Pattern 3: Parallel Swarm (example: 3 Claude workers in tmux)
@@ -141,7 +141,7 @@ add-worker --agent codex
 ```
 /list-needs-design
 /brainstorm-issue 45
-/fix 45
+/dev 45
 ```
 
 ### Pattern 6: Proposal Review
@@ -149,14 +149,14 @@ add-worker --agent codex
 ```
 /list-proposals
 /approve-proposal 67
-/fix
+/dev
 ```
 
 ### Pattern 6: Fix-Loop + Parallel Review
 
 ```
 # Window 1: autonomous worker
-/fix-loop
+/dev-loop
 
 # Window 2: unblock stuck issues
 /review-blocked
@@ -173,7 +173,7 @@ add-worker --agent codex
 | **P2** | Medium — degraded, workaround exists |
 | **P3** | Low — minor, cosmetic |
 
-Unlabeled issues are triaged automatically on first `/fix`.
+Unlabeled issues are triaged automatically on first `/dev`.
 
 ## Blocking Labels
 

@@ -139,7 +139,7 @@ case "$AGENT" in
       exit 1
     fi
     AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions"
-    WORKER_CMD="/autocoder:fix-loop"
+    WORKER_CMD="/autocoder:dev-loop"
     MANAGER_CMD="/autocoder:monitor-loop"
     ;;
   gemini)
@@ -149,7 +149,7 @@ case "$AGENT" in
       exit 1
     fi
     AGENT_LAUNCH_CMD="gemini --sandbox=false"
-    WORKER_CMD="/fix-loop"
+    WORKER_CMD="/dev-loop"
     MANAGER_CMD="/monitor-loop"
     ;;
   codex)

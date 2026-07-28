@@ -3,7 +3,7 @@
 # integration branch (default: main) in a way that is safe for parallel git worktrees.
 #
 # WHY THIS EXISTS:
-#   The /fix auto-merge step used to do `git checkout "$PARENT_BRANCH"; git merge; git push`,
+#   The /dev auto-merge step used to do `git checkout "$PARENT_BRANCH"; git merge; git push`,
 #   where PARENT_BRANCH = the branch the worktree was currently on. In a parallel-worktree
 #   swarm each worktree sits on its own `main-wt-N` branch (git forbids checking out `main`
 #   in two worktrees at once), so fixes got merged into and pushed to per-worktree branches
@@ -111,6 +111,6 @@ echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and pushed."
 
 # 4. Clean up the feature branch now that its work is on the integration branch.
 git push origin --delete "$FEATURE" 2>/dev/null || true
-# Leave HEAD on the feature branch locally; the next /fix run branches fresh from
+# Leave HEAD on the feature branch locally; the next /dev run branches fresh from
 # origin/<integration-branch>, so the stale local branch is harmless and gc-able.
 exit 0

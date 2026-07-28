@@ -2,7 +2,7 @@
 model: haiku
 ---
 <!--
-Phase 3 fix-loop token-efficiency (spec §5.3, §10 Phase 3, §7.1.1 verified
+Phase 3 dev-loop token-efficiency (spec §5.3, §10 Phase 3, §7.1.1 verified
 2026-05-21). Haiku gate; fix work dispatched to Sonnet/Opus via Task `model=`.
 
 `model:` frontmatter convention verified 2026-05-21 against the official
@@ -60,7 +60,7 @@ issue_comment N "Triage: <priority> — <one-line rationale>"
 | Security | Exploit | Vuln | Potential | None |
 | Keywords | crash/down/urgent/security | broken/fails/blocking | issue/bug | minor/cosmetic |
 
-Do not load `/autocoder:fix`. Stop after all triaged.
+Do not load `/autocoder:dev`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
@@ -78,11 +78,15 @@ Use the Task tool with:
   model: <opus|sonnet>
   prompt: |
     You are the autocoder fix-worker for issue #<ISSUE>.
-    Load and execute `/autocoder:fix <ISSUE>` via the Skill tool.
+    Load and execute `/autocoder:dev <ISSUE>` via the Skill tool.
     Gate (Haiku) already classified phase=<fix|enhance>; do not re-triage.
-    Complete the full skill chain (systematic-debugging → TDD →
-    verification → finishing-a-development-branch). Report branch
-    name and commit SHA in your final message.
+    Complete the full skill chain (peters-toolkit:bugfix if installed,
+    else systematic-debugging → TDD; then verification →
+    finishing-a-development-branch). Run unattended: never ask a
+    question or wait for approval — resolve bugfix's G1/G2/G4/G5/G8
+    gates per /autocoder:dev's autonomous gate policy, escalating via
+    blocking labels instead of pausing. Report branch name and commit
+    SHA in your final message.
 ```
 
 Subagent runs in its own conversation/model; Haiku stops after dispatch (§7.1.1).
