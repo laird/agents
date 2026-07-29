@@ -322,6 +322,96 @@ case "$UNP_OUTPUT" in
   *)                             echo "FAIL: unparseable summary not reported"; FAIL=$((FAIL + 1)) ;;
 esac
 
+# ── Multi-suite runs must SUM their counts, not report the last one ───────
+# This repo's unit command is `for t in tests/test_*.sh; do bash "$t" || exit 1;
+# done` — 11+ independent scripts, each printing its own "Results: N passed".
+# count_before ended in `tail -1`, which is right for Jest (one summary per run)
+# and wrong here: a green run of ~164 assertions reported "7/0 passed", the last
+# suite's count over a total no script ever prints. Not a false green — the exit
+# code comes from PIPESTATUS — but the number a human reads was off by ~23x.
+mkdir -p "$TMP/multi"
+cat > "$TMP/multi/CLAUDE.md" <<'EOF'
+# Test fixture
+
+### Unit Tests Only
+```bash
+bash multi.sh
+```
+
+**Test Reports**:
+- Location: `docs/test/regression-reports/`
+EOF
+
+cat > "$TMP/multi/multi.sh" <<'EOF'
+#!/bin/bash
+echo "Results: 6 passed, 0 failed"
+echo "Results: 13 passed, 0 failed"
+echo "Results: 7 passed, 0 failed"
+EOF
+chmod +x "$TMP/multi/multi.sh"
+
+cd "$TMP/multi"
+git init --quiet
+git config user.email test@example.com
+git config user.name "Test"
+echo '{"issueSource": "github"}' > .autocoder.json
+
+MULTI_OUTPUT=$(REGRESSION_TEST_NO_ISSUES=1 bash "$SCRIPT" 2>&1)
+MULTI_RC=$?
+
+assert_eq "multi-suite green run exits 0" "0" "$MULTI_RC"
+
+case "$MULTI_OUTPUT" in
+  *"26/26 passed"*) echo "PASS: per-suite counts are summed (26), not last-wins"; PASS=$((PASS + 1)) ;;
+  *)                echo "FAIL: counts not summed — want '26/26 passed' in output"; FAIL=$((FAIL + 1)) ;;
+esac
+
+# The denominator must never be 0 on a run that passed tests. No bash suite here
+# prints the word "total", so UNIT_TOTAL has to be derived from passed+failed.
+assert_not_contains "total is not reported as 0 on a passing run" "26/0 passed" "$MULTI_OUTPUT"
+
+# Failures across suites must sum too, and still go red.
+mkdir -p "$TMP/multired"
+cat > "$TMP/multired/CLAUDE.md" <<'EOF'
+# Test fixture
+
+### Unit Tests Only
+```bash
+bash multifail.sh
+```
+
+**Test Reports**:
+- Location: `docs/test/regression-reports/`
+EOF
+
+cat > "$TMP/multired/multifail.sh" <<'EOF'
+#!/bin/bash
+echo "Results: 4 passed, 2 failed"
+echo "Results: 5 passed, 3 failed"
+exit 1
+EOF
+chmod +x "$TMP/multired/multifail.sh"
+
+cd "$TMP/multired"
+git init --quiet
+git config user.email test@example.com
+git config user.name "Test"
+echo '{"issueSource": "github"}' > .autocoder.json
+
+MULTIRED_OUTPUT=$(REGRESSION_TEST_NO_ISSUES=1 bash "$SCRIPT" 2>&1)
+MULTIRED_RC=$?
+
+if [ "$MULTIRED_RC" -ne 0 ]; then
+  echo "PASS: multi-suite run with failures exits non-zero"; PASS=$((PASS + 1))
+else
+  echo "FAIL: multi-suite run with failures exited 0"; FAIL=$((FAIL + 1))
+fi
+
+case "$MULTIRED_OUTPUT" in
+  *"9/14 passed"*) echo "PASS: failures are summed across suites (9 passed of 14)"; PASS=$((PASS + 1)) ;;
+  *)               echo "FAIL: failure counts not summed — want '9/14 passed'"; FAIL=$((FAIL + 1)) ;;
+esac
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
