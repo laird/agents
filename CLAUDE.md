@@ -311,6 +311,19 @@ This framework has proven results:
 
 **Why this matters**: The marketplace update mechanism relies on the root version number to detect that new plugin versions are available. Forgetting to bump the marketplace version will prevent users from receiving your plugin updates.
 
+## Branching & Releases
+
+This repo uses a three-tier branch model — see **`CONTRIBUTING.md`** for the full flow:
+
+```
+feature/*  ──PR──▶  integration  ──PR──▶  master
+  (work)            (integration test)     (release)
+```
+
+- Work in `feature/*` branches cut **off `integration`**; open PRs **into `integration`** (never commit directly to `integration` or `master`).
+- A **release** is a PR from `integration` → `master`. It must bump the version, and `.github/workflows/release-gate.yml` enforces it: the marketplace root `version` must increase over `master`, and every plugin's `marketplace.json` version must equal its own `plugin.json` (the three-place rule above).
+- Before opening a release PR, run `bash scripts/check-release-version.sh` locally — exit 0 means the gate will pass.
+
 ## References
 
 - **MADR 3.0.0**: https://adr.github.io/madr/ - ADR format specification
