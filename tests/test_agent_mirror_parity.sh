@@ -21,7 +21,16 @@ VERBS=(issue_list issue_get issue_update issue_comment issue_close \
        issue_create issue_claim issue_release issue_any_claimable)
 
 # Files that are shared infrastructure, not platform-specific.
-SHARED=(issue-fns.sh issue-config.sh issues-file.py issues-gh.sh)
+#
+# This must list the WHOLE issue layer, not just the two original backends.
+# A backend that ships only under plugins/ is invisible to this guard, which is
+# how the drift in #71 went unnoticed in the first place: the mirror looked
+# healthy because nothing checked the files that were missing from it.
+#   - issues-jira.sh / issues-ado.sh arrived with #83 and were never mirrored.
+#   - issue-source-lib.sh (issue-source resolution for the swarm launch scripts)
+#     existed only under plugins/.
+SHARED=(issue-fns.sh issue-config.sh issues-file.py issues-gh.sh \
+        issues-jira.sh issues-ado.sh issue-source-lib.sh)
 
 # ── The mirror must ship every shared file ────────────────────────────────
 for f in "${SHARED[@]}"; do
