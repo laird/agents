@@ -20,6 +20,8 @@ source "${_ifns_DIR}/issue-config.sh"
 case "${ISSUE_SOURCE:-}" in
   github) _ifns_BACKEND_SCRIPT="issues-gh.sh"   ;;
   file)   _ifns_BACKEND_SCRIPT="issues-file.py" ;;
+  jira)   _ifns_BACKEND_SCRIPT="issues-jira.sh" ;;
+  ado)    _ifns_BACKEND_SCRIPT="issues-ado.sh"  ;;
   *)      _ifns_BACKEND_SCRIPT="${ISSUE_BACKEND:-}" ;;
 esac
 _ifns_BACKEND_BIN="${_ifns_DIR}/${_ifns_BACKEND_SCRIPT}"
