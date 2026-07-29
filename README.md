@@ -467,7 +467,7 @@ agents/
 │           ├── worker-health.sh         # Worker liveness checks for manager
 │           ├── swarm-manifest-lib.sh    # Swarm state tracking
 │           ├── issue-fns.sh             # issue_claim / issue_release / issue_update wrappers
-│           ├── issue-source-lib.sh      # Issue backend detection (file / github)
+│           ├── issue-source-lib.sh      # Issue backend detection (file / github / jira / ado)
 │           ├── issues-file.py           # File-backend issue store
 │           ├── issues-gh.sh             # GitHub-backend issue store
 │           ├── merge-to-integration.sh  # Land worktree work on shared integration branch
@@ -625,35 +625,40 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 ---
 
-## Adding a Custom Issue Backend
+## Issue Backends
 
-The issue system is pluggable. Any executable that implements the backend contract can be used as an issue source.
+The issue system is pluggable. Four backends ship built-in — **file**, **GitHub**, **Jira**, and **Azure DevOps** — and any executable implementing the same contract can be added as a custom backend. Select one with `/set-issue-source`.
+
+See **[`docs/issue-backends.md`](docs/issue-backends.md)** for the full overview, and [`docs/jira-setup.md`](docs/jira-setup.md) / [`docs/ado-setup.md`](docs/ado-setup.md) for the Jira and Azure DevOps setup guides.
 
 ### Backend Contract
 
-Your backend must accept these subcommands:
+Every backend accepts the same 9 verbs:
 
 | Subcommand | Args | Output |
 |-----------|------|--------|
-| `list` | `[--label L] [--state open\|closed\|all] [--limit N]` | JSON array — `gh issue list` schema |
+| `list` | `[--label L] [--state open\|working\|blocked\|closed\|all] [--limit N]` | JSON array — `gh issue list` schema |
 | `get` | `<number>` | JSON object — `gh issue view` schema |
-| `update` | `<number> [--add-label L] [--remove-label L] [--status S]` | exit code |
+| `update` | `<number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | exit code |
 | `comment` | `<number> --body "..."` | exit code |
 | `close` | `<number> [--comment "..."]` | exit code |
 | `create` | `--title "..." --body "..." [--label L]` | `{"number": N}` |
+| `claim` | `<number>` | exit code |
+| `release` | `<number>` | exit code |
+| `any-claimable` | — | exit `0` if claimable work exists, `1` if none |
 
-`list` and `get` must output JSON matching `gh issue list --json number,title,body,labels,state` and `gh issue view --json number,title,body,labels,state,comments` respectively.
+`list` and `get` must output JSON matching `gh issue list --json number,title,body,labels,state` and `gh issue view --json number,title,body,labels,state,comments` respectively. Exit codes: `0` success/work exists, `1` clean negative, `2` usage error, `3` backend error.
 
 Note: `--priority` is translated to `--label` by `issue-fns.sh` before reaching backends. Backends only receive `--label`.
 
-### Registering Your Backend
+### Registering a Custom Backend
 
-In `.autocoder.json`:
+The built-in sources (`file`, `github`, `jira`, `ado`) need only `issueSource`. A custom backend additionally points `issueBackend` at an executable:
 
 ```json
 {
-  "issueSource": "jira",
-  "issueBackend": "./scripts/backends/jira-backend.sh"
+  "issueSource": "linear",
+  "issueBackend": "./scripts/backends/linear-backend.sh"
 }
 ```
 

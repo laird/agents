@@ -11,10 +11,22 @@ _ifns_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${_ifns_DIR}/issue-config.sh"
 
 _ifns_PY="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/issues-file.py"
+_ifns_JIRA="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/issues-jira.sh"
+_ifns_ADO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/issues-ado.sh"
 
 # ── Internal: dispatch to file backend ────────────────────────────────────
 _ifns_file() {
   python3 "$_ifns_PY" "$@"
+}
+
+# ── Internal: dispatch to Jira backend (self-contained 9-verb script) ──────
+_ifns_jira() {
+  "$_ifns_JIRA" "$@"
+}
+
+# ── Internal: dispatch to Azure DevOps backend (self-contained 9-verb) ─────
+_ifns_ado() {
+  "$_ifns_ADO" "$@"
 }
 
 # ── Internal: GitHub backend implementations ──────────────────────────────
@@ -104,6 +116,8 @@ issue_list() {
   case "$ISSUE_SOURCE" in
     github) _ifns_gh_list "${args[@]}" ;;
     file)   _ifns_file list "${args[@]}" ;;
+    jira)   _ifns_jira list "${args[@]}" ;;
+    ado)    _ifns_ado list "${args[@]}" ;;
     *)      "$ISSUE_BACKEND" list "${args[@]}" ;;
   esac
 }
@@ -112,6 +126,8 @@ issue_get() {
   case "$ISSUE_SOURCE" in
     github) gh issue view "$1" --json number,title,body,labels,state,comments ;;
     file)   _ifns_file get "$@" ;;
+    jira)   _ifns_jira get "$@" ;;
+    ado)    _ifns_ado get "$@" ;;
     *)      "$ISSUE_BACKEND" get "$@" ;;
   esac
 }
@@ -120,6 +136,8 @@ issue_update() {
   case "$ISSUE_SOURCE" in
     github) _ifns_gh_update "$@" ;;
     file)   _ifns_file update "$@" ;;
+    jira)   _ifns_jira update "$@" ;;
+    ado)    _ifns_ado update "$@" ;;
     *)      "$ISSUE_BACKEND" update "$@" ;;
   esac
 }
@@ -135,6 +153,8 @@ issue_comment() {
       gh issue comment "$number" --body "$body"
       ;;
     file) _ifns_file comment "$@" ;;
+    jira) _ifns_jira comment "$@" ;;
+    ado)  _ifns_ado comment "$@" ;;
     *)    "$ISSUE_BACKEND" comment "$@" ;;
   esac
 }
@@ -143,6 +163,8 @@ issue_close() {
   case "$ISSUE_SOURCE" in
     github) _ifns_gh_close "$@" ;;
     file)   _ifns_file close "$@" ;;
+    jira)   _ifns_jira close "$@" ;;
+    ado)    _ifns_ado close "$@" ;;
     *)      "$ISSUE_BACKEND" close "$@" ;;
   esac
 }
@@ -159,6 +181,8 @@ issue_create() {
   case "$ISSUE_SOURCE" in
     github) _ifns_gh_create "${args[@]}" ;;
     file)   _ifns_file create "${args[@]}" ;;
+    jira)   _ifns_jira create "${args[@]}" ;;
+    ado)    _ifns_ado create "${args[@]}" ;;
     *)      "$ISSUE_BACKEND" create "${args[@]}" ;;
   esac
 }
