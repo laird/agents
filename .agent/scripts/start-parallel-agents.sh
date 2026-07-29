@@ -11,6 +11,8 @@
 #                          swarm manifest, and dispatch NOTHING to the manager
 #                          (the caller — e.g. the idle sentinel — owns the
 #                          dispatch). Implies --no-worktrees.
+#   --issue-source file|github|jira|ado  Issue backend for this swarm run
+#   --issue-dir PATH       File issue directory when --issue-source file
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
@@ -20,6 +22,7 @@
 #   start-parallel-agents.sh 3 --mux herdr --agent claude
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github
 #   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
@@ -38,6 +41,8 @@ AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/mux-send-lib.sh"
 # shellcheck source=swarm-manifest-lib.sh
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
+# shellcheck source=issue-source-lib.sh
+source "$SCRIPT_DIR/issue-source-lib.sh"
 
 # Defaults
 NUM_AGENTS=3
@@ -45,6 +50,8 @@ USE_WORKTREES=true
 MUX=""
 AGENT=""
 MANAGER_ONLY=false
+CLI_ISSUE_SOURCE=""
+CLI_ISSUE_DIR=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -65,6 +72,14 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
+    --issue-source)
+      CLI_ISSUE_SOURCE="$2"
+      shift 2
+      ;;
+    --issue-dir)
+      CLI_ISSUE_DIR="$2"
+      shift 2
+      ;;
     [0-9]*)
       NUM_AGENTS="$1"
       shift
@@ -79,6 +94,8 @@ while [[ $# -gt 0 ]]; do
       echo "                         swarm manifest, and dispatch NOTHING to the manager"
       echo "                         (the caller — e.g. the idle sentinel — owns the"
       echo "                         dispatch). Implies --no-worktrees."
+      echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
+      echo "  --issue-dir PATH       File issue directory when --issue-source file"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
@@ -87,6 +104,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 3 --mux herdr --agent claude"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github"
       exit 0
       ;;
     *)
@@ -240,6 +258,14 @@ SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 worker_marker_line() { printf 'export AUTOCODER_WORKER=%q' "$SESSION_NAME:$1"; }
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
+# Resolve the backend once, in the dispatcher, and propagate it to every worker
+# below via issue_env_exports. Workers also source issue-config.sh, which reads
+# .autocoder.json per worktree — but that only agrees with the dispatcher by
+# coincidence. With `--issue-dir` the dispatcher's directory exists nowhere in
+# config, so without this propagation workers resolve a different issue store
+# than the one the swarm was pointed at.
+resolve_effective_issue_source "$CLI_ISSUE_SOURCE" "$CLI_ISSUE_DIR" "$(resolve_main_worktree)" || exit 1
+
 # Generate shared task list ID for coordination
 TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
 
@@ -347,6 +373,21 @@ else
   echo ""
 fi
 
+send_issue_env_tmux() {
+  local target="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && tmux send-keys -t "$target" "$line" C-m
+  done < <(issue_env_exports)
+}
+
+# herdr workers and manager get the same env (mirrors the plugin copy).
+send_issue_env_herdr() {
+  local pane="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_herdr_command "$pane" "$line"
+  done < <(issue_env_exports)
+}
+
 # ============================================================================
 # TMUX MODE
 # ============================================================================
@@ -375,6 +416,7 @@ if [ "$MUX" = "tmux" ]; then
     REVIEW_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "review" -P -F '#{window_id}')
     MANAGER_PANE=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
     tmux send-keys -t "$MANAGER_PANE" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
+    send_issue_env_tmux "$MANAGER_PANE"
     tmux send-keys -t "$MANAGER_PANE" "export $MANAGER_MARKER" C-m
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -406,6 +448,9 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
   fi
   tmux send-keys -t "$PANE_ID" "$(worker_marker_line 1)" C-m
+  # Unconditional: every agent framework reads ISSUE_SOURCE, so this must not
+  # sit behind the claude-only coordination guard below.
+  send_issue_env_tmux "$PANE_ID"
 
   # Set environment variables for Antigravity coordination
   if [ "$AGENT" = "claude" ]; then
@@ -427,6 +472,7 @@ if [ "$MUX" = "tmux" ]; then
       tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
     fi
     tmux send-keys -t "$PANE_ID" "$(worker_marker_line "$i")" C-m
+    send_issue_env_tmux "$PANE_ID"
 
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -488,6 +534,7 @@ if [ "$MUX" = "tmux" ]; then
   # Identity marker: exported before the REPL launches so the manager process
   # carries it in /proc/<pid>/environ (see MANAGER_MARKER above).
   tmux send-keys -t "$MANAGER_PANE" "export $MANAGER_MARKER" C-m
+  send_issue_env_tmux "$MANAGER_PANE"
 
   if [ "$AGENT" = "claude" ]; then
     tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -558,6 +605,15 @@ elif [ "$MUX" = "cmux" ]; then
     cmux send-key --workspace "$ws_ref" enter >/dev/null
   }
 
+  # Defined here rather than at file scope because it depends on cmux_send_cmd,
+  # which is itself local to this branch.
+  send_issue_env_cmux() {
+    local workspace="$1"
+    while IFS= read -r line; do
+      [ -n "$line" ] && cmux_send_cmd "$workspace" "$line"
+    done < <(issue_env_exports)
+  }
+
   # Extract workspace ref (e.g. "workspace:3") from "OK workspace:3" output
   parse_ws_ref() {
     echo "$1" | grep -o 'workspace:[0-9]*'
@@ -594,6 +650,8 @@ elif [ "$MUX" = "cmux" ]; then
     # Rename workspace: wt<N>-<project>
     cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
     cmux_send_cmd "$WS_REF" "$(worker_marker_line "$i")"
+
+    send_issue_env_cmux "$WS_REF"
 
     # Set environment variables for Antigravity coordination
     if [ "$AGENT" = "claude" ]; then
@@ -638,6 +696,7 @@ elif [ "$MUX" = "cmux" ]; then
     # Identity marker: exported before the REPL launches so the manager
     # process carries it in its environment (see MANAGER_MARKER above).
     cmux_send_cmd "$REVIEW_WS_REF" "export $MANAGER_MARKER"
+    send_issue_env_cmux "$REVIEW_WS_REF"
 
     if [ "$AGENT" = "claude" ]; then
       cmux_send_cmd "$REVIEW_WS_REF" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
@@ -744,6 +803,7 @@ elif [ "$MUX" = "herdr" ]; then
     send_herdr_command "$PANE_ID" "$(worker_marker_line "$i")"
 
     # Set environment variables for Antigravity coordination
+    send_issue_env_herdr "$PANE_ID"
     if [ "$AGENT" = "claude" ]; then
       send_herdr_command "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
       send_herdr_command "$PANE_ID" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
@@ -786,6 +846,7 @@ elif [ "$MUX" = "herdr" ]; then
     # Identity marker: exported before the REPL launches so the manager
     # process carries it in its environment (see MANAGER_MARKER above).
     send_herdr_command "$MANAGER_PANE_ID" "export $MANAGER_MARKER"
+    send_issue_env_herdr "$MANAGER_PANE_ID"
 
     if [ "$AGENT" = "claude" ]; then
       send_herdr_command "$MANAGER_PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
