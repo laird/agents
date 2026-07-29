@@ -332,6 +332,14 @@ bash plugins/autocoder/scripts/regression-test.sh
 bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocoder/scripts/*.py
 ```
 
+### Unit Tests Only
+```bash
+for t in tests/test_*.sh; do bash "$t" || exit 1; done
+```
+This is the header `regression-test.sh` reads to decide what to actually run.
+Do not point it at `### Regression Test Suite` — that entry invokes
+`regression-test.sh` itself, and the script rejects self-referential commands.
+
 ### Test Framework Details
 
 **Unit Tests**:
