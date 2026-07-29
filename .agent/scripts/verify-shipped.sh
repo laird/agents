@@ -22,9 +22,24 @@
 #   Shipping is therefore defined against the branch that actually ships — the
 #   repo's default branch by default, overridable with CLAUDE_CODE_SHIP_BRANCH.
 #
+# THE DEFAULT BRANCH ALWAYS SHIPS (issue #76):
+#   The designation above is read from the *local worktree's* GEMINI.md, so two
+#   worktrees sitting on different branches returned different verdicts for the
+#   same commit. Worse, a designation naming a branch that has since been merged
+#   away stops advancing, so every subsequent commit is un-shippable forever —
+#   work landing on the trunk reports NOT_SHIPPED and is parked with
+#   awaiting-integration.
+#
+#   So a commit is shipped if it has reached the designated ship branch OR the
+#   repo's default branch. That restores the doctrine stated above (the default
+#   branch is what ships) while keeping the override useful for a swarm that
+#   genuinely gates on an integration line. It cannot re-introduce the #35 bug:
+#   that bug was closing work that reached *only* a feature line, and a feature
+#   line is neither the ship branch nor the default.
+#
 # Usage:   verify-shipped.sh <commit-ish> [ship-branch]
-# Exit:    0 = commit is an ancestor of the ship branch (safe to close)
-#          1 = commit exists but has NOT reached the ship branch (do not close)
+# Exit:    0 = commit is an ancestor of the ship branch or the default branch
+#          1 = commit exists but has reached neither (do not close)
 #          2 = usage error, or the commit/ship branch could not be resolved
 #
 # On exit 1 the script prints the ship branch and, when it can determine one,
@@ -47,6 +62,32 @@ fi
 # The regex accepts any branch name — the older extractor in dev-loop.md matches
 # only \b(main|master|develop|integration)\b, which cannot express a branch like
 # feat/autocoder-planning-pipeline.
+# Name of the repo default branch, or empty when it cannot be determined (a
+# bare fixture repo with no origin, or gh unavailable). Callers must treat an
+# empty result as "no default-branch check", never as a failure.
+resolve_default_branch() {
+    local d=""
+    d=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+        | sed 's@^refs/remotes/origin/@@')
+    if [ -z "$d" ]; then
+        d=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name \
+            2>/dev/null || echo "")
+    fi
+    printf '%s' "$d"
+}
+
+# First resolvable of origin/<branch> then <branch>; empty when neither exists.
+resolve_ref() {
+    local branch="$1" candidate
+    [ -n "$branch" ] || return 0
+    for candidate in "origin/$branch" "$branch"; do
+        if git rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+}
+
 SHIP_BRANCH="${2:-${CLAUDE_CODE_SHIP_BRANCH:-}}"
 
 if [ -z "$SHIP_BRANCH" ]; then
@@ -58,8 +99,10 @@ if [ -z "$SHIP_BRANCH" ]; then
     done
 fi
 
+DEFAULT_BRANCH=$(resolve_default_branch)
+
 if [ -z "$SHIP_BRANCH" ]; then
-    SHIP_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
+    SHIP_BRANCH="$DEFAULT_BRANCH"
 fi
 SHIP_BRANCH="${SHIP_BRANCH:-main}"
 
@@ -70,31 +113,44 @@ fi
 
 git fetch origin "$SHIP_BRANCH" --quiet 2>/dev/null || true
 
-SHIP_REF=""
-for candidate in "origin/$SHIP_BRANCH" "$SHIP_BRANCH"; do
-    if git rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null; then
-        SHIP_REF="$candidate"
-        break
-    fi
-done
+SHIP_REF=$(resolve_ref "$SHIP_BRANCH")
 
 if [ -z "$SHIP_REF" ]; then
     echo "verify-shipped: cannot resolve ship branch '$SHIP_BRANCH'" >&2
     exit 2
 fi
 
-if git merge-base --is-ancestor "$COMMIT" "$SHIP_REF" 2>/dev/null; then
-    echo "SHIPPED: $(git rev-parse --short "$COMMIT") is on ${SHIP_REF}"
-    exit 0
+# The default branch is a second, always-valid shipping destination. Resolved
+# only when it names something other than the ship branch, and a failure to
+# resolve it is not fatal — the ship-branch check above still stands.
+DEFAULT_REF=""
+if [ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != "$SHIP_BRANCH" ]; then
+    git fetch origin "$DEFAULT_BRANCH" --quiet 2>/dev/null || true
+    DEFAULT_REF=$(resolve_ref "$DEFAULT_BRANCH")
 fi
 
-echo "NOT_SHIPPED: $(git rev-parse --short "$COMMIT") has not reached ${SHIP_REF}"
+for ref in "$SHIP_REF" "$DEFAULT_REF"; do
+    [ -n "$ref" ] || continue
+    if git merge-base --is-ancestor "$COMMIT" "$ref" 2>/dev/null; then
+        echo "SHIPPED: $(git rev-parse --short "$COMMIT") is on ${ref}"
+        exit 0
+    fi
+done
 
-# Best-effort: name where it IS, so the caller can explain the gap.
+if [ -n "$DEFAULT_REF" ]; then
+    echo "NOT_SHIPPED: $(git rev-parse --short "$COMMIT") has reached neither ${SHIP_REF} nor ${DEFAULT_REF}"
+else
+    echo "NOT_SHIPPED: $(git rev-parse --short "$COMMIT") has not reached ${SHIP_REF}"
+fi
+
+# Best-effort: name where it IS, so the caller can explain the gap. Both
+# shipping destinations are excluded — neither contains the commit here, and
+# listing them as "parked on" would be actively misleading.
 PARKED=$(git branch -r --contains "$COMMIT" 2>/dev/null \
     | sed 's/^[ *]*//' \
     | grep -v -- '->' \
     | grep -v "^${SHIP_REF}$" \
+    | grep -v "^${DEFAULT_REF:-__none__}$" \
     | head -3 | tr '\n' ' ')
 [ -n "$PARKED" ] && echo "PARKED_ON:$PARKED"
 

@@ -176,3 +176,113 @@ def test_repo_declares_ship_branch_for_the_fleet():
         "CLAUDE.md must declare the ship branch so headless workers and humans "
         "can resolve it without direnv"
     )
+
+
+# ── The default branch always ships (issue #76) ─────────────────────────────
+# The designation is read from the *local worktree's* CLAUDE.md, so two
+# worktrees on different branches disagreed about the same commit. And a
+# designation naming a branch that has been merged away stops advancing, which
+# makes every later commit permanently un-shippable. These build a repo with a
+# real origin, because the property under test is default-branch resolution.
+
+@pytest.fixture
+def repo_with_origin(tmp_path):
+    """Clone-with-origin: master (default), plus a frozen integration line."""
+    origin = tmp_path / "origin.git"
+    sh(f"git init -q --bare -b master {origin}", tmp_path)
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    sh("git init -q -b master", seed)
+    sh("git config user.email t@t; git config user.name t", seed)
+    (seed / "a.txt").write_text("base\n")
+    sh("git add -A && git commit -qm base", seed)
+    sh(f"git remote add origin {origin} && git push -q origin master", seed)
+
+    # An integration line that receives feature work, then stops advancing.
+    sh("git checkout -q -b integration", seed)
+    (seed / "b.txt").write_text("integration work\n")
+    sh("git add -A && git commit -qm 'integration work'", seed)
+    frozen = sh("git rev-parse HEAD", seed).stdout.strip()
+    sh("git push -q origin integration", seed)
+
+    # A feature line that reaches neither destination.
+    sh("git checkout -q -b orphan", seed)
+    (seed / "c.txt").write_text("orphan work\n")
+    sh("git add -A && git commit -qm 'orphan work'", seed)
+    orphan = sh("git rev-parse HEAD", seed).stdout.strip()
+    sh("git push -q origin orphan", seed)
+
+    # master advances past the integration line, as it does after a big merge.
+    sh("git checkout -q master", seed)
+    (seed / "d.txt").write_text("trunk work\n")
+    sh("git add -A && git commit -qm 'trunk work'", seed)
+    on_master = sh("git rev-parse HEAD", seed).stdout.strip()
+    sh("git push -q origin master", seed)
+
+    work = tmp_path / "work"
+    sh(f"git clone -q {origin} {work}", tmp_path)
+    sh("git config user.email t@t; git config user.name t", work)
+    return work, on_master, frozen, orphan
+
+
+def _run(cwd, *args):
+    import os
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SHIP_BRANCH"}
+    return subprocess.run(["bash", str(SCRIPT), *args], cwd=str(cwd),
+                          capture_output=True, text=True, env=env)
+
+
+def test_default_branch_ships_even_when_the_designation_is_stale(repo_with_origin):
+    """The #76 regression: a stale designation must not un-ship trunk work."""
+    work, on_master, _frozen, _orphan = repo_with_origin
+    (work / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    res = _run(work, on_master)
+    assert res.returncode == 0, (
+        "a commit on the repo default branch must count as shipped even when "
+        f"the ship branch designation points at a frozen line: {res.stdout}{res.stderr}"
+    )
+    assert "SHIPPED" in res.stdout
+
+
+def test_env_pin_to_a_frozen_branch_still_ships_trunk_work(repo_with_origin):
+    """.envrc outranks CLAUDE.md, so the env path needs the same guarantee."""
+    import os
+    work, on_master, _frozen, _orphan = repo_with_origin
+    env = dict(os.environ, CLAUDE_CODE_SHIP_BRANCH="integration")
+    res = subprocess.run(["bash", str(SCRIPT), on_master], cwd=str(work),
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 0, f"env pin must not un-ship trunk work: {res.stdout}"
+
+
+def test_gate_still_blocks_work_on_neither_destination(repo_with_origin):
+    """#35 must survive: work on a feature line alone is still NOT_SHIPPED."""
+    work, _on_master, _frozen, orphan = repo_with_origin
+    (work / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    res = _run(work, orphan)
+    assert res.returncode == 1, f"orphan work must not pass the gate: {res.stdout}"
+    assert "NOT_SHIPPED" in res.stdout
+
+
+def test_designated_ship_branch_still_counts(repo_with_origin):
+    """The override keeps working: reaching it alone is enough."""
+    work, _on_master, frozen, _orphan = repo_with_origin
+    (work / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    res = _run(work, frozen)
+    assert res.returncode == 0, f"integration work must still ship: {res.stdout}"
+
+
+def test_verdict_does_not_depend_on_which_worktree_asks(repo_with_origin):
+    """The issue title: same commit, same answer, whichever branch you sit on."""
+    work, on_master, _frozen, _orphan = repo_with_origin
+    (work / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    sh("git worktree add -q ../wt-int -b intline origin/integration", work)
+    other = work.parent / "wt-int"
+    (other / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+
+    a, b = _run(work, on_master), _run(other, on_master)
+    assert a.returncode == b.returncode, (
+        f"worktrees disagree: master-worktree={a.returncode} "
+        f"integration-worktree={b.returncode}\n{a.stdout}\n{b.stdout}"
+    )
+    assert a.returncode == 0
