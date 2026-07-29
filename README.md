@@ -171,42 +171,87 @@ startdt 3    # 1 manager + 3 Droid workers in tmux
 
 ### Claude Code
 
-#### Add Marketplace
+The steps below are the exact sequence to go from nothing to a running autocoder swarm. Commands that start with `/` are typed **inside Claude Code**; commands without a slash are typed in **your terminal**.
 
-```bash
-/plugin add marketplace https://github.com/laird/agents
+> **Prerequisites:** a git repository, `tmux` (or `cmux`) if you want a swarm, and — for the GitHub issue backend — an authenticated `gh` CLI (`gh auth login`).
+
+#### 1. Add the marketplace
+
+Inside Claude Code:
+
+```
+/plugin marketplace add laird/agents
 ```
 
-#### Install Plugins
+(`owner/repo` is the GitHub shorthand; for other hosts pass a full `https://…​.git` URL.) Running `/plugin` with no arguments opens the interactive plugin UI (Discover / Installed / Marketplaces / Errors) if you'd rather click through it.
 
-**Install modernize plugin** (software modernization workflows):
+#### 2. Install the plugin
 
-```bash
-/plugin install modernize
+One plugin per command. Install autocoder (and optionally modernize):
+
+```
+/plugin install autocoder@plugin-marketplace
+/plugin install modernize@plugin-marketplace     # optional
 ```
 
-**Install autocoder plugin** (autonomous GitHub issue resolution):
+Then activate them in the current session (new sessions load them automatically):
 
-```bash
-/plugin install autocoder
+```
+/reload-plugins
 ```
 
-**Install both plugins**:
+Autocoder's slash commands are now available — `/fix`, `/fix-loop`, `/stop-loop`, `/install`, `/set-issue-source`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/review-blocked`, `/autocoder-help`, and more. Run `/autocoder-help` for the full list; `/modernize-help` covers the modernize workflow.
 
-```bash
-/plugin install modernize autocoder
+#### 3. Install the utility scripts
+
+Run the plugin's installer **inside Claude Code**:
+
+```
+/install
 ```
 
-After installation, commands will be available as slash commands in Claude Code:
+This checks dependencies (tmux/cmux, `gh`, agent CLIs), sets up the loop mechanism used by `/fix-loop`, and — the part that matters for swarms — symlinks the parallel-agent utilities into `~/.local/bin` (adding it to your `PATH`): `start-parallel`, `add-worker`, `remove-worker`, `join-parallel`, `end-parallel`, `stop-parallel`. It can also add optional shell aliases.
 
-- **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
-- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
+Open a new terminal (or `source` your shell rc) so the symlinks are on your `PATH`, then confirm:
 
-**Get help anytime:**
-```bash
-/modernize-help    # Overview of modernization workflow
-/autocoder-help    # Overview of autonomous coding workflow
 ```
+start-parallel --help
+```
+
+#### 4. Choose the issue source
+
+From the repo you want autocoder to work on, inside Claude Code:
+
+```
+/set-issue-source
+```
+
+Pick `github` (default for GitHub repos; needs `gh auth login`) or `file` (a local `.issues/` directory — no external service). This writes `.autocoder.json` so every agent shares the same source.
+
+#### 5. Run autocoder
+
+```
+/fix          # one autonomous pass over the highest-priority issue
+/fix-loop     # run continuously until no claimable work remains
+/stop-loop    # stop the loop
+```
+
+#### 6. Start an agentic swarm
+
+`start-parallel` launches **N** worker agents, each in its own git worktree, under a terminal multiplexer — a parallel fleet all pulling from the same issue queue. Run it in your terminal, from the target repo:
+
+```bash
+# 3 Claude workers in tmux, self-claiming from the GitHub issue queue:
+start-parallel 3 --agent claude --mux tmux --issue-source github
+
+# create the swarm but don't start the loops yet (attach and start manually):
+start-parallel 3 --agent claude --paused
+
+# manager routing: workers idle until a manager dispatches /autocoder:fix <N>:
+start-parallel 5 --agent claude --route manager
+```
+
+Manage a running swarm with the companion utilities `/install` set up — `add-worker`, `remove-worker`, `join-parallel` (attach), `stop-parallel` (pause loops), `end-parallel` (tear down). See [`docs/multi-worktree-coordination.md`](docs/multi-worktree-coordination.md) for coordination details.
 
 ### Recommended Companion Plugins
 
