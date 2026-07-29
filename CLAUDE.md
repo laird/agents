@@ -296,20 +296,23 @@ This framework has proven results:
 
 ### Version Management
 
-**CRITICAL**: When updating any plugin version, you MUST also update the marketplace version:
+**CRITICAL**: When updating any plugin version, you MUST update it in **three** places, or the versions drift apart:
 
-1. **Individual plugin versions** are in `.claude-plugin/marketplace.json` under `plugins[]`
-2. **Marketplace version** is at the root level of `.claude-plugin/marketplace.json`
-3. **Both must be updated** for the update mechanism to work properly
+1. **Individual plugin versions** in `.claude-plugin/marketplace.json` under `plugins[]`
+2. **Marketplace version** at the root level of `.claude-plugin/marketplace.json`
+3. **The plugin's own manifest** `.claude-plugin/plugins/<name>/plugin.json` — this is the version the installed plugin self-reports, and it is easy to forget because it lives in a different file
 
 **Example workflow:**
 ```bash
 # When updating autocoder from 3.5.0 to 3.6.0:
-# 1. Update plugins[].version: "3.6.0"  (individual plugin)
-# 2. Update root version: "3.10.0"     (marketplace version bump)
+# 1. Update marketplace.json plugins[].version:            "3.6.0"  (individual plugin)
+# 2. Update marketplace.json root version:                 "3.10.0" (marketplace version bump)
+# 3. Update .claude-plugin/plugins/autocoder/plugin.json:  "3.6.0"  (plugin manifest — keep == #1)
 ```
 
-**Why this matters**: The marketplace update mechanism relies on the root version number to detect that new plugin versions are available. Forgetting to bump the marketplace version will prevent users from receiving your plugin updates.
+**Why this matters**: The marketplace update mechanism relies on the root version number to detect that new plugin versions are available. Forgetting to bump the marketplace version will prevent users from receiving your plugin updates — and forgetting `plugin.json` (#3) leaves the installed plugin reporting a stale version even after it updates. #1 and #3 must always be equal.
+
+Note: the other platform packagings (`.factory-plugin/`, `codex-plugins/`) carry their own version numbers and are released independently — only keep a packaging's marketplace and its `plugin.json` in step *with each other*; they need not match the Claude versions.
 
 ## References
 
