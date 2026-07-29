@@ -7,6 +7,8 @@
 # Options:
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --issue-source file|github|jira|ado  Issue backend for this swarm run
+#   --issue-dir PATH       File issue directory when --issue-source file
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
@@ -14,6 +16,7 @@
 #   start-parallel-agents.sh 4 --mux cmux --agent gemini
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github
 #   start-parallel-agents.sh 2 --no-worktrees
 
 set -e
@@ -30,12 +33,16 @@ AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=mux-send-lib.sh
 source "$SCRIPT_DIR/mux-send-lib.sh"
+# shellcheck source=issue-source-lib.sh
+source "$SCRIPT_DIR/issue-source-lib.sh"
 
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
 MUX=""
 AGENT=""
+CLI_ISSUE_SOURCE=""
+CLI_ISSUE_DIR=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -52,6 +59,14 @@ while [[ $# -gt 0 ]]; do
       USE_WORKTREES=false
       shift
       ;;
+    --issue-source)
+      CLI_ISSUE_SOURCE="$2"
+      shift 2
+      ;;
+    --issue-dir)
+      CLI_ISSUE_DIR="$2"
+      shift 2
+      ;;
     [0-9]*)
       NUM_AGENTS="$1"
       shift
@@ -62,6 +77,8 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
+      echo "  --issue-dir PATH       File issue directory when --issue-source file"
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
@@ -69,6 +86,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github"
       exit 0
       ;;
     *)
@@ -199,6 +217,14 @@ PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
+# Resolve the backend once, in the dispatcher, and propagate it to every worker
+# below via issue_env_exports. Workers also source issue-config.sh, which reads
+# .autocoder.json per worktree — but that only agrees with the dispatcher by
+# coincidence. With `--issue-dir` the dispatcher's directory exists nowhere in
+# config, so without this propagation workers resolve a different issue store
+# than the one the swarm was pointed at.
+resolve_effective_issue_source "$CLI_ISSUE_SOURCE" "$CLI_ISSUE_DIR" "$(resolve_main_worktree)" || exit 1
+
 # Generate shared task list ID for coordination
 TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
 
@@ -263,6 +289,13 @@ else
   echo ""
 fi
 
+send_issue_env_tmux() {
+  local target="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && tmux send-keys -t "$target" "$line" C-m
+  done < <(issue_env_exports)
+}
+
 # ============================================================================
 # TMUX MODE
 # ============================================================================
@@ -287,6 +320,9 @@ if [ "$MUX" = "tmux" ]; then
   else
     tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
   fi
+  # Unconditional: every agent framework reads ISSUE_SOURCE, so this must not
+  # sit behind the claude-only coordination guard below.
+  send_issue_env_tmux "$SESSION_NAME:0.0"
 
   # Set environment variables for Antigravity coordination
   if [ "$AGENT" = "claude" ]; then
@@ -304,6 +340,7 @@ if [ "$MUX" = "tmux" ]; then
     else
       tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$PROJECT_ROOT'" C-m
     fi
+    send_issue_env_tmux "$SESSION_NAME:0.$((i-1))"
 
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -352,6 +389,7 @@ if [ "$MUX" = "tmux" ]; then
   # Set up review window
   echo "   Starting coordinator..."
   tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
+  send_issue_env_tmux "$SESSION_NAME:1.0"
 
   if [ "$AGENT" = "claude" ]; then
     tmux send-keys -t "$SESSION_NAME:1.0" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -413,6 +451,15 @@ elif [ "$MUX" = "cmux" ]; then
     cmux send-key --workspace "$ws_ref" enter >/dev/null
   }
 
+  # Defined here rather than at file scope because it depends on cmux_send_cmd,
+  # which is itself local to this branch.
+  send_issue_env_cmux() {
+    local workspace="$1"
+    while IFS= read -r line; do
+      [ -n "$line" ] && cmux_send_cmd "$workspace" "$line"
+    done < <(issue_env_exports)
+  }
+
   # Extract workspace ref (e.g. "workspace:3") from "OK workspace:3" output
   parse_ws_ref() {
     echo "$1" | grep -o 'workspace:[0-9]*'
@@ -446,6 +493,8 @@ elif [ "$MUX" = "cmux" ]; then
 
     # Rename workspace: wt<N>-<project>
     cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
+
+    send_issue_env_cmux "$WS_REF"
 
     # Set environment variables for Antigravity coordination
     if [ "$AGENT" = "claude" ]; then
@@ -482,6 +531,8 @@ elif [ "$MUX" = "cmux" ]; then
   if [ -n "$REVIEW_WS_REF" ]; then
     # Manager workspace: manager-<project> (same pattern as wt<N>-<project> workers)
     cmux rename-workspace --workspace "$REVIEW_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
+
+    send_issue_env_cmux "$REVIEW_WS_REF"
 
     if [ "$AGENT" = "claude" ]; then
       cmux_send_cmd "$REVIEW_WS_REF" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"

@@ -109,6 +109,54 @@ for side in "plugins:$PLUGIN_DIR" "mirror:$AGENT_DIR"; do
   fi
 done
 
+# ── start-parallel-agents.sh: behavioural parity, not byte parity ─────────
+# This pair CANNOT join SHARED above: the two legitimately differ (tmux/cmux
+# launch mechanics, ANTIGRAVITY_* vs CLAUDE_CODE_* env names), so a diff check
+# would fail permanently and teach everyone to ignore it. What must match is
+# the contract: same issue CLI surface, and the dispatcher's resolved backend
+# actually reaching the workers.
+#
+# The mirror shipped issue-source-lib.sh (via the fix for #71) while its only
+# consumer still never called it — 233 lines behind, no --issue-source flag,
+# and workers launched without ISSUE_SOURCE/ISSUE_DIR_PATH. See #88.
+SPA="start-parallel-agents.sh"
+
+# `--help` exits during argument parsing, before any multiplexer is touched, so
+# running it is hermetic. Asserting on real output beats grepping the source:
+# a flag can be documented in a comment and still not be parsed.
+for side in "plugins:$PLUGIN_DIR" "mirror:$AGENT_DIR"; do
+  label="${side%%:*}"; dir="${side#*:}"
+  if [ ! -f "$dir/$SPA" ]; then
+    bad "$label: $SPA missing"
+    continue
+  fi
+  help_out=$(bash "$dir/$SPA" --help 2>&1) || true
+  for flag in --issue-source --issue-dir; do
+    if echo "$help_out" | grep -qF -- "$flag"; then
+      ok "$label $SPA documents $flag"
+    else
+      bad "$label $SPA does not document $flag"
+    fi
+  done
+done
+
+# The flags must be *parsed*, the backend *resolved*, and the result *sent* to
+# workers. Each of the three is a separate way to be half-wired, so assert all
+# three rather than only that the library is sourced.
+for side in "plugins:$PLUGIN_DIR" "mirror:$AGENT_DIR"; do
+  label="${side%%:*}"; dir="${side#*:}"
+  [ -f "$dir/$SPA" ] || continue
+  src=$(cat "$dir/$SPA")
+  for needle in 'issue-source-lib.sh' '--issue-source)' '--issue-dir)' \
+                'resolve_effective_issue_source' 'issue_env_exports'; do
+    if echo "$src" | grep -qF -- "$needle"; then
+      ok "$label $SPA has $needle"
+    else
+      bad "$label $SPA is missing $needle"
+    fi
+  done
+done
+
 # ── The real gh must never have been reached ──────────────────────────────
 if [ -f "$GH_TRIPWIRE" ]; then
   bad "test shelled out to real gh: $(head -1 "$GH_TRIPWIRE")"
