@@ -28,12 +28,20 @@ TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
-    # Extract report directory
-    if grep -q "Location: " CLAUDE.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
-    else
-        REPORT_DIR="docs/test/regression-reports"
-    fi
+    # Extract report directory.
+    # Scope to the Test Reports section: CLAUDE.md has several "Location: " lines
+    # and the Unit Tests one (`tests/test_*.sh`) comes first. Taking the first
+    # global match made the script mkdir a directory literally named
+    # `tests/test_*.sh`, which shadows the project's own test glob and turns the
+    # unit suite spuriously red (issue #97).
+    REPORT_DIR=$(grep -A3 '\*\*Test Reports\*\*' CLAUDE.md 2>/dev/null \
+        | grep "Location: " \
+        | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
+    # A value that still looks like a glob is a parse failure, not a directory
+    # name — never create it.
+    case "$REPORT_DIR" in
+        ""|*[\*\?\[]*) REPORT_DIR="docs/test/regression-reports" ;;
+    esac
 
     # Extract unit test configuration
     if grep -q "Working directory: " CLAUDE.md && grep -B5 "Working directory:" CLAUDE.md | grep -q "Unit Tests"; then
