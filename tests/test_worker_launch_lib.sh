@@ -40,6 +40,29 @@ esac
 assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the sonnet tier"
 assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
 
+# The worker-loop path must resolve to a file that EXISTS, not just to a
+# plausible-looking string. Installed plugins live at
+# cache/plugin-marketplace/autocoder/<version>/scripts, so a repo_root derived as
+# SCRIPT_DIR/../../.. lands on the cache root; appending plugins/autocoder/scripts
+# yields a hybrid path that is real in neither layout (issue #94). The loop script
+# always ships beside this lib, so resolve it from the lib's own directory.
+BOGUS_ROOT="$TMP/not-a-repo-checkout"
+mkdir -p "$BOGUS_ROOT"
+resolve_worker_launch claude "$BOGUS_ROOT"
+WORKER_LOOP_PATH="${WORKER_CMD#bash \'}"
+WORKER_LOOP_PATH="${WORKER_LOOP_PATH%\'}"
+if [ ! -f "$WORKER_LOOP_PATH" ]; then
+  echo "FAIL: Claude worker loop path does not exist: '$WORKER_LOOP_PATH'" >&2
+  exit 1
+fi
+case "$WORKER_LOOP_PATH" in
+  "$BOGUS_ROOT"*)
+    echo "FAIL: worker loop path was derived from repo_root instead of the lib dir: '$WORKER_LOOP_PATH'" >&2
+    exit 1 ;;
+esac
+# Restore the normal-layout resolution for any later assertions.
+resolve_worker_launch claude "$REPO"
+
 resolve_worker_launch gemini "$REPO"
 assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
