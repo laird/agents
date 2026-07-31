@@ -46,11 +46,14 @@ resolve_worker_launch() {
       MANAGER_LAUNCH_MODE="interactive"
       ;;
     gemini)
-      AGENT_LAUNCH_CMD="gemini --sandbox=false"
-      WORKER_CMD="/fix-loop"
-      WORKER_LAUNCH_MODE="interactive"
-      WORKER_COMMAND_MODE="agent-input"
-      MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
+      # Workers: shell loop that restarts gemini per issue (fresh context per fix).
+      # gemini-fix-loop.sh calls `gemini -p` as a subprocess per iteration.
+      # Manager: interactive Gemini session for coordination (monitor-loop).
+      AGENT_LAUNCH_CMD=""
+      WORKER_CMD="bash '$repo_root/scripts/gemini-fix-loop.sh'"
+      WORKER_LAUNCH_MODE="shell"
+      WORKER_COMMAND_MODE="shell"
+      MANAGER_LAUNCH_CMD="gemini --sandbox=false"
       MANAGER_CMD="/monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       ;;
