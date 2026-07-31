@@ -196,6 +196,47 @@ workers automatically (they are both wedged and bloated, so there is no progress
 to lose). For one-shot runs, prefer confirming with the human first via
 AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
 
+### Step 4c: Hand off workers approaching the context limit (≥95%)
+
+**Every tick, read each worker's `NN% context used` line and hand off any worker at ≥95%
+context — do NOT let it keep working up to 100% and wedge.** This is distinct from Step 4b
+(which restarts a worker that is *already* wedged): Step 4c is **proactive**, triggered by
+context %, and it **preserves** the worker's in-flight task via a handoff rather than
+discarding uncommitted work.
+
+Read each worker's context percentage from its pane:
+
+```bash
+# per worker pane
+tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE '[0-9]+% context used' | tail -1
+```
+
+For **any worker at ≥95% context**, orchestrate handoff → clear → resume so nothing is lost:
+
+1. **Handoff** — have the worker preserve state *before* clearing: commit its WIP to the
+   branch (even partial, WIP-tagged) **and** post a handoff note (its plan, key findings,
+   concrete next steps) as a comment on the GitHub issue it is working, so the state
+   survives the clear. If the worker cannot self-handoff (already near 100%/jammed), the
+   manager captures the handoff note on the issue on its behalf.
+2. **`/clear`** — free the context window:
+   ```bash
+   tmux send-keys -t <session>:<window>.<pane> "/clear" Enter
+   ```
+3. **Resume** — a fresh-context session re-reads the handoff (issue + branch + note) and
+   continues its assigned issue:
+   ```bash
+   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+   ```
+
+**Why 95%, not 100%:** a worker that runs to 100% wedges mid-task while holding a large
+footprint, and at 100% the built-in `/clear` is often un-submittable via tmux (jammed
+input) — forcing the heavier `restart-worker` (Step 4b), which **discards uncommitted
+work**. Handing off at 95% — while `/clear` still works and the worker still has a working
+context — avoids the wedge and loses nothing.
+
+**Do NOT `/clear` a mid-task worker WITHOUT a handoff first** — that loses the task context.
+(Only a worker that has *completed* its task may take a bare `/clear` + `/autocoder:fix-loop`.)
+
 ### Step 5: Dispatch Work to Idle Workers
 
 Find unblocked claimable issues sorted by priority (the `--state open`

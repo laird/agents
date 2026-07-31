@@ -174,6 +174,35 @@ workers automatically (they are both wedged and bloated, so there is no progress
 to lose). For one-shot runs, prefer confirming with the human first via
 AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
 
+### Step 4c: Hand off workers approaching the context limit (≥95%)
+
+**Every tick, read each worker's `NN% context used` line and hand off any worker at ≥95%
+context — do NOT let it keep working up to 100% and wedge.** Distinct from Step 4b (which
+restarts an *already*-wedged worker): Step 4c is **proactive**, triggered by context %, and
+**preserves** the worker's in-flight task via a handoff rather than discarding uncommitted work.
+
+Read each worker's context percentage from its pane:
+
+```bash
+tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE '[0-9]+% context used' | tail -1
+```
+
+For **any worker at ≥95% context**, orchestrate handoff → clear → resume:
+
+1. **Handoff** — preserve state before clearing: commit WIP to the branch (even partial,
+   WIP-tagged) **and** post a handoff note (plan, key findings, next steps) as a comment on
+   the GitHub issue the worker is on, so it survives the clear. If the worker can't
+   self-handoff (near 100%/jammed), the manager writes the handoff note on its behalf.
+2. **`/clear`** — `tmux send-keys -t <pane> "/clear" Enter`.
+3. **Resume** — `tmux send-keys -t <pane> "/autocoder:fix <issue_number>" Enter` (fresh
+   context re-reads the issue + branch + handoff note and continues).
+
+**Why 95%, not 100%:** at 100% the worker wedges and the built-in `/clear` is often
+un-submittable via tmux (jammed) — forcing the heavier `restart-worker`, which discards
+uncommitted work. Handing off at 95% avoids the wedge and loses nothing. **Never `/clear` a
+mid-task worker without a handoff first** (only a *completed*-task worker takes a bare
+`/clear` + `/autocoder:fix-loop`).
+
 ### Step 5: Dispatch Work to Idle Workers
 
 Find unblocked claimable issues sorted by priority (the `--state open`
