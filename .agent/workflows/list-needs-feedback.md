@@ -186,4 +186,4 @@ echo "════════════════════════�
 - `/list-needs-design` - List issues needing design work
 - `/list-proposals` - List AI-generated proposals awaiting approval
 - `/brainstorm-issue` - Use AI to brainstorm an issue
-- `/fix` - Autonomous issue resolution
+- `/dev` - Autonomous issue resolution

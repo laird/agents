@@ -12,6 +12,18 @@ This is the **Modernize** Claude Code plugin - a production-validated framework 
 - Originally created for .NET Framework migrations but universally applicable
 - Emphasizes continuous improvement through retrospective analysis
 
+## Branches
+
+**Integration branch**: `feat/autocoder-planning-pipeline` — where workers merge completed issues.
+
+**Ship branch**: `feat/autocoder-planning-pipeline` — the branch that defines "shipped" for the close gate (issue #35).
+
+Workers must not close an issue until its commit is an ancestor of the ship branch; `plugins/autocoder/scripts/verify-shipped.sh` enforces this and `/dev` calls it before `issue_close`. Unshipped work is left open with the `awaiting-integration` label.
+
+Ship branch is currently the integration branch, not `master`, deliberately: nothing this swarm produces reaches `master` until the `/dev` line merges (#30), so measuring against `master` would park every fixed issue behind that single merge. **When #30 lands, change this to `master`** in both this file and `.envrc`.
+
+Resolution order: `verify-shipped.sh <commit> <branch>` argument → `CLAUDE_CODE_SHIP_BRANCH` → the **Ship branch** line above → repo default branch → `main`.
+
 ## Issue Management
 
 This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), via a Jira project (jira backend), or via Azure DevOps work items (ado backend) — whichever is configured in `.autocoder.json`.
@@ -192,11 +204,13 @@ Located in `scripts/` directory:
 
 **Key parallel files:**
 - `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
-- `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
-- `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
+- `/dev`: `plugins/autocoder/commands/dev.md` ↔ `.agent/workflows/dev.md`
+- `/dev-loop`: `plugins/autocoder/commands/dev-loop.md` ↔ `.agent/workflows/dev-loop.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
 - `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
 - `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
+
+`/fix` and `/fix-loop` remain as thin alias stubs forwarding to `/dev` and `/dev-loop`, mirrored on both sides (`plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`, and the `-loop` pair). Internal callers use the new names directly.
 
 **Key parallel scripts:**
 - `start-parallel-agents.sh`: `plugins/autocoder/scripts/start-parallel-agents.sh` ↔ `.agent/scripts/start-parallel-agents.sh`

@@ -2,7 +2,7 @@
 
 This directory contains general helper scripts for the repository.
 
-- **`watchdog-fix.sh`**: A script to restart the `/fix` workflow if it crashes (moved here from `.agent/scripts` in some contexts, but check `.agent/scripts` for the Antigravity-specific version).
+- **`watchdog-fix.sh`**: A script to restart the `/dev` workflow if it crashes (moved here from `.agent/scripts` in some contexts, but check `.agent/scripts` for the Antigravity-specific version).
 - **`codex-autocoder.sh`**: Run one Codex autocoder pass using the repo's new Codex skill packaging.
 - **`codex-fix-loop.sh`**: Repeat Codex autocoder passes with shell-managed sleep/stop behavior.
 - **`codex-manage-workers.sh`**: Run one Codex manager pass to inspect worker status and blocked issues.

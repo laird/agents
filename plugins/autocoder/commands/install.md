@@ -20,7 +20,7 @@ This command installs all autocoder plugin components:
 ### 1. Loop Mechanism (for infinite loops)
 - **Preferred**: Claude Code `/loop` command (CronCreate) — no installation needed
 - **Fallback**: Stop hook in `.claude/settings.json` for older Claude Code versions
-- **Purpose**: Enables `/fix-loop` to run continuously
+- **Purpose**: Enables `/dev-loop` to run continuously
 - **Scope**: Current project only
 
 ### 2. Parallel Agent Scripts (for multi-agent coordination)
@@ -75,7 +75,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "This installer will set up:"
 echo "  0. Dependency check (tmux/cmux, claude/gemini/codex, gh)"
-echo "  1. Loop mechanism (for infinite /fix-loop)"
+echo "  1. Loop mechanism (for infinite /dev-loop)"
 echo "  2. Parallel agent scripts (terminal commands)"
 echo "  3. Shell aliases (optional shortcuts)"
 echo ""
@@ -117,7 +117,7 @@ if [ "$HAS_TMUX" = false ] && [ "$HAS_CMUX" = false ]; then
   echo ""
   echo "⚠️  No terminal multiplexer found!"
   echo "   You need at least one of tmux or cmux to run parallel agents."
-  echo "   Single-agent mode (/fix, /fix-loop) works without a multiplexer."
+  echo "   Single-agent mode (/dev, /dev-loop) works without a multiplexer."
 fi
 
 echo ""
@@ -176,7 +176,7 @@ echo ""
 echo "📍 Part 1: Loop Mechanism"
 echo ""
 echo "✅ Claude Code /loop command detected (CronCreate available)"
-echo "   /fix-loop will use the native /loop command — no stop hook needed."
+echo "   /dev-loop will use the native /loop command — no stop hook needed."
 echo ""
 INSTALL_STOP_HOOK=false
 ```
@@ -238,9 +238,9 @@ Skip the cleanup question entirely if no legacy stop hook was found.
 echo "📍 Part 1: Stop Hook Installation (fallback)"
 echo ""
 echo "⚠️  Claude Code /loop command not available in this version."
-echo "   Installing stop hook for /fix-loop to run continuously."
+echo "   Installing stop hook for /dev-loop to run continuously."
 echo ""
-echo "Purpose: Intercepts session exits and feeds /fix back as input."
+echo "Purpose: Intercepts session exits and feeds /dev back as input."
 echo "Location: .claude/settings.json (current project only)"
 echo ""
 
@@ -309,10 +309,10 @@ echo ""
 Use AskUserQuestion to ask about stop hook:
 
 ```
-Question: "Install stop hook in this project? (needed for /fix-loop on older Claude Code)"
+Question: "Install stop hook in this project? (needed for /dev-loop on older Claude Code)"
 Header: "Stop Hook"
 Options:
-  - "Yes, install stop hook" - "Required for /fix-loop to run continuously"
+  - "Yes, install stop hook" - "Required for /dev-loop to run continuously"
   - "No, skip this step" - "You can install later with /install"
 ```
 
@@ -592,10 +592,10 @@ echo ""
 
 if [ "$INSTALL_STOP_HOOK" = false ] && grep -q "CronCreate" <<< "${AVAILABLE_TOOLS:-}"; then
   echo "  ✅ /loop command available (no stop hook needed)"
-  echo "     → /fix-loop uses native CronCreate mechanism"
+  echo "     → /dev-loop uses native CronCreate mechanism"
 elif [ "$INSTALL_STOP_HOOK" = true ] && [ "$USER_APPROVED_STOP_HOOK" = "yes" ]; then
   echo "  ✅ Stop hook in .claude/settings.json (fallback)"
-  echo "     → Enables /fix-loop to run continuously"
+  echo "     → Enables /dev-loop to run continuously"
 else
   echo "  ⏭️  Loop mechanism (skipped)"
 fi
@@ -636,7 +636,7 @@ echo ""
 echo "🚀 Quick Start:"
 echo ""
 echo "1. Test in this project:"
-echo "   /fix-loop"
+echo "   /dev-loop"
 echo ""
 if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "2. From terminal (after restarting shell):"

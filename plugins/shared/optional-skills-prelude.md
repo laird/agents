@@ -31,7 +31,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-## Worker skills manifest (referenced by dispatcher commands /fix-loop and /modernize)
+## Worker skills manifest (referenced by dispatcher commands /dev-loop and /modernize)
 
 The block below is prepended by dispatchers as the **first paragraph of each worker's
 prompt**. The bullet list is generated at dispatch time as the intersection of the

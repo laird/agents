@@ -7,9 +7,9 @@ case "$COMMAND" in
   fix)
     ISSUE_NUMBER="${1:-}"
     if [ -n "$ISSUE_NUMBER" ]; then
-      droid exec --full-auto "/fix $ISSUE_NUMBER"
+      droid exec --full-auto "/dev $ISSUE_NUMBER"
     else
-      droid exec --full-auto "/fix"
+      droid exec --full-auto "/dev"
     fi
     ;;
   monitor-workers)

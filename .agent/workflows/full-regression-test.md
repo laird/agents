@@ -676,12 +676,12 @@ After running, this command produces:
    - Resolved issues closed automatically when tests pass
    - Analysis comments added to relevant issues
 
-## Integration with /fix
+## Integration with /dev
 
-This command is automatically invoked by `/fix` when no priority bug issues exist. After running:
+This command is automatically invoked by `/dev` when no priority bug issues exist. After running:
 
-- If failures are found → Issues are created → `/fix` picks them up
-- If all pass → `/fix` moves to enhancement phase
+- If failures are found → Issues are created → `/dev` picks them up
+- If all pass → `/dev` moves to enhancement phase
 
 You can also run this command standalone to check project health.
 

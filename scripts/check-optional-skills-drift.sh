@@ -22,14 +22,14 @@ boilerplate_files=(
   .agent/shared/optional-skills-prelude.md
   plugins/autocoder/commands/brainstorm-issue.md
   plugins/autocoder/commands/approve-proposal.md
-  plugins/autocoder/commands/fix.md
-  plugins/autocoder/commands/fix-loop.md
+  plugins/autocoder/commands/dev.md
+  plugins/autocoder/commands/dev-loop.md
   plugins/modernize/commands/plan.md
   plugins/modernize/commands/modernize.md
   .agent/workflows/brainstorm-issue.md
   .agent/workflows/approve-proposal.md
-  .agent/workflows/fix.md
-  .agent/workflows/fix-loop.md
+  .agent/workflows/dev.md
+  .agent/workflows/dev-loop.md
   .agent/workflows/plan.md
   .agent/workflows/modernize.md
 )
@@ -56,7 +56,7 @@ else
 fi
 
 # --- Pass 2: per-command mapping identical between Claude/Antigravity mirrors ---
-for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop; do
+for cmd in brainstorm-issue approve-proposal plan modernize dev dev-loop; do
   matches=$(find plugins/*/commands -name "${cmd}.md" 2>/dev/null)
   count=$(echo "$matches" | grep -c . || true)
   if [ "$count" -ne 1 ]; then

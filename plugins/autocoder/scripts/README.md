@@ -109,9 +109,9 @@ counter, and one set of flock files.
 - **GitHub backend**: `claim` is **best-effort**. The gh API has no
   atomic single-writer label edit, so two agents racing to claim the
   same issue may both think they succeeded. Slash commands that depend
-  on strict single-winner semantics (notably `fix-loop`) should treat
+  on strict single-winner semantics (notably `dev-loop`) should treat
   this as a known limitation and rely on the comment-scan race detector
-  in `/autocoder:fix` for cross-host racers.
+  in `/autocoder:dev` for cross-host racers.
 - **Future backends**: implementations whose native API supports atomic
   claim must pass the strict contract test; implementations with
   best-effort claim must declare so explicitly in this README and
@@ -192,5 +192,5 @@ For the file backend specifically, also exercise:
   exactly one exits 0.
 - **Cross-worktree**: from a secondary worktree, all operations target
   the main worktree's `.issues/` directory.
-- **fix-loop-idle**: with empty `open/`, `fix-loop` over ~30s does not
-  spawn `/fix`.
+- **dev-loop-idle**: with empty `open/`, `dev-loop` over ~30s does not
+  spawn `/dev`.

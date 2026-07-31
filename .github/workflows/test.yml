@@ -18,16 +18,17 @@ jobs:
           # Add a manifest first if pip caching is ever wanted.
       - name: Install pytest
         run: python3 -m pip install --upgrade pip pytest
-      - name: Run tests
+      - name: Run Python tests
         run: python3 -m pytest tests/ -v
 
   # pytest's default collection is `test_*.py`, so the 13 tests/test_*.sh files
-  # were invisible to CI — which is how #57, #58 and #63 all shipped green.
-  # They cover the issue-backend dispatcher, both backends, worker launch and
-  # the fix-loop idle path, i.e. most of the autocoder runtime.
+  # were invisible to CI (issue #32) — which is how #57, #58 and #63 all shipped
+  # green. They cover the issue-backend dispatcher, both backends, worker launch
+  # and the dev-loop idle path, i.e. most of the autocoder runtime.
   #
   # Kept as a separate job so a shell failure and a python failure stay
-  # distinguishable at a glance.
+  # distinguishable at a glance, and driven through scripts/run-shell-suites.sh
+  # so CI and a local run execute the same code path.
   shell:
     runs-on: ubuntu-latest
     steps:
@@ -40,29 +41,5 @@ jobs:
         run: |
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
-      # Output conventions differ across these files — 6 print a
-      # "Results: N passed, M failed" summary, 7 print a terse "ok <name>".
-      # Exit status is the one contract all 13 honour, so key on that and
-      # never parse stdout.
-      - name: Run shell tests
-        run: |
-          set -u
-          failed=()
-          for t in tests/test_*.sh; do
-            echo "::group::$t"
-            if bash "$t"; then
-              echo "PASS $t"
-            else
-              rc=$?
-              echo "FAIL $t (exit $rc)"
-              failed+=("$t (exit $rc)")
-            fi
-            echo "::endgroup::"
-          done
-          echo ""
-          if [ "${#failed[@]}" -gt 0 ]; then
-            echo "Failing shell tests (${#failed[@]}):"
-            printf '  %s\n' "${failed[@]}"
-            exit 1
-          fi
-          echo "All shell tests passed."
+      - name: Run shell test suites
+        run: bash scripts/run-shell-suites.sh

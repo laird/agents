@@ -28,7 +28,7 @@ Autonomous GitHub issue resolution system with infinite loop support.
 ```
 
 The `/install` command will:
-1. Install stop hook for `/fix-loop` (project-local)
+1. Install stop hook for `/dev-loop` (project-local)
 2. Install `start-parallel`, `add-worker`, `remove-worker`, `join-parallel`, `end-parallel`, and `stop-parallel` scripts (global)
 3. Check required dependencies and report any missing setup
 
@@ -84,7 +84,7 @@ The plugin automatically creates these labels on first run:
 
 ### Blocking Labels
 
-These labels indicate why fix-loop cannot autonomously work on an issue:
+These labels indicate why dev-loop cannot autonomously work on an issue:
 
 | Label | Color | When Applied | Example |
 |-------|-------|--------------|---------|
@@ -135,23 +135,23 @@ gh issue edit <issue_number> --remove-label "working"
 
 ```bash
 # Terminal 1: Start first agent
-/fix-loop
+/dev-loop
 
 # Terminal 2: Start second agent (different working directory or repo clone)
-/fix-loop
+/dev-loop
 
 # Both agents will work on different issues without conflict
 ```
 
 ## Blocked Issue Review Workflow
 
-When fix-loop encounters issues it cannot handle autonomously, it adds blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`) and moves on. Use `/review-blocked` in a separate session to review and unblock these issues.
+When dev-loop encounters issues it cannot handle autonomously, it adds blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`) and moves on. Use `/review-blocked` in a separate session to review and unblock these issues.
 
 ### Workflow
 
 ```bash
-# Terminal 1: Run fix-loop continuously
-/fix-loop
+# Terminal 1: Run dev-loop continuously
+/dev-loop
 
 # Terminal 2: Review blocked issues interactively (in parallel)
 /review-blocked
@@ -189,7 +189,7 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
    ```
 
 4. **Decision**: Choose how to proceed
-   - **Approve** → Removes blocking label, fix-loop will implement on next iteration
+   - **Approve** → Removes blocking label, dev-loop will implement on next iteration
    - **Explore further** → Use `/brainstorm`, `/q1-hypothesize`, or ask questions
    - **Reject** → Closes issue with reason
    - **Skip** → Leaves blocked, moves to next issue
@@ -205,7 +205,7 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 
 ### Benefits
 
-- **Non-blocking**: Runs in separate session, doesn't interrupt fix-loop
+- **Non-blocking**: Runs in separate session, doesn't interrupt dev-loop
 - **Priority-driven**: Always surfaces most important blocked issues first
 - **Lightweight**: Quick recommendations, dive deeper with other skills if needed
 - **Clear transitions**: Issues move from blocked → approved with proper labels
@@ -214,8 +214,8 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 
 | Command | Description |
 |---------|-------------|
-| `/fix [number]` | Fix a specific issue or highest priority GitHub issue |
-| `/fix-loop` | Start infinite loop that runs `/fix` continuously |
+| `/dev [number]` | Fix a specific issue or highest priority GitHub issue |
+| `/dev-loop` | Start infinite loop that runs `/dev` continuously |
 | `/stop-loop` | Stop the continuous fix loop |
 | `/full-regression-test` | Run complete test suite and create issues for failures; logs results to history |
 | `/monitor-workers` | Monitor worker agents, dispatch idle workers, scale fleet with `add-worker`, detect stale locks, deploy when done |
@@ -230,28 +230,28 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/install` | Install stop hook, parallel agent scripts, and check dependencies |
 | `/autocoder-help` | Show help and workflow overview |
-| `/autocoder:gate` | Slim default for `/loop` cron path — branches on `/tmp/autocoder-work.json` phase, delegates to `/autocoder:fix N` |
+| `/autocoder:gate` | Slim default for `/loop` cron path — branches on `/tmp/autocoder-work.json` phase, delegates to `/autocoder:dev N` |
 | `/autocoder:dispatch` | Opt-in Haiku-pinned alternative — runs triage cheaply, spawns Sonnet/Opus Task subagent for fix work |
 
 ## Token-Efficient Loop Commands
 
-Phase 2 and Phase 3 of the fix-loop token-efficiency work added two new commands used by `/fix-loop` to keep cron-driven iterations cheap. See the design spec at `docs/specs/2026-05-21-fix-loop-token-efficiency-design.md` (§5.3 command split, §13.4 acceptance criteria, §7.1.1 Task `model=` override verification).
+Phase 2 and Phase 3 of the dev-loop token-efficiency work added two new commands used by `/dev-loop` to keep cron-driven iterations cheap. See the design spec at `docs/specs/2026-05-21-fix-loop-token-efficiency-design.md` (§5.3 command split, §13.4 acceptance criteria, §7.1.1 Task `model=` override verification).
 
 ### `/autocoder:gate` (default after Phase 2)
 
-The slim replacement for `/autocoder:fix` on the `/loop` cron path. It reads the work descriptor at `/tmp/autocoder-work.json` (written by `fix-loop-gate.sh`), branches on the `phase` field, and delegates to `/autocoder:fix N` for actual fix work. This avoids loading `fix.md`'s full ~75 KB skill body on every cron tick — `gate.md` is only ~2 KB. It is now the default command invoked by `/fix-loop`.
+The slim replacement for `/autocoder:dev` on the `/loop` cron path. It reads the work descriptor at `/tmp/autocoder-work.json` (written by `fix-loop-gate.sh`), branches on the `phase` field, and delegates to `/autocoder:dev N` for actual fix work. This avoids loading `fix.md`'s full ~75 KB skill body on every cron tick — `gate.md` is only ~2 KB. It is now the default command invoked by `/dev-loop`.
 
 ### `/autocoder:dispatch` (opt-in, model-split)
 
-An alternative entry point with `model: haiku` pinned in its frontmatter. Use it to do model-split routing: Haiku runs the cheap triage step, then spawns a `Task` subagent with `model="sonnet"` (or `model="opus"` for P0 issues) to do the actual fix. Opt in by setting `LOOP_MODEL_SPLIT=1` when starting `/fix-loop`. See spec §7.1.1 for the verification that confirms Task's `model=` override actually switches models.
+An alternative entry point with `model: haiku` pinned in its frontmatter. Use it to do model-split routing: Haiku runs the cheap triage step, then spawns a `Task` subagent with `model="sonnet"` (or `model="opus"` for P0 issues) to do the actual fix. Opt in by setting `LOOP_MODEL_SPLIT=1` when starting `/dev-loop`. See spec §7.1.1 for the verification that confirms Task's `model=` override actually switches models.
 
 ### Configuration
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `LOOP_MODEL_SPLIT` | `0` | When `1`, `/fix-loop` invokes `/autocoder:dispatch` instead of `/autocoder:gate`. |
+| `LOOP_MODEL_SPLIT` | `0` | When `1`, `/dev-loop` invokes `/autocoder:dispatch` instead of `/autocoder:gate`. |
 | `AUTOCODER_WORK_JSON` | `/tmp/autocoder-work.json` | Path to the work descriptor written by `fix-loop-gate.sh` and read by `/autocoder:gate`. |
-| `IDLE_SLEEP_MINUTES` | `60` | Idle sleep between cron iterations when no work is available (also exposed as `/fix-loop --sleep N`). |
+| `IDLE_SLEEP_MINUTES` | `60` | Idle sleep between cron iterations when no work is available (also exposed as `/dev-loop --sleep N`). |
 
 ## Monitor Workers (`/monitor-workers`)
 
@@ -263,7 +263,7 @@ The `/monitor-workers` command is the manager's primary tool for overseeing a sw
 2. **Read worker screens** — Uses cmux/tmux to check if agents are idle or active
 3. **Detect stale "working" labels** — Finds issues tagged "working" with no agent activity in the last hour; asks to remove
 4. **Find unblocked issues** — Lists open issues without blocking labels
-5. **Dispatch idle workers** — Sends `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
+5. **Dispatch idle workers** — Sends `/autocoder:dev <issue_number>` to idle workers via cmux/tmux
 6. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploys
 
 ### Usage
@@ -281,14 +281,14 @@ The `/monitor-workers` command is the manager's primary tool for overseeing a sw
 **cmux** (reads screens and sends keystrokes):
 ```bash
 cmux read-screen --workspace <ref> --lines 15    # Check if idle
-cmux send --workspace <ref> "/autocoder:fix 123"  # Dispatch work
+cmux send --workspace <ref> "/autocoder:dev 123"  # Dispatch work
 cmux send-key --workspace <ref> Enter              # Execute
 ```
 
 **tmux** (same capability):
 ```bash
 tmux capture-pane -t <session>:<window>.<pane> -p | tail -15  # Check
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:dev 123" Enter
 ```
 
 ### Stale Lock Detection
@@ -362,7 +362,7 @@ Here's the full narrative of running a swarm. You work primarily through the **m
 
 Run this first. The installer:
 - Checks dependencies (tmux/cmux, claude/gemini, gh) and suggests how to install anything missing
-- Installs the stop hook for `/fix-loop`
+- Installs the stop hook for `/dev-loop`
 - Creates terminal commands (`start-parallel`, `add-worker`, `remove-worker`, `join-parallel`, `end-parallel`, `stop-parallel`)
 
 After install, restart your shell so `start-parallel` is on your `PATH`.
@@ -375,7 +375,7 @@ start-parallel 3 --mux cmux --agent claude
 # or: start-parallel 3 --mux tmux --agent claude
 ```
 
-This creates 3 git worktrees (`myproject-wt-1`, `myproject-wt-2`, `myproject-wt-3`) as sibling directories, each on its own branch. It launches an agent in each worktree running `/fix-loop`, plus opens a **manager session** in the main project directory. The manager session is where you'll spend your time.
+This creates 3 git worktrees (`myproject-wt-1`, `myproject-wt-2`, `myproject-wt-3`) as sibling directories, each on its own branch. It launches an agent in each worktree running `/dev-loop`, plus opens a **manager session** in the main project directory. The manager session is where you'll spend your time.
 
 **Step 3: Work from the manager session**
 
@@ -468,14 +468,14 @@ The `/monitor-workers` command can **send commands directly** to idle worker ses
 **cmux** (reads screens and sends keystrokes):
 ```bash
 cmux read-screen --workspace <ref> --lines 15    # Check if idle
-cmux send --workspace <ref> "/autocoder:fix 123"  # Dispatch work
+cmux send --workspace <ref> "/autocoder:dev 123"  # Dispatch work
 cmux send-key --workspace <ref> Enter              # Execute
 ```
 
 **tmux** (same capability):
 ```bash
 tmux capture-pane -t <session>:<window>.<pane> -p | tail -15  # Check
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:dev 123" Enter
 ```
 
 This means the manager can detect idle workers and assign them new issues without you switching terminals.
@@ -498,7 +498,7 @@ Run multiple AI agents in parallel using tmux or cmux and git worktrees for coor
 /install
 
 # Approve when prompted:
-# - Stop hook: Yes (for /fix-loop)
+# - Stop hook: Yes (for /dev-loop)
 # - Parallel scripts: Yes (for terminal commands)
 
 # 2. Start parallel agents (from terminal, in your project)
@@ -529,8 +529,8 @@ join-parallel --mux cmux
 
 | Framework | Launch Command | Slash Commands |
 |-----------|---------------|----------------|
-| **Claude Code** | `claude code --dangerously-skip-permissions .` | `/autocoder:fix-loop`, `/autocoder:review-blocked` |
-| **Gemini CLI** | `gemini --sandbox=false` | `/fix-loop`, `/monitor-loop`, `/review-blocked` |
+| **Claude Code** | `claude code --dangerously-skip-permissions .` | `/autocoder:dev-loop`, `/autocoder:review-blocked` |
+| **Gemini CLI** | `gemini --sandbox=false` | `/dev-loop`, `/monitor-loop`, `/review-blocked` |
 | **Codex CLI** | `codex` | Codex goal loop or shell-loop fallback |
 | **Droid** | shell-loop wrapper | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
 
@@ -543,7 +543,7 @@ Auto-detection prefers cmux over tmux, and then checks available agents in order
 Creates a tmux session with 2 windows:
 
 **Window 0: Parallel Fix Agents**
-- 3+ panes running `/fix-loop` simultaneously
+- 3+ panes running `/dev-loop` simultaneously
 - Each pane in its own git worktree (separate feature branch)
 - All share task list via `CLAUDE_CODE_TASK_LIST_ID`
 - Prevents duplicate work with `working` label
@@ -558,7 +558,7 @@ Creates a tmux session with 2 windows:
 Creates one workspace (tab) per agent:
 
 **Worker Workspaces** (named `wt1-<project>`, `wt2-<project>`, etc.)
-- Each runs `/fix-loop` in its own git worktree
+- Each runs `/dev-loop` in its own git worktree
 - Isolated feature branches for parallel work
 
 **Manager Workspace** (named `<project>`)
@@ -601,7 +601,7 @@ start-parallel 5 --mux tmux --agent codex --issue-source github --paused
 start-parallel 3 --mux cmux --agent droid --no-worktrees
 ```
 
-Paused swarms create the manager session and worker panes/workspaces, but do not start `/fix-loop` or the equivalent shell fallback. The manager pane prints readiness guidance so you can review issues first, then use `add-worker` to start an idle worker or add new running capacity later:
+Paused swarms create the manager session and worker panes/workspaces, but do not start `/dev-loop` or the equivalent shell fallback. The manager pane prints readiness guidance so you can review issues first, then use `add-worker` to start an idle worker or add new running capacity later:
 
 ```bash
 add-worker --agent codex
@@ -765,7 +765,7 @@ Autocoder agents record what they do so you can review their work over time and 
 
 ### What Gets Logged
 
-Every time `/fix` resolves an issue, it appends a structured entry to the history log:
+Every time `/dev` resolves an issue, it appends a structured entry to the history log:
 
 | Event | Entry |
 |-------|-------|
@@ -818,26 +818,26 @@ append-to-history.sh "Title" "What" "Why" "Impact"
 
 ## Infinite Loop Setup
 
-The `/fix-loop` command uses Claude Code's stop hook mechanism to run forever.
+The `/dev-loop` command uses Claude Code's stop hook mechanism to run forever.
 
 ### How It Works
 
 1. Creates state file: `.claude/fix-loop.local.md`
 2. Stop hook intercepts session exit
-3. If state file exists, feeds `/fix` back as input
+3. If state file exists, feeds `/dev` back as input
 4. Loop continues until manually stopped
 
 ### Usage
 
 ```bash
 # Start infinite loop
-/fix-loop
+/dev-loop
 
 # Limit to 100 iterations
-/fix-loop 100
+/dev-loop 100
 
 # Custom idle sleep time (default 60 min)
-/fix-loop --sleep 120
+/dev-loop --sleep 120
 ```
 
 ### Stopping the Loop
@@ -867,7 +867,7 @@ idle_sleep_minutes: 60
 started: 2024-01-15T10:30:00-05:00
 ---
 
-/fix
+/dev
 ```
 
 The `.local.md` suffix ensures it's gitignored.

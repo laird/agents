@@ -31,7 +31,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping modernize v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping modernize v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 | Step | Skill mapping |
 |---|---|
@@ -65,7 +65,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 # Detect autocoder plugin
 AUTOCODER_AVAILABLE=false
 # Check for autocoder workflows in .agent/workflows/
-if [ -f ".agent/workflows/fix.md" ]; then
+if [ -f ".agent/workflows/dev.md" ]; then
     AUTOCODER_AVAILABLE=true
     echo "✅ Autocoder workflows detected"
 else

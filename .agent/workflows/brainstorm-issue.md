@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping brainstorm-issue v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping brainstorm-issue v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 | Step | Skill mapping |
 |---|---|
@@ -268,7 +268,7 @@ Depending on the issue type, the brainstorming will focus on different aspects:
     ▼
 ┌─────────────────┐
 │  Ready for      │
-│  /fix    │
+│  /dev    │
 └─────────────────┘
 ```
 
@@ -276,5 +276,5 @@ Depending on the issue type, the brainstorming will focus on different aspects:
 
 - `/list-needs-design` - List all issues needing design work
 - `/list-needs-feedback` - List issues needing feedback
-- `/fix` - Autonomous issue resolution
+- `/dev` - Autonomous issue resolution
 - `/approve-proposal` - Approve a proposal for implementation

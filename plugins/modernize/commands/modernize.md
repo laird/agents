@@ -223,7 +223,7 @@ while true; do
             SCREEN=$(tmux capture-pane -t "$SESSION_NAME:0.$pane" -p 2>/dev/null | tail -15)
             if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
               echo "🚀 Dispatching idle worker (pane $pane) to issue #$issue_num"
-              tmux send-keys -t "$SESSION_NAME:0.$pane" "/autocoder:fix $issue_num" Enter
+              tmux send-keys -t "$SESSION_NAME:0.$pane" "/autocoder:dev $issue_num" Enter
               IDLE_DISPATCHED=true
               break
             fi
@@ -233,7 +233,7 @@ while true; do
             SCREEN=$(cmux read-screen --workspace "$ws" --lines 15 2>/dev/null)
             if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
               echo "🚀 Dispatching idle worker ($ws) to issue #$issue_num"
-              cmux send --workspace "$ws" "/autocoder:fix $issue_num"
+              cmux send --workspace "$ws" "/autocoder:dev $issue_num"
               cmux send-key --workspace "$ws" Enter
               IDLE_DISPATCHED=true
               break

@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping approve-proposal v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping approve-proposal v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 | Step | Skill mapping |
 |---|---|
@@ -47,7 +47,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 ## What This Does
 
-Removes the `proposal` label from specified GitHub issues, allowing `/fix-loop` to implement them automatically.
+Removes the `proposal` label from specified GitHub issues, allowing `/dev-loop` to implement them automatically.
 
 ## Instructions
 
@@ -167,8 +167,8 @@ echo ""
 
 if [ $APPROVED -gt 0 ]; then
   echo "🚀 Next steps:"
-  echo "   • Run /fix-loop to implement approved proposals"
-  echo "   • Or run /fix for a single iteration"
+  echo "   • Run /dev-loop to implement approved proposals"
+  echo "   • Or run /dev for a single iteration"
 fi
 ```
 
@@ -187,12 +187,12 @@ fi
            │
            ▼
 ┌─────────────────────┐
-│  /fix-loop   │  ← Implements approved issues
+│  /dev-loop   │  ← Implements approved issues
 └─────────────────────┘
 ```
 
 ## See Also
 
 - `/list-proposals` - View all pending proposals
-- `/fix` - Single iteration of issue resolution
-- `/fix-loop` - Continuous issue resolution loop
+- `/dev` - Single iteration of issue resolution
+- `/dev-loop` - Continuous issue resolution loop

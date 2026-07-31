@@ -54,7 +54,7 @@ if [[ "$action" == "setup" ]]; then
   # per issues-file.py cmd_update, the working label drives status=working).
   write_issue 1 "P0 bug: deploy crashes on cold start"   "bug, P0, working" "working" \
     "Critical: cold-start crash on staging. Currently mid-fix (working label set)."
-  # 002: P1 bug ready to be claimed by next /autocoder:fix tick.
+  # 002: P1 bug ready to be claimed by next /autocoder:dev tick.
   write_issue 2 "P1 bug: incorrect totals on summary page" "bug, P1"        "open"    \
     "Summary page sums one row too few. No claim yet; ready for next tick."
   # 003: Approved enhancement — has no `proposal` label, so the fix loop treats

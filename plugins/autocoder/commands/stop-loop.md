@@ -1,6 +1,6 @@
 # Stop Fix Loop
 
-Stops the infinite `/fix-loop` by removing the state file.
+Stops the infinite `/dev-loop` by removing the state file.
 
 ## Usage
 
@@ -21,10 +21,10 @@ if [[ -f "$LOOP_STATE_FILE" ]]; then
   echo "🛑 Fix loop stopped"
   echo "   Completed iterations: ${ITERATION:-0}"
   echo ""
-  echo "   To restart: /fix-loop"
+  echo "   To restart: /dev-loop"
 else
   echo "ℹ️  No active fix loop found"
   echo ""
-  echo "   To start a loop: /fix-loop"
+  echo "   To start a loop: /dev-loop"
 fi
 ```

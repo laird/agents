@@ -635,11 +635,11 @@ fi
 echo ""
 ```
 
-## Integration with /fix
+## Integration with /dev
 
-This command integrates with `/fix` workflow:
+This command integrates with `/dev` workflow:
 
-- When called from `/fix`, operates in improvement mode
+- When called from `/dev`, operates in improvement mode
 - Uses existing test-coverage.md for fast iteration
 - Updates report after each improvement cycle
 

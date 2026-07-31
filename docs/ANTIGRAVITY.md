@@ -38,8 +38,8 @@ Antigravity is an agent engine that uses a `.agent/` directory structure to defi
 │   ├── modernize.md             # Modernization workflow
 │   ├── retro.md                 # Retrospective workflow
 │   ├── retro-apply.md           # Apply improvements workflow
-│   ├── fix.md            # Autonomous issue resolution (v2.0.0)
-│   ├── fix-loop.md       # Infinite loop with stop hook (v2.0.0)
+│   ├── dev.md            # Autonomous issue resolution (v2.0.0; fix.md = alias)
+│   ├── dev-loop.md       # Infinite loop with stop hook (v2.0.0)
 │   ├── install-stop-hook.md     # Stop hook installation (v2.0.0)
 │   ├── list-proposals.md        # List pending proposals (v2.0.0)
 │   ├── full-regression-test.md  # Regression testing (v2.0.0)
@@ -96,8 +96,8 @@ ln -s /path/to/agents/.agent /your/project/.agent
 
 | Workflow | Description |
 |----------|-------------|
-| `fix.md` | Autonomous issue resolution with triage and proposals |
-| `fix-loop.md` | Infinite loop wrapper with stop hook |
+| `dev.md` | Autonomous issue resolution with triage and proposals (`fix.md` is a deprecated alias) |
+| `dev-loop.md` | Infinite loop wrapper with stop hook |
 | `monitor-workers.md` | Check worker status, stale locks, and dispatch opportunities |
 | `monitor-loop.md` | Continuous manager loop for worker coordination |
 | `install.md` | Install stop hook, parallel scripts, and aliases |
@@ -161,7 +161,7 @@ Protocols define standardized methodologies:
 
 | Version | Changes |
 |---------|---------|
-| 2.0.0 | Full Claude Code parity: expanded fix (~1200 lines), added fix-loop, install-stop-hook |
+| 2.0.0 | Full Claude Code parity: expanded fix (~1200 lines), added dev-loop, install-stop-hook |
 | 1.5.0 | Added proposal system, issue triage, list-proposals workflow |
 | 1.0 | Initial Antigravity support |
 

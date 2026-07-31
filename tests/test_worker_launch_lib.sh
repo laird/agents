@@ -41,7 +41,7 @@ assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the son
 assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
 
 resolve_worker_launch gemini "$REPO"
-assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
+assert_eq "$WORKER_CMD" "/dev-loop" "Gemini worker command"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
 
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"

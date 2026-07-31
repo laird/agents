@@ -1,6 +1,6 @@
 <!--
-Slim fix-loop gate. Per spec §5.3 / §7.1.1, no `model:` frontmatter:
-inherits the model from whatever invokes it (fix-loop's loop model).
+Slim dev-loop gate. Per spec §5.3 / §7.1.1, no `model:` frontmatter:
+inherits the model from whatever invokes it (dev-loop's loop model).
 A Haiku-pinned variant (`/autocoder:dispatch`) is Phase 3, not here.
 -->
 
@@ -49,7 +49,7 @@ issue_comment N "Triage: <priority> — <one-line rationale>"
 | Security | Exploit | Vuln | Potential | None |
 | Keywords | crash/down/urgent/security | broken/fails/blocking | issue/bug | minor/cosmetic |
 
-Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
+Keep terse. Do not load `/autocoder:dev`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
@@ -73,6 +73,6 @@ tool in the current session. Context will accumulate across issues in this mode 
 shell-loop mode for multi-issue worker sessions.
 
 ```
-Use the Skill tool to invoke: autocoder:fix
+Use the Skill tool to invoke: autocoder:dev
 With args: <issue number from work JSON>
 ```

@@ -1,7 +1,7 @@
 #!/bin/bash
 # tests/test_fix_loop_idle.sh — verify Goal #2: zero-cost idle preflight.
 # When .issues/open/ is empty, fix-loop-gate.sh should exit 1 (idle) and
-# NOT write a work-plan file, so the outer loop never invokes /fix.
+# NOT write a work-plan file, so the outer loop never invokes /dev.
 
 PASS=0; FAIL=0
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts"

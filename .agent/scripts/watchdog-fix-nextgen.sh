@@ -1,11 +1,11 @@
 #!/bin/bash
 # watchdog-fix.sh
-# Ensures the /fix workflow runs continuously.
+# Ensures the /dev workflow runs continuously.
 # Usage: ./watchdog-fix.sh [agent_command]
 
 # Default agent command - change this if your binary is named differently (e.g., 'cortex', 'claude')
 AGENT_CMD=${1:-"antigravity"}
-WORKFLOW="/fix"
+WORKFLOW="/dev"
 
 TARGET_DIR="/home/laird/src/nextgen-CDD"
 

@@ -156,7 +156,7 @@ Custom droids are invoked via the Task tool for specialized work:
 
 ### Hooks
 
-The stop hook in `.factory/settings.json` enables continuous operation (fix-loop). It runs the same `plugins/autocoder/hooks/stop-hook.sh` used by Claude Code.
+The stop hook in `.factory/settings.json` enables continuous operation (dev-loop). It runs the same `plugins/autocoder/hooks/stop-hook.sh` used by Claude Code.
 
 ### Runtime Scripts
 
@@ -202,8 +202,8 @@ When installed as a plugin or via the installer, these slash commands are availa
 
 | Command | Description |
 |---------|-------------|
-| `/fix` | Autonomous GitHub issue resolution |
-| `/fix-loop` | Continuous autonomous resolution |
+| `/dev` | Autonomous GitHub issue resolution |
+| `/dev-loop` | Continuous autonomous resolution |
 | `/stop-loop` | Stop the continuous loop |
 | `/monitor-workers` | Monitor workers, dispatch idle agents |
 | `/review-blocked` | Review and unblock labeled issues |
@@ -234,9 +234,9 @@ droid
 Then use slash commands:
 
 ```
-/fix              # Fix highest priority issue
+/dev              # Fix highest priority issue
 /assess           # Assess modernization readiness
-/fix-loop         # Run continuously
+/dev-loop         # Run continuously
 ```
 
 ### Headless Mode (droid exec)

@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 `/retro` produces a **Document** deliverable (IMPROVEMENTS.md). Skill mapping:
 
@@ -55,7 +55,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 ## Data Sources
 
 **History log** — primary source of what happened:
-- File backend: `HISTORY.md` in project root (written by `/fix` and `/full-regression-test`)
+- File backend: `HISTORY.md` in project root (written by `/dev` and `/full-regression-test`)
 - GitHub backend: comments on the `history-log` labeled issue
 
 **Git log** — signals of agent behavior quality:
@@ -114,7 +114,7 @@ if [ -f "HISTORY.md" ]; then
   cat HISTORY.md
 else
   echo "⚠️  No HISTORY.md found — history is sparse."
-  echo "    Run /fix or /full-regression-test to begin building history."
+  echo "    Run /dev or /full-regression-test to begin building history."
 fi
 ```
 
@@ -238,7 +238,7 @@ For each top pattern:
 **Expected Impact**: [Quantified: e.g., "Reduce needs-clarification blocks by ~30%"]
 
 **Affected Components**:
-- `plugins/autocoder/commands/fix.md` — [which section]
+- `plugins/autocoder/commands/dev.md` — [which section]
 ```
 
 ### Phase 4: Write IMPROVEMENTS.md (~5 min)

@@ -3,7 +3,7 @@
 Honest scope note
 -----------------
 gate.md is a slash-command body. Most of its routing logic ("if phase=triage
-loop over .issues[] and call issue_update", "if phase=fix invoke autocoder:fix
+loop over .issues[] and call issue_update", "if phase=fix invoke autocoder:dev
 via Skill") is **prose for the LLM runtime to interpret**, not executable
 bash. The only thing we can genuinely unit-test is the bash fenced block(s)
 that actually run as shell:

@@ -2,8 +2,9 @@
 
 | Claude plugin command | Droid handling |
 |---|---|
-| `/fix` | Run the core autocoder workflow against a specific issue or the highest-priority queue item |
-| `/fix-loop` | Re-run the core workflow continuously with explicit shell/session control |
+| `/dev` | Run the core autocoder workflow against a specific issue or the highest-priority queue item |
+| `/dev-loop` | Re-run the core workflow continuously with explicit shell/session control |
+| `/fix`, `/fix-loop` | Deprecated aliases — forward to `/dev` and `/dev-loop` |
 | `/monitor-workers` | Inspect worker sessions, stale locks, and dispatch opportunities for parallel work |
 | `/monitor-loop` | Re-run worker monitoring continuously with explicit shell/session control |
 | `/stop-loop` | Stop the active shell/session loop |

@@ -21,7 +21,7 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
-6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
+6. **Dispatch idle workers** — Send `/autocoder:dev <issue_number>` to idle workers via cmux/tmux
 7. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
@@ -188,7 +188,7 @@ restart-worker --worktree <worktree_path> --mux cmux --agent codex
 
 `restart-worker` finds the worker's pane/workspace by its worktree path,
 kills the hung process (`tmux respawn-pane -k` / `cmux close-workspace`), and
-relaunches the agent's fix-loop in the same worktree. After restarting, re-read
+relaunches the agent's dev-loop in the same worktree. After restarting, re-read
 the worker's screen after a few seconds to confirm it came back up.
 
 **When to restart automatically vs. ask:** during `--watch`, restart `UNHEALTHY`
@@ -250,13 +250,13 @@ For each idle worker with an unworked issue available, send the fix command:
 
 **cmux:**
 ```bash
-cmux send --workspace <ref> "/autocoder:fix <issue_number>"
+cmux send --workspace <ref> "/autocoder:dev <issue_number>"
 cmux send-key --workspace <ref> Enter
 ```
 
 **tmux:**
 ```bash
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:dev <issue_number>" Enter
 ```
 
 **Codex workers:** send the shell wrapper instead of the Claude slash command.
@@ -392,8 +392,8 @@ Idle workers available: K
 Stale "working" labels: S
 
 Actions taken:
-- Sent `/autocoder:fix 1234` to wt-1
-- Sent `/autocoder:fix 5678` to wt-3
+- Sent `/autocoder:dev 1234` to wt-1
+- Sent `/autocoder:dev 5678` to wt-3
 - Removed stale "working" label from #9999
 
 Deploy status: 21 commits since last deploy, waiting for workers to complete

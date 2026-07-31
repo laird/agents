@@ -24,7 +24,7 @@ HAS_CMUX=$(command -v cmux &>/dev/null && echo yes || echo no)
 ALIASES_INSTALLED=$(grep -l "startclt\|startct\|startgt\|startdt" ~/.zshrc ~/.bashrc ~/.profile 2>/dev/null | head -1)
 
 # Active sessions
-ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "fix-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
+ACTIVE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -c "dev-loop\|claude-\|codex-\|gemini-\|droid-" || echo 0)
 
 echo "Issue backend:  $ISSUE_SOURCE"
 echo "Agents:         $(echo claude=$HAS_CLAUDE codex=$HAS_CODEX gemini=$HAS_GEMINI droid=$HAS_DROID)"
@@ -59,9 +59,9 @@ Based on what you find, give contextual guidance:
 
 | Command | Purpose |
 |---------|---------|
-| `/fix` | Fix highest-priority issue or a specific issue |
-| `/fix-loop` | Run continuous issue resolution |
-| `/review-blocked` | Interactively review blocked issues (run alongside fix-loop) |
+| `/dev` | Fix highest-priority issue or a specific issue |
+| `/dev-loop` | Run continuous issue resolution |
+| `/review-blocked` | Interactively review blocked issues (run alongside dev-loop) |
 | `/stop-loop` | Stop the continuous loop |
 
 ### Design & Brainstorming
@@ -120,7 +120,7 @@ The number is the worker count. Each swarm starts N worker agents + 1 manager ag
 ### Pattern 1: Single Issue Fix
 
 ```
-/fix 123
+/dev 123
 ```
 
 ### Pattern 2: Continuous Autonomous Mode
@@ -128,7 +128,7 @@ The number is the worker count. Each swarm starts N worker agents + 1 manager ag
 ```
 /set-issue-source   # First time: configure file or GitHub backend
 /install            # First time: install stop hook + aliases
-/fix-loop
+/dev-loop
 ```
 
 ### Pattern 3: Parallel Swarm (example: 3 Antigravity workers in tmux)
@@ -142,7 +142,7 @@ startclt 3
 ```
 /list-needs-design
 /brainstorm-issue 45
-/fix 45
+/dev 45
 ```
 
 ### Pattern 5: Proposal Review
@@ -150,14 +150,14 @@ startclt 3
 ```
 /list-proposals
 /approve-proposal 67
-/fix
+/dev
 ```
 
 ### Pattern 6: Fix-Loop + Parallel Review
 
 ```
 # Window 1: autonomous worker
-/fix-loop
+/dev-loop
 
 # Window 2: unblock stuck issues
 /review-blocked
@@ -174,7 +174,7 @@ startclt 3
 | **P2** | Medium — degraded, workaround exists |
 | **P3** | Low — minor, cosmetic |
 
-Unlabeled issues are triaged automatically on first `/fix`.
+Unlabeled issues are triaged automatically on first `/dev`.
 
 ## Blocking Labels
 
