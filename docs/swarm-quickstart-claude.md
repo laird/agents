@@ -101,12 +101,10 @@ The status bar at the bottom shows both windows; `*` marks the active one.
 |------|--------|
 | `Ctrl-b 0` | Switch to workers (window 0) |
 | `Ctrl-b 1` | Switch to manager (window 1) |
-| `Ctrl-b ←` / `Ctrl-b →` | Move between worker panes within window 0 |
+| `Ctrl-b ←` / `Ctrl-b →` | Move between worker panes within a window |
 | `Ctrl-b d` | Detach — leave swarm running in background |
-| `Ctrl-b z` | Zoom current pane to full screen (press again to unzoom) |
-| `Ctrl-b [` | Enter scroll mode (arrow keys / Page Up/Down to scroll, `q` to exit) |
 
-> **Interacting with a worker:** navigate to its pane (`Ctrl-b 0`, then `Ctrl-b →` to cycle) and type directly. The worker sees your input just like a normal terminal.
+You can type directly into any pane to interact with that worker. For everything else, see the [tmux cheat sheet](https://tmuxcheatsheet.com).
 
 ---
 
