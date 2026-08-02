@@ -376,15 +376,56 @@ start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
 
 When a worker has no issues in the queue, it can fall back to monitoring production systems — scanning logs for errors, checking service health, and filing or updating GitHub issues for any problems found. This keeps workers productive during queue droughts and surfaces production incidents automatically.
 
-The SRE monitor workflow (`agents/autocoder/workflows/sre-monitor.md`) is project-specific — copy and adapt it for your own services. It runs as the idle state in `/fix-loop`: after completing a monitoring cycle the worker sleeps 15–30 minutes before the next check, unless a P0 is detected (immediate action).
+Copy `agents/autocoder/workflows/sre-monitor.md` into your project and adapt the log-collection commands for your environment. The log-collection step is necessarily project-specific: it depends on your logging provider, service names, and the error patterns that matter to you. Everything else (severity triage, issue filing, sleep/wake cycle) stays the same.
 
-A typical SRE monitor checks:
-- Recent production log errors (last 30 minutes)
-- Service health and engagement/job status
-- Worker heartbeat health across all instances
-- Staging environment for regressions
+**Extending the log-collection step — examples by provider:**
 
-For each finding it either files a new GitHub issue with priority label, or comments on an existing open issue with updated frequency and context.
+*GCP Cloud Run / Cloud Logging:*
+```bash
+export SRE_PROJECT_ID="my-gcp-project"
+export SRE_SERVICE_NAME="my-api"
+
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=$SRE_SERVICE_NAME" \
+  --project="$SRE_PROJECT_ID" --limit=100 --freshness=30m 2>&1 \
+  | grep -iE "(error|fatal|timeout|Max restart|lock expired)" | head -40
+```
+
+*AWS CloudWatch Logs:*
+```bash
+aws logs filter-log-events \
+  --log-group-name "/aws/ecs/my-service" \
+  --start-time $(date -d '30 minutes ago' +%s000) \
+  --filter-pattern "?ERROR ?FATAL ?timeout" \
+  --query 'events[*].message' --output text | head -40
+```
+
+*Datadog:*
+```bash
+datadog-cli logs search \
+  "service:my-service status:(error OR warn) @env:production" \
+  --from "30 minutes ago" --limit 100 \
+  | jq -r '.[].message' | head -40
+```
+
+*Kubernetes (kubectl):*
+```bash
+kubectl logs -n production \
+  -l app=my-service \
+  --since=30m --prefix \
+  | grep -iE "(error|fatal|panic|OOMKilled)" | tail -40
+```
+
+*Local / file-based logs:*
+```bash
+grep -iE "(error|fatal|panic)" /var/log/my-service/app.log \
+  | awk -v cutoff="$(date -d '30 minutes ago' '+%Y-%m-%d %H:%M')" '$0 >= cutoff' \
+  | tail -40
+```
+
+Extend the `grep -iE` pattern with the error signatures that matter for your service — worker crashes, lock timeouts, queue stalls, auth failures, etc. Add a severity table mapping those patterns to P0–P3 so the agent knows when to file immediately vs. comment on an existing issue.
+
+For each finding the monitor either files a new GitHub issue with a priority label, or comments on an existing open issue with the latest timestamp, frequency, and context.
 
 ---
 ## Repository Structure
