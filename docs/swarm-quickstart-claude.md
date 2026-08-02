@@ -8,6 +8,8 @@ Run an autonomous multi-agent swarm using Claude Code (the `claude` CLI).
 - [`tmux`](https://github.com/tmux/tmux/wiki/Installing) installed
 - GitHub CLI (`gh`) installed and authenticated
 
+> **macOS:** [`cmux`](https://github.com/nicholasgasior/cmux) is also supported as an alternative multiplexer. Pass `--mux cmux` to `start-parallel` if you prefer it.
+
 ---
 
 ## Install
