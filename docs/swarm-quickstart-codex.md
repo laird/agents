@@ -35,7 +35,7 @@ The installer symlinks `skills/autocoder` and `skills/modernize` into `~/.codex/
 
 ```bash
 cd /path/to/your-project
-start-parallel --agent codex --workers 3 --issue-source github
+start-parallel 3 --agent codex --issue-source github
 ```
 
 Then attach to the tmux session that was just created:

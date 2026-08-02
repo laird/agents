@@ -35,7 +35,7 @@ The installer symlinks `.factory/skills/autocoder`, `.factory/droids/*.md`, and 
 
 ```bash
 cd /path/to/your-project
-start-parallel --agent droid --workers 3 --issue-source github
+start-parallel 3 --agent droid --issue-source github
 ```
 
 Then attach to the tmux session that was just created:

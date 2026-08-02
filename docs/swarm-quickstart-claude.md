@@ -22,7 +22,7 @@ Run an autonomous multi-agent swarm using Claude Code (the `claude` CLI).
 /autocoder:install
 ```
 
-`/autocoder:install` sets up shell scripts by symlinking `start-parallel`, `join-parallel`, `stop-parallel`, and related commands into `~/.local/bin`. Reload your shell after it finishes:
+`/autocoder:install` symlinks `start-parallel`, `join-parallel`, `stop-parallel`, and related scripts into `~/.local/bin`. Re-run it after updating the plugin to refresh the symlinks. Reload your shell after it finishes:
 
 **Step 2 — In your terminal:**
 
@@ -38,7 +38,7 @@ source ~/.zshrc    # or ~/.bashrc
 
 ```bash
 cd /path/to/your-project
-start-parallel --agent claude --workers 3 --issue-source github
+start-parallel 3 --agent claude --issue-source github
 ```
 
 Then attach to the tmux session that was just created:
@@ -125,7 +125,7 @@ tmux ls
 ```bash
 WORKER_MODEL=claude-haiku-4-5-20251001 \
 MANAGER_MODEL=claude-opus-5 \
-  start-parallel --agent claude --workers 4
+  start-parallel 4 --agent claude
 ```
 
 ---
