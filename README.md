@@ -351,7 +351,7 @@ Autonomous GitHub issue resolution with intelligent testing, quality automation,
 
 **Get help:** `/autocoder-help`
 
-**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`
+**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`, `/manager-handoff`, `/manager-resume`
 
 **Quick Start:**
 ```bash
@@ -371,6 +371,20 @@ WORKER_MODEL=claude-sonnet-5 MANAGER_MODEL=claude-opus-5 startclt 3
 # Manager-routing mode (zero worker-vs-worker claim races)
 start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
 ```
+
+**SRE Monitor (idle fallback):**
+
+When a worker has no issues in the queue, it can fall back to monitoring production systems — scanning logs for errors, checking service health, and filing or updating GitHub issues for any problems found. This keeps workers productive during queue droughts and surfaces production incidents automatically.
+
+The SRE monitor workflow (`agents/autocoder/workflows/sre-monitor.md`) is project-specific — copy and adapt it for your own services. It runs as the idle state in `/fix-loop`: after completing a monitoring cycle the worker sleeps 15–30 minutes before the next check, unless a P0 is detected (immediate action).
+
+A typical SRE monitor checks:
+- Recent production log errors (last 30 minutes)
+- Service health and engagement/job status
+- Worker heartbeat health across all instances
+- Staging environment for regressions
+
+For each finding it either files a new GitHub issue with priority label, or comments on an existing open issue with updated frequency and context.
 
 ---
 ## Repository Structure
