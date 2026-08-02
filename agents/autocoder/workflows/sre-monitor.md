@@ -1,166 +1,151 @@
 # SRE Monitor Workflow
 
-**Purpose**: Monitor production logs for failures and engagement processing issues; file or update GitHub issues
+**Purpose**: Monitor production systems for failures; file or update GitHub issues for any problems found.
 
-**When to run**: When there are no P0-P3 bugs or approved enhancements to work on (idle state)
+**When to run**: When there are no P0-P3 bugs or approved enhancements to work on (idle state). After each monitoring cycle, sleep 15–30 minutes before the next — unless a P0 is detected (act immediately).
 
-## Setup: Production Tunnel
+## Configuration
+
+Set these before running (or export them in your shell profile):
 
 ```bash
-# Verify production proxy is running (port 8080)
-curl -s http://localhost:8080/health | python3 -c "import json,sys; d=json.load(sys.stdin); print('health:', d.get('status'))"
-
-# If not running, start it:
-gcloud config configurations activate production
-gcloud run services proxy dashboard-ui \
-  --project=gp-ct-sbox-sat-gcp0c9-nextgenc \
-  --region=us-central1 \
-  --port=8080 \
-  --tag=production > /tmp/gcloud-proxy-production.log 2>&1 &
-sleep 3
-curl -s http://localhost:8080/health
+export SRE_PROJECT_ID="your-gcp-project-id"          # GCP project (if using Cloud Run / GCP Logging)
+export SRE_SERVICE_NAME="your-service-name"           # Primary service to monitor
+export SRE_SECONDARY_SERVICE="your-secondary-service" # Optional: secondary service
+export SRE_BASE_URL="https://your-service.example.com" # API base URL for health checks
 ```
 
 ## Step 1: Check Production Logs (Last 30 Minutes)
 
-```bash
-# IMPORTANT: Keep gcloud command on ONE line — multiline with backslash-continuation breaks due to trailing spaces.
-# Use --freshness flag instead of timestamp in filter. Use grep for filtering (--format flag also causes issues).
-gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=dashboard-ui" --project=gp-ct-sbox-sat-gcp0c9-nextgenc --limit=100 --freshness=30m 2>&1 | grep -E "(error|warn|heartbeat|Max restart|lock|stalled|timeout|Worker health)" | head -40
+Fetch recent logs and filter for known error patterns:
 
-# Also check thesis-validator (internal service, same binary, shares Redis/DB with dashboard-ui):
-gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=thesis-validator" --project=gp-ct-sbox-sat-gcp0c9-nextgenc --limit=60 --freshness=30m 2>&1 | grep -E "(message:|component:|Max restart|Worker health|error|lock)" | head -30
+```bash
+# GCP Cloud Run example — adapt to your logging provider
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=$SRE_SERVICE_NAME" \
+  --project="$SRE_PROJECT_ID" \
+  --limit=100 \
+  --freshness=30m 2>&1 \
+  | grep -iE "(error|warn|fatal|timeout|restart|lock|stall)" \
+  | head -40
+
+# Secondary service (if configured)
+if [ -n "$SRE_SECONDARY_SERVICE" ]; then
+  gcloud logging read \
+    "resource.type=cloud_run_revision AND resource.labels.service_name=$SRE_SECONDARY_SERVICE" \
+    --project="$SRE_PROJECT_ID" \
+    --limit=60 \
+    --freshness=30m 2>&1 \
+    | grep -iE "(error|warn|fatal|timeout|restart|lock|stall)" \
+    | head -30
+fi
 ```
 
-### Known Error Patterns
+**Adapt for other providers:**
+- AWS CloudWatch: `aws logs filter-log-events --log-group-name /your/service --start-time ...`
+- Datadog: `datadog-cli logs search "service:$SRE_SERVICE_NAME status:error"`
+- Local/file: `tail -n 500 /var/log/your-service.log | grep -iE "(error|warn|fatal)"`
 
-| Pattern | Severity | GH Issue | Action |
-|---------|----------|----------|--------|
-| `Max restart attempts reached, not restarting` (worker factory) | P1 | File if new | Worker permanently dead; service degraded |
-| `could not renew lock for job` (BullMQ) | P1 | File if new | Job orphaned; engagement may be stuck |
-| `Missing K_SERVICE or GCP_PROJECT_ID` | P3 | #2174 | Comment with count if increasing |
-| `One or more TimeSeries could not be written` (GCPMetrics) | P3 | #2173 | Comment with count if increasing |
-| No log output for >10 min from service | P0 | File immediately | CPU/event-loop starvation |
+### Error Severity Guide
 
-## Step 2: Check Engagement Health
+| Pattern | Severity | Action |
+|---------|----------|--------|
+| Service completely unresponsive (no logs >10 min) | P0 | File immediately, page on-call |
+| Worker permanently crashed (max restart attempts reached) | P1 | File if new issue |
+| Job lock lost / job orphaned | P1 | File if new issue |
+| Repeated transient errors (>10/30 min) | P2 | File or update existing issue |
+| Occasional transient errors (<10/30 min) | P3 | Comment on existing issue if open |
+| Single one-off error | — | Log, no action unless pattern repeats |
+
+## Step 2: Check Service Health
 
 ```bash
-# List active engagements
-curl -s http://localhost:8080/api/v1/engagements | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-items=d if isinstance(d,list) else d.get('engagements',d.get('data',[]))
-for e in (items if isinstance(items,list) else []):
-    lid=e.get('lifecycle','?')
-    sid=e.get('id','?')[:8]
-    name=e.get('name','?')[:30]
-    status=e.get('status','?')
-    updated=e.get('updated_at','?')
-    print(f'{sid} {name} lifecycle={lid} status={status} updated={updated}')
-"
+# Health endpoint
+curl -sf "$SRE_BASE_URL/health" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('status:', d.get('status', 'unknown'))
+for k, v in d.items():
+    if k != 'status':
+        print(f'  {k}: {v}')
+" || echo "HEALTH CHECK FAILED"
 
-# Check for engagements stuck with no progress (stale activeJobIds, error stages)
-curl -s http://localhost:8080/api/v1/engagements | python3 -c "
-import json,sys,time
-d=json.load(sys.stdin)
-items=d if isinstance(d,list) else d.get('engagements',d.get('data',[]))
-now_ms=time.time()*1000
-for e in (items if isinstance(items,list) else []):
-    updated=e.get('updated_at',0)
-    if isinstance(updated,(int,float)):
-        age_hours=(now_ms-updated)/3600000
-        if age_hours > 2:
-            print(f'STALE {age_hours:.1f}h: {e.get(\"id\",\"?\")[:8]} {e.get(\"name\",\"?\")[:40]}')
-    stages=e.get('stages',{})
-    for stage,v in stages.items() if isinstance(stages,dict) else []:
-        if isinstance(v,dict) and v.get('status') == 'error':
-            print(f'ERROR stage: {e.get(\"id\",\"?\")[:8]} {stage}={v.get(\"status\")}')
-    active=e.get('activeJobIds',[])
-    cur=e.get('currentJobId')
-    if isinstance(active,list) and len(active)>1:
-        print(f'STALE JOBS: {e.get(\"id\",\"?\")[:8]} activeJobIds={active} currentJobId={cur}')
-"
+# List active jobs / work items (adapt path to your API)
+curl -sf "$SRE_BASE_URL/api/v1/jobs" | python3 -c "
+import json, sys, time
+items = json.load(sys.stdin)
+if isinstance(items, dict):
+    items = items.get('jobs', items.get('data', []))
+now_ms = time.time() * 1000
+for item in (items if isinstance(items, list) else []):
+    updated = item.get('updated_at', 0)
+    age_h = (now_ms - updated) / 3_600_000 if isinstance(updated, (int, float)) else 0
+    status = item.get('status', '?')
+    name = str(item.get('name', item.get('id', '?')))[:40]
+    stale = ' ⚠️  STALE' if age_h > 2 else ''
+    print(f'{name}  status={status}  age={age_h:.1f}h{stale}')
+" 2>/dev/null || echo "(no job list endpoint — skip)"
 ```
 
-## Step 3: Check Worker Health Across All Instances
+## Step 3: Check Worker Health
 
 ```bash
-FILTER='resource.type="cloud_run_revision" AND resource.labels.service_name="dashboard-ui"'
-SINCE=$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ')
-gcloud logging read "$FILTER AND timestamp>=\"$SINCE\"" \
-  --project=gp-ct-sbox-sat-gcp0c9-nextgenc \
-  --limit=50 \
-  --format='table(timestamp,jsonPayload.component,jsonPayload.level,jsonPayload.message)' \
-  | grep -E "(WorkerFactory|heartbeat|restart)"
+# Filter recent logs for worker heartbeat / restart messages
+SINCE=$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+        || date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ')
+
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=$SRE_SERVICE_NAME AND timestamp>=\"$SINCE\"" \
+  --project="$SRE_PROJECT_ID" \
+  --limit=50 2>&1 \
+  | grep -iE "(worker|heartbeat|restart|health)" \
+  | head -20
 ```
 
-Expected healthy output: all worker factories show `Worker health check passed` every ~30s
+Expected healthy output: all workers show a heartbeat / health-check-passed message at their configured interval (e.g., every 30 s).
 
-## Step 4: Check `thesis-validator-staging` Service
+## Step 4: Assess and Act
 
-```bash
-FILTER='resource.type="cloud_run_revision" AND resource.labels.service_name="thesis-validator-staging"'
-SINCE=$(date -u -d '15 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-15M '+%Y-%m-%dT%H:%M:%SZ')
-gcloud logging read "$FILTER AND timestamp>=\"$SINCE\"" \
-  --project=gp-ct-sbox-sat-gcp0c9-nextgenc \
-  --limit=30 \
-  --format='table(timestamp,jsonPayload.level,jsonPayload.message,jsonPayload.component)' \
-  | grep -E "(error|warn|heartbeat|restart|Max restart)"
-```
-
-Note: `thesis-validator-staging` has persistent dead workers (tracked in separate issue). Only file new issue if behavior worsens (e.g., service stops responding entirely).
-
-## Step 5: Assess and Act
-
-### Existing Issue Numbers (check before filing new)
+### Before Filing — Check for Existing Issues
 
 ```bash
-# Search existing issues for relevant keywords
-gh issue list --state open --label "P0,P1,P2,P3" --json number,title,labels | \
-  python3 -c "
-import json,sys
+gh issue list --state open --json number,title,labels \
+  | python3 -c "
+import json, sys
 for i in json.load(sys.stdin):
     print(f'#{i[\"number\"]} {i[\"title\"][:70]}')
-" | grep -iE "(worker|heartbeat|lock|engagement|stall|stuck|vertex|expert)"
+" | grep -iE "(worker|lock|stall|timeout|health|restart)"
 ```
 
 ### Decision Logic
 
 ```
 If new error pattern not in any open issue:
-  → File new GH issue with:
-     - Priority label based on severity table above
-     - Title: short description of the pattern
-     - Body: timestamp, error message, Cloud Run revision, frequency, engagement ID if applicable
-     - Label: "sre" or appropriate component label
+  → File a new GitHub issue (see template below)
 
-If error pattern matches existing open issue:
-  → Comment on existing issue with:
-     - Latest occurrence timestamp
-     - Frequency in last 30 min
-     - Any new context (engagement IDs affected, etc.)
+If error pattern matches an existing open issue:
+  → Comment on that issue with latest timestamp, frequency, and new context
 
-If production is completely healthy (no errors, all workers green, engagements progressing):
-  → Log a brief note and schedule next check in 30 minutes
+If everything is healthy (no errors, workers green, jobs progressing):
+  → Log "SRE check passed — no action required" and schedule next check
 ```
 
-### File New Issue Template
+### File New Issue
 
 ```bash
 gh issue create \
-  --title "TITLE" \
+  --title "YOUR TITLE HERE" \
   --label "P1,sre" \
-  --body "$(cat << 'EOF'
+  --body "$(cat <<'BODY'
 ## SRE Alert
 
 **Detected**: $(date -u)
-**Service**: dashboard-ui (production)
-**Revision**: REVISION_NAME
+**Service**: $SRE_SERVICE_NAME
 
 ## Error Pattern
 
 \`\`\`
-ERROR_MESSAGE
+PASTE_ERROR_MESSAGE_HERE
 \`\`\`
 
 ## Frequency
@@ -169,29 +154,38 @@ N occurrences in last 30 minutes
 
 ## Impact
 
-DESCRIBE_IMPACT
+Describe the user-visible or system impact.
 
-## Relevant Logs
+## Sample Logs
 
 \`\`\`
-SAMPLE_LOG_LINES
+PASTE_SAMPLE_LOG_LINES_HERE
 \`\`\`
 
 *Filed by autocoder sre-monitor workflow*
-EOF
+BODY
 )"
 ```
 
-### Add Comment to Existing Issue
+### Comment on Existing Issue
 
 ```bash
 gh issue comment ISSUE_NUMBER --body "**SRE Update** $(date -u)
 
 Continued occurrence: N times in last 30 min
-Revision: dashboard-ui-REVISION
-Sample: \`ERROR_MESSAGE\`"
+Sample: \`ERROR_MESSAGE_HERE\`"
 ```
+
+## Adapting This Workflow
+
+Copy this file into your project and replace:
+
+1. **Log provider** — swap `gcloud logging read` for your provider's CLI (`aws logs`, `datadog-cli`, `journalctl`, etc.)
+2. **Health endpoint** — update `/health` path and response shape
+3. **Job/work-item endpoint** — update `/api/v1/jobs` path and JSON field names
+4. **Error patterns** — extend the `grep -iE` pattern to match your service's log vocabulary
+5. **Severity table** — add rows for known recurring patterns with their issue numbers
 
 ## Integration with Fix Loop
 
-This workflow runs as the **idle fallback** in the autocoder fix loop. After completing one SRE monitoring cycle (steps 1-5), wait 15-30 minutes before the next cycle, unless a P0 is detected (act immediately in that case).
+This workflow is the **idle fallback** in the autocoder fix loop. After one complete monitoring cycle (steps 1–4), sleep 15–30 minutes before the next — unless a P0 is detected, in which case act immediately and re-check within 5 minutes.
