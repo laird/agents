@@ -7,20 +7,23 @@ Run an autonomous multi-agent swarm using Claude Code (the `claude` CLI).
 - [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
 - [`tmux`](https://github.com/tmux/tmux/wiki/Installing) or [`cmux`](https://github.com/nicholasgasior/cmux) installed
 - GitHub CLI (`gh`) installed and authenticated
-- This repo cloned to disk and `CLAUDE.md` present in your target project
 
 ## Install
 
-```bash
-# From within your target project repo
-claude mcp add https://github.com/laird/agents   # or clone locally and use local path
+From within your target project, run these slash commands inside Claude Code:
+
+```
+/plugin add marketplace https://github.com/laird/agents
+/plugin install autocoder
 ```
 
-Or install by cloning:
+Then run the install command to set up shell scripts and aliases:
 
-```bash
-git clone https://github.com/laird/agents ~/src/agents
 ```
+/autocoder:install
+```
+
+This symlinks `start-parallel`, `join-parallel`, `stop-parallel`, and related scripts into `~/.local/bin` and optionally adds shell aliases to your rc file.
 
 ## Quick Start
 
@@ -28,12 +31,14 @@ git clone https://github.com/laird/agents ~/src/agents
 cd /path/to/your-project
 
 # 1 manager + 3 workers, issue source = GitHub Issues
-~/src/agents/plugins/autocoder/scripts/start-parallel-agents.sh \
-  --agent claude --workers 3 --issue-source github
+start-parallel --agent claude --workers 3 --issue-source github
 
 # With manager routing (no claim races):
-~/src/agents/plugins/autocoder/scripts/start-parallel-agents.sh \
-  --agent claude --workers 3 --route manager
+start-parallel --agent claude --workers 3 --route manager
+
+# Or using the shell alias (after sourcing claude-shell-aliases.sh):
+startclt 3    # 1 manager + 3 Claude workers in tmux
+startclc 3    # 1 manager + 3 Claude workers in cmux
 ```
 
 Each worker opens a visible tmux pane running `claude-worker-loop.sh`, which restarts a fresh `claude` process per issue (no context accumulation). The manager runs `claude-opus-5`; workers default to `claude-sonnet-5`.
@@ -53,13 +58,13 @@ Ctrl-b d
 ```bash
 WORKER_MODEL=claude-haiku-4-5-20251001 \
 MANAGER_MODEL=claude-opus-5 \
-  start-parallel-agents.sh --agent claude --workers 4
+  start-parallel --agent claude --workers 4
 ```
 
 ## Stop
 
 ```bash
-~/src/agents/plugins/autocoder/scripts/stop-parallel-agents.sh
+stop-parallel
 ```
 
 ## Tips
