@@ -53,7 +53,7 @@ This file tracks all significant changes, migrations, and decisions.
 
 **What Changed**: Updated install-codex.sh to symlink repo-local codex runtime wrappers into target repos and documented the behavior in Codex install docs.
 
-**Why Changed**: Target repos like nextgen-CDD expected shared Codex loop scripts, but the installer only linked skills and aliases, causing bash scripts/codex-fix-loop.sh and bash scripts/codex-manage-workers-loop.sh to fail with missing-file errors.
+**Why Changed**: Target repos expected shared Codex loop scripts, but the installer only linked skills and aliases, causing bash scripts/codex-fix-loop.sh and bash scripts/codex-manage-workers-loop.sh to fail with missing-file errors.
 
 **Impact**: Running the installer now makes worker and manager loop entrypoints available from the target repo and its git worktrees, matching AGENTS.md expectations.
 
@@ -478,24 +478,24 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
-## 2026-05-03 13:29:55 - Install ARI Codex plugin
+## 2026-05-03 13:29:55 - Install custom Codex plugin
 
-**What Changed**: Installed tv-ari-skills 1.0.2 from nextgen-CDD ari-plugin bundle into Codex marketplace configuration
+**What Changed**: Installed a custom skills bundle from a target project into Codex marketplace configuration
 
-**Why Changed**: User requested installation from the integration ari-plugin source
+**Why Changed**: User requested installation from a project-specific plugin source
 
-**Impact**: Codex now has the TV ARI Skills marketplace enabled; start with ari_help
+**Impact**: Codex marketplace updated with custom plugin; skills available immediately
 
 
 ---
 
-## 2026-05-03 13:32:41 - Install ARI plugin from zip URL
+## 2026-05-03 13:32:41 - Install plugin from zip URL
 
-**What Changed**: Downloaded tv-ari-skills-1.0.2.zip via authenticated GitHub API from the integration ari-plugin path, extracted it into a durable Codex marketplace directory, and registered tv-ari-skills from that bundle
+**What Changed**: Downloaded a plugin zip via authenticated GitHub API, extracted it into a durable Codex marketplace directory, and registered the plugin bundle
 
-**Why Changed**: User requested installation specifically from the tv-ari-skills-1.0.2.zip URL
+**Why Changed**: User requested installation from a specific zip URL
 
-**Impact**: Codex tv-ari-skills marketplace now points to /Users/Laird.Popkin/.codex/marketplaces/tv-ari-skills-url-1.0.2 with plugin version 1.0.2 enabled
+**Impact**: Codex marketplace now points to the extracted plugin directory with the plugin version enabled
 
 
 ---
@@ -506,7 +506,7 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Why Changed**: The user requested this checkout be installed as a plugin marketplace, and current Codex marketplace entries should include authentication policy metadata.
 
-**Impact**: Codex lists laird-agents at /Users/Laird.Popkin/src/agents with autocoder available/installed and modernize available; validation commands confirmed JSON syntax.
+**Impact**: Codex lists the agents repo with autocoder available/installed and modernize available; validation commands confirmed JSON syntax.
 
 
 ---

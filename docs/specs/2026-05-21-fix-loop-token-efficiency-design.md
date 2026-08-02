@@ -343,7 +343,7 @@ different model than the caller's."*
 #### 7.1.1 Test run 2026-05-21
 
 **Test environment:** Claude Code, Opus 4.7 (1M context) parent
-session at `/Users/Laird.Popkin/src/nextgen-CDD/.worktrees/agentex-port`.
+session at `<project-root>/.worktrees/agentex-port`.
 Two `Agent` calls (Task tool equivalent) with `model="haiku"` and
 `model="opus"` parameters, asking each subagent to report its own
 model identity.

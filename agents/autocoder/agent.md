@@ -29,7 +29,7 @@ Read project-specific settings from guidance file (e.g., `CLAUDE.md`, `gemini.md
 - Proposal system for human-approved enhancements
 - Test coverage analysis
 - Git branch management and GitHub issue updates
-- SRE monitoring: production log scanning, engagement health checks, auto-filing issues
+- SRE monitoring: production log scanning, service health checks, auto-filing issues
 
 ## Required Tools
 

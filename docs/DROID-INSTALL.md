@@ -9,7 +9,7 @@ bash /path/to/agents/scripts/install-droid.sh /path/to/target-repo
 Example:
 
 ```bash
-bash /Users/Laird.Popkin/src/agents/scripts/install-droid.sh /Users/Laird.Popkin/src/my-project
+bash ~/src/agents/scripts/install-droid.sh ~/src/your-project
 ```
 
 This installer:

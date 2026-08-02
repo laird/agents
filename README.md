@@ -130,6 +130,19 @@ See [docs/DROID.md](docs/DROID.md) for details.
 
 ---
 
+## Swarm Quickstart Guides
+
+Platform-specific install and run guides for each supported agent:
+
+| Platform | Quickstart |
+|----------|-----------|
+| Claude Code | [docs/swarm-quickstart-claude.md](docs/swarm-quickstart-claude.md) |
+| Gemini CLI (Antigravity) | [docs/swarm-quickstart-gemini.md](docs/swarm-quickstart-gemini.md) |
+| OpenAI Codex CLI | [docs/swarm-quickstart-codex.md](docs/swarm-quickstart-codex.md) |
+| Droid (Factory) | [docs/swarm-quickstart-droid.md](docs/swarm-quickstart-droid.md) |
+
+---
+
 ## Shell Aliases — All Combinations
 
 Source the alias files for the platforms you use. Each provides `start` and `join` aliases for both tmux and cmux.
@@ -662,12 +675,13 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.31.0 | 2026-08-02 | **Swarm quickstart guides** — per-platform install+run docs for Claude, Gemini/Antigravity, Codex, and Droid (`docs/swarm-quickstart-*.md`). Removed all project-specific and EY-specific content: triage corpus rewritten with generic SaaS domain, install docs use generic paths, HISTORY.md anonymized, scripts parameterized. |
 | 3.30.0 | 2026-08-02 | **Autocoder v4.9.0**: Manager context-reset commands — `/autocoder:manager-handoff` snapshots live GitHub state, worker topology, and session notes to `MANAGER-STATE.md` then guides a clean context reset; `/autocoder:manager-resume` reads the saved state, diffs against live GitHub, and emits a ready-to-act summary in the fresh session. |
 | 3.29.0 | 2026-07-31 | **Autocoder v4.8.0**: Jira and Azure DevOps issue backends (parallel with file/GitHub). Fresh-context fix extended to Gemini/Antigravity workers — `gemini-fix-loop.sh` now runs as a shell subprocess per issue, matching the Claude worker pattern. cmux liveness probe in multiplexer auto-detection (prefers tmux if cmux is installed but not running). API push fallback; issues with an open PR suppressed from the claimable queue. CI shell test suite; multiple bug fixes: label reconciliation, `.autocoder.json` winning over stale env exports, portable test-stat parsing, start-issue-work.sh exit-128 fix. |
 | 3.24.0 | 2026-07-24 | **Autocoder v4.5.0**: Robust issue claiming — atomic file-backend rename + GitHub race detection via `[autocoder-claim]` markers (3 s settlement, then marker-count check). Task scope gate before branch creation (CONTEXT FIT + WORKTREE INDEPENDENCE); over-large issues decomposed with "Files Affected" field for swarm-safe parallelism. `claude-worker-loop.sh` shell loop gives each issue a fresh Claude process (clean context window) in a visible tmux pane. Model tiers: manager runs `claude-opus-5`, workers run `claude-sonnet-5`; overridable via `WORKER_MODEL`/`MANAGER_MODEL`. tmux/cmux availability check with per-platform install links. |
 | 3.23.0 | 2026-07-23 | **Swarm routing modes**: `--route manager` flag for `start-parallel-agents.sh` — workers idle at a ready prompt, manager dispatches `/autocoder:fix <N>` one at a time, eliminating all worker-vs-worker claim races. `--paused`/`--no-start` flag creates the swarm without launching loops (start them later with `start-workers.sh`). |
 | 3.22.0 | 2026-06-20 | **Swarm resilience & hardened git workflow**: Manager agent monitors worker health and restarts unhealthy workers. `add-worker.sh` lets the manager (or user) scale the fleet mid-run without restarting. Hardened `/fix` git workflow: always creates `feature/issue-N` branch, auto-detects default branch, propagated to Codex, Droid, and OpenCode platforms. Shared integration branch (`merge-to-integration.sh`) for landing parallel worktree work. Codex and Antigravity/Gemini parity updates. |
-| 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, engagement health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/fix` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
+| 3.11.1 | 2026-03-05 | **Autocoder v3.6.3**: SRE monitoring workflow as idle fallback (production log scanning, service health checks, worker heartbeats, automated issue filing). Issue decomposition for complex `/fix` issues. `/review-blocked` command for parallel review sessions (supports needs-design, too-complex, proposal, future labels). `/install` command replaces `/install-stop-hook` (now installs all plugin components). `future` blocking label for deferred issues. Stop hook path auto-detection and duplicate prevention. |
 | 3.4.0 | 2026-01-24 | **Autocoder v3.0.0**: Renamed `/fix-github` → `/fix`, `/fix-github-loop` → `/fix-loop`. Added design workflow commands (`/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`). Added help commands (`/autocoder-help`, `/modernize-help`). Updated README with workflow patterns. |
 | 3.3.0 | 2025-12-29 | **Proposal system & triage**: AI-generated enhancements now require human approval via `proposal` label. Added `/list-proposals` command, unprioritized issue triage, platform documentation (CLAUDE-CODE.md, ANTIGRAVITY.md, OPENCODE.md). All platforms updated to consistent v1.5.0 |
 | 3.0.0 | 2025-11-24 | **Added autocoder plugin**: Autonomous GitHub issue resolution with `/fix` command. Self-configuring via `CLAUDE.md`, works with any test framework. Includes regression-test.sh script with GitHub integration. Marketplace now contains 2 plugins (modernize + autocoder) |

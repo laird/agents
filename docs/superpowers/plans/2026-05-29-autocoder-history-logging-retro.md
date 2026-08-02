@@ -182,10 +182,10 @@ Expected: file exists containing `## ... - Test Entry` with the four fields.
 ```bash
 mkdir -p /tmp/testdocs/docs
 cd /tmp/testdocs
-bash /Users/Laird.Popkin/src/agents/scripts/append-to-history.sh \
+bash /path/to/agents/scripts/append-to-history.sh \
   "Compat Test" "Old-style call" "Testing" "Backward compat"
 cat docs/HISTORY.md
-cd /Users/Laird.Popkin/src/agents
+cd /path/to/agents
 rm -rf /tmp/testdocs
 ```
 

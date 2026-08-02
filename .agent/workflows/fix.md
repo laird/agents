@@ -1340,7 +1340,7 @@ fi
 #   "Issue asks for 'real-time notifications' but doesn't specify transport.
 #    Open questions:
 #    1. SSE (we use it elsewhere) vs WebSocket vs polling?
-#    2. Who is the audience — engagement participants only, or all users?
+#    2. Who is the audience — specific user groups only, or all users?
 #    3. Persistence semantics — at-least-once? best-effort?
 #    Approaches considered:
 #    - SSE: matches existing infra but only server-push.
