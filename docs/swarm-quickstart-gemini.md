@@ -35,12 +35,7 @@ The Gemini workflows live in `.agent/workflows/` and are loaded automatically wh
 
 ```bash
 cd /path/to/your-project
-
-# 1 manager + 3 workers
 start-parallel --agent gemini --workers 3 --issue-source github
-
-# With manager routing (eliminates worker claim races):
-start-parallel --agent gemini --workers 3 --route manager
 ```
 
 Then attach to the tmux session that was just created:
