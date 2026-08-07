@@ -604,15 +604,27 @@ else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
 
+  # ── Branch-evidence exclusion (issue #48) ──────────────────────────────────
+  # Filtering on labels alone re-exposes in-flight issues whenever a `working`
+  # label is dropped (issue #14 — still live in workers on older code). The
+  # post-selection arbitration below catches it, but only after a claim/back-off
+  # cycle, and the gap between the two is where a second worker also claims.
+  # A pushed branch is evidence that survives a lost label. ONE ls-remote per
+  # pass, not one API call per candidate. Fails open on a network blip.
+  CLAIMED_BY_BRANCH=$("${SCRIPT_DIR}/claimed-issue-numbers.sh" origin)
+  [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
+  echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
+
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
   # Also filter out decomposed parent issues (work on their sub-tasks instead)
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
@@ -631,12 +643,13 @@ else
 
   # Build ranked list of all candidate issues (for retry on race conflict)
   cat /tmp/top-issue.json > /tmp/top-issue-single.json
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     [.[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
@@ -875,23 +888,77 @@ echo "✅ Saved merge mode '$MERGE_MODE' to CLAUDE.md"
 
 4. Commit the CLAUDE.md change so all agents share the setting.
 
-## CRITICAL: Always Remove 'working' Label
+## CRITICAL: Release the 'working' Label Only on a Terminal Outcome
 
-**The `working` label MUST be removed when you stop working on an issue, regardless of the outcome.** This is a concurrency lock — if not removed, no other agent can pick up the issue.
+The `working` label is the concurrency lock. It is held for the **whole life of
+the claim**, not per commit. An open issue with no `working` label is, by
+definition, claimable — so dropping the lock while the issue is still open and
+still yours re-exposes it to the pool and invites a peer to duplicate your work.
 
-Remove it in ALL exit paths:
-- **Issue fixed and closed** → remove `working` label
-- **Issue deferred/blocked** → remove `working` label (the `add-blocking-label.sh` script does this automatically, but if you add blocking labels directly via `issue_update` or `/update-issue`, you MUST also remove `working`)
-- **Issue skipped** → remove `working` label
-- **Error or failure** → remove `working` label
-- **Moving to next issue** → remove `working` label from current issue
+**Release the lock ONLY when the claim has actually ended:**
+
+| Terminal outcome | Release? | Also required |
+|---|---|---|
+| Issue closed (merged / resolved) | ✅ yes | — |
+| PR opened (`pr` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step, so the issue stays out of the claimable pool until the merge closes it |
+| Blocked (`needs-design`, `needs-clarification`, `needs-approval`, `too-complex`, `future`) | ✅ yes | post a release comment in the same step |
+| Deliberately skipped or abandoned | ✅ yes | post a release comment in the same step |
+| Could not switch to the feature branch (claim never started) | ✅ yes | — |
+
+**NEVER release the lock for any of these:**
+
+- After a **partial** commit, or a commit titled `#N (partial): …`
+- Between batches of an implementation plan
+- Because you are compacting context, pausing, or handing off mid-issue
+- Because you *think* you are done — "done" means the issue is **CLOSED**, not
+  "the last commit landed"
+- Because you are moving on to another issue while this one is still open —
+  that is an abandonment, so release it via the explicit-release path below
+  (with a comment), not silently
 
 ```bash
-# ALWAYS run this before moving to the next issue:
+# Correct: terminal outcome only, and only after the publication gate
+# (PUSH_OK / merge-to-integration.sh) has passed. Pair the release with the close.
+issue_close "$ISSUE_NUM" --comment "✅ Resolved — <summary>"
 issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
 
-**Never add a blocking label without also removing the `working` label.** If you use `issue_update` or `/update-issue` to add `needs-design`, `too-complex`, `needs-clarification`, `needs-approval`, or `future`, always include a second command to remove `working` in the same step.
+```bash
+# WRONG — this is issue #14. The issue is still OPEN, so removing the lock
+# hands it straight back to the claimable pool while you still hold the branch.
+git commit -m "#${ISSUE_NUM} (partial): first half of the refactor"
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+### Explicit release (blocked, skipped, or abandoned)
+
+A release that is not a close must be **visible**, so peers and
+`/monitor-workers` can tell a deliberate hand-off from a crashed worker. Always
+comment first, then drop the label:
+
+```bash
+issue_comment "$ISSUE_NUM" --body "🔓 **Releasing claim**
+
+**Reason**: <blocked on X | skipped because Y | abandoning, see below>
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (<pushed | discarded>)
+**State left behind**: <what is done, what remains>
+
+Releasing the \`working\` lock so another agent can pick this up."
+issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+```
+
+**Never add a blocking label without also releasing the lock.** `add-blocking-label.sh`
+does both for you; if you add `needs-design`, `too-complex`, `needs-clarification`,
+`needs-approval`, or `future` directly via `issue_update` or `/update-issue`, you
+must remove `working` and post the release comment in the same step.
+
+### Holding the lock across a pause
+
+If you are still working the issue — mid-plan, compacting context, resuming next
+iteration — **keep the label**. The `feature/issue-<N>` branch plus the
+work-started comment are the proof the lock is live. An abandoned lock is not
+your problem to clean up mid-flight: `/monitor-workers` detects locks with no
+agent activity and reclaims them with human confirmation.
 
 ## Fixing Strategy
 
@@ -1003,15 +1070,47 @@ else
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
-  # Remove 'working' label and close issue
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  # ── Ship gate (issue #35) ───────────────────────────────────────────────
+  # #26's PUSH_OK guard answers "did the push succeed?". It cannot answer "did
+  # this reach the branch that ships?" A worker branching from a feature line
+  # pushes fine, merges fine, tests fine — and closes the issue while the
+  # shipping branch is untouched. Every signal is green and the tracker is wrong.
+  #
+  # NOTE: checking ancestry of $INTEGRATION_BRANCH does NOT work. When the swarm's
+  # integration branch is itself a feature line, a commit merged into it IS an
+  # ancestor of it, so the check passes and the issue closes — which is the bug.
+  # Ship is measured against the branch that actually ships. (The PR merge mode
+  # above needs no gate here: it never closes the issue itself — it hands off to
+  # `awaiting-integration` and lets the merge close it.)
+  LANDED_COMMIT=$(git rev-parse HEAD)
+  if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
+    # Genuinely shipped — safe to close.
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 [Detailed explanation of fix]
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 
 🤖 Auto-resolved by autonomous fix workflow"
+  else
+    # Real work, really pushed, but NOT on the shipping branch. Closing here
+    # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
+    # released, and record exactly what must merge for this to ship.
+    SHIP_BRANCH_NAME="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+    issue_comment "$ISSUE_NUM" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+
+The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${LANDED_COMMIT}\`. It has **not** reached \`${SHIP_BRANCH_NAME}\`, so closing would assert something false.
+
+**To ship**: \`${INTEGRATION_BRANCH}\` must merge to \`${SHIP_BRANCH_NAME}\`.
+
+Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
+
+🤖 Ship gate (issue #35)"
+    echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
+  fi
 
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
@@ -1238,9 +1337,23 @@ else
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
-  # Remove 'working' label and close issue with detailed explanation
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  # ── Ship gate (issue #35) ───────────────────────────────────────────────
+  # #26's PUSH_OK guard answers "did the push succeed?". It cannot answer "did
+  # this reach the branch that ships?" A worker branching from a feature line
+  # pushes fine, merges fine, tests fine — and closes the issue while the
+  # shipping branch is untouched. Every signal is green and the tracker is wrong.
+  #
+  # NOTE: checking ancestry of $INTEGRATION_BRANCH does NOT work. When the swarm's
+  # integration branch is itself a feature line, a commit merged into it IS an
+  # ancestor of it, so the check passes and the issue closes — which is the bug.
+  # Ship is measured against the branch that actually ships. (The PR merge mode
+  # above needs no gate here: it never closes the issue itself — it hands off to
+  # `awaiting-integration` and lets the merge close it.)
+  LANDED_COMMIT=$(git rev-parse HEAD)
+  if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
+    # Genuinely shipped — safe to close.
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ## Root Cause
 [Detailed analysis]
@@ -1258,6 +1371,24 @@ else
 **Commit**: [commit hash]
 
 🤖 Auto-resolved by autonomous fix workflow with superpowers"
+  else
+    # Real work, really pushed, but NOT on the shipping branch. Closing here
+    # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
+    # released, and record exactly what must merge for this to ship.
+    SHIP_BRANCH_NAME="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+    issue_comment "$ISSUE_NUM" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+
+The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${LANDED_COMMIT}\`. It has **not** reached \`${SHIP_BRANCH_NAME}\`, so closing would assert something false.
+
+**To ship**: \`${INTEGRATION_BRANCH}\` must merge to \`${SHIP_BRANCH_NAME}\`.
+
+Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
+
+🤖 Ship gate (issue #35)"
+    echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
+  fi
 
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
@@ -2115,8 +2246,12 @@ Enhancement implementation paused. Will resume after bugs are fixed.
   # Do NOT merge - leave branch for investigation
   echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
 
-  # Remove 'working' label to release the enhancement
-  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  # KEEP the 'working' label. The enhancement is PAUSED, not finished — the
+  # branch is preserved and this worker intends to resume once the bug issues
+  # land. Releasing here would re-expose an issue that already has unmerged work
+  # on a branch (issue #14). Release it only if you are truly abandoning the
+  # enhancement, and then use the explicit-release path (comment + label removal).
+  echo "⏸️  Enhancement #$ENHANCE_NUM paused ('working' lock retained; branch preserved)"
 
   # Switch back to main
   git checkout main
@@ -2132,19 +2267,22 @@ Skip an enhancement and move to the next if:
 - Enhancement requires user decisions not documented
 
 ```bash
-# Remove 'working' label to release the enhancement for others
-issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-
-issue_comment "$ENHANCE_NUM" --body "⏭️ **Enhancement Skipped**
+# Explicit release: announce the hand-off FIRST, then drop the lock, so peers
+# and /monitor-workers see a deliberate release rather than a vanished lock.
+issue_comment "$ENHANCE_NUM" --body "🔓 **Enhancement Skipped — releasing claim**
 
 This enhancement cannot be automatically implemented because:
 [Reason]
 
 **Recommendation**: [What manual steps are needed]
+**State left behind**: [what exists on the branch, if anything]
 
-Moving to next enhancement or proposing new improvements.
+Releasing the \`working\` lock so another agent can pick this up.
 
 🤖 Autonomous enhancement workflow"
+
+# Terminal outcome only: this is an abandonment, paired with the release comment above.
+issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
 
 # Add 'needs-review' label
 issue_update "$ENHANCE_NUM" --add-label "needs-review"
@@ -2364,8 +2502,16 @@ Once the `proposal` label is removed, the `/fix` workflow will automatically imp
 
 🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
 
-**REMINDER**: Before moving to the next issue, ALWAYS remove the `working` label from the current issue:
+**REMINDER**: The `working` label is released only on a **terminal outcome** —
+the issue is closed, or you explicitly release it (blocked / skipped / abandoned)
+with a release comment in the same step:
+
 ```bash
+# Terminal outcome only. Never after a partial commit, a batch boundary, or a pause.
 issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
 ```
-This applies to ALL outcomes: fixed, skipped, deferred, blocked, or errored. Failing to remove this label will prevent any agent from working on the issue.
+
+Dropping it while the issue is still open and still yours re-exposes it to the
+claimable pool and causes a peer to duplicate your work. Leaving it held while
+you are genuinely still working is correct — `/monitor-workers` reclaims locks
+that go stale.

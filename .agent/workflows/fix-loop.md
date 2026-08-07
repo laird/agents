@@ -24,7 +24,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping fix-loop v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping fix-loop v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 `/fix-loop` is a dispatcher coordinating parallel workers. The dispatcher and workers have distinct skill mappings.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/check-optional-skills-drift.sh
 # Two-pass drift detector for opportunistic-skill-integration prelude blocks.
-# Pass 1: boilerplate identical across all 12 command files + 2 canonical sources.
+# Pass 1: boilerplate identical across all 14 command files + 2 canonical sources.
 # Pass 2: per-command mapping identical between Claude Code and Antigravity mirrors.
 # Exits non-zero on any drift or structural problem (CI-safe).
 #
@@ -24,12 +24,14 @@ boilerplate_files=(
   plugins/autocoder/commands/approve-proposal.md
   plugins/autocoder/commands/fix.md
   plugins/autocoder/commands/fix-loop.md
+  plugins/autocoder/commands/retro.md
   plugins/modernize/commands/plan.md
   plugins/modernize/commands/modernize.md
   .agent/workflows/brainstorm-issue.md
   .agent/workflows/approve-proposal.md
   .agent/workflows/fix.md
   .agent/workflows/fix-loop.md
+  .agent/workflows/retro.md
   .agent/workflows/plan.md
   .agent/workflows/modernize.md
 )
@@ -56,8 +58,13 @@ else
 fi
 
 # --- Pass 2: per-command mapping identical between Claude/Antigravity mirrors ---
-for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop; do
-  matches=$(find plugins/*/commands -name "${cmd}.md" 2>/dev/null)
+# retro added: it carries both a prelude block and a mapping block but was
+# missing from this manifest, so its mirrors could drift undetected.
+for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop retro; do
+  # Match on the mapping marker, not just the filename: retro.md exists in both
+  # plugins/autocoder (carries the mapping block) and plugins/modernize (an
+  # unrelated command with no block).
+  matches=$(grep -l "BEGIN optional-skills-mapping ${cmd} v1" $(find plugins/*/commands -name "${cmd}.md" 2>/dev/null) 2>/dev/null || true)
   count=$(echo "$matches" | grep -c . || true)
   if [ "$count" -ne 1 ]; then
     echo "ERROR: ${cmd}.md matches ${count} files in plugins/*/commands (expected 1):" >&2
