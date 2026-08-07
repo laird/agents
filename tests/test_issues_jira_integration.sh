@@ -108,6 +108,16 @@ eq "update --add-label adds P3" "True" "$HAS_P3"
 "$BACKEND" close "$NUM" --comment "closing" >/dev/null
 eq "close transitions the issue to CLOSED" "CLOSED" "$("$BACKEND" get "$NUM" | field '["state"]')"
 
+# ── ADF flattening: v3 search descriptions come back as ADF documents ───────
+# The fake (like real Jira Cloud) returns `description` as an ADF doc object
+# from /rest/api/3/search/jql; list must flatten it to the plain string
+# consumers have always received (paragraphs joined by newlines).
+ADF_NUM=$("$BACKEND" create --title "adf probe" --body $'para one\npara two' --label adf-probe | field '["number"]')
+ADF_BODY=$("$BACKEND" list --state open --label adf-probe | field '[0]["body"]')
+eq "list flattens a multi-paragraph ADF description to plain text" $'para one\npara two' "$ADF_BODY"
+ADF_IS_STR=$("$BACKEND" list --state open --label adf-probe | python3 -c 'import json,sys; print(isinstance(json.load(sys.stdin)[0]["body"], str))')
+eq "list body is a plain string, not an ADF object" "True" "$ADF_IS_STR"
+
 # ── not-found is a clean negative (exit 1), not a backend error (exit 3) ─────
 "$BACKEND" get 999 >/dev/null 2>&1; eq "get on a missing issue exits 1" "1" "$?"
 

@@ -44,6 +44,15 @@ seed("Blocked on design", ["needs-design"], "indeterminate")  # ENG-3: blocked, 
 seed("Already claimed", ["working"], "indeterminate") # ENG-4: working, not claimable
 seed("Finished work", [], "done")                     # ENG-5: closed only
 
+def to_adf(text):
+    """Wrap plain text in the minimal ADF doc/paragraph/text structure that
+    v3 search really returns for `description` (one paragraph per line)."""
+    return {"type": "doc", "version": 1, "content": [
+        {"type": "paragraph",
+         "content": ([{"type": "text", "text": p}] if p else [])}
+        for p in (text or "").split("\n")
+    ]}
+
 def status_obj(cat):
     name = {"new": "To Do", "indeterminate": "In Progress", "done": "Done"}[cat]
     return {"name": name, "statusCategory": {"key": cat}}
@@ -167,6 +176,10 @@ class H(BaseHTTPRequestHandler):
                 # fields (the API defaults to id-only). id/key always present.
                 view["id"] = str(1000 + n)
                 view["fields"] = {k: v for k, v in view["fields"].items() if k in fields}
+                # v3 search returns description as an ADF document object,
+                # NOT v2's plain string (v2 CRUD reads still return strings).
+                if "description" in view["fields"]:
+                    view["fields"]["description"] = to_adf(view["fields"]["description"])
                 issues.append(view)
             resp = {"issues": issues}
             if start + maxr < len(hits):

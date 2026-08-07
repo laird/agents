@@ -52,7 +52,9 @@
 #     endpoint requires an explicit `fields` list to return field data,
 #     paginates via `nextPageToken` (no startAt), and returns NO `total` —
 #     so any-claimable checks for a non-empty first page (maxResults=1)
-#     instead of reading a count.
+#     instead of reading a count. v3 also returns `description` as an ADF
+#     document object; the list reshape flattens it back to the plain string
+#     consumers of `body` have always received.
 #   - claim is BEST-EFFORT (like the github backend): Jira label edits are not
 #     atomic single-writer operations, so concurrent claims can both succeed.
 #   - The claimable JQL excludes blocking labels AND includes label-less issues
@@ -265,6 +267,27 @@ PY
   # Reshape the accumulated pages into the gh-compatible array.
   LIMIT="$limit" python3 - "$pages" <<'PY' || { rm -f "$pages"; exit 3; }
 import json, os, sys
+
+def flatten_adf(desc):
+    # v3 search returns `description` as an ADF document object; consumers of
+    # `body` expect the plain string that v2 (and the v2 CRUD paths, which are
+    # unchanged) always delivered. Walk the node tree collecting text values;
+    # top-level blocks (paragraphs) are joined with newlines. Tolerates None,
+    # plain strings, and malformed nodes.
+    if desc is None:
+        return ""
+    if isinstance(desc, str):
+        return desc
+    if not isinstance(desc, dict):
+        return ""
+    def text_of(node):
+        if not isinstance(node, dict):
+            return ""
+        if node.get("type") == "text":
+            return node.get("text") or ""
+        return "".join(text_of(c) for c in (node.get("content") or []))
+    return "\n".join(text_of(b) for b in (desc.get("content") or []))
+
 out = []
 with open(sys.argv[1]) as fh:
     for line in fh:
@@ -283,7 +306,7 @@ with open(sys.argv[1]) as fh:
             out.append({
                 "number": num,
                 "title": f.get("summary") or "",
-                "body": f.get("description") or "",
+                "body": flatten_adf(f.get("description")),
                 "labels": [{"name": l} for l in (f.get("labels") or [])],
                 "state": "CLOSED" if cat == "done" else "OPEN",
             })

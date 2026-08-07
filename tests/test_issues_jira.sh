@@ -60,9 +60,10 @@ case "$url" in
   */rest/api/3/search/jql)
     # New contract: {issues:[...]} only — no total, no startAt. Absence of a
     # nextPageToken means this is the last (only) page.
+    # description arrives as an ADF document object (v3), never a plain string.
     emit '{"issues":[
-      {"key":"ENG-7","fields":{"summary":"first","description":"body one","labels":["P1"],"status":{"statusCategory":{"key":"indeterminate"}}}},
-      {"key":"ENG-8","fields":{"summary":"second","description":"","labels":[],"status":{"statusCategory":{"key":"done"}}}}
+      {"key":"ENG-7","fields":{"summary":"first","description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"body one"}]}]},"labels":["P1"],"status":{"statusCategory":{"key":"indeterminate"}}}},
+      {"key":"ENG-8","fields":{"summary":"second","description":null,"labels":[],"status":{"statusCategory":{"key":"done"}}}}
     ]}' 200 ;;
   */rest/api/2/search)
     # Removed by Atlassian (CHANGE-2046). Any request landing here must fail
@@ -137,6 +138,11 @@ STATE7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin
 assert_eq "list maps non-done → OPEN" "OPEN" "$STATE7"
 LABEL7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["labels"][0]["name"])')
 assert_eq "list maps labels to [{name}]" "P1" "$LABEL7"
+# v3 search returns ADF descriptions; consumers must still see a plain string.
+BODY7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d[0]["body"]; print(b if isinstance(b,str) else type(b).__name__)')
+assert_eq "list flattens ADF description to a plain string" "body one" "$BODY7"
+BODY8=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d[1]["body"]; print(repr(b))')
+assert_eq "list maps null description to empty string" "''" "$BODY8"
 
 # ── list --state blocked: positive selection, no awaiting-integration ───────
 run list --state blocked
