@@ -22,7 +22,7 @@ In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the
 
 <!-- END optional-skills-prelude v1 -->
 
-<!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Antigravity/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 `/fix` accepts heterogeneous work — bug fixes, feature implementation, refactoring, increasing test coverage, docs/config/chore, or proposing new tasks. The agent classifies the work after reading the issue and applies the matching skills along two axes: deliverable type and kind of work.
 
