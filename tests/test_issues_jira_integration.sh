@@ -1,7 +1,9 @@
 #!/bin/bash
 # tests/test_issues_jira_integration.sh — end-to-end test of issues-jira.sh
-# against a STATEFUL in-process fake of the Jira REST API v2
-# (tests/fixtures/fake_jira.py).
+# against a STATEFUL in-process fake of the Jira REST API
+# (tests/fixtures/fake_jira.py): v2 issue lifecycle plus the v3
+# /rest/api/3/search/jql search endpoint (v2 search returns HTTP 410 there,
+# as on real Jira Cloud since CHANGE-2046).
 #
 # This complements tests/test_issues_jira.sh (which stubs curl and asserts the
 # *shape* of outgoing requests): here real curl talks real HTTP to a fake that
@@ -42,6 +44,10 @@ cleanup() {
 trap cleanup EXIT
 
 # ── start the fake on an ephemeral port ─────────────────────────────────────
+# FAKE_JIRA_PAGE_CAP=2 makes the fake serve at most 2 issues per search page,
+# so any list of the 5 seeded issues must follow the nextPageToken chain —
+# exercising the backend's v3 pagination loop, not just its first request.
+export FAKE_JIRA_PAGE_CAP=2
 python3 "$FAKE" 0 >"$LOG" 2>&1 &
 SERVER_PID=$!
 PORT=""
@@ -70,7 +76,8 @@ eq "list --state open includes unlabeled (labels-is-EMPTY guard) + P1"  "1,2" "$
 eq "list --state blocked selects only the needs-design issue"           "3"   "$("$BACKEND" list --state blocked | nums)"
 eq "list --state working selects only the claimed issue"                "4"   "$("$BACKEND" list --state working | nums)"
 eq "list --state closed selects only the done issue"                    "5"   "$("$BACKEND" list --state closed  | nums)"
-eq "list --state all returns everything"                                "1,2,3,4,5" "$("$BACKEND" list --state all | nums)"
+eq "list --state all paginates via nextPageToken (page cap 2)"          "1,2,3,4,5" "$("$BACKEND" list --state all | nums)"
+eq "list --limit stops the pagination loop and truncates"               "1,2,3" "$("$BACKEND" list --state all --limit 3 | nums)"
 "$BACKEND" any-claimable; eq "any-claimable exits 0 when work exists" "0" "$?"
 
 # ── full lifecycle round-trip ───────────────────────────────────────────────

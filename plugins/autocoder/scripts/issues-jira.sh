@@ -42,9 +42,17 @@
 #                     email+token basic auth when set.                — env only
 #
 # Notes:
-#   - Uses REST API v2 so `description` is a plain string on both read and
-#     write. API v3 would require Atlassian Document Format (ADF) for every
-#     body, which buys nothing here and complicates round-tripping.
+#   - Issue lifecycle (create/get/update/comment/transitions/assignee) uses
+#     REST API v2 so `description` is a plain string on both read and write.
+#     API v3 would require Atlassian Document Format (ADF) for every body,
+#     which buys nothing here and complicates round-tripping. Those v2
+#     endpoints are NOT removed.
+#   - Search uses POST /rest/api/3/search/jql: Atlassian REMOVED
+#     POST /rest/api/2/search from Jira Cloud (HTTP 410, CHANGE-2046). The new
+#     endpoint requires an explicit `fields` list to return field data,
+#     paginates via `nextPageToken` (no startAt), and returns NO `total` —
+#     so any-claimable checks for a non-empty first page (maxResults=1)
+#     instead of reading a count.
 #   - claim is BEST-EFFORT (like the github backend): Jira label edits are not
 #     atomic single-writer operations, so concurrent claims can both succeed.
 #   - The claimable JQL excludes blocking labels AND includes label-less issues
@@ -203,46 +211,85 @@ cmd_list() {
   jql=$(_jira_state_jql "$state")
   [ -n "$label" ] && jql="$jql AND labels = \"$label\""
 
-  local payload
-  payload=$(JQL="$jql" LIMIT="$limit" python3 - <<'PY'
+  # POST /rest/api/3/search/jql (v2 search is removed, HTTP 410). The new
+  # contract: `fields` must be listed explicitly to get field data back, and
+  # pagination is a nextPageToken loop — no startAt, no total. Pages are
+  # accumulated (one JSON array per line) in a temp file until either the
+  # requested limit is reached or the server stops returning a token.
+  local pages token="" fetched=0 page_meta page_count
+  pages=$(mktemp)
+  while :; do
+    local payload
+    payload=$(JQL="$jql" LIMIT="$limit" FETCHED="$fetched" TOKEN="$token" python3 - <<'PY'
 import json, os
-print(json.dumps({
+remaining = int(os.environ["LIMIT"]) - int(os.environ["FETCHED"])
+req = {
     "jql": os.environ["JQL"],
-    "maxResults": int(os.environ["LIMIT"]),
+    "maxResults": min(remaining, 100),
     "fields": ["summary", "description", "labels", "status"],
-}))
+}
+if os.environ.get("TOKEN"):
+    req["nextPageToken"] = os.environ["TOKEN"]
+print(json.dumps(req))
 PY
 )
-  _jira_request_ok POST "/rest/api/2/search" "$payload"
-  # Reshape Jira's search response into the gh-compatible array. The response is
-  # passed via an env var, NOT stdin: a `python3 - <<'PY'` heredoc already binds
-  # stdin to the script source, so a piped body would be swallowed.
-  RESP="$_JIRA_BODY" python3 - <<'PY' || exit 3
-import json, os
+    _jira_request_ok POST "/rest/api/3/search/jql" "$payload"
+    # Append this page's issues to the accumulator and read back
+    # "<count> <nextPageToken>". The response is passed via an env var, NOT
+    # stdin: a `python3 - <<'PY'` heredoc already binds stdin to the script
+    # source, so a piped body would be swallowed.
+    page_meta=$(RESP="$_JIRA_BODY" python3 - "$pages" <<'PY'
+import json, os, sys
 try:
     data = json.loads(os.environ["RESP"])
 except Exception:
     print("issues-jira.sh: could not parse Jira search response", file=sys.stderr)
     raise SystemExit(3)
-out = []
-for it in data.get("issues", []):
-    f = it.get("fields", {}) or {}
-    key = it.get("key", "")
-    num = key.rsplit("-", 1)[-1]
-    try:
-        num = int(num)
-    except ValueError:
-        pass
-    cat = (((f.get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
-    out.append({
-        "number": num,
-        "title": f.get("summary") or "",
-        "body": f.get("description") or "",
-        "labels": [{"name": l} for l in (f.get("labels") or [])],
-        "state": "CLOSED" if cat == "done" else "OPEN",
-    })
-print(json.dumps(out))
+issues = data.get("issues", []) or []
+with open(sys.argv[1], "a") as fh:
+    fh.write(json.dumps(issues) + "\n")
+print(len(issues), data.get("nextPageToken") or "")
 PY
+) || { rm -f "$pages"; exit 3; }
+    page_count="${page_meta%% *}"
+    token="${page_meta#* }"
+    [ "$token" = "$page_meta" ] && token=""
+    fetched=$((fetched + page_count))
+    # Stop on: limit reached, no further page, or an empty page (safety net
+    # against a server that keeps handing back tokens).
+    if [ "$fetched" -ge "$limit" ] || [ -z "$token" ] || [ "$page_count" -eq 0 ]; then
+      break
+    fi
+  done
+
+  # Reshape the accumulated pages into the gh-compatible array.
+  LIMIT="$limit" python3 - "$pages" <<'PY' || { rm -f "$pages"; exit 3; }
+import json, os, sys
+out = []
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        for it in json.loads(line):
+            f = it.get("fields", {}) or {}
+            key = it.get("key", "")
+            num = key.rsplit("-", 1)[-1]
+            try:
+                num = int(num)
+            except ValueError:
+                pass
+            cat = (((f.get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
+            out.append({
+                "number": num,
+                "title": f.get("summary") or "",
+                "body": f.get("description") or "",
+                "labels": [{"name": l} for l in (f.get("labels") or [])],
+                "state": "CLOSED" if cat == "done" else "OPEN",
+            })
+print(json.dumps(out[:int(os.environ["LIMIT"])]))
+PY
+  rm -f "$pages"
 }
 
 # ── get ──────────────────────────────────────────────────────────────────────
@@ -461,16 +508,19 @@ cmd_release() {
 
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
+  # The v3 search/jql response has no `total` (removed with the old API), and
+  # this verb never needed a count — only existence. Ask for a single result
+  # with the cheapest field set and test whether the first page is non-empty.
   local payload
   payload=$(JQL="$(_jira_open_jql)" python3 - <<'PY'
 import json, os
-print(json.dumps({"jql": os.environ["JQL"], "maxResults": 1, "fields": ["key"]}))
+print(json.dumps({"jql": os.environ["JQL"], "maxResults": 1, "fields": ["id"]}))
 PY
 )
-  _jira_request_ok POST "/rest/api/2/search" "$payload"
-  local total
-  total=$(printf '%s' "$_JIRA_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total", 0))' 2>/dev/null) || exit 3
-  [ "${total:-0}" -gt 0 ] 2>/dev/null
+  _jira_request_ok POST "/rest/api/3/search/jql" "$payload"
+  local count
+  count=$(printf '%s' "$_JIRA_BODY" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("issues") or []))' 2>/dev/null) || exit 3
+  [ "${count:-0}" -gt 0 ] 2>/dev/null
 }
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
