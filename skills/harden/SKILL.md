@@ -76,10 +76,29 @@ that's what makes caches replay and rounds comparable.
      actually executes — instrument to find the seam every path shares before wiring fixes.
    - *Environment drift*: zombie workflows, exhausted credits/quota, stray processes.
 
-5. **Log every run, mandatory.** Append to a run-log document per run: setup, result
-   (status/cost/artifacts), and a "Learned" list. Commit and push with the fixes. The log is
-   what turns runs into fixes — and it becomes the platform's defect-class history. Also
-   capture durable rulings (what counts as success, what's a pause vs a failure) as they emerge.
+5. **Log every run, mandatory — richly enough to write the final report from the log alone.**
+   Append a chapter per round to the run-log document (e.g.
+   `docs/assessments/<date>-<scope>-run-log.md`), committed and pushed with the fixes. Each
+   chapter records:
+   - **Header**: round number, date/time, and what build/commits are under test ("run N —
+     <date> (<what changed since last round>)").
+   - **Setup**: scope (general/goal), config deltas, cache state, anything operator-provided
+     (credits, budget raises).
+   - **Result**: status, duration, cost delta, artifacts produced (deliverable ids, report
+     paths), and the contract grading (per-stage ✅/❌ with the checker's detail lines).
+   - **Found**: every defect surfaced, each with its root-cause evidence (log lines,
+     `file:line`, reproduction) — written so a reader who wasn't present can verify it.
+   - **Improved**: every fix landed this round — commit SHAs, test counts, and one line on
+     what behavior changed. Include fixes that *disproved* an earlier attempt (wrong seam,
+     regression caught) — the misses teach as much as the hits.
+   - **Learned**: the durable generalizations (new defect classes, operator rulings on what
+     counts as success/pause/failure, environment gotchas) — these accrete into the platform's
+     defect-class history and feed the final report's meta-analysis.
+   The exit deliverable is a **stabilization verdict** chapter summarizing rounds × defect
+   classes × fixes (see Athena's 12-run log for the reference shape: per-round chapters plus a
+   closing verdict and a what-we-learned-each-round retrospective table). If the log can't
+   answer "what did round N find and improve, and how do we know?", the logging was
+   insufficient — fix the log before the next round.
 
 6. **Exit criteria and verdict.** Two consecutive runs passing everything → write a
    stabilization verdict in the log naming what was fixed and what's deliberately deferred.
