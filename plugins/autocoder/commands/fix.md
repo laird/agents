@@ -1057,15 +1057,47 @@ else
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
-  # Remove 'working' label and close issue
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  # ── Ship gate (issue #35) ───────────────────────────────────────────────
+  # #26's PUSH_OK guard answers "did the push succeed?". It cannot answer "did
+  # this reach the branch that ships?" A worker branching from a feature line
+  # pushes fine, merges fine, tests fine — and closes the issue while the
+  # shipping branch is untouched. Every signal is green and the tracker is wrong.
+  #
+  # NOTE: checking ancestry of $INTEGRATION_BRANCH does NOT work. When the swarm's
+  # integration branch is itself a feature line, a commit merged into it IS an
+  # ancestor of it, so the check passes and the issue closes — which is the bug.
+  # Ship is measured against the branch that actually ships. (The PR merge mode
+  # above needs no gate here: it never closes the issue itself — it hands off to
+  # `awaiting-integration` and lets the merge close it.)
+  LANDED_COMMIT=$(git rev-parse HEAD)
+  if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
+    # Genuinely shipped — safe to close.
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 [Detailed explanation of fix]
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 
 🤖 Auto-resolved by autonomous fix workflow"
+  else
+    # Real work, really pushed, but NOT on the shipping branch. Closing here
+    # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
+    # released, and record exactly what must merge for this to ship.
+    SHIP_BRANCH_NAME="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+    issue_comment "$ISSUE_NUM" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+
+The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${LANDED_COMMIT}\`. It has **not** reached \`${SHIP_BRANCH_NAME}\`, so closing would assert something false.
+
+**To ship**: \`${INTEGRATION_BRANCH}\` must merge to \`${SHIP_BRANCH_NAME}\`.
+
+Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
+
+🤖 Ship gate (issue #35)"
+    echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
+  fi
 
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
@@ -1292,9 +1324,23 @@ else
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
 
-  # Remove 'working' label and close issue with detailed explanation
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+  # ── Ship gate (issue #35) ───────────────────────────────────────────────
+  # #26's PUSH_OK guard answers "did the push succeed?". It cannot answer "did
+  # this reach the branch that ships?" A worker branching from a feature line
+  # pushes fine, merges fine, tests fine — and closes the issue while the
+  # shipping branch is untouched. Every signal is green and the tracker is wrong.
+  #
+  # NOTE: checking ancestry of $INTEGRATION_BRANCH does NOT work. When the swarm's
+  # integration branch is itself a feature line, a commit merged into it IS an
+  # ancestor of it, so the check passes and the issue closes — which is the bug.
+  # Ship is measured against the branch that actually ships. (The PR merge mode
+  # above needs no gate here: it never closes the issue itself — it hands off to
+  # `awaiting-integration` and lets the merge close it.)
+  LANDED_COMMIT=$(git rev-parse HEAD)
+  if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
+    # Genuinely shipped — safe to close.
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ## Root Cause
 [Detailed analysis]
@@ -1312,6 +1358,24 @@ else
 **Commit**: [commit hash]
 
 🤖 Auto-resolved by autonomous fix workflow with superpowers"
+  else
+    # Real work, really pushed, but NOT on the shipping branch. Closing here
+    # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
+    # released, and record exactly what must merge for this to ship.
+    SHIP_BRANCH_NAME="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+    issue_comment "$ISSUE_NUM" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+
+The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${LANDED_COMMIT}\`. It has **not** reached \`${SHIP_BRANCH_NAME}\`, so closing would assert something false.
+
+**To ship**: \`${INTEGRATION_BRANCH}\` must merge to \`${SHIP_BRANCH_NAME}\`.
+
+Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
+
+🤖 Ship gate (issue #35)"
+    echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
+  fi
 
 # Write completion status file for agents-ui TUI monitoring
 SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
