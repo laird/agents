@@ -580,15 +580,27 @@ else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
 
+  # ── Branch-evidence exclusion (issue #48) ──────────────────────────────────
+  # Filtering on labels alone re-exposes in-flight issues whenever a `working`
+  # label is dropped (issue #14 — still live in workers on older code). The
+  # post-selection arbitration below catches it, but only after a claim/back-off
+  # cycle, and the gap between the two is where a second worker also claims.
+  # A pushed branch is evidence that survives a lost label. ONE ls-remote per
+  # pass, not one API call per candidate. Fails open on a network blip.
+  CLAIMED_BY_BRANCH=$("${SCRIPT_DIR}/claimed-issue-numbers.sh" origin)
+  [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
+  echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
+
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
   # Also filter out decomposed parent issues (work on their sub-tasks instead)
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     .[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
@@ -607,12 +619,13 @@ else
 
   # Build ranked list of all candidate issues (for retry on race conflict)
   cat /tmp/top-issue.json > /tmp/top-issue-single.json
-  cat /tmp/all-issues.json | jq -r '
+  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
     [.[] |
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
       and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and ((.number | IN($claimed[])) | not)
     ) |
     {
       number: .number,
