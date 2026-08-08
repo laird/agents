@@ -1,0 +1,22 @@
+name: release-gate
+
+# Runs ONLY on pull requests whose base is master — i.e. a release PR promoting
+# the integration branch to master. Enforces the release discipline:
+#   1. the marketplace root version is bumped above what master ships, and
+#   2. each plugin's marketplace version matches its own plugin.json.
+# Feature → integration PRs do not trigger this (their base is integration).
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  version-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # need base history to compare versions
+      - name: Fetch base branch
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+      - name: Enforce version bump + three-place consistency
+        run: bash scripts/check-release-version.sh "origin/${{ github.base_ref }}"
