@@ -132,6 +132,20 @@ When a swarm is available, the loop runs in batches:
    classes appear — for **N consecutive runs** (default 2; one clean run can be luck).
    Deliberately deferred items, logged as accepted, don't block exit.
 
+## Model tiers
+
+The coordinator running this loop (scope → run → grade → fix → log) should be the **deep
+reasoning model** (e.g. `claude-opus-5`). Root-cause analysis, grading judgment calls, and
+deciding which findings are entangled vs. independent all benefit from the extra reasoning
+capacity, and the coordinator touches few files compared to the total work done.
+
+Subagents dispatched for independent fixes — and autocoder swarm workers — should be the
+**balanced model** (e.g. `claude-sonnet-5`). Each fix is bounded, well-specified before
+dispatch, and self-contained; burning an Opus budget on mechanical implementation work is
+waste. When spawning subagents explicitly, pass `model: claude-sonnet-5` (or equivalent) in
+the agent options. When using the autocoder swarm, the default worker model (`WORKER_MODEL`,
+defaulting to `claude-sonnet-5`) is already correct — do not override it upward.
+
 ## Scaling the fix phase (autocoder swarms / subagent fan-out)
 
 The loop is single-coordinator by design for run/grade/log and for ENTANGLED fixes — root
