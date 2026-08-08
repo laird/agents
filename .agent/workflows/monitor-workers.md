@@ -199,9 +199,39 @@ For **any worker at ≥95% context**, orchestrate handoff → clear → resume:
 
 **Why 95%, not 100%:** at 100% the worker wedges and the built-in `/clear` is often
 un-submittable via tmux (jammed) — forcing the heavier `restart-worker`, which discards
-uncommitted work. Handing off at 95% avoids the wedge and loses nothing. **Never `/clear` a
-mid-task worker without a handoff first** (only a *completed*-task worker takes a bare
-`/clear` + `/autocoder:fix-loop`).
+uncommitted work. Handing off at 95% avoids the wedge and loses nothing.
+
+**The jam is the whole reason for the threshold.** At roughly **≥97%** context the worker's
+input stops accepting submissions: text sent via `tmux send-keys` queues as
+`❯ Press up to edit queued messages` and **Enter does not submit it**. So `/clear` — and any
+"do a handoff" instruction — cannot be driven via send-keys once the worker is that full.
+Firing at 95% keeps you on the clean self-handoff path, *before* the jam.
+
+#### Fallback: worker input is already jammed (≥~97%)
+
+Do **not** keep retrying `/clear`; it fails silently and the worker wedges at 100% anyway.
+The **manager captures the handoff on the worker's behalf** — nothing is lost, since the
+worker's earlier commits are already safe on its branch and step 1 rescues the rest:
+
+1. **Preserve uncommitted edits:**
+   `git -C <worktree> add -A && git -C <worktree> commit -m 'WIP: manager-preserved handoff snapshot'`
+2. **Post the handoff note** (state done + next steps) as a comment on the issue:
+   `issue_comment <issue_number> --body "Handoff (manager-captured): ..."`
+3. **Release the claim:** `issue_release <issue_number>` (drops the `working` label) so the
+   resumed worker re-claims cleanly.
+4. **Hard restart** — a kill, **not** send-keys `/clear`, which is what is jammed:
+   `bash plugins/autocoder/scripts/restart-worker.sh --worktree <worktree>`
+5. **Resume:** `tmux send-keys -t <pane> "/autocoder:fix <issue_number>" Enter`
+
+Confirm the pane actually came back up before reporting recovery — `restart-worker.sh` kills
+first, so a failed relaunch leaves a bare shell and a dead worker.
+
+**Prefer prevention:** this fallback is manual and loses in-flight reasoning, so treat ≥95%
+as a hard trigger. A worker loop that watches its own context and self-hands-off before the
+jam is more reliable than the manager catching it on a monitor tick.
+
+**Never `/clear` a mid-task worker without a handoff first** (only a *completed*-task worker
+takes a bare `/clear` + `/autocoder:fix-loop`).
 
 ### Step 5: Dispatch Work to Idle Workers
 
