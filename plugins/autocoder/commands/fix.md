@@ -214,72 +214,35 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - Decisions with irreversible consequences
 - When superpowers approaches have failed twice
 
-## Model Selection (Opus 4.5)
+## Model Selection
 
-When spawning agents or using the Task tool during issue resolution, select the model based on task complexity:
+Model tiers are resolved from env vars → `.autocoder.json` → built-in defaults.
+See `autocoder:references/model-config.md` for full reference and override instructions.
 
-### Issue Complexity → Model Mapping
-
-| Issue Type | Model | Rationale |
-|------------|-------|-----------|
-| Simple (P2/P3, clear fix) | Sonnet | Known patterns, documented solutions |
-| Complex (P0/P1, architectural) | Opus | Deep analysis, trade-off decisions |
-| Regression test analysis | Sonnet | Standard test interpretation |
-| Root cause investigation | Opus | Multi-factor analysis |
-| Improvement proposals | Opus | Creative problem-solving |
-| Labeling & formatting | Haiku | Mechanical operations |
+| Tier | Default (Claude Code) | Used for |
+|------|-----------------------|---------|
+| **Deep** (`$MANAGER_MODEL`) | `claude-opus-5` | P0/P1 issues, root cause, proposals |
+| **Balanced** (`$WORKER_MODEL`) | `claude-sonnet-5` | P2/P3 fixes, plan execution, analysis |
+| **Fast** (`$FAST_MODEL`) | `claude-haiku-4-5` | Labels, comments, commit messages |
 
 ### Escalation Triggers
 
-**Start with Sonnet, escalate to Opus when:**
-- Fix attempt fails after 2 tries with same approach
-- Issue involves 5+ files requiring coordinated changes
-- Root cause is unclear after initial investigation
-- Multiple test failures share non-obvious common cause
-- Issue requires architectural decision (new patterns, dependencies)
-
-**Stay with Sonnet when:**
-- Error messages clearly indicate the fix
-- Issue matches known patterns from previous fixes
-- Single file change with isolated impact
-- Test failures have obvious cause (typo, missing import)
-
-**Drop to Haiku for:**
-- Adding/updating priority labels
-- Posting status comments to GitHub
-- Formatting commit messages
-- Simple file cleanup (delete, rename)
-
-### Model Usage by Workflow Phase
-
-| Phase | Recommended Model |
-|-------|-------------------|
-| Initial complexity assessment | Sonnet |
-| Simple issue: direct fix | Sonnet |
-| Complex issue: systematic-debugging skill | Opus |
-| Complex issue: brainstorming skill | Opus |
-| Complex issue: writing-plans skill | Opus |
-| Complex issue: executing-plans skill | Sonnet |
-| Verification before completion | Sonnet |
-| Regression test execution | Sonnet |
-| Regression test analysis | Sonnet → Opus if patterns unclear |
-| Improvement proposals | Opus |
-| Issue creation from failures | Haiku |
+Start at `$WORKER_MODEL`; escalate to `$MANAGER_MODEL` when:
+- Fix attempt fails after 2 tries with the same approach
+- Root cause spans 5+ files requiring coordinated changes
+- Issue is labelled P0 or P1
 
 ### Example Task Tool Usage
 
 ```javascript
-// Initial assessment - start with Sonnet
-Task("analyst", "Assess complexity of issue #${ISSUE_NUM}...", model="sonnet")
+// Standard fix — use $WORKER_MODEL
+Task("coder", "Fix dependency conflict in package.json...", model=WORKER_MODEL)
 
-// Complex root cause - use Opus
-Task("debugger", "Investigate why 15 tests fail with timeout...", model="opus")
+// Complex root cause — use $MANAGER_MODEL
+Task("debugger", "Investigate why 15 tests fail with timeout...", model=MANAGER_MODEL)
 
-// Standard fix - use Sonnet
-Task("coder", "Update package.json to fix dependency conflict...", model="sonnet")
-
-// Label management - use Haiku
-Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
+// Mechanical task — use $FAST_MODEL
+Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model=FAST_MODEL)
 ```
 
 ## Context Management (MANDATORY — NON-NEGOTIABLE)
@@ -441,6 +404,74 @@ if [ "$ISSUE_SOURCE" = "github" ]; then
     fi
   fi
 fi
+
+# ── Model configuration ──────────────────────────────────────────────────────
+# Resolve model tiers: env vars → .autocoder.json → built-in defaults.
+# If nothing is configured, ask the user to confirm defaults before proceeding.
+_DEFAULT_MANAGER_MODEL="claude-opus-5"
+_DEFAULT_WORKER_MODEL="claude-sonnet-5"
+_DEFAULT_FAST_MODEL="claude-haiku-4-5"
+
+# Load from .autocoder.json if present and not already set via env
+if [ -f ".autocoder.json" ] && command -v python3 >/dev/null 2>&1; then
+  _JSON_MANAGER=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('managerModel',''))" 2>/dev/null || echo "")
+  _JSON_WORKER=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('workerModel',''))" 2>/dev/null || echo "")
+  _JSON_FAST=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('fastModel',''))" 2>/dev/null || echo "")
+  MANAGER_MODEL="${MANAGER_MODEL:-${_JSON_MANAGER:-$_DEFAULT_MANAGER_MODEL}}"
+  WORKER_MODEL="${WORKER_MODEL:-${_JSON_WORKER:-$_DEFAULT_WORKER_MODEL}}"
+  FAST_MODEL="${FAST_MODEL:-${_JSON_FAST:-$_DEFAULT_FAST_MODEL}}"
+else
+  MANAGER_MODEL="${MANAGER_MODEL:-$_DEFAULT_MANAGER_MODEL}"
+  WORKER_MODEL="${WORKER_MODEL:-$_DEFAULT_WORKER_MODEL}"
+  FAST_MODEL="${FAST_MODEL:-$_DEFAULT_FAST_MODEL}"
+fi
+
+# Detect whether this is the first run (no models were pre-configured)
+_MODELS_PRECONFIGURED=false
+if [ -n "${MANAGER_MODEL_PRECONFIG:-}" ] || [ -n "${WORKER_MODEL_PRECONFIG:-}" ]; then
+  _MODELS_PRECONFIGURED=true
+elif grep -q '"managerModel"\|"workerModel"\|"fastModel"' .autocoder.json 2>/dev/null; then
+  _MODELS_PRECONFIGURED=true
+fi
+
+if [ "$_MODELS_PRECONFIGURED" = "false" ]; then
+  echo ""
+  echo "⚙️  Model configuration — no custom models detected."
+  echo ""
+  echo "   Default tiers:"
+  echo "     Deep (manager/complex): $MANAGER_MODEL"
+  echo "     Balanced (worker/standard): $WORKER_MODEL"
+  echo "     Fast (labels/comments): $FAST_MODEL"
+  echo ""
+  echo "   To keep these defaults, reply: confirm"
+  echo "   To override, set env vars before running /fix:"
+  echo "     export MANAGER_MODEL=\"claude-opus-5\""
+  echo "     export WORKER_MODEL=\"claude-sonnet-5\""
+  echo "     export FAST_MODEL=\"claude-haiku-4-5\""
+  echo "   Or add to .autocoder.json:"
+  echo "     {\"managerModel\": \"claude-opus-5\", \"workerModel\": \"claude-sonnet-5\", \"fastModel\": \"claude-haiku-4-5\"}"
+  echo ""
+  # Ask the user to confirm or override using AskUserQuestion.
+  # Present this as a blocking confirmation — do NOT proceed until the user responds.
+  echo "ACTION_REQUIRED: Ask the user now using AskUserQuestion:"
+  echo "  Question: 'Autocoder will use these model tiers — confirm or override?'"
+  echo "  Options:"
+  echo "    1. Use defaults ($MANAGER_MODEL / $WORKER_MODEL / $FAST_MODEL)"
+  echo "    2. Override — I will set MANAGER_MODEL / WORKER_MODEL / FAST_MODEL env vars"
+  echo "    3. Save defaults to .autocoder.json (so this prompt doesn't appear again)"
+  echo ""
+  echo "  If the user chooses option 3, write the following to .autocoder.json (merging"
+  echo "  with any existing keys):"
+  echo "    managerModel: $MANAGER_MODEL"
+  echo "    workerModel:  $WORKER_MODEL"
+  echo "    fastModel:    $FAST_MODEL"
+  echo "  Then continue."
+  echo "  If the user overrides, update MANAGER_MODEL / WORKER_MODEL / FAST_MODEL to"
+  echo "  the values they provide before continuing."
+fi
+
+export MANAGER_MODEL WORKER_MODEL FAST_MODEL
+echo "✅ Models: manager=$MANAGER_MODEL  worker=$WORKER_MODEL  fast=$FAST_MODEL"
 
 # Detect available plugins for enhanced capabilities
 echo "🔌 Detecting available plugins..."
