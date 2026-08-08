@@ -1,19 +1,20 @@
 #!/bin/bash
 # ado-smoke-test.sh — live end-to-end check of issues-ado.sh against a REAL
-# Azure DevOps organization. Run this where outbound HTTPS to dev.azure.com is
-# allowed (your laptop, or a session whose egress policy permits Azure DevOps).
+# Azure DevOps organization. Run where outbound HTTPS to dev.azure.com is
+# allowed (your laptop, or a session whose egress policy permits it).
 #
 # Prereqs (export before running):
-#   export ADO_ORG_URL="https://dev.azure.com/YOURORG"
-#   export ADO_PROJECT="YourProject"
-#   export ADO_PAT="<personal access token with Work Items read/write>"
-#   # Optional, if your process is not Agile/CMMI (which use "Closed"):
-#   #   export ADO_CLOSED_STATE="Done"     # Basic / Scrum
-#   #   export ADO_WORKITEM_TYPE="Issue"   # default is Task
+#   export ADO_ORG_URL="https://dev.azure.com/YOURORG"   # or ADO_ORG=YOURORG
+#   export ADO_PROJECT="sandbox"                          # project name or id
+#   export ADO_PAT="<PAT with Work Items (Read & Write) scope>"
+# Optional (process-template dependent — see issues-ado.sh header):
+#   export ADO_WORKITEM_TYPE="Issue"    # 'Issue' exists in the Basic process;
+#                                       # use 'Task' for Agile/Scrum/CMMI
+#   export ADO_CLOSED_STATE="Done"      # state 'close' writes (Basic: Done)
 #
 # Usage:
-#   bash ado-smoke-test.sh             # creates a throwaway work item, exercises
-#                                      # the full 9-verb lifecycle, then closes it.
+#   bash ado-smoke-test.sh             # creates a throwaway work item,
+#                                      # exercises the full lifecycle, closes it.
 #
 # It talks ONLY to your project and closes the work item it creates.
 
@@ -21,22 +22,23 @@ set -u
 BACKEND="${BACKEND:-plugins/autocoder/scripts/issues-ado.sh}"
 [ -f "$BACKEND" ] || { echo "Cannot find $BACKEND — run from the repo root or set BACKEND=path"; exit 2; }
 
-for v in ADO_ORG_URL ADO_PROJECT ADO_PAT; do
+[ -n "${ADO_ORG_URL:-}" ] || [ -n "${ADO_ORG:-}" ] || { echo "Missing \$ADO_ORG_URL (or \$ADO_ORG) — see the header of this script."; exit 2; }
+for v in ADO_PROJECT ADO_PAT; do
   [ -n "${!v:-}" ] || { echo "Missing \$$v — see the header of this script."; exit 2; }
 done
+ORG_URL="${ADO_ORG_URL:-https://dev.azure.com/${ADO_ORG}}"
 
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; PASS=$((PASS+1)); }
 bad()  { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 
 echo "== 0. connectivity =="
-# _apis/projects/<project> is a cheap authenticated GET; PAT auth uses empty user.
 if curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
      --user ":$ADO_PAT" \
-     "${ADO_ORG_URL%/}/_apis/projects/${ADO_PROJECT}?api-version=7.0" | grep -q '^200$'; then
-  ok "authenticated to $ADO_ORG_URL (project $ADO_PROJECT)"
+     "${ORG_URL%/}/_apis/projects?api-version=7.1" | grep -q '^200$'; then
+  ok "authenticated to $ORG_URL"
 else
-  bad "could not authenticate — check org URL / project / PAT scope / egress"; exit 1
+  bad "could not authenticate — check org URL / PAT scope / egress"; exit 1
 fi
 
 echo "== 1. any-claimable (exit 0=work, 1=none) =="
@@ -55,8 +57,9 @@ echo "== 4. get it back =="
 "$BACKEND" get "$NUM" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
 assert d["state"]=="OPEN", d["state"]
-print("  title:", d["title"]); print("  tags:", [l["name"] for l in d["labels"]])
-' && ok "get round-trips" || bad "get failed"
+assert isinstance(d["body"], str), type(d["body"]).__name__
+print("  title:", d["title"]); print("  labels:", [l["name"] for l in d["labels"]])
+' && ok "get round-trips (state OPEN, body is a string)" || bad "get failed"
 
 echo "== 5. claim / release (working tag) =="
 "$BACKEND" claim "$NUM"   && ok "claimed"   || bad "claim failed"
@@ -66,13 +69,17 @@ echo "== 5. claim / release (working tag) =="
 echo "== 6. comment =="
 "$BACKEND" comment "$NUM" --body "smoke: hello from ado-smoke-test.sh" && ok "commented" || bad "comment failed"
 
-echo "== 7. update tag =="
+echo "== 7. update label =="
 "$BACKEND" update "$NUM" --add-label P3 && ok "added tag P3" || bad "tag update failed"
 
-echo "== 8. close (transition to a done state: ${ADO_CLOSED_STATE:-Closed}) =="
+echo "== 8. list shows the open item =="
+"$BACKEND" list --state open --limit 50 | grep -q "\"number\": $NUM" \
+  && ok "open list contains #$NUM" || bad "open list missing #$NUM"
+
+echo "== 9. close =="
 "$BACKEND" close "$NUM" --comment "smoke: closing throwaway work item" && ok "closed" || bad "close failed"
 "$BACKEND" get "$NUM" | grep -q '"state": "CLOSED"' && ok "verified CLOSED" || bad "work item not CLOSED after close"
 
 echo ""
-echo "==== $PASS passed, $FAIL failed  (created #${NUM}; it is now Closed — delete from Azure DevOps if you like) ===="
+echo "==== $PASS passed, $FAIL failed  (created work item #${NUM}; delete it from ADO if you like) ===="
 [ "$FAIL" -eq 0 ]

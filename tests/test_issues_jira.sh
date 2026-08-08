@@ -57,11 +57,18 @@ printf '%s\t%s\t%s\n' "$method" "$url" "$data" >> "$CURL_CAPTURE"
 emit() { printf '%s\n%s' "$1" "$2"; }  # body, code
 
 case "$url" in
-  */rest/api/2/search)
-    emit '{"total":2,"issues":[
-      {"key":"ENG-7","fields":{"summary":"first","description":"body one","labels":["P1"],"status":{"statusCategory":{"key":"indeterminate"}}}},
-      {"key":"ENG-8","fields":{"summary":"second","description":"","labels":[],"status":{"statusCategory":{"key":"done"}}}}
+  */rest/api/3/search/jql)
+    # New contract: {issues:[...]} only — no total, no startAt. Absence of a
+    # nextPageToken means this is the last (only) page.
+    # description arrives as an ADF document object (v3), never a plain string.
+    emit '{"issues":[
+      {"key":"ENG-7","fields":{"summary":"first","description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"body one"}]}]},"labels":["P1"],"status":{"statusCategory":{"key":"indeterminate"}}}},
+      {"key":"ENG-8","fields":{"summary":"second","description":null,"labels":[],"status":{"statusCategory":{"key":"done"}}}}
     ]}' 200 ;;
+  */rest/api/2/search)
+    # Removed by Atlassian (CHANGE-2046). Any request landing here must fail
+    # loudly so a regression back to the old endpoint cannot pass.
+    emit '{"errorMessages":["The requested API has been removed. Please migrate to /rest/api/3/search/jql."],"errors":{}}' 410 ;;
   */rest/api/2/issue/ENG-404*)
     emit '{"errorMessages":["Issue does not exist"]}' 404 ;;
   */rest/api/2/issue/*/transitions)
@@ -113,6 +120,15 @@ done
 assert_contains "open JQL scopes to project" 'project = "ENG"' "$JQL"
 assert_contains "open JQL excludes done work" 'statusCategory != Done' "$JQL"
 
+# ── search request shape: v3 endpoint, explicit fields, token pagination ────
+SEARCH_URL=$(tail -1 "$CURL_CAPTURE" | cut -f2)
+assert_contains "list posts to /rest/api/3/search/jql (v2 search is removed)" '/rest/api/3/search/jql' "$SEARCH_URL"
+SEARCH_DATA=$(last_data)
+for f in summary description labels status; do
+  assert_contains "list requests field $f explicitly" "\"$f\"" "$SEARCH_DATA"
+done
+assert_not_contains "list payload has no startAt (token pagination)" 'startAt' "$SEARCH_DATA"
+
 # ── list output is reshaped to the gh schema ────────────────────────────────
 NUM7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["number"])')
 assert_eq "list maps key suffix to integer number" "7" "$NUM7"
@@ -122,6 +138,11 @@ STATE7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin
 assert_eq "list maps non-done → OPEN" "OPEN" "$STATE7"
 LABEL7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["labels"][0]["name"])')
 assert_eq "list maps labels to [{name}]" "P1" "$LABEL7"
+# v3 search returns ADF descriptions; consumers must still see a plain string.
+BODY7=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d[0]["body"]; print(b if isinstance(b,str) else type(b).__name__)')
+assert_eq "list flattens ADF description to a plain string" "body one" "$BODY7"
+BODY8=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d[1]["body"]; print(repr(b))')
+assert_eq "list maps null description to empty string" "''" "$BODY8"
 
 # ── list --state blocked: positive selection, no awaiting-integration ───────
 run list --state blocked

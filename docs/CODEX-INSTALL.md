@@ -3,27 +3,27 @@
 Install the shared Codex runtime from this repository into your local environment:
 
 ```bash
-bash /Users/Laird.Popkin/src/agents/scripts/install-codex.sh /path/to/target-repo
+bash /path/to/agents/scripts/install-codex.sh /path/to/your-project
 ```
 
 Example:
 
 ```bash
-bash /Users/Laird.Popkin/src/agents/scripts/install-codex.sh /Users/Laird.Popkin/src/nextgen-CDD
+bash ~/src/agents/scripts/install-codex.sh ~/src/your-project
 ```
 
 This installer:
 
 - symlinks `skills/autocoder` and `skills/modernize` into `~/.codex/skills`
 - symlinks `codex-start-parallel`, `start-parallel`, `join-parallel`, `end-parallel`, and `stop-parallel` into `~/.local/bin`
-- symlinks the `codex-*.sh` runtime wrappers into `/path/to/target-repo/scripts`
-- appends `source /Users/Laird.Popkin/src/agents/scripts/codex-shell-aliases.sh` to your shell rc file if needed
+- symlinks the `codex-*.sh` runtime wrappers into `/path/to/your-project/scripts`
+- appends `source /path/to/agents/scripts/codex-shell-aliases.sh` to your shell rc file if needed
 
 After the installer finishes:
 
 ```bash
 source ~/.zshrc
-cd /Users/Laird.Popkin/src/nextgen-CDD
+cd /path/to/your-project
 startcc 3
 ```
 

@@ -7,7 +7,7 @@
 AGENT_CMD=${1:-"antigravity"}
 WORKFLOW="/fix"
 
-TARGET_DIR="/home/laird/src/nextgen-CDD"
+TARGET_DIR="${2:-$(pwd)}"
 
 echo "=================================================="
 echo "   Antigravity Watchdog: $WORKFLOW"
