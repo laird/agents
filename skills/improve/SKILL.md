@@ -117,17 +117,22 @@ that's what makes caches replay and rounds comparable.
 
 ## The swarm-mode cadence (canonical sequence)
 
-When a swarm is available, the loop runs in batches:
+When a swarm is available, the loop runs in batches. **One run at a time**: do not start the
+next run until every fix from the current batch — coordinator and swarm alike — is implemented.
+An early rerun before all fixes land wastes the run and makes grading ambiguous.
 
 1. **Run** the exercise; **grade** it (contract + telemetry + reconciliation).
 2. **Analyze every finding to execution-ready**: root cause, evidence bundle (log lines,
    file:line, reproduction), proposed fix direction — a finding is not handed off until a
    worker could start coding from it.
-3. **Triage**: entangled/seam-uncertain fixes stay with the coordinator (fix → early rerun to
-   verify); independent, well-specified findings are filed for the **swarm**.
-4. **The swarm works the batch** to completion.
-5. **Re-run the exercise** — the batch acceptance test. Fixed findings vanish from the
-   grading; regressions and misses reappear with fresh evidence.
+3. **Triage and fix all findings before re-running.**
+   - Entangled/seam-uncertain fixes: the coordinator handles these in-context first, before
+     dispatching anything to the swarm. No early rerun — fix them, commit, then proceed.
+   - Independent, well-specified findings: file for the **swarm** after coordinator fixes land.
+4. **The swarm works the batch** to completion. Wait for all workers to finish.
+5. **Re-run the exercise** — the single batch acceptance test. This is the *only* rerun for
+   this batch. Fixed findings vanish from the grading; regressions and misses reappear with
+   fresh evidence.
 6. **Repeat until no findings** — meaning the contract is fully green and no new defect
    classes appear — for **N consecutive runs** (default 2; one clean run can be luck).
    Deliberately deferred items, logged as accepted, don't block exit.

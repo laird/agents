@@ -38,10 +38,15 @@ assert_eq "$ISSUE_SOURCE" "file" "CLI file source"
 assert_eq "$ISSUE_DIR_PATH" "$MAIN/local-issues" "CLI issue dir"
 
 rm "$MAIN/.autocoder.json"
-ISSUE_SOURCE=file ISSUE_DIR_PATH="$MAIN/env-issues" resolve_effective_issue_source "" "" "$MAIN"
+# Use explicit exports (not VAR=value prefix) so bash's save/restore of
+# per-call env doesn't undo the function's own export after it returns.
+export ISSUE_SOURCE=file
+export ISSUE_DIR_PATH="$MAIN/env-issues"
+resolve_effective_issue_source "" "" "$MAIN"
 assert_eq "$ISSUE_SOURCE" "file" "environment source fallback"
 assert_eq "$ISSUE_SOURCE_ORIGIN" "environment" "environment origin"
 assert_eq "$ISSUE_DIR_PATH" "$MAIN/env-issues" "environment issue dir"
+unset ISSUE_SOURCE ISSUE_DIR_PATH
 
 # A genuinely custom (non-built-in) configured source still routes through the
 # ISSUE_BACKEND escape hatch.
