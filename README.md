@@ -12,6 +12,21 @@ This marketplace contains **2 plugins** with complementary capabilities:
 Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **harden** (`skills/harden/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
 
 
+## Start Here
+
+Pick your platform:
+
+| I'm using… | Go to |
+|------------|-------|
+| **Claude Code** | [Claude Code install](#claude-code) |
+| **Gemini CLI / Antigravity** | [Antigravity section](#antigravity) |
+| **OpenAI Codex CLI** | [Codex section](#codex-support) |
+| **Droid (Factory)** | [Droid section](#droid-factory-support) |
+
+Not sure? **Claude Code** is the primary platform — it has the most complete feature set and documentation.
+
+---
+
 ## ⚠️ Compatibility Notice
 
 **These plugins are primarily developed for personal use.** While they should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees they will work in all environments. Use at your own risk.
@@ -36,6 +51,7 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 | **Codex** | `.codex-plugin/`, `codex-plugins/`, `skills/`, and `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
 | **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
 | **Droid (Factory)** | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
+| **Harden skill** (all platforms) | `skills/harden/` | [skills/harden/SKILL.md](skills/harden/SKILL.md) |
 
 Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
 
@@ -441,6 +457,23 @@ Extend the `grep -iE` pattern with the error signatures that matter for your ser
 For each finding the monitor either files a new GitHub issue with a priority label, or comments on an existing open issue with the latest timestamp, frequency, and context.
 
 ---
+
+### Skill: Harden
+
+A validation and refinement loop for **stabilizing** a platform — not security hardening. Run the real end-to-end cycle, grade it against an explicit contract, root-cause fix, log findings, repeat until N consecutive clean runs.
+
+**When to use:** After an initial modernize or migration, when you want to drive defect count to zero through repeated live runs rather than code review alone. Also useful for any system with a runnable end-to-end exercise.
+
+**How to invoke:**
+- Claude Code: `/harden` (or load `skills/harden/SKILL.md` directly)
+- Codex / Gemini: load the `harden` skill from `skills/harden/`
+
+**Model tiers:** Coordinator on Opus (grading, root-cause analysis); subagent workers on Sonnet (bounded fixes).
+
+See [`skills/harden/SKILL.md`](skills/harden/SKILL.md) for the full loop protocol including swarm-mode cadence and cost discipline.
+
+---
+
 ## Repository Structure
 ---
 
