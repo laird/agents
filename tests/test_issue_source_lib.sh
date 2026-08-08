@@ -38,7 +38,10 @@ assert_eq "$ISSUE_SOURCE" "file" "CLI file source"
 assert_eq "$ISSUE_DIR_PATH" "$MAIN/local-issues" "CLI issue dir"
 
 rm "$MAIN/.autocoder.json"
-ISSUE_SOURCE=file ISSUE_DIR_PATH="$MAIN/env-issues" resolve_effective_issue_source "" "" "$MAIN"
+# VAR=val function syntax in bash reverts exported vars after the call; export explicitly.
+export ISSUE_SOURCE=file
+export ISSUE_DIR_PATH="$MAIN/env-issues"
+resolve_effective_issue_source "" "" "$MAIN"
 assert_eq "$ISSUE_SOURCE" "file" "environment source fallback"
 assert_eq "$ISSUE_SOURCE_ORIGIN" "environment" "environment origin"
 assert_eq "$ISSUE_DIR_PATH" "$MAIN/env-issues" "environment issue dir"
