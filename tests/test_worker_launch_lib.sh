@@ -41,7 +41,16 @@ assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the son
 assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
 
 resolve_worker_launch gemini "$REPO"
-assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
+# Like Claude, Gemini workers run a SHELL LOOP: gemini-fix-loop.sh restarts the
+# gemini process per issue so each fix starts with a fresh context. The manager
+# stays interactive because it coordinates across issues (monitor-loop).
+case "$WORKER_CMD" in
+  *gemini-fix-loop.sh*) ;;
+  *) echo "FAIL: Gemini worker should run gemini-fix-loop.sh, got '$WORKER_CMD'" >&2; exit 1 ;;
+esac
+assert_eq "$WORKER_LAUNCH_MODE" "shell" "Gemini workers launch via the shell loop"
+assert_eq "$WORKER_COMMAND_MODE" "shell" "Gemini workers take shell commands"
+assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Gemini manager launches interactively"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
 
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
