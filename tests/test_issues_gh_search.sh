@@ -48,9 +48,11 @@ chmod +x "$TMP/bin/gh"
 
 capture_search() {
   # Runs the backend with the stubbed gh and echoes the captured search string.
+  # BASH_ENV is cleared so the subprocess does not prepend $HOME/bin to PATH,
+  # which would shadow the stub with the real gh wrapper.
   export GH_SEARCH_CAPTURE="$TMP/search.txt"
   : > "$GH_SEARCH_CAPTURE"
-  PATH="$TMP/bin:$PATH" "$BACKEND" "$@" >/dev/null 2>&1
+  BASH_ENV="" PATH="$TMP/bin:$PATH" "$BACKEND" "$@" >/dev/null 2>&1
   cat "$GH_SEARCH_CAPTURE"
 }
 
