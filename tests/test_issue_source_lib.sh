@@ -43,14 +43,29 @@ assert_eq "$ISSUE_SOURCE" "file" "environment source fallback"
 assert_eq "$ISSUE_SOURCE_ORIGIN" "environment" "environment origin"
 assert_eq "$ISSUE_DIR_PATH" "$MAIN/env-issues" "environment issue dir"
 
+# A genuinely custom (non-built-in) configured source still routes through the
+# ISSUE_BACKEND escape hatch.
 cat > "$MAIN/.autocoder.json" <<JSON
-{"issueSource":"jira","issueBackend":"jira-script"}
+{"issueSource":"linear","issueBackend":"linear-script"}
 JSON
 resolve_effective_issue_source "" "" "$MAIN"
-assert_eq "$ISSUE_SOURCE" "jira" "custom configured source preserved"
-assert_eq "$ISSUE_BACKEND" "jira-script" "custom backend preserved"
+assert_eq "$ISSUE_SOURCE" "linear" "custom configured source preserved"
+assert_eq "$ISSUE_BACKEND" "linear-script" "custom backend preserved"
 
-if resolve_effective_issue_source linear "" "$MAIN" 2>/dev/null; then
+# jira is a first-class source: it resolves without an issueBackend override,
+# because the dispatcher maps it to issues-jira.sh directly.
+cat > "$MAIN/.autocoder.json" <<JSON
+{"issueSource":"jira"}
+JSON
+resolve_effective_issue_source "" "" "$MAIN"
+assert_eq "$ISSUE_SOURCE" "jira" "jira configured source preserved"
+assert_eq "$ISSUE_BACKEND" "" "jira needs no custom backend override"
+
+# jira is also accepted as a --issue-source CLI value.
+resolve_effective_issue_source jira "" "$MAIN"
+assert_eq "$ISSUE_SOURCE" "jira" "jira accepted as CLI source"
+
+if resolve_effective_issue_source notreal "" "$MAIN" 2>/dev/null; then
   echo "FAIL: unsupported CLI issue source should fail" >&2
   exit 1
 fi
