@@ -97,8 +97,20 @@ EOF
 # caller can tell "no data" apart from a genuine zero.
 
 # count_before <file> <keyword>  — matches "<N> <keyword>" (Jest/Playwright text)
+#
+# SUMS every match rather than taking the last. Jest and Playwright emit one
+# summary per run, so last-wins and sum agree there. But this repo's own unit
+# command is `for t in tests/test_*.sh; do bash "$t" || exit 1; done` — a dozen
+# independent scripts, each printing its own "Results: N passed, M failed". Under
+# `tail -1` a green run of ~164 assertions reported the LAST suite's 7. Summing
+# is correct for both shapes.
+#
+# Still returns EMPTY when nothing matched (awk's uninitialized `s` prints as
+# the empty string), which the caller relies on to tell "runner produced no
+# summary" apart from a genuine zero.
 count_before() {
-    grep -oE "[0-9]+[[:space:]]+$2" "$1" 2>/dev/null | grep -oE '^[0-9]+' | tail -1
+    grep -oE "[0-9]+[[:space:]]+$2" "$1" 2>/dev/null | grep -oE '^[0-9]+' \
+        | awk '{ s += $1; n += 1 } END { if (n) print s }'
 }
 
 # json_int <file> <key>  — matches "<key>": <N> in JSON output
@@ -151,7 +163,13 @@ if [ -z "${UNIT_PASSED}${UNIT_FAILED}${UNIT_TOTAL}" ] && [ "${UNIT_SUITE_SKIPPED
 fi
 UNIT_PASSED="${UNIT_PASSED:-0}"
 UNIT_FAILED="${UNIT_FAILED:-0}"
-UNIT_TOTAL="${UNIT_TOTAL:-0}"
+# Derive the denominator when the runner never prints one. No bash suite in this
+# repo emits the word "total", so UNIT_TOTAL was always 0 and every summary read
+# "N/0 passed". Derive only — never overwrite a total the runner did report,
+# since Jest's total legitimately includes skipped tests that are neither passed
+# nor failed. Must stay AFTER the no-parseable-summary guard above, or an
+# unparseable run would synthesise 0+0=0 and look like a valid green.
+UNIT_TOTAL="${UNIT_TOTAL:-$((UNIT_PASSED + UNIT_FAILED))}"
 
 echo -e "${GREEN}Unit Tests Complete: ${UNIT_PASSED}/${UNIT_TOTAL} passed${NC}"
 echo ""
