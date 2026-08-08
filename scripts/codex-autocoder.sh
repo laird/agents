@@ -111,13 +111,13 @@ case "$COMMAND" in
 
     PROMPT="$(build_fix_prompt "$USER_SCOPE")"
 
-    codex exec --full-auto -C "$REPO_ROOT" "$PROMPT"
+    codex exec --dangerously-bypass-approvals-and-sandbox -C "$REPO_ROOT" "$PROMPT"
     ;;
   review-blocked)
     EXTRA_GUIDANCE="${*:-}"
     PROMPT="$(build_review_blocked_prompt "$EXTRA_GUIDANCE")"
 
-    codex exec --full-auto -C "$REPO_ROOT" "$PROMPT"
+    codex exec --dangerously-bypass-approvals-and-sandbox -C "$REPO_ROOT" "$PROMPT"
     ;;
   -h|--help|help)
     usage

@@ -185,15 +185,21 @@ Ready. Run /autocoder:monitor-workers to dispatch work.
 
 ### Step 5: Handle stale working labels
 
-If any stale "working" labels were found (issue marked working but worker idle >60min), ask the manager:
+Apply the full stale-lock test from `/autocoder:monitor-workers` Step 4. Worker
+idleness alone is never enough: check live panes/processes, dirty matching
+worktrees, local and remote `*issue-N*` branch-tip timestamps, and issue/comment
+timestamps. Unknown or unavailable evidence must retain the lock.
 
-> "Issue #N has the 'working' label but the worker appears idle for >60 minutes. Remove the 'working' label so it can be reassigned?"
+When every signal is conclusively older than 60 minutes, release the stale lock
+automatically so the issue can be reassigned:
 
 ```bash
-gh issue edit <number> --remove-label "working"
+issue_release <number>
 ```
 
-This is the same check monitor-workers does, but doing it at resume time avoids silent lock-outs.
+If a matching remote branch remains, report it as a takeover blocker rather than
+deleting it automatically. This is the same conservative check monitor-workers
+uses, and prevents resume-time cleanup from stripping a live branch lock.
 
 ### Step 6: Clean up state file (optional)
 

@@ -717,3 +717,25 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Plugin consumers can receive the new Autocoder release metadata; local file issue parsing no longer trips over unquoted title colons in ignored .issues files.
 
+
+---
+
+## 2026-08-08 19:20:28 - Prevent Codex swarm permission hangs
+
+**What Changed**: Updated interactive Codex worker/manager launches and fallback worker/monitor exec wrappers to use --dangerously-bypass-approvals-and-sandbox; expanded launch tests.
+
+**Why Changed**: Codex swarm workers and managers could pause indefinitely while waiting for approval requests in unattended sessions.
+
+**Impact**: Codex worker and manager agents now run without approval prompts or the Codex sandbox; deployments must provide external isolation.
+
+
+---
+
+## 2026-08-08 19:32:18 - Recover stale autocoder working locks safely
+
+**What Changed**: Changed manager monitoring and resume protocols to automatically release stale working labels only after checking live agents, dirty worktrees, recent local and remote issue branch commits, and issue activity; added protocol regression coverage and bumped marketplace/autocoder versions to 3.35.0/4.13.0.
+
+**Why Changed**: Abandoned working labels could block the queue indefinitely, while issue timestamps alone could misclassify active feature-branch work as stale.
+
+**Impact**: Managers can requeue conclusively abandoned issues without interrupting active branch work; uncertain evidence retains the lock and old remote branches are reported for takeover review.
+

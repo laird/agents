@@ -261,7 +261,7 @@ The `/monitor-workers` command is the manager's primary tool for overseeing a sw
 
 1. **Check worktree status** — For each worker worktree, reports branch, last commit time, and whether actively working
 2. **Read worker screens** — Uses cmux/tmux to check if agents are idle or active
-3. **Detect stale "working" labels** — Finds issues tagged "working" with no agent activity in the last hour; asks to remove
+3. **Recover stale "working" labels** — Automatically releases locks only when no live agent, dirty matching worktree, recent branch commit, or recent issue update exists
 4. **Find unblocked issues** — Lists open issues without blocking labels
 5. **Dispatch idle workers** — Sends `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
 6. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploys
@@ -294,9 +294,10 @@ tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
 ### Stale Lock Detection
 
 Detects when a "working" label is stale (agent crashed or disconnected):
-- No commits or file changes for the issue in the last hour
-- No agent process found working on it
-- Asks you before removing the label so another worker can pick it up
+- No live agent owns the issue and no matching worktree has dirty files
+- No matching local or remote feature branch has a commit in the last hour
+- No issue or comment update occurred in the last hour
+- Automatically releases the label only when every check succeeds; unknown evidence retains it
 
 ## Monitor Loop (`/monitor-loop`)
 
@@ -483,9 +484,10 @@ This means the manager can detect idle workers and assign them new issues withou
 ### Stale Lock Detection
 
 `/monitor-workers` detects when a "working" label is stale (agent crashed or disconnected):
-- No commits or file changes for the issue in the last hour
-- No agent process found working on it
-- Asks you before removing the label so another worker can pick it up
+- No live agent owns the issue and no matching worktree has dirty files
+- No matching local or remote feature branch has a commit in the last hour
+- No issue or comment update occurred in the last hour
+- Automatically releases the label only when every check succeeds; unknown evidence retains it
 
 ## Parallel Agent System
 

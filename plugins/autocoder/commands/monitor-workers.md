@@ -18,7 +18,7 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 
 1. **Check worktree status** — For each worker worktree, report branch, last commit time, and whether actively working
 2. **Read worker screens** — Use cmux/tmux to check if agents are idle or active
-3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
+3. **Recover stale "working" labels** — Automatically release locks only after proving there is no active agent, dirty worktree, recent feature-branch commit, or recent issue update
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
 6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
@@ -129,24 +129,52 @@ Look for these idle indicators:
 
 ### Step 4: Detect Stale "working" Labels
 
-For each issue with the "working" label, check if work is actually happening:
+Use a 60-minute stale threshold unless the repository defines a longer one. For
+each issue with the `working` label, perform **all** of these checks before
+releasing it:
 
-1. **Check worktree match**: Is there a worktree with a branch containing the issue number? If so, has it had commits in the last 60 minutes?
-2. **Check screen**: Can you find an agent actively working on this issue via cmux/tmux screen?
-3. **Check issue timestamps**: Is the issue's most recent comment/update older than 60 minutes?
+1. **Live agent ownership**: read every cmux/tmux worker screen and command line.
+   If any live agent mentions issue `N`, `feature/issue-N`, or is running in the
+   matching worktree, the lock is active.
+2. **Matching worktrees and local branches**: inspect every worktree whose branch
+   contains `issue-N`. A dirty worktree is active regardless of commit age. Also
+   inspect the tip time of every local branch matching `*issue-N*`.
+3. **Remote branch activity**: fetch branch metadata and inspect every remote
+   branch matching `*issue-N*`, especially `origin/feature/issue-N`. A branch-tip
+   commit newer than the threshold is active even when the issue has no recent
+   comments. Do not treat branch existence alone as recent activity; compare its
+   tip timestamp.
+4. **Issue activity**: inspect the issue's `updatedAt` and newest comment time.
 
-**A "working" label is stale if ALL of these are true:**
-- No worktree has committed changes for this issue in the last 60 minutes
-- No agent screen shows active work on this issue
-- The issue's most recent update is older than 60 minutes
+Example branch checks:
 
-**When a stale "working" label is detected**, use AskUserQuestion to ask:
-> "Issue #N has the 'working' label but no agent appears to be actively working on it (no commits or file changes in the last hour). Remove the 'working' label so it can be picked up by another worker?"
+```bash
+git fetch origin --prune --quiet
+git worktree list --porcelain
+git for-each-ref --format='%(refname:short) %(committerdate:unix)' \
+  "refs/heads/*issue-${ISSUE_NUM}*" "refs/remotes/origin/*issue-${ISSUE_NUM}*"
+```
 
-If approved:
+**A `working` label is stale only when ALL are true:**
+- No live worker owns or is actively discussing the issue
+- No matching worktree has uncommitted changes
+- No matching local or remote branch has a tip commit in the last 60 minutes
+- The issue and its comments have had no updates in the last 60 minutes
+
+If any check is unavailable (for example, fetch or screen inspection fails),
+fail closed: keep the label and report that ownership could not be verified.
+
+**When all checks prove the lock is stale, remove it automatically** so another
+worker can claim the issue; do not pause for a permission question:
+
 ```bash
 issue_release <number>
 ```
+
+Report the evidence and action, including the newest issue, branch, and worktree
+timestamps examined. If an old matching remote branch remains, do not delete it
+automatically: report it as a takeover blocker for manager review because worker
+claim logic treats remote branches as authoritative locks.
 
 ### Step 4b: Restart Unhealthy Workers (High Memory + Stalled)
 
@@ -431,7 +459,7 @@ done
 ## Key Principles
 
 - **Use cmux/tmux to dispatch** — Send commands directly to idle workers, don't just report
-- **Detect stale locks** — Ask before removing "working" labels that appear abandoned
+- **Recover stale locks** — Automatically remove `working` only after live-agent, dirty-worktree, branch-tip, and issue-activity checks all prove it stale
 - **Restart wedged workers in place** — A worker that is stalled AND holding high memory has run out of headroom; kill and relaunch it on the same worktree/issue rather than letting it hang
 - **Priority order** — Assign highest priority issues first (P0 > P1 > P2 > P3)
 - **Don't double-assign** — Check "working" label before dispatching

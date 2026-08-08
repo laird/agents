@@ -59,7 +59,7 @@ resolve_worker_launch() {
     codex)
       local probe_script="$repo_root/scripts/probe-codex-goals.sh"
       if [ -f "$probe_script" ] && bash "$probe_script" 2>/dev/null; then
-        AGENT_LAUNCH_CMD="codex"
+        AGENT_LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox"
         WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$repo_root/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, test, commit, push the current HEAD, close or PR according to repo rules, remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
         WORKER_LAUNCH_MODE="interactive"
         WORKER_COMMAND_MODE="agent-input"
