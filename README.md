@@ -9,7 +9,7 @@ This marketplace contains **2 plugins** with complementary capabilities:
 1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
 2. **Autocoder** - Autonomous issue resolution — GitHub, Jira, Azure DevOps, or file-backed trackers — with intelligent testing and quality automation
 
-Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **harden** (`skills/harden/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
+Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **improve** (`skills/improve/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
 
 
 ## Start Here
@@ -51,7 +51,7 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 | **Codex** | `.codex-plugin/`, `codex-plugins/`, `skills/`, and `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
 | **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
 | **Droid (Factory)** | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
-| **Harden skill** (all platforms) | `skills/harden/` | [skills/harden/SKILL.md](skills/harden/SKILL.md) |
+| **Improve skill** (all platforms) | `skills/improve/` | [skills/improve/SKILL.md](skills/improve/SKILL.md) |
 
 Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
 
@@ -458,19 +458,19 @@ For each finding the monitor either files a new GitHub issue with a priority lab
 
 ---
 
-### Skill: Harden
+### Skill: Improve
 
 A validation and refinement loop for **stabilizing** a platform — not security hardening. Run the real end-to-end cycle, grade it against an explicit contract, root-cause fix, log findings, repeat until N consecutive clean runs.
 
 **When to use:** After an initial modernize or migration, when you want to drive defect count to zero through repeated live runs rather than code review alone. Also useful for any system with a runnable end-to-end exercise.
 
 **How to invoke:**
-- Claude Code: `/harden` (or load `skills/harden/SKILL.md` directly)
-- Codex / Gemini: load the `harden` skill from `skills/harden/`
+- Claude Code: load the `improve` skill via the Skill tool (or use `skills/improve/SKILL.md` directly)
+- Codex / Gemini: load the `improve` skill from `skills/improve/`
 
-**Model tiers:** Coordinator on Opus (grading, root-cause analysis); subagent workers on Sonnet (bounded fixes).
+**Model tiers:** Coordinator on `$MANAGER_MODEL` (`opus` / `pro`) for grading and root-cause analysis; subagent workers on `$WORKER_MODEL` (`sonnet` / `flash`) for bounded fixes. Credentials are inherited from the running session.
 
-See [`skills/harden/SKILL.md`](skills/harden/SKILL.md) for the full loop protocol including swarm-mode cadence and cost discipline.
+See [`skills/improve/SKILL.md`](skills/improve/SKILL.md) for the full loop protocol including swarm-mode cadence and cost discipline.
 
 ---
 
