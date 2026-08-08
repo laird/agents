@@ -217,13 +217,14 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 ## Model Selection
 
 Model tiers are resolved from env vars → `.autocoder.json` → built-in defaults.
+Agents inherit credentials from the running Gemini/Antigravity session — no separate API keys needed.
 See `autocoder:references/model-config.md` for full reference and override instructions.
 
 | Tier | Default (Gemini/Antigravity) | Used for |
 |------|-----------------------------|---------|
-| **Deep** (`$MANAGER_MODEL`) | `gemini-2.5-pro` | P0/P1 issues, root cause, proposals |
-| **Balanced** (`$WORKER_MODEL`) | `gemini-2.0-flash` | P2/P3 fixes, plan execution, analysis |
-| **Fast** (`$FAST_MODEL`) | `gemini-2.0-flash` | Labels, comments, commit messages |
+| **Deep** (`$MANAGER_MODEL`) | `pro` | P0/P1 issues, root cause, proposals |
+| **Balanced** (`$WORKER_MODEL`) | `flash` | P2/P3 fixes, plan execution, analysis |
+| **Fast** (`$FAST_MODEL`) | `flash` | Labels, comments, commit messages |
 
 ### Escalation Triggers
 
@@ -386,9 +387,9 @@ fi
 # ── Model configuration ──────────────────────────────────────────────────────
 # Resolve model tiers: env vars → .autocoder.json → built-in defaults.
 # If nothing is configured, ask the user to confirm defaults before proceeding.
-_DEFAULT_MANAGER_MODEL="gemini-2.5-pro"
-_DEFAULT_WORKER_MODEL="gemini-2.0-flash"
-_DEFAULT_FAST_MODEL="gemini-2.0-flash"
+_DEFAULT_MANAGER_MODEL="pro"
+_DEFAULT_WORKER_MODEL="flash"
+_DEFAULT_FAST_MODEL="flash"
 
 # Load from .autocoder.json if present and not already set via env
 if [ -f ".autocoder.json" ] && command -v python3 >/dev/null 2>&1; then
@@ -423,11 +424,11 @@ if [ "$_MODELS_PRECONFIGURED" = "false" ]; then
   echo ""
   echo "   To keep these defaults, reply: confirm"
   echo "   To override, set env vars before running /fix:"
-  echo "     export MANAGER_MODEL=\"gemini-2.5-pro\""
-  echo "     export WORKER_MODEL=\"gemini-2.0-flash\""
-  echo "     export FAST_MODEL=\"gemini-2.0-flash\""
+  echo "     export MANAGER_MODEL=\"pro\""
+  echo "     export WORKER_MODEL=\"flash\""
+  echo "     export FAST_MODEL=\"flash\""
   echo "   Or add to .autocoder.json:"
-  echo "     {\"managerModel\": \"gemini-2.5-pro\", \"workerModel\": \"gemini-2.0-flash\", \"fastModel\": \"gemini-2.0-flash\"}"
+  echo "     {\"managerModel\": \"pro\", \"workerModel\": \"flash\", \"fastModel\": \"flash\"}"
   echo ""
   # Ask the user to confirm or override using the platform's question tool.
   # Present this as a blocking confirmation — do NOT proceed until the user responds.

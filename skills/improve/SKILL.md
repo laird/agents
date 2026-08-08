@@ -1,13 +1,13 @@
 ---
-name: harden
-description: Use this skill to harden a platform — validate and stabilize it through repeated live end-to-end runs (not security hardening) — run, grade against an executable contract, root-cause fix, log learnings, and repeat until N consecutive clean runs. Hardening can be GENERAL (the whole platform) or FOCUSED on a particular goal (e.g. cost accuracy, autonomy, a subsystem). Applies to any system with a runnable end-to-end exercise; project-specific run commands come from the target repo's CLAUDE.md or from the operator.
+name: improve
+description: Use this skill to improve a platform — validate and stabilize it through repeated live end-to-end runs — run, grade against an executable contract, root-cause fix, log learnings, and repeat until N consecutive clean runs. Improvement can be GENERAL (the whole platform) or FOCUSED on a particular goal (e.g. cost accuracy, autonomy, a subsystem). Applies to any system with a runnable end-to-end exercise; project-specific run commands come from the target repo's CLAUDE.md or from the operator.
 ---
 
-# Harden: the Validation & Refinement Loop
+# Improve: the Validation & Refinement Loop
 
-Stabilize a platform by running its real end-to-end cycle repeatedly, treating every run as an
-experiment that either passes an explicit contract or hands you the next defect. Proven on the
-Athena deal-insights platform (12 runs, 11+ defect classes found and fixed in one day — see
+Stabilize and improve a platform by running its real end-to-end cycle repeatedly, treating every
+run as an experiment that either passes an explicit contract or hands you the next defect. Proven
+on the Athena deal-insights platform (12 runs, 11+ defect classes found and fixed in one day — see
 `docs/assessments/2026-08-07-validation-run-log.md` in that repo for the worked example).
 
 ## Core loop
@@ -135,16 +135,19 @@ When a swarm is available, the loop runs in batches:
 ## Model tiers
 
 The coordinator running this loop (scope → run → grade → fix → log) should be the **deep
-reasoning model** (e.g. `claude-opus-5`). Root-cause analysis, grading judgment calls, and
-deciding which findings are entangled vs. independent all benefit from the extra reasoning
-capacity, and the coordinator touches few files compared to the total work done.
+reasoning model** (`$MANAGER_MODEL`, defaulting to `opus` on Claude Code / `pro` on Gemini).
+Root-cause analysis, grading judgment calls, and deciding which findings are entangled vs.
+independent all benefit from the extra reasoning capacity, and the coordinator touches few
+files compared to the total work done.
+
+Agents inherit credentials from the running session — no separate API keys are needed.
 
 Subagents dispatched for independent fixes — and autocoder swarm workers — should be the
-**balanced model** (e.g. `claude-sonnet-5`). Each fix is bounded, well-specified before
-dispatch, and self-contained; burning an Opus budget on mechanical implementation work is
-waste. When spawning subagents explicitly, pass `model: claude-sonnet-5` (or equivalent) in
-the agent options. When using the autocoder swarm, the default worker model (`WORKER_MODEL`,
-defaulting to `claude-sonnet-5`) is already correct — do not override it upward.
+**balanced model** (`$WORKER_MODEL`, defaulting to `sonnet` / `flash`). Each fix is bounded,
+well-specified before dispatch, and self-contained; burning a deep-model budget on mechanical
+implementation work is waste. When spawning subagents explicitly, pass the `$WORKER_MODEL`
+tier. When using the autocoder swarm, the default worker model is already correct — do not
+override it upward.
 
 ## Scaling the fix phase (autocoder swarms / subagent fan-out)
 

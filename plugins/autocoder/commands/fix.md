@@ -217,13 +217,14 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 ## Model Selection
 
 Model tiers are resolved from env vars → `.autocoder.json` → built-in defaults.
+Agents inherit credentials from the running Claude Code session — no separate API keys needed.
 See `autocoder:references/model-config.md` for full reference and override instructions.
 
 | Tier | Default (Claude Code) | Used for |
 |------|-----------------------|---------|
-| **Deep** (`$MANAGER_MODEL`) | `claude-opus-5` | P0/P1 issues, root cause, proposals |
-| **Balanced** (`$WORKER_MODEL`) | `claude-sonnet-5` | P2/P3 fixes, plan execution, analysis |
-| **Fast** (`$FAST_MODEL`) | `claude-haiku-4-5` | Labels, comments, commit messages |
+| **Deep** (`$MANAGER_MODEL`) | `opus` | P0/P1 issues, root cause, proposals |
+| **Balanced** (`$WORKER_MODEL`) | `sonnet` | P2/P3 fixes, plan execution, analysis |
+| **Fast** (`$FAST_MODEL`) | `haiku` | Labels, comments, commit messages |
 
 ### Escalation Triggers
 
@@ -408,9 +409,9 @@ fi
 # ── Model configuration ──────────────────────────────────────────────────────
 # Resolve model tiers: env vars → .autocoder.json → built-in defaults.
 # If nothing is configured, ask the user to confirm defaults before proceeding.
-_DEFAULT_MANAGER_MODEL="claude-opus-5"
-_DEFAULT_WORKER_MODEL="claude-sonnet-5"
-_DEFAULT_FAST_MODEL="claude-haiku-4-5"
+_DEFAULT_MANAGER_MODEL="opus"
+_DEFAULT_WORKER_MODEL="sonnet"
+_DEFAULT_FAST_MODEL="haiku"
 
 # Load from .autocoder.json if present and not already set via env
 if [ -f ".autocoder.json" ] && command -v python3 >/dev/null 2>&1; then
@@ -445,11 +446,11 @@ if [ "$_MODELS_PRECONFIGURED" = "false" ]; then
   echo ""
   echo "   To keep these defaults, reply: confirm"
   echo "   To override, set env vars before running /fix:"
-  echo "     export MANAGER_MODEL=\"claude-opus-5\""
-  echo "     export WORKER_MODEL=\"claude-sonnet-5\""
-  echo "     export FAST_MODEL=\"claude-haiku-4-5\""
+  echo "     export MANAGER_MODEL=\"opus\""
+  echo "     export WORKER_MODEL=\"sonnet\""
+  echo "     export FAST_MODEL=\"haiku\""
   echo "   Or add to .autocoder.json:"
-  echo "     {\"managerModel\": \"claude-opus-5\", \"workerModel\": \"claude-sonnet-5\", \"fastModel\": \"claude-haiku-4-5\"}"
+  echo "     {\"managerModel\": \"opus\", \"workerModel\": \"sonnet\", \"fastModel\": \"haiku\"}"
   echo ""
   # Ask the user to confirm or override using AskUserQuestion.
   # Present this as a blocking confirmation — do NOT proceed until the user responds.
@@ -458,7 +459,10 @@ if [ "$_MODELS_PRECONFIGURED" = "false" ]; then
   echo "  Options:"
   echo "    1. Use defaults ($MANAGER_MODEL / $WORKER_MODEL / $FAST_MODEL)"
   echo "    2. Override — I will set MANAGER_MODEL / WORKER_MODEL / FAST_MODEL env vars"
+  echo "       (use tier shorthand: opus/sonnet/haiku for Claude Code, pro/flash for Gemini)"
   echo "    3. Save defaults to .autocoder.json (so this prompt doesn't appear again)"
+  echo ""
+  echo "  Agents inherit credentials from the running session — no API keys needed."
   echo ""
   echo "  If the user chooses option 3, write the following to .autocoder.json (merging"
   echo "  with any existing keys):"
