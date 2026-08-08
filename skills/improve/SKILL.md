@@ -1,9 +1,9 @@
 ---
-name: harden
-description: Use this skill to harden a platform — validate and stabilize it through repeated live end-to-end runs (not security hardening) — run, grade against an executable contract, root-cause fix, log learnings, and repeat until N consecutive clean runs. Hardening can be GENERAL (the whole platform) or FOCUSED on a particular goal (e.g. cost accuracy, autonomy, a subsystem). Applies to any system with a runnable end-to-end exercise; project-specific run commands come from the target repo's CLAUDE.md or from the operator.
+name: improve
+description: Use this skill to improve a platform — validate and stabilize it through repeated live end-to-end runs — run, grade against an executable contract, root-cause fix, log learnings, and repeat until N consecutive clean runs. Improvement can be GENERAL (the whole platform) or FOCUSED on a particular goal (e.g. cost accuracy, autonomy, a subsystem). Applies to any system with a runnable end-to-end exercise; project-specific run commands come from the target repo's CLAUDE.md or from the operator.
 ---
 
-# Harden: the Validation & Refinement Loop
+# Improve: the Validation & Refinement Loop
 
 Stabilize a platform by running its real end-to-end cycle repeatedly, treating every run as an
 experiment that either passes an explicit contract or hands you the next defect. Proven on the
@@ -17,11 +17,11 @@ operator's chosen N) against the declared scope. Never declare stability from on
 
 ## Step 0 — establish scope and the exercise (before any looping)
 
-**Scope.** Hardening is either:
+**Scope.** Improvement is either:
 - **General** — the whole platform must survive the full cycle cleanly; grade every contract
   stage and all telemetry.
-- **Goal-focused** — the operator names a goal ("harden cost tracking", "harden the autonomy
-  loop", "harden ingest"). Still run the real end-to-end exercise (subsystems fail at their
+- **Goal-focused** — the operator names a goal ("improve cost tracking", "improve the autonomy
+  loop", "improve ingest"). Still run the real end-to-end exercise (subsystems fail at their
   seams, not in isolation), but grading WEIGHTS the goal: define goal-specific pass criteria
   (e.g. reconciliation delta ≈ 0), fix goal-relevant defects in-loop, and file off-goal
   discoveries as issues for the swarm/backlog instead of chasing them. State the scope in the
@@ -29,7 +29,7 @@ operator's chosen N) against the declared scope. Never declare stability from on
 
 **The exercise.** The loop is only as good as the thing it runs. Before round 1, pin down
 exactly how to execute the platform's end-to-end cycle:
-1. Read the target repo's `CLAUDE.md` for a hardening/validation binding (Athena: the
+1. Read the target repo's `CLAUDE.md` for a improvement/validation binding (Athena: the
    "Validation & Refinement Loop" section — full research cycle via
    `npm run research -- --engagement-id <id> --auto --full-cycle --wait`, worker
    singleton restart procedure, log locations, reconciliation tooling).
@@ -38,7 +38,7 @@ exactly how to execute the platform's end-to-end cycle:
 3. If still ambiguous — or the run spends real money, needs credentials, or mutates shared
    state — ASK THE OPERATOR before the first run: what to run, against what target/inputs,
    and the budget.
-Then WRITE the binding into that repo's `CLAUDE.md` so the next hardening session skips this
+Then WRITE the binding into that repo's `CLAUDE.md` so the next improvement session skips this
 step. Identical inputs across rounds (same target, config, scope) are part of the binding —
 that's what makes caches replay and rounds comparable.
 

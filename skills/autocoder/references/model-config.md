@@ -44,5 +44,5 @@ exported as env vars for the duration of the run.
 
 ## Extending to other plugins
 
-This tier system is defined for `autocoder`. Other plugins (modernize, harden)
+This tier system is defined for `autocoder`. Other plugins (modernize, improve)
 will adopt the same env vars and `.autocoder.json` keys in a future update.

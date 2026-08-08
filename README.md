@@ -9,7 +9,7 @@ This marketplace contains **2 plugins** with complementary capabilities:
 1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
 2. **Autocoder** - Autonomous issue resolution — GitHub, Jira, Azure DevOps, or file-backed trackers — with intelligent testing and quality automation
 
-Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **harden** (`skills/harden/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
+Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **improve** (`skills/improve/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
 
 
 ## ⚠️ Compatibility Notice
