@@ -337,7 +337,7 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 **Unit Tests**:
 - Framework: plain `bash` assertion scripts, plus `pytest` for the Python backend
 - Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
-- Run all shell tests: `for t in tests/test_*.sh; do bash "$t" || exit 1; done`
+- Run all shell tests: `for t in $(find tests -maxdepth 1 -name 'test_*.sh' -type f | sort); do bash "$t" || exit 1; done`
 - Note: the Python tests require `pytest`, which is not installed in all environments.
 - The Jira and Azure DevOps backends each have two complementary shell tests,
   all hermetic (no network): `test_issues_jira.sh` / `test_issues_ado.sh` stub

@@ -28,21 +28,27 @@ TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
-    # Extract report directory
-    if grep -q "Location: " CLAUDE.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
-    else
+    # Extract report directory — scoped to the **Test Reports** block to avoid
+    # matching the unit-test Location line first (which contains glob chars).
+    REPORT_DIR=$(grep -A5 "\*\*Test Reports\*\*" CLAUDE.md | grep "Location: " | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
+    if [ -z "$REPORT_DIR" ]; then
+        REPORT_DIR="docs/test/regression-reports"
+    fi
+    # Reject paths that contain glob metacharacters — they almost certainly
+    # came from the wrong Location: line (e.g. tests/test_*.sh).
+    if echo "$REPORT_DIR" | grep -q '[*?[]'; then
+        echo -e "${YELLOW}WARNING: REPORT_DIR '$REPORT_DIR' contains glob metacharacters — using default.${NC}" >&2
         REPORT_DIR="docs/test/regression-reports"
     fi
 
-    # Extract unit test configuration
-    if grep -q "Working directory: " CLAUDE.md && grep -B5 "Working directory:" CLAUDE.md | grep -q "Unit Tests"; then
-        UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
-        UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
+    # Extract unit test configuration — look for the "Run all shell tests:"
+    # inline command in the Test Framework Details block.
+    UNIT_TEST_DIR="."
+    if grep -q "Run all shell tests:" CLAUDE.md; then
+        UNIT_TEST_CMD=$(grep "Run all shell tests:" CLAUDE.md | sed 's/[^`]*`\([^`]*\)`.*/\1/' | head -1)
     else
         # Not configured. Do NOT assume npm — in a repo without package.json
         # that produces a spurious failure (and, for E2E, auto-filed issues).
-        UNIT_TEST_DIR="."
         UNIT_TEST_CMD=""
     fi
 
@@ -69,6 +75,13 @@ else
 fi
 
 REPORT_FILE="$REPORT_DIR/regression-${TIMESTAMP}.md"
+
+# Remove any bogus report directory created by the REPORT_DIR parse bug
+# (literal name "tests/test_*.sh" — the asterisk is part of the filename).
+if [ -d "tests/test_*.sh" ]; then
+    echo -e "${YELLOW}Cleaning up bogus report directory 'tests/test_*.sh'...${NC}" >&2
+    rm -rf "tests/test_*.sh"
+fi
 
 # Create report directory if it doesn't exist
 mkdir -p "$REPORT_DIR"
@@ -97,8 +110,9 @@ EOF
 # caller can tell "no data" apart from a genuine zero.
 
 # count_before <file> <keyword>  — matches "<N> <keyword>" (Jest/Playwright text)
+# Sums all occurrences so multi-file shell-test runs are tallied correctly.
 count_before() {
-    grep -oE "[0-9]+[[:space:]]+$2" "$1" 2>/dev/null | grep -oE '^[0-9]+' | tail -1
+    grep -oE "[0-9]+[[:space:]]+$2" "$1" 2>/dev/null | grep -oE '^[0-9]+' | awk '{s+=$1} END{if(NR>0) print s}'
 }
 
 # json_int <file> <key>  — matches "<key>": <N> in JSON output
@@ -124,12 +138,16 @@ if [ -z "$UNIT_TEST_CMD" ]; then
     UNIT_EXIT=0
     UNIT_SUITE_SKIPPED=true
     : > "$UNIT_RESULTS"
-elif $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
-    UNIT_STATUS="✅ PASSED"
-    UNIT_EXIT=0
 else
-    UNIT_STATUS="❌ FAILED"
-    UNIT_EXIT=1
+    bash -c "$UNIT_TEST_CMD" 2>&1 | tee "$UNIT_RESULTS"
+    # Check the left side of the pipeline (tee always exits 0, masking failures)
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+        UNIT_STATUS="❌ FAILED"
+        UNIT_EXIT=1
+    else
+        UNIT_STATUS="✅ PASSED"
+        UNIT_EXIT=0
+    fi
 fi
 
 if [ "$UNIT_TEST_DIR" != "." ]; then
@@ -147,6 +165,12 @@ UNIT_TOTAL=$(count_before "$UNIT_RESULTS" total)
 # suite hides a broken build.
 if [ -z "${UNIT_PASSED}${UNIT_FAILED}${UNIT_TOTAL}" ] && [ "${UNIT_SUITE_SKIPPED:-false}" != "true" ]; then
     UNIT_STATUS="❌ FAILED (no parseable test summary — did '$UNIT_TEST_CMD' actually run?)"
+    UNIT_EXIT=1
+fi
+# Belt-and-suspenders: if any tests reported failure in the output, mark failed.
+# Covers shell-style test output where the runner might exit 0 despite failures.
+if [ "${UNIT_FAILED:-0}" -gt 0 ] && [ "${UNIT_SUITE_SKIPPED:-false}" != "true" ]; then
+    UNIT_STATUS="❌ FAILED (${UNIT_FAILED} test(s) failed)"
     UNIT_EXIT=1
 fi
 UNIT_PASSED="${UNIT_PASSED:-0}"
@@ -386,9 +410,13 @@ echo ""
 echo -e "  ${YELLOW}Report saved to:${NC} $REPORT_FILE"
 echo ""
 
-# Exit with failure if any tests failed
+# Exit with failure if any tests failed, or if every suite was skipped.
+# Zero tests executed must not be reported as a pass.
 if [ "$UNIT_EXIT" -ne 0 ] || [ "$E2E_EXIT" -ne 0 ]; then
     echo -e "${RED}⚠️  Some tests failed. Check GitHub issues for details.${NC}"
+    exit 1
+elif [ "${UNIT_SUITE_SKIPPED:-false}" = "true" ] && [ "${E2E_SUITE_SKIPPED:-false}" = "true" ]; then
+    echo -e "${RED}⚠️  All test suites were skipped — zero tests executed is not a pass.${NC}"
     exit 1
 else
     echo -e "${GREEN}✅ All tests passed!${NC}"
