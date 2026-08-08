@@ -158,6 +158,20 @@ if [ "$MUX" = "tmux" ]; then
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
   else
     tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
+
+    # Confirm the relaunch actually took. A respawned pane that failed to start
+    # the loop sits at a bare shell, and reporting success there hides a dead
+    # worker from the manager's recovery loop (issue #94).
+    sleep 2
+    PANE_TAIL=$(tmux capture-pane -p -t "$PANE" 2>/dev/null | tail -5 || true)
+    case "$PANE_TAIL" in
+      *"No such file or directory"*|*"command not found"*)
+        echo "❌ Relaunch failed — the pane reported:" >&2
+        echo "$PANE_TAIL" >&2
+        echo "   Worker was killed but did NOT restart. Fix the launch command before retrying." >&2
+        exit 1
+        ;;
+    esac
   fi
 
   echo "✅ Worker restarted in tmux pane $PANE (worktree: $WORKTREE)"
