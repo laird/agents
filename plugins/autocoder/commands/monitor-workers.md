@@ -284,19 +284,25 @@ cmux send-key --workspace <ref> Enter
 
 **tmux:**
 ```bash
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+"$SCRIPT_DIR/dispatch-worker.sh" --mux tmux --agent claude \
+  --target <session>:<window>.<pane> --issue <issue_number>
 ```
 
 **Codex workers:** send the shell wrapper instead of the Claude slash command.
-The wrapper runs the issue-start handshake before launching Codex:
+The dispatch helper selects the shell wrapper and submits Enter in the same
+operation. **Do not send text with a bare `tmux send-keys` call**: text without
+`Enter` remains in Codex's input buffer and the worker never starts.
 ```bash
-cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
-cmux send-key --workspace <ref> Enter
+"$SCRIPT_DIR/dispatch-worker.sh" --mux cmux --agent codex \
+  --target <ref> --issue <issue_number>
 
-tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>" Enter
+"$SCRIPT_DIR/dispatch-worker.sh" --mux tmux --agent codex \
+  --target <session>:<window>.<pane> --issue <issue_number>
 ```
 
-After dispatching, verify the worker started by reading its screen again after a few seconds.
+After dispatching, verify the command disappeared from the input buffer and the
+worker started by reading its screen again after a few seconds. If it is still
+buffered, send `Enter` immediately and report the helper failure.
 
 ### Step 5b: Add a Worker When the Queue Is Backing Up
 

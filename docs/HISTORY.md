@@ -739,3 +739,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Managers can requeue conclusively abandoned issues without interrupting active branch work; uncertain evidence retains the lock and old remote branches are reported for takeover review.
 
+
+---
+
+## 2026-08-08 19:47:22 - Submit Codex tmux dispatches reliably
+
+**What Changed**: Added a dispatch-worker helper and changed tmux submission to send literal command text, pause briefly, then send C-m separately; updated manager protocols, Codex manager goal guidance, tests, documentation, and bumped marketplace/autocoder versions to 3.35.1/4.13.1.
+
+**Why Changed**: Codex could miss Enter when tmux delivered the command and submit key in one send-keys call, leaving assignments buffered but unexecuted.
+
+**Impact**: Manager assignments now execute reliably in Codex workers and are verified through a focused two-call tmux regression test.
+

@@ -19,6 +19,9 @@ for the full design.
   `issue_claim`, `issue_release`, `issue_any_claimable`. Each function
   shells out to the configured backend script with the verb name and the
   caller's arguments. No backend logic lives here.
+- **`dispatch-worker.sh`** — sends one manager assignment to a tmux/cmux
+  worker and submits it reliably. For tmux, text and `C-m` are separate events
+  so Codex cannot leave the command sitting unexecuted in its input buffer.
 - **`issues-<backend>` scripts** — self-contained implementations. One
   bug in one backend cannot affect another.
 

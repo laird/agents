@@ -64,7 +64,7 @@ resolve_worker_launch() {
         WORKER_LAUNCH_MODE="interactive"
         WORKER_COMMAND_MODE="agent-input"
         MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
-        MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
+        MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely. When dispatching through tmux or cmux, always use plugins/autocoder/scripts/dispatch-worker.sh so the command and Enter are sent atomically; verify the worker screen after every dispatch and immediately submit Enter if text remains buffered."
         MANAGER_LAUNCH_MODE="interactive"
       else
         WORKER_CMD="bash '$repo_root/scripts/codex-fix-loop.sh'"

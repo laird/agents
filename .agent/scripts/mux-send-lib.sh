@@ -2,6 +2,7 @@
 # Timeout-wrapped tmux/cmux send helpers.
 
 AUTOCODER_MUX_TIMEOUT_SECONDS="${AUTOCODER_MUX_TIMEOUT_SECONDS:-15}"
+AUTOCODER_TMUX_SUBMIT_DELAY_SECONDS="${AUTOCODER_TMUX_SUBMIT_DELAY_SECONDS:-0.15}"
 
 # Startup liveness probes should be quicker than in-flight sends.
 AUTOCODER_CMUX_PROBE_SECONDS="${AUTOCODER_CMUX_PROBE_SECONDS:-5}"
@@ -45,7 +46,12 @@ send_tmux_command() {
 send_tmux_text_enter() {
   local target="$1"
   local text="$2"
-  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" "$text" Enter
+  # Codex's TUI can miss Enter when payload and submit arrive in one tmux call,
+  # leaving the command visible but unexecuted in its input buffer. Send literal
+  # text and C-m as distinct events with a small settling delay.
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" -l -- "$text" || return
+  sleep "$AUTOCODER_TMUX_SUBMIT_DELAY_SECONDS"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" C-m
 }
 
 validate_tmux_target() {
