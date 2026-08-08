@@ -27,3 +27,4 @@ Use this skill when the user wants Codex to operate the repo's autonomous issue-
 
 - For workflow sequencing: [references/workflow-map.md](references/workflow-map.md)
 - For legacy command mapping: [references/command-mapping.md](references/command-mapping.md)
+- For model tier configuration (fast/balanced/deep) and per-command defaults: [references/model-config.md](references/model-config.md)
