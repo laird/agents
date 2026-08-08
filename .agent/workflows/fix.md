@@ -4,22 +4,8 @@ Analyze all open GitHub issues, prioritize them, and begin systematically fixing
 
 ## Optional skill enhancements
 
-<!-- BEGIN optional-skills-prelude v1 — keep in sync across all command files; see plugins/shared/optional-skills-prelude.md -->
-
-If a named skill appears in your available skills list (delivered in the session-start system-reminder), invoke it via the `Skill` tool at the indicated step. Otherwise, follow the inline protocol below — it remains the source of truth and is unchanged by this section.
-
-In Gemini CLI / Antigravity, skills activate via `activate_skill` instead of the `Skill` tool; the mapping is otherwise identical.
-
-**Skill-name matching.** Match each table entry as an exact string. Mapping tables use fully-qualified names (`<plugin>:<skill>`) for plugin-installed skills and bare names for personal toolkit skills.
-
-**Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
-
-**Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for personal toolkit skills.
-
-**Skills are advisory, not gating.** A command's completion criteria are defined by its inline protocol. Optional skill outcomes are surfaced and considered, but do not override inline success criteria. "Always applied" in a mapping table means the skill is invoked when installed; outcomes remain advisory. When a command claims success while an advisory skill earlier in the run surfaced a failure, the success summary acknowledges the advisory finding.
-
-**Version trust.** Skills are matched by name; the integration does not pin or verify versions. If a tracked skill's contract changes in a way that breaks the chain, the integration is stale and must be updated.
-
+<!-- BEGIN optional-skills-prelude v1 -->
+Invoke listed skills via the `Skill` tool (Gemini/Antigravity: `activate_skill`). Match names exactly (`plugin:skill` or bare). `A → B` = sequence, `A + B` = parallel. Missing `superpowers:*` skill: emit one tip at entry. Not-installed: silent fallback. Mid-run failure: surface and fall back to inline. Skills are advisory — inline protocol defines completion.
 <!-- END optional-skills-prelude v1 -->
 
 <!-- BEGIN optional-skills-mapping fix v1 — keep in sync between Claude/Antigravity mirrors of this command -->
@@ -78,39 +64,7 @@ Where Step 3 contributes only a single skill or no sequence, treat it as a one-s
 
 **Without issue number**: Fetches all open issues with priority labels (P0-P3) and processes them in priority order.
 
-## What This Does
-
-### Bug Fixing Phase (Priority)
-1. Creates priority labels (P0, P1, P2, P3) if they don't exist
-2. Fetches all open GitHub issues with priority labels
-3. Identifies the highest priority issue (P0 > P1 > P2 > P3)
-4. **For simple issues**: Directly troubleshoot and fix
-5. **For complex issues**: Use superpowers skills to plan and execute
-6. After fixing, moves to the next issue
-7. Continues until all bug issues are resolved
-
-### Regression Testing Phase
-8. **When no priority bugs exist**: Run full regression test suite
-9. Analyze regression test results and create GitHub issues for failures
-10. Loop back to bug fixing if new issues are created
-
-### Enhancement Phase (when no bugs)
-11. Check for existing enhancement issues
-12. **If enhancements exist**: Use superpowers to design, plan, and implement each one
-13. Run tests after implementation
-14. **If tests pass**: Commit, merge, and close enhancement
-15. **If tests fail**: Create bug issues for failures, pause enhancement, fix bugs first
-16. Repeat until all existing enhancements are implemented
-
-### Propose New Enhancements (lowest priority)
-17. **Only when no bugs AND no existing enhancements**: Propose new improvements
-18. Use `thorough-brainstorming` (preferred) or `superpowers:brainstorming` to identify valuable enhancements
-19. Create enhancement issue with detailed implementation plan
-20. Loop back to Enhancement Phase to implement
-
-Never stop, just keep looking for issues to address. Priority: Triage Unprioritized > Bugs > Existing Enhancements > Proposing New Enhancements.
-
-**Note**: This command automatically reviews and prioritizes any open issues that lack priority labels (P0-P3) before processing the issue queue.
+**Workflow priority (highest → lowest):** Triage unprioritized issues → fix bugs by priority (P0 → P1 → P2 → P3) → implement approved enhancements → propose new enhancements. Run regression tests when no bugs remain. Never stop — keep looking for work.
 
 ## Unprioritized Issue Triage
 
@@ -214,73 +168,18 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 - Decisions with irreversible consequences
 - When superpowers approaches have failed twice
 
-## Model Selection (Opus 4.5)
+## Model Selection
 
-When spawning agents or using the Task tool during issue resolution, select the model based on task complexity:
+| Task | Model |
+|------|-------|
+| Simple (P2/P3, clear fix) | gemini-2.0-flash |
+| Complex/architectural (P0/P1) | gemini-2.5-pro |
+| Root cause (unclear after initial look) | gemini-2.5-pro |
+| Regression test analysis | gemini-2.0-flash |
+| Improvement proposals | gemini-2.5-pro |
+| Labels, comments, commit messages | gemini-2.0-flash |
 
-### Issue Complexity → Model Mapping
-
-| Issue Type | Model | Rationale |
-|------------|-------|-----------|
-| Simple (P2/P3, clear fix) | Sonnet | Known patterns, documented solutions |
-| Complex (P0/P1, architectural) | Opus | Deep analysis, trade-off decisions |
-| Regression test analysis | Sonnet | Standard test interpretation |
-| Root cause investigation | Opus | Multi-factor analysis |
-| Improvement proposals | Opus | Creative problem-solving |
-| Labeling & formatting | Haiku | Mechanical operations |
-
-### Escalation Triggers
-
-**Start with Sonnet, escalate to Opus when:**
-- Fix attempt fails after 2 tries with same approach
-- Issue involves 5+ files requiring coordinated changes
-- Root cause is unclear after initial investigation
-- Multiple test failures share non-obvious common cause
-- Issue requires architectural decision (new patterns, dependencies)
-
-**Stay with Sonnet when:**
-- Error messages clearly indicate the fix
-- Issue matches known patterns from previous fixes
-- Single file change with isolated impact
-- Test failures have obvious cause (typo, missing import)
-
-**Drop to Haiku for:**
-- Adding/updating priority labels
-- Posting status comments to GitHub
-- Formatting commit messages
-- Simple file cleanup (delete, rename)
-
-### Model Usage by Workflow Phase
-
-| Phase | Recommended Model |
-|-------|-------------------|
-| Initial complexity assessment | Sonnet |
-| Simple issue: direct fix | Sonnet |
-| Complex issue: systematic-debugging skill | Opus |
-| Complex issue: brainstorming skill | Opus |
-| Complex issue: writing-plans skill | Opus |
-| Complex issue: executing-plans skill | Sonnet |
-| Verification before completion | Sonnet |
-| Regression test execution | Sonnet |
-| Regression test analysis | Sonnet → Opus if patterns unclear |
-| Improvement proposals | Opus |
-| Issue creation from failures | Haiku |
-
-### Example Task Tool Usage
-
-```javascript
-// Initial assessment - start with Sonnet
-Task("analyst", "Assess complexity of issue #${ISSUE_NUM}...", model="sonnet")
-
-// Complex root cause - use Opus
-Task("debugger", "Investigate why 15 tests fail with timeout...", model="opus")
-
-// Standard fix - use Sonnet
-Task("coder", "Update package.json to fix dependency conflict...", model="sonnet")
-
-// Label management - use Haiku
-Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
-```
+Start with gemini-2.0-flash; escalate to gemini-2.5-pro after 2 failed attempts or when root cause spans 5+ files.
 
 ## Context Management (MANDATORY — NON-NEGOTIABLE)
 
@@ -301,6 +200,15 @@ Task("labeler", "Add P2 label to issue #${ISSUE_NUM}...", model="haiku")
 ## Instructions
 
 Start working on GitHub issues now:
+
+```bash
+# Skip if this worktree is already actively working on a task
+CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+if [[ "$CURRENT_BRANCH" == feature/issue-* ]]; then
+  echo "ℹ️  Worktree busy on $CURRENT_BRANCH — skipping fix-loop trigger."
+  exit 0
+fi
+```
 
 ```bash
 # Source issue function layer (routes to GitHub or file backend)
