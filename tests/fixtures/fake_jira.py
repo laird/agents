@@ -5,7 +5,11 @@ evaluator so list/any-claimable/blocked genuinely filter.
 
 Not a general Jira emulator — it covers:
   GET  /rest/api/2/myself
-  POST /rest/api/2/search                {jql,maxResults,fields}
+  POST /rest/api/3/search/jql            {jql,maxResults,fields,nextPageToken}
+                                         → {issues:[...], nextPageToken?}
+                                         (no startAt/total — the new contract)
+  POST /rest/api/2/search                → HTTP 410 (removed by Atlassian,
+                                         CHANGE-2046; pins the regression)
   POST /rest/api/2/issue                 create
   GET  /rest/api/2/issue/{key}           (+?fields=...) / 404
   PUT  /rest/api/2/issue/{key}           update.labels [{add|remove}]
@@ -17,6 +21,7 @@ Not a general Jira emulator — it covers:
 Auth is accepted but ignored. State lives in memory for the process lifetime.
 """
 import json
+import os
 import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +43,15 @@ seed("Has P1 label", ["P1"], "new")                   # ENG-2: claimable (P1 not
 seed("Blocked on design", ["needs-design"], "indeterminate")  # ENG-3: blocked, not claimable
 seed("Already claimed", ["working"], "indeterminate") # ENG-4: working, not claimable
 seed("Finished work", [], "done")                     # ENG-5: closed only
+
+def to_adf(text):
+    """Wrap plain text in the minimal ADF doc/paragraph/text structure that
+    v3 search really returns for `description` (one paragraph per line)."""
+    return {"type": "doc", "version": 1, "content": [
+        {"type": "paragraph",
+         "content": ([{"type": "text", "text": p}] if p else [])}
+        for p in (text or "").split("\n")
+    ]}
 
 def status_obj(cat):
     name = {"new": "To Do", "indeterminate": "In Progress", "done": "Done"}[cat]
@@ -131,11 +145,46 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         body = self._body()
         if path == "/rest/api/2/search":
+            # Removed by Atlassian (CHANGE-2046). Real Jira Cloud returns 410
+            # with a migration pointer; serving it here pins the regression.
+            return self._send(410, {"errorMessages": [
+                "The requested API has been removed. Please migrate to "
+                "/rest/api/3/search/jql. See "
+                "https://developer.atlassian.com/changelog/#CHANGE-2046"
+            ], "errors": {}})
+        if path == "/rest/api/3/search/jql":
             jql = body.get("jql", "")
             maxr = int(body.get("maxResults", 50))
+            # Like real Jira Cloud, the server enforces its own page-size cap
+            # regardless of the requested maxResults. Tests set a small
+            # FAKE_JIRA_PAGE_CAP to force multi-page nextPageToken traversal.
+            maxr = max(1, min(maxr, int(os.environ.get("FAKE_JIRA_PAGE_CAP", "100"))))
+            fields = body.get("fields") or []
+            token = body.get("nextPageToken")
+            start = 0
+            if token is not None:
+                try:
+                    start = int(token)
+                except (TypeError, ValueError):
+                    return self._send(400, {"errorMessages": ["Invalid nextPageToken"]})
             hits = [n for n in sorted(ISSUES) if jql_matches(n, jql)]
-            issues = [to_view(n) for n in hits[:maxr]]
-            return self._send(200, {"total": len(hits), "maxResults": maxr, "issues": issues})
+            page = hits[start:start + maxr]
+            issues = []
+            for n in page:
+                view = to_view(n)
+                # New contract: field data is returned ONLY for requested
+                # fields (the API defaults to id-only). id/key always present.
+                view["id"] = str(1000 + n)
+                view["fields"] = {k: v for k, v in view["fields"].items() if k in fields}
+                # v3 search returns description as an ADF document object,
+                # NOT v2's plain string (v2 CRUD reads still return strings).
+                if "description" in view["fields"]:
+                    view["fields"]["description"] = to_adf(view["fields"]["description"])
+                issues.append(view)
+            resp = {"issues": issues}
+            if start + maxr < len(hits):
+                resp["nextPageToken"] = str(start + maxr)
+            return self._send(200, resp)
         if path == "/rest/api/2/issue":
             f = body.get("fields", {})
             n = NEXT[0]; NEXT[0] += 1

@@ -206,6 +206,27 @@ Located in `scripts/` directory:
 - `approve-blocked-issue.sh`: `plugins/autocoder/scripts/approve-blocked-issue.sh` ↔ `.agent/scripts/approve-blocked-issue.sh`
 - `reject-blocked-issue.sh`: `plugins/autocoder/scripts/reject-blocked-issue.sh` ↔ `.agent/scripts/reject-blocked-issue.sh`
 
+### Skill Packaging
+
+`skills/` at the repo root is the source of truth, but a skill that lives only
+there reaches **nobody**: each platform loads skills from its own plugin tree.
+Every root skill must be mirrored, byte-identical, into the plugin that ships it:
+
+| root skill | Claude Code | Codex | Droid |
+|---|---|---|---|
+| `skills/autocoder/` | `plugins/autocoder/skills/autocoder/` | `codex-plugins/autocoder/skills/autocoder/` | `.factory/skills/autocoder/` |
+| `skills/improve/` | `plugins/autocoder/skills/improve/` | — | — |
+| `skills/modernize/` | `plugins/modernize/skills/modernize/` | `codex-plugins/modernize/skills/modernize/` | `.factory/skills/modernize/` |
+
+Copies, not symlinks — plugin installation copies trees, and a symlink that
+survives git may not survive the install. `tests/test_skill_packaging.sh`
+enforces the Claude Code column and the `SKILL_OWNER` map inside it; **adding a
+new `skills/<name>/` directory requires adding it there too**, or the suite fails.
+
+Note that a command referring to `autocoder:references/<file>.md` resolves
+against the *plugin's* skills tree, not the repo root, so such a reference is
+broken until the mirror exists.
+
 ### Agent Invocation Pattern
 
 When working with this repository:

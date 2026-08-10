@@ -18,6 +18,14 @@
 # MANAGER_CMD:         command that starts manager monitoring.
 # MANAGER_LAUNCH_MODE: interactive|shell
 
+# Directory this lib was sourced from. Scripts that ship alongside it (e.g.
+# claude-worker-loop.sh) MUST be resolved from here, not from repo_root: callers
+# derive repo_root as SCRIPT_DIR/../../.., which is only correct for a repo
+# checkout. Installed plugins live at cache/plugin-marketplace/autocoder/<ver>/scripts,
+# where that walk lands on the cache root and produces a path real in neither
+# layout — killing the worker but never relaunching it (issue #94).
+WORKER_LAUNCH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 resolve_worker_launch() {
   local agent="$1"
   local repo_root="$2"
@@ -38,7 +46,12 @@ resolve_worker_launch() {
       WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
       MANAGER_MODEL="${MANAGER_MODEL:-claude-opus-5}"
       AGENT_LAUNCH_CMD=""
-      WORKER_CMD="bash '$repo_root/plugins/autocoder/scripts/claude-worker-loop.sh'"
+      local worker_loop="$WORKER_LAUNCH_LIB_DIR/claude-worker-loop.sh"
+      if [ ! -f "$worker_loop" ]; then
+        echo "❌ claude-worker-loop.sh not found next to worker-launch-lib.sh ($worker_loop)" >&2
+        return 1
+      fi
+      WORKER_CMD="bash '$worker_loop'"
       WORKER_LAUNCH_MODE="shell"
       WORKER_COMMAND_MODE="shell"
       MANAGER_LAUNCH_CMD="claude --dangerously-skip-permissions --model $MANAGER_MODEL"
@@ -46,13 +59,12 @@ resolve_worker_launch() {
       MANAGER_LAUNCH_MODE="interactive"
       ;;
     gemini)
-      # Workers: shell loop that restarts gemini per issue (fresh context per fix).
-      # gemini-fix-loop.sh calls `gemini -p` as a subprocess per iteration.
+      # Workers: interactive Gemini session running /fix-loop (matches .agent/workflows/).
       # Manager: interactive Gemini session for coordination (monitor-loop).
-      AGENT_LAUNCH_CMD=""
-      WORKER_CMD="bash '$repo_root/scripts/gemini-fix-loop.sh'"
-      WORKER_LAUNCH_MODE="shell"
-      WORKER_COMMAND_MODE="shell"
+      AGENT_LAUNCH_CMD="gemini --sandbox=false"
+      WORKER_CMD="/fix-loop"
+      WORKER_LAUNCH_MODE="interactive"
+      WORKER_COMMAND_MODE="agent-input"
       MANAGER_LAUNCH_CMD="gemini --sandbox=false"
       MANAGER_CMD="/monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"

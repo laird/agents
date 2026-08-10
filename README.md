@@ -7,9 +7,9 @@ A multi-platform repository of production-validated protocols, specialized agent
 This marketplace contains **2 plugins** with complementary capabilities:
 
 1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
-2. **Autocoder** - Autonomous GitHub issue resolution with intelligent testing and quality automation
+2. **Autocoder** - Autonomous issue resolution — GitHub, Jira, Azure DevOps, or file-backed trackers — with intelligent testing and quality automation
 
-Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. Originally created for .NET framework migrations, these tools work with any language or platform.
+Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **harden** (`skills/harden/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
 
 
 ## ⚠️ Compatibility Notice
@@ -360,7 +360,7 @@ Complete modernization workflow with multi-agent orchestration. See the [Moderni
 
 ### Plugin 2: Autocoder
 
-Autonomous GitHub issue resolution with intelligent testing, quality automation, multi-agent swarm support, and human-in-the-loop proposal system. See the [Autocoder README](plugins/autocoder/README.md) for full documentation.
+Autonomous issue resolution (GitHub, Jira, Azure DevOps, or file-backed trackers) with intelligent testing, quality automation, multi-agent swarm support, and human-in-the-loop proposal system. See the [Autocoder README](plugins/autocoder/README.md) for full documentation.
 
 **Get help:** `/autocoder-help`
 
@@ -675,6 +675,8 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.32.1 | 2026-08-07 | **Autocoder v4.10.1**: Jira backend migrated to `/rest/api/3/search/jql` (Atlassian removed the v2 search API — HTTP 410); nextPageToken pagination, explicit fields, ADF descriptions flattened to plain text. Validated LIVE against a real Jira Cloud site (full lifecycle + search); test fakes now 410 the removed endpoint so the migration can't regress. |
+| 3.32.0 | 2026-08-07 | **Autocoder v4.10.0**: ship gate (`verify-shipped.sh` — issues close only when their work reaches the ship branch), claim lock held to a terminal outcome (#14), branch-claimed issues excluded from the candidate list (#48). Platform-packaging drift repaired across Claude/Codex/Gemini/Droid (drift checker now covers `retro`; Codex/Droid skill trees unified). New repo skill: **harden** — run/grade/fix/log validation loop for platform stabilization. Planning-pipeline spec/plan docs landed. |
 | 3.31.0 | 2026-08-02 | **Swarm quickstart guides** — per-platform install+run docs for Claude, Gemini/Antigravity, Codex, and Droid (`docs/swarm-quickstart-*.md`). Removed all project-specific and EY-specific content: triage corpus rewritten with generic SaaS domain, install docs use generic paths, HISTORY.md anonymized, scripts parameterized. |
 | 3.30.0 | 2026-08-02 | **Autocoder v4.9.0**: Manager context-reset commands — `/autocoder:manager-handoff` snapshots live GitHub state, worker topology, and session notes to `MANAGER-STATE.md` then guides a clean context reset; `/autocoder:manager-resume` reads the saved state, diffs against live GitHub, and emits a ready-to-act summary in the fresh session. |
 | 3.29.0 | 2026-07-31 | **Autocoder v4.8.0**: Jira and Azure DevOps issue backends (parallel with file/GitHub). Fresh-context fix extended to Gemini/Antigravity workers — `gemini-fix-loop.sh` now runs as a shell subprocess per issue, matching the Claude worker pattern. cmux liveness probe in multiplexer auto-detection (prefers tmux if cmux is installed but not running). API push fallback; issues with an open PR suppressed from the claimable queue. CI shell test suite; multiple bug fixes: label reconciliation, `.autocoder.json` winning over stale env exports, portable test-stat parsing, start-issue-work.sh exit-128 fix. |
