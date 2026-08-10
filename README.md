@@ -366,11 +366,16 @@ Autonomous issue resolution (GitHub, Jira, Azure DevOps, or file-backed trackers
 
 **Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`, `/manager-handoff`, `/manager-resume`
 
+**Prerequisites:**
+- [`gh`](https://cli.github.com/) installed and authenticated (`gh auth status`)
+- GitHub issues in your target repo (or another backend configured — see `docs/jira-setup.md`, `docs/ado-setup.md`)
+
 **Quick Start:**
 ```bash
-/fix              # Fix highest priority issue
-/install          # One-time setup for continuous mode
-/fix-loop         # Run continuously (single agent)
+/set-issue-source    # Step 0: pick github, jira, ado, or file backend
+/fix                 # Fix highest priority issue
+/install             # One-time setup for continuous mode
+/fix-loop            # Run continuously (single agent)
 ```
 
 **Swarm (parallel workers):**
