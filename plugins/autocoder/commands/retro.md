@@ -37,15 +37,16 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 
 <!-- END optional-skills-prelude v2 -->
 
-<!-- BEGIN optional-skills-mapping retro v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping retro v2 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 `/retro` produces a **Document** deliverable (IMPROVEMENTS.md). Skill mapping:
 
 | Step | Skill mapping |
 |---|---|
 | Synthesize findings into recommendations | `completion-review` (always) |
+| Capture a durable learning from the retrospective | `compound-engineering:ce-compound` (when installed) |
 
-<!-- END optional-skills-mapping retro v1 -->
+<!-- END optional-skills-mapping retro v2 -->
 
 ## Usage
 

@@ -46,7 +46,7 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 
 <!-- END optional-skills-prelude v2 -->
 
-<!-- BEGIN optional-skills-mapping modernize v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping modernize v2 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 | Step | Skill mapping |
 |---|---|
@@ -57,9 +57,9 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 | Per-phase wrap-up | `completion-review` |
 | Hand off project state | `create-handoff` (invoke at one of: end of each completed phase as part of phase wrap-up; ~30 tool calls without a phase boundary — heuristic, adjust based on observed context pressure in early runs; or explicit user signal) |
 
-**Worker dispatch.** When dispatching coder/tester/etc. agents, prepend the `optional-skills-manifest v1` block (held in `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker mapping for the agent role being dispatched (per-worker mappings appear in the agent files when agent-level integration is taken up; for now, include `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch` as the candidate set for code-producing workers).
+**Worker dispatch.** When dispatching coder/tester/etc. agents, prepend the `optional-skills-manifest v2` block (held in `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker mapping for the agent role being dispatched (per-worker mappings appear in the agent files when agent-level integration is taken up; for now, include `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch`, plus the Compound Engineering skills `compound-engineering:ce-brainstorm`, `ce-plan`, `ce-work`, `ce-debug`, `ce-code-review`, `ce-doc-review`, `ce-resolve-pr-feedback` — preferred over the superpowers/toolkit skills covering the same roles — as the candidate set for code-producing workers).
 
-<!-- END optional-skills-mapping modernize v1 -->
+<!-- END optional-skills-mapping modernize v2 -->
 
 ## Prerequisites Check
 

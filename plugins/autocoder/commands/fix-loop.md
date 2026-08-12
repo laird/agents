@@ -41,7 +41,7 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 
 <!-- END optional-skills-prelude v2 -->
 
-<!-- BEGIN optional-skills-mapping fix-loop v1 — keep in sync between Claude/Antigravity mirrors of this command -->
+<!-- BEGIN optional-skills-mapping fix-loop v2 — keep in sync between Claude/Antigravity mirrors of this command -->
 
 `/fix-loop` is a dispatcher coordinating parallel workers. The dispatcher and workers have distinct skill mappings.
 
@@ -58,9 +58,9 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 |---|---|
 | Each worker finishes its branch (PR / merge) | `superpowers:finishing-a-development-branch` |
 
-**Worker dispatch.** Prepend the `optional-skills-manifest v1` block (from `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker skill set: `superpowers:systematic-debugging`, `superpowers:test-driven-development`, `superpowers:using-git-worktrees`, `superpowers:verification-before-completion`, `superpowers:requesting-code-review`, `superpowers:receiving-code-review`, `superpowers:finishing-a-development-branch`, `thorough-brainstorming`, `thorough-writing-plans`, `superpowers:brainstorming`, `superpowers:writing-plans`, `autocoder:improve-test-coverage`, `critical-design-review`, `critical-implementation-review`, `completion-review`.
+**Worker dispatch.** Prepend the `optional-skills-manifest v2` block (from `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker skill set: `superpowers:systematic-debugging`, `superpowers:test-driven-development`, `superpowers:using-git-worktrees`, `superpowers:verification-before-completion`, `superpowers:requesting-code-review`, `superpowers:receiving-code-review`, `superpowers:finishing-a-development-branch`, `thorough-brainstorming`, `thorough-writing-plans`, `superpowers:brainstorming`, `superpowers:writing-plans`, `autocoder:improve-test-coverage`, `critical-design-review`, `critical-implementation-review`, `completion-review`, and the Compound Engineering skills `compound-engineering:ce-brainstorm`, `ce-plan`, `ce-work`, `ce-debug`, `ce-code-review`, `ce-doc-review`, `ce-resolve-pr-feedback` (preferred over the superpowers/toolkit skills covering the same roles).
 
-<!-- END optional-skills-mapping fix-loop v1 -->
+<!-- END optional-skills-mapping fix-loop v2 -->
 
 ## Usage
 
