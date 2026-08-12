@@ -316,21 +316,40 @@ This framework has proven results:
 
 ## Plugin Configuration
 
-**Plugin Metadata**: `.claude-plugin/plugin.json`
-- Name: `modernize`
-- Version: `0.2.0`
-- Commands: 5 slash commands in `commands/`
-- Agents: 6 specialist agents in `agents/`
+**Plugin Metadata**: `.claude-plugin/marketplace.json` — there is no separate
+per-plugin `plugin.json` for Claude Code. Each `plugins[]` entry is the manifest:
+it carries the name, version, description, and a `source` pointing at
+`./plugins/<name>/`, and **that entry is what the loader reads.** Verified: with
+a marketplace entry at 9.9.9 and a nested `plugin.json` at 7.7.7,
+`claude plugin details` reported 9.9.9. Nested `.claude-plugin/plugins/*/plugin.json`
+files were removed for this reason — they were maintained by hand and read by nothing.
 
-**Installation**: Clone repository or copy `commands/` directory to target project.
+**Installation**: add this repo as a plugin marketplace, or clone it.
+
+### Which manifest each platform actually loads
+
+| Platform | Manifest it reads | Per-plugin manifest |
+|---|---|---|
+| Claude Code | `.claude-plugin/marketplace.json` | none — the marketplace entry *is* the manifest |
+| Codex | `.agents/plugins/marketplace.json` | `codex-plugins/<name>/.codex-plugin/plugin.json` (carries the version) |
+| Droid | `.factory-plugin/marketplace.json` | `.factory-plugin/plugins/<name>/plugin.json` |
+| Antigravity | `.agent/` (rules + workflows, no marketplace) | — |
+
+`tests/test_manifest_versions.sh` asserts every one of these agrees on a version.
 
 ### Version Management
 
-**CRITICAL**: When updating any plugin version, you MUST also update the marketplace version:
+**CRITICAL**: a version bump must move **every** manifest together, or a platform
+advertises a version it isn't shipping. The Droid marketplace once sat twelve minor
+versions behind because only the Claude one was bumped.
 
-1. **Individual plugin versions** are in `.claude-plugin/marketplace.json` under `plugins[]`
-2. **Marketplace version** is at the root level of `.claude-plugin/marketplace.json`
-3. **Both must be updated** for the update mechanism to work properly
+1. `.claude-plugin/marketplace.json` — root `version` **and** each `plugins[].version`
+2. `.factory-plugin/marketplace.json` — root `version` **and** each `plugins[].version`
+3. `.factory-plugin/plugins/<name>/plugin.json`
+4. `codex-plugins/<name>/.codex-plugin/plugin.json`
+
+Both root marketplace versions must match; the update mechanism keys on them. Run
+`bash tests/test_manifest_versions.sh` after any bump.
 
 **Example workflow:**
 ```bash

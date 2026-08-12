@@ -15,11 +15,11 @@
 #   reports a version that does not match what the marketplace promised, and
 #   the update mechanism that keys on the root marketplace version misfires.
 #
-# NOTE on authority: Claude Code reads the version from the MARKETPLACE ENTRY,
-# not from .claude-plugin/plugins/<name>/plugin.json. Verified empirically —
-# with the entry at 9.9.9 and the nested manifest at 7.7.7, `claude plugin
-# details` reported 9.9.9. Those nested files are kept in sync anyway because
-# they are published artifacts, but they are not what the loader consults.
+# NOTE on authority: Claude Code reads the version from the MARKETPLACE ENTRY.
+# Verified empirically — with the entry at 9.9.9 and a nested plugin.json at
+# 7.7.7, `claude plugin details` reported 9.9.9. The nested
+# .claude-plugin/plugins/<name>/plugin.json files have since been deleted for
+# that reason: hand-maintained, and read by nothing.
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
