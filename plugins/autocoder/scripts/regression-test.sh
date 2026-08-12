@@ -28,16 +28,27 @@ TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
 
-    # Extract report directory
-    if grep -q "Location: " CLAUDE.md; then
-        REPORT_DIR=$(grep "Location: " CLAUDE.md | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
-    else
+    # Extract report directory.
+    # Scope this to the "Test Reports" section. "Location:" is a generic label
+    # that also appears under "Unit Tests", and taking the first match made this
+    # resolve to the unit-test glob `tests/test_*.sh` — which the script then
+    # created as a literal directory and wrote the report into.
+    REPORT_DIR=$(grep -A3 "Test Reports" CLAUDE.md | grep "Location: " \
+        | sed 's/.*Location: *`\([^`]*\)`.*/\1/' | head -1)
+    if [ -z "$REPORT_DIR" ]; then
         REPORT_DIR="docs/test/regression-reports"
     fi
+    # A glob or wildcard is never a directory. Refuse it rather than creating it.
+    case "$REPORT_DIR" in
+        *[\*\?]*)
+            echo -e "${YELLOW}Ignoring wildcard report location '$REPORT_DIR'${NC}"
+            REPORT_DIR="docs/test/regression-reports" ;;
+    esac
 
     # Extract unit test configuration
-    if grep -q "Working directory: " CLAUDE.md && grep -B5 "Working directory:" CLAUDE.md | grep -q "Unit Tests"; then
+    if grep -q "### Unit Tests Only" CLAUDE.md; then
         UNIT_TEST_DIR=$(grep -A5 "Unit Tests" CLAUDE.md | grep "Working directory:" | sed 's/.*Working directory: *`\([^`]*\)`.*/\1/' | head -1)
+        [ -n "$UNIT_TEST_DIR" ] || UNIT_TEST_DIR="."
         UNIT_TEST_CMD=$(grep -A5 "### Unit Tests Only" CLAUDE.md | sed -n '/```bash/,/```/p' | grep -v '```' | head -1)
     else
         # Not configured. Do NOT assume npm — in a repo without package.json
@@ -389,6 +400,13 @@ echo ""
 # Exit with failure if any tests failed
 if [ "$UNIT_EXIT" -ne 0 ] || [ "$E2E_EXIT" -ne 0 ]; then
     echo -e "${RED}⚠️  Some tests failed. Check GitHub issues for details.${NC}"
+    exit 1
+elif [ "${UNIT_SUITE_SKIPPED:-false}" = "true" ] && [ "${E2E_SUITE_SKIPPED:-false}" = "true" ]; then
+    # Both suites skipped means nothing ran. Reporting that as "all tests
+    # passed" is how a repo with no configured suite looks permanently green —
+    # this script did exactly that here, printing "0/0 passed" and exit 0.
+    echo -e "${YELLOW}⚠️  No tests ran — neither suite is configured in CLAUDE.md.${NC}"
+    echo -e "${YELLOW}   Add a '### Unit Tests Only' or '### E2E Tests Only' section with its command.${NC}"
     exit 1
 else
     echo -e "${GREEN}✅ All tests passed!${NC}"

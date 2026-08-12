@@ -357,6 +357,11 @@ This section configures the `/fix` command for autonomous issue resolution.
 bash plugins/autocoder/scripts/regression-test.sh
 ```
 
+### Unit Tests Only
+```bash
+bash tests/run-shell-suite.sh
+```
+
 ### Build Verification
 ```bash
 bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocoder/scripts/*.py
@@ -367,7 +372,10 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 **Unit Tests**:
 - Framework: plain `bash` assertion scripts, plus `pytest` for the Python backend
 - Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
-- Run all shell tests: `for t in tests/test_*.sh; do bash "$t" || exit 1; done`
+- Run all shell tests: `bash tests/run-shell-suite.sh` — runs every `tests/test_*.sh`
+  and prints a single parseable summary. `regression-test.sh` reads its unit-test
+  command from the `### Unit Tests Only` section above; a bare `for` loop emits one
+  summary per file and the report then quotes a single test's numbers as the suite's.
 - Note: the Python tests require `pytest`, which is not installed in all environments.
 - The Jira and Azure DevOps backends each have two complementary shell tests,
   all hermetic (no network): `test_issues_jira.sh` / `test_issues_ado.sh` stub
