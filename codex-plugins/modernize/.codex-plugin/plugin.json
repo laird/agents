@@ -1,6 +1,6 @@
 {
     "name": "modernize",
-    "version": "3.3.0",
+    "version": "3.4.0",
     "description": "Systematic modernization workflows for Codex, including assessment, planning, execution guidance, and retrospective improvement loops.",
     "author": {
         "name": "Agent Protocols Team",

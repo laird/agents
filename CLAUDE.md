@@ -210,18 +210,27 @@ Located in `scripts/` directory:
 
 `skills/` at the repo root is the source of truth, but a skill that lives only
 there reaches **nobody**: each platform loads skills from its own plugin tree.
-Every root skill must be mirrored, byte-identical, into the plugin that ships it:
+Every root skill must be mirrored into the plugin that ships it:
 
-| root skill | Claude Code | Codex | Droid |
+| root skill | Claude Code (byte-identical, enforced) | Codex (adapted) | Droid (adapted) |
 |---|---|---|---|
 | `skills/autocoder/` | `plugins/autocoder/skills/autocoder/` | `codex-plugins/autocoder/skills/autocoder/` | `.factory/skills/autocoder/` |
 | `skills/improve/` | `plugins/autocoder/skills/improve/` | — | — |
 | `skills/modernize/` | `plugins/modernize/skills/modernize/` | `codex-plugins/modernize/skills/modernize/` | `.factory/skills/modernize/` |
 
+**Only the Claude Code column is byte-identical**, and it is the only one
+`tests/test_skill_packaging.sh` enforces. The Codex and Droid columns are
+*platform-adapted* copies maintained by hand: `.factory/` says "Droid" where the
+root says "Codex", and both drop the `references/model-config.md` pointer. Copy
+the root file over the `plugins/` mirror; **hand-apply** the same edit to the
+Codex and Droid trees and re-diff afterward to confirm only those intentional
+differences remain. Nothing machine-checks that, so an edit made only in
+`skills/` silently never reaches Codex or Droid users.
+
 Copies, not symlinks — plugin installation copies trees, and a symlink that
-survives git may not survive the install. `tests/test_skill_packaging.sh`
-enforces the Claude Code column and the `SKILL_OWNER` map inside it; **adding a
-new `skills/<name>/` directory requires adding it there too**, or the suite fails.
+survives git may not survive the install. **Adding a new `skills/<name>/`
+directory requires adding it to the `SKILL_OWNER` map** in
+`tests/test_skill_packaging.sh`, or the suite fails.
 
 Note that a command referring to `autocoder:references/<file>.md` resolves
 against the *plugin's* skills tree, not the repo root, so such a reference is

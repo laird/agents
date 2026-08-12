@@ -24,20 +24,24 @@ Platform note: in Gemini CLI / Antigravity, skills activate via `activate_skill`
 
 **Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
 
-**Compound Engineering precedence.** If a skill from the `compound-engineering` plugin covers a role in the table below and appears in your available-skills list, invoke it *in place of* the skill named in the mapping tables for that role. Compound Engineering outranks both `superpowers:*` and personal toolkit skills. Roles with no entry below are unaffected.
+**Compound Engineering precedence.** If a skill from the `compound-engineering` plugin covers a role in the table below and appears in your available-skills list, invoke it *in place of* the skill named in the mapping tables for that role. Compound Engineering outranks both `superpowers:*` and personal toolkit skills, and this rule overrides any "(preferred)" annotation a mapping table places on a substituted skill. Roles with no entry below are unaffected.
 
 | Role | Use when installed | In place of |
 |---|---|---|
 | design exploration / requirements | `ce-brainstorm` | `thorough-brainstorming`, `superpowers:brainstorming` |
 | implementation planning | `ce-plan` | `thorough-writing-plans`, `superpowers:writing-plans` |
-| executing a plan | `ce-work` | `superpowers:executing-plans` |
+| executing a plan | `ce-work`, invoked as `mode:return-to-caller <plan path>` | `superpowers:executing-plans` |
 | debugging a defect | `ce-debug` | `superpowers:systematic-debugging` |
-| reviewing a spec or plan document | `ce-doc-review` | `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan` |
-| reviewing written code | `ce-code-review` | `completion-review`, `superpowers:requesting-code-review` |
-| acting on review feedback | `ce-resolve-pr-feedback` | `superpowers:receiving-code-review` |
+| reviewing a spec, plan, or report document | `ce-doc-review` | `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan` |
+| reviewing written code | `ce-code-review` | `superpowers:requesting-code-review` |
+| acting on review feedback **on an existing PR** | `ce-resolve-pr-feedback` | `superpowers:receiving-code-review` |
 | session handoff | `ce-handoff` | `create-handoff`, `resume-handoff` |
 
-Worktree provisioning and branch finishing are **not** substituted: `superpowers:using-git-worktrees` and `superpowers:finishing-a-development-branch` remain in force, because the inline protocol owns worktree naming, the issue-claim sequence, and the configured Merge Mode.
+Three deliberate exclusions:
+
+- **Worktree provisioning and branch finishing are not substituted.** `superpowers:using-git-worktrees` and `superpowers:finishing-a-development-branch` remain in force — do **not** substitute `ce-worktree`, `ce-commit-push-pr`, `ce-commit`, or `lfg` for them — because the inline protocol owns worktree naming, the issue-claim sequence, and the configured Merge Mode. `ce-work` is substituted for plan execution only, which is why the table requires `mode:return-to-caller`: bare `ce-work` owns its own shipping tail and would bypass all three.
+- **`completion-review` is never substituted.** It is a plan-vs-delivery audit, not a diff review, and it runs on Document deliverables (`/retro`, `/fix`'s Document row) where a code reviewer has nothing to read. Run it as the mapping tables specify, alongside `ce-code-review` rather than replaced by it.
+- **Review feedback with no PR open.** When findings came from an in-session `ce-code-review` and no PR exists yet, act on them via the inline protocol or `superpowers:receiving-code-review`; `ce-resolve-pr-feedback` requires GitHub PR threads.
 
 **Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list **and no installed Compound Engineering skill covers its role**, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for Compound Engineering or personal toolkit skills.
 

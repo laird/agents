@@ -25,20 +25,24 @@ Platform note: in Gemini CLI / Antigravity, skills activate via `activate_skill`
 
 **Notation.** `A → B → C` means sequence (invoke in order). `A + B + C` means independent facets (all apply, order irrelevant). `A (primary)` means A is the orchestration spine. A leading `→` on a row indicates "next in sequence if applicable."
 
-**Compound Engineering precedence.** If a skill from the `compound-engineering` plugin covers a role in the table below and appears in your available-skills list, invoke it *in place of* the skill named in the mapping tables for that role. Compound Engineering outranks both `superpowers:*` and personal toolkit skills. Roles with no entry below are unaffected.
+**Compound Engineering precedence.** If a skill from the `compound-engineering` plugin covers a role in the table below and appears in your available-skills list, invoke it *in place of* the skill named in the mapping tables for that role. Compound Engineering outranks both `superpowers:*` and personal toolkit skills, and this rule overrides any "(preferred)" annotation a mapping table places on a substituted skill. Roles with no entry below are unaffected.
 
 | Role | Use when installed | In place of |
 |---|---|---|
 | design exploration / requirements | `ce-brainstorm` | `thorough-brainstorming`, `superpowers:brainstorming` |
 | implementation planning | `ce-plan` | `thorough-writing-plans`, `superpowers:writing-plans` |
-| executing a plan | `ce-work` | `superpowers:executing-plans` |
+| executing a plan | `ce-work`, invoked as `mode:return-to-caller <plan path>` | `superpowers:executing-plans` |
 | debugging a defect | `ce-debug` | `superpowers:systematic-debugging` |
-| reviewing a spec or plan document | `ce-doc-review` | `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan` |
-| reviewing written code | `ce-code-review` | `completion-review`, `superpowers:requesting-code-review` |
-| acting on review feedback | `ce-resolve-pr-feedback` | `superpowers:receiving-code-review` |
+| reviewing a spec, plan, or report document | `ce-doc-review` | `critical-design-review`, `critical-implementation-review`, `update-design-doc`, `update-implementation-plan` |
+| reviewing written code | `ce-code-review` | `superpowers:requesting-code-review` |
+| acting on review feedback **on an existing PR** | `ce-resolve-pr-feedback` | `superpowers:receiving-code-review` |
 | session handoff | `ce-handoff` | `create-handoff`, `resume-handoff` |
 
-Worktree provisioning and branch finishing are **not** substituted: `superpowers:using-git-worktrees` and `superpowers:finishing-a-development-branch` remain in force, because the inline protocol owns worktree naming, the issue-claim sequence, and the configured Merge Mode.
+Three deliberate exclusions:
+
+- **Worktree provisioning and branch finishing are not substituted.** `superpowers:using-git-worktrees` and `superpowers:finishing-a-development-branch` remain in force — do **not** substitute `ce-worktree`, `ce-commit-push-pr`, `ce-commit`, or `lfg` for them — because the inline protocol owns worktree naming, the issue-claim sequence, and the configured Merge Mode. `ce-work` is substituted for plan execution only, which is why the table requires `mode:return-to-caller`: bare `ce-work` owns its own shipping tail and would bypass all three.
+- **`completion-review` is never substituted.** It is a plan-vs-delivery audit, not a diff review, and it runs on Document deliverables (`/retro`, `/fix`'s Document row) where a code reviewer has nothing to read. Run it as the mapping tables specify, alongside `ce-code-review` rather than replaced by it.
+- **Review feedback with no PR open.** When findings came from an in-session `ce-code-review` and no PR exists yet, act on them via the inline protocol or `superpowers:receiving-code-review`; `ce-resolve-pr-feedback` requires GitHub PR threads.
 
 **Failure semantics.** Not-installed: silent fallback. Mid-run failure or interruption of an installed skill: surface the failure message, fall back to the inline protocol for the rest of that step, no retry. Self-skip (e.g., `<SUBAGENT-STOP>`): silent fallback, not treated as failure. If at least one `superpowers:*` skill named in this command's mapping table is missing from your available-skills list **and no installed Compound Engineering skill covers its role**, emit one consolidated recommendation line at command entry: *Tip: this command works best with the `superpowers` plugin (https://github.com/obra/superpowers) — install via `/plugin install superpowers@claude-plugins-official`.* Never emit such notices for Compound Engineering or personal toolkit skills.
 
@@ -59,7 +63,7 @@ Worktree provisioning and branch finishing are **not** substituted: `superpowers
 | Per-phase wrap-up | `completion-review` |
 | Hand off project state | `create-handoff` (invoke at one of: end of each completed phase as part of phase wrap-up; ~30 tool calls without a phase boundary — heuristic, adjust based on observed context pressure in early runs; or explicit user signal) |
 
-**Worker dispatch.** When dispatching coder/tester/etc. agents, prepend the `optional-skills-manifest v2` block (held in `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker mapping for the agent role being dispatched (per-worker mappings appear in the agent files when agent-level integration is taken up; for now, include `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch`, plus the Compound Engineering skills `compound-engineering:ce-brainstorm`, `ce-plan`, `ce-work`, `ce-debug`, `ce-code-review`, `ce-doc-review`, `ce-resolve-pr-feedback` — preferred over the superpowers/toolkit skills covering the same roles — as the candidate set for code-producing workers).
+**Worker dispatch.** When dispatching coder/tester/etc. agents, prepend the `optional-skills-manifest v2` block (held in `plugins/shared/optional-skills-prelude.md` / `.agent/shared/optional-skills-prelude.md`) as the **first paragraph** of each worker's prompt. Generate the bullet list as the intersection of your available skills × the per-worker mapping for the agent role being dispatched (per-worker mappings appear in the agent files when agent-level integration is taken up; for now, include `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch`, plus the Compound Engineering skills `compound-engineering:ce-brainstorm`, `compound-engineering:ce-plan`, `compound-engineering:ce-work`, `compound-engineering:ce-debug`, `compound-engineering:ce-code-review`, `compound-engineering:ce-doc-review`, `compound-engineering:ce-resolve-pr-feedback` (or the bare `ce-*` form on platforms that list them that way) — preferred over the superpowers/toolkit skills covering the same roles — as the candidate set for code-producing workers).
 
 <!-- END optional-skills-mapping modernize v2 -->
 
