@@ -20,6 +20,7 @@ Use this skill when the user wants Droid to assess, plan, execute, or retrospect
 - Keep specialist separation: coordinator, security, architect, coder, tester, documentation.
 - Use repo scripts for dependency analysis, stage testing, validation, and history logging.
 - Treat `AGENTS.md` as the primary configuration source; use `CLAUDE.md` only as legacy fallback.
+- If Compound Engineering `ce-*` skills are available in your environment, prefer them over `superpowers:*` and bare-name toolkit skills per the precedence table in the command protocol's *Optional skill enhancements* section.
 
 ## When To Read More
 
