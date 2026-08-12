@@ -5,6 +5,13 @@
 # Pass 2: per-command mapping identical between Claude Code and Antigravity mirrors.
 # Exits non-zero on any drift or structural problem (CI-safe).
 #
+# Sentinel versions are matched as `v<N>`, not a hardcoded `v1`, so bumping a
+# block's version never requires editing this script — and, critically, never
+# silently disables the check. A hardcoded version that stops matching extracts
+# an empty block from BOTH mirrors, and two empty strings hash equal: the script
+# would print OK while verifying nothing. Both passes now treat an empty
+# extraction as a structural error.
+#
 # Known limitation: Pass 2 verifies cross-platform parity, not correctness.
 # A bug applied identically to both mirrors satisfies Pass 2.
 
@@ -43,9 +50,16 @@ for f in "${boilerplate_files[@]}"; do
   fi
 done
 
+for f in "${boilerplate_files[@]}"; do
+  if [ -z "$(awk '/BEGIN optional-skills-prelude v[0-9]+/,/END optional-skills-prelude v[0-9]+/' "$f")" ]; then
+    echo "ERROR: no optional-skills-prelude block found in: $f" >&2
+    exit 1
+  fi
+done
+
 boilerplate_hashes=$(
   for f in "${boilerplate_files[@]}"; do
-    awk '/BEGIN optional-skills-prelude v1/,/END optional-skills-prelude v1/' "$f" | sha256sum
+    awk '/BEGIN optional-skills-prelude v[0-9]+/,/END optional-skills-prelude v[0-9]+/' "$f" | sha256sum
   done | sort -u
 )
 unique_count=$(echo "$boilerplate_hashes" | wc -l | tr -d ' ')
@@ -64,7 +78,7 @@ for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop retro; 
   # Match on the mapping marker, not just the filename: retro.md exists in both
   # plugins/autocoder (carries the mapping block) and plugins/modernize (an
   # unrelated command with no block).
-  matches=$(grep -l "BEGIN optional-skills-mapping ${cmd} v1" $(find plugins/*/commands -name "${cmd}.md" 2>/dev/null) 2>/dev/null || true)
+  matches=$(grep -lE "BEGIN optional-skills-mapping ${cmd} v[0-9]+" $(find plugins/*/commands -name "${cmd}.md" 2>/dev/null) 2>/dev/null || true)
   count=$(echo "$matches" | grep -c . || true)
   if [ "$count" -ne 1 ]; then
     echo "ERROR: ${cmd}.md matches ${count} files in plugins/*/commands (expected 1):" >&2
@@ -77,8 +91,15 @@ for cmd in brainstorm-issue approve-proposal plan modernize fix fix-loop retro; 
     echo "ERROR: missing $ag_file" >&2
     exit 1
   fi
-  cc_hash=$(awk "/BEGIN optional-skills-mapping ${cmd} v1/,/END optional-skills-mapping ${cmd} v1/" "$cc_file" | sha256sum)
-  ag_hash=$(awk "/BEGIN optional-skills-mapping ${cmd} v1/,/END optional-skills-mapping ${cmd} v1/" "$ag_file" | sha256sum)
+  cc_block=$(awk "/BEGIN optional-skills-mapping ${cmd} v[0-9]+/,/END optional-skills-mapping ${cmd} v[0-9]+/" "$cc_file")
+  ag_block=$(awk "/BEGIN optional-skills-mapping ${cmd} v[0-9]+/,/END optional-skills-mapping ${cmd} v[0-9]+/" "$ag_file")
+  # An empty extraction on both sides hashes equal and would report a false OK.
+  if [ -z "$cc_block" ] || [ -z "$ag_block" ]; then
+    echo "ERROR: no ${cmd} mapping block found in $([ -z "$cc_block" ] && echo "$cc_file")$([ -z "$cc_block" ] && [ -z "$ag_block" ] && echo " and ")$([ -z "$ag_block" ] && echo "$ag_file")" >&2
+    exit 1
+  fi
+  cc_hash=$(printf '%s' "$cc_block" | sha256sum)
+  ag_hash=$(printf '%s' "$ag_block" | sha256sum)
   if [ "$cc_hash" = "$ag_hash" ]; then
     echo "${cmd}: OK"
   else
