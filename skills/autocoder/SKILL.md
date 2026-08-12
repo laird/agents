@@ -22,6 +22,7 @@ Use this skill when the user wants Codex to operate the repo's autonomous issue-
 - Use `plugins/autocoder/scripts/regression-test.sh` for full regression runs when appropriate.
 - Use `scripts/append-to-history.sh` to log significant work.
 - Treat `AGENTS.md` as the primary configuration source; use `CLAUDE.md` only as legacy fallback.
+- If Compound Engineering `ce-*` skills are available in your environment, prefer them over `superpowers:*` and bare-name toolkit skills per the precedence table in the command protocol's *Optional skill enhancements* section.
 
 ## When To Read More
 

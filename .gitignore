@@ -45,3 +45,6 @@ agents-ui-*.png
 # committed it disabled label setup in every clone (see #36). Kept ignored so a
 # stray local copy cannot come back.
 .github/.priority-labels-configured
+
+# Regression test reports (runtime generated)
+docs/test/regression-reports/

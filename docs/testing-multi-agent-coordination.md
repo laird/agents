@@ -7,7 +7,8 @@ Complete test plan for validating automatic multi-agent coordination across git 
 ### 1. Install Plugin from parallel Branch
 
 ```bash
-/install https://github.com/laird/agents#parallel:.claude-plugin/plugins/autocoder
+/plugin marketplace add https://github.com/laird/agents
+/plugin install autocoder@plugin-marketplace
 ```
 
 Verify installation:

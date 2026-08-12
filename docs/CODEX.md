@@ -21,7 +21,7 @@ Codex uses:
 
 ### Marketplace Plugins
 
-- `.codex-plugin/marketplace.json` - Codex marketplace registry
+- `.agents/plugins/marketplace.json` - Codex marketplace registry (the path Codex resolves; confirm with `codex plugin list`)
 - `codex-plugins/autocoder/.codex-plugin/plugin.json` - Autocoder Codex plugin manifest
 - `codex-plugins/modernize/.codex-plugin/plugin.json` - Modernize Codex plugin manifest
 

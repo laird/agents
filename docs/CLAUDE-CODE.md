@@ -12,20 +12,17 @@ Claude Code is Anthropic's official CLI for Claude. This repository provides a p
 
 ```
 .claude-plugin/
-├── marketplace.json              # Marketplace metadata and plugin registry
-└── plugins/
-    ├── modernize/
-    │   └── plugin.json           # Modernize plugin definition (v3.1.0)
-    └── autocoder/
-        └── plugin.json           # Autocoder plugin definition (v2.1.0)
+└── marketplace.json              # Marketplace metadata and plugin registry
 ```
+
+Claude Code has no separate per-plugin `plugin.json`: each `plugins[]` entry in
+`marketplace.json` is the manifest, and its `source` points at `./plugins/<name>/`.
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | `marketplace.json` | Registry of available plugins, versions, and metadata |
-| `plugins/*/plugin.json` | Individual plugin definitions with commands and metadata |
 
 ### Plugin Source Locations
 
