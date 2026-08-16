@@ -310,6 +310,50 @@ input) — forcing the heavier `restart-worker` (Step 4b), which **discards unco
 work**. Handing off at 95% — while `/clear` still works and the worker still has a working
 context — avoids the wedge and loses nothing.
 
+**The jam is the whole reason for the 95% threshold.** At roughly **≥97%** context a
+worker's input stops accepting submissions: text sent with `tmux send-keys` queues as
+`❯ Press up to edit queued messages` and **Enter does not submit it**. So `/clear` — and any
+"please do a handoff" instruction — **cannot be driven via send-keys** once the worker is
+that full. Firing at 95% keeps you on the clean self-handoff path, *before* the jam.
+
+#### Fallback: worker input is already jammed (≥~97%)
+
+If Step 4c fires late and send-keys no longer submits, do **not** keep retrying `/clear` —
+it will silently fail and the worker wedges at 100% anyway. The **manager captures the
+handoff on the worker's behalf**, which loses nothing (all of the worker's earlier commits
+are already safe on its branch; only uncommitted edits are at risk, and step 1 rescues
+those):
+
+1. **Preserve uncommitted edits** — commit them from outside the worker:
+   ```bash
+   git -C <worktree> add -A
+   git -C <worktree> commit -m 'WIP: manager-preserved handoff snapshot'
+   ```
+2. **Post the handoff note** — state done / next steps as a comment on the issue:
+   ```bash
+   issue_comment <issue_number> --body "Handoff (manager-captured): <state done, next steps>"
+   ```
+3. **Release the claim** so the resumed worker can re-claim cleanly:
+   ```bash
+   issue_release <issue_number>   # drops the 'working' label
+   ```
+4. **Hard restart** the pane — a kill, **not** send-keys `/clear`, which is what is jammed:
+   ```bash
+   bash plugins/autocoder/scripts/restart-worker.sh --worktree <worktree>
+   ```
+5. **Resume** in the fresh pane, which re-reads the branch + handoff note:
+   ```bash
+   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+   ```
+
+Confirm the pane actually came back up before reporting recovery — `restart-worker.sh`
+kills first, so a failed relaunch leaves a bare shell and a dead worker.
+
+**Prefer prevention:** because this fallback is manual and lossy of in-flight reasoning,
+treat ≥95% as a hard trigger rather than a soft one. A worker loop that watches its own
+context and self-hands-off before the jam is more reliable than the manager catching it on
+a monitor tick.
+
 **Do NOT `/clear` a mid-task worker WITHOUT a handoff first** — that loses the task context.
 (Only a worker that has *completed* its task may take a bare `/clear` + `/autocoder:fix-loop`.)
 
