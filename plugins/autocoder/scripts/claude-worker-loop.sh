@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CLAUDE_CMD="claude --dangerously-skip-permissions --model $WORKER_MODEL"
+CLAUDE_CMD="claude -p --dangerously-skip-permissions --model $WORKER_MODEL"
 
 echo "🔄 Worker loop starting"
 echo "   Model:      $WORKER_MODEL"
