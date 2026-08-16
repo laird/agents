@@ -60,13 +60,23 @@ If no configuration is found, defaults are used.
 
 ```bash
 # Source issue config — exits with clear error if not configured
+# Resolve the autocoder script directory. A project-local tree only wins if it is
+# a COMPLETE override — i.e. it actually contains the file we are about to source.
+# Testing for the directory alone let a stale vendored .agent/ or plugins/autocoder/
+# tree, left behind by an old project import, shadow the installed plugin: the
+# source below then failed and every issue_* call silently used the wrong backend.
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
-  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
-  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
-  fi
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
+  done
+  find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
 )
+if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
+  echo "autocoder: cannot locate issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
+  exit 1
+fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 # ISSUE_SOURCE is now exported (or command has exited with error)
 
@@ -298,13 +308,23 @@ Failures are assigned priority based on impact:
 3. **Add analysis comments**: Document test results on relevant issues
 
 ```bash
+# Resolve the autocoder script directory. A project-local tree only wins if it is
+# a COMPLETE override — i.e. it actually contains the file we are about to source.
+# Testing for the directory alone let a stale vendored .agent/ or plugins/autocoder/
+# tree, left behind by an old project import, shadow the installed plugin: the
+# source below then failed and every issue_* call silently used the wrong backend.
 SCRIPT_DIR=$(
-  if [ -d "$(pwd)/.agent/scripts" ]; then echo "$(pwd)/.agent/scripts"
-  elif [ -d "$(pwd)/plugins/autocoder/scripts" ]; then echo "$(pwd)/plugins/autocoder/scripts"
-  elif [ -d "$(pwd)/.claude-plugin/plugins/autocoder/scripts" ]; then echo "$(pwd)/.claude-plugin/plugins/autocoder/scripts"
-  else find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
-  fi
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
+  done
+  find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
 )
+if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
+  echo "autocoder: cannot locate issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
+  exit 1
+fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 
 echo ""
