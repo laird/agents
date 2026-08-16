@@ -288,7 +288,9 @@ cmux send-key --workspace <ref> Enter              # Execute
 **tmux** (same capability):
 ```bash
 worker-idle --pane <pane-id>                                  # exit 0 = idle, 1 = busy
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 ### Stale Lock Detection
@@ -475,7 +477,9 @@ cmux send-key --workspace <ref> Enter              # Execute
 **tmux** (same capability):
 ```bash
 worker-idle --pane <pane-id>                                  # exit 0 = idle, 1 = busy
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 This means the manager can detect idle workers and assign them new issues without you switching terminals.

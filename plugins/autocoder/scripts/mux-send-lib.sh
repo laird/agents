@@ -42,10 +42,27 @@ send_tmux_command() {
   run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" "$text" C-m
 }
 
+# Send prompt text to an interactive agent TUI, then submit it.
+#
+# The Enter MUST be a separate send-keys call. Passing it as a trailing key in
+# the same call -- `send-keys "$text" Enter` -- reliably leaves the text sitting
+# UNSUBMITTED in the agent's input box: the TUI receives the whole burst as one
+# paste and treats the trailing newline as part of the pasted content rather
+# than as submit. The pane then looks like it received the message (a
+# capture-pane grep for your marker succeeds) while the agent never saw it, so
+# the dispatch silently does nothing and the worker is later misread as idle or
+# disobedient. send_cmux_command has always done this correctly; tmux did not.
+#
+# The delay between the two calls is what lets the TUI settle out of paste
+# mode. Zero works sometimes, which is worse than never working.
+AUTOCODER_MUX_SUBMIT_DELAY="${AUTOCODER_MUX_SUBMIT_DELAY:-0.4}"
+
 send_tmux_text_enter() {
   local target="$1"
   local text="$2"
-  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" "$text" Enter
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" "$text" || return 1
+  sleep "$AUTOCODER_MUX_SUBMIT_DELAY"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" Enter
 }
 
 validate_tmux_target() {

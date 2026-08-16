@@ -255,8 +255,12 @@ For **any worker at ≥95% context**, orchestrate handoff → clear → resume:
    WIP-tagged) **and** post a handoff note (plan, key findings, next steps) as a comment on
    the GitHub issue the worker is on, so it survives the clear. If the worker can't
    self-handoff (near 100%/jammed), the manager writes the handoff note on its behalf.
-2. **`/clear`** — `tmux send-keys -t <pane> "/clear" Enter`.
-3. **Resume** — `tmux send-keys -t <pane> "/autocoder:fix <issue_number>" Enter` (fresh
+2. **`/clear`** — `tmux send-keys -t <pane> "/clear"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <pane> Enter    # separate call, or it never submits`.
+3. **Resume** — `tmux send-keys -t <pane> "/autocoder:fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <pane> Enter    # separate call, or it never submits` (fresh
    context re-reads the issue + branch + handoff note and continues).
 
 **Why 95%, not 100%:** at 100% the worker wedges and the built-in `/clear` is often
@@ -274,7 +278,18 @@ bucket already excludes blocked and working issues by directory):
 issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
 ```
 
-For each idle worker with an unworked issue available, send the fix command:
+For each idle worker with an unworked issue available, send the fix command.
+
+**The Enter must be its own `send-keys` call.** `send-keys "$text" Enter` in one
+call reliably leaves the text UNSUBMITTED in the agent's input box: the TUI takes
+the burst as one paste and treats the trailing newline as content, not submit.
+The `sleep` lets the TUI leave paste mode. Scripts should use
+`send_tmux_text_enter` from `mux-send-lib.sh`.
+
+**A marker grep does not prove delivery** — unsubmitted text appears in
+`capture-pane` just like received text. Confirm the pane submitted: prompt clear
+plus an activity marker. If your prompt is still visible with no activity marker,
+send a bare `tmux send-keys -t <pane> Enter` and re-check.
 
 **cmux:**
 ```bash
@@ -284,7 +299,9 @@ cmux send-key --workspace <ref> Enter
 
 **tmux:**
 ```bash
-tmux send-keys -t <session>:<window>.<pane> "/fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "/fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 **Codex workers:** send the shell wrapper instead of the Antigravity slash command.
@@ -293,7 +310,9 @@ The wrapper runs the issue-start handshake before launching Codex:
 cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
 cmux send-key --workspace <ref> Enter
 
-tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 After dispatching, verify the worker started by reading its screen again after a few seconds.
