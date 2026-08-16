@@ -280,14 +280,14 @@ The `/monitor-workers` command is the manager's primary tool for overseeing a sw
 
 **cmux** (reads screens and sends keystrokes):
 ```bash
-cmux read-screen --workspace <ref> --lines 15    # Check if idle
+worker-idle --all                                # Which are idle (NOT a screen grep)
 cmux send --workspace <ref> "/autocoder:fix 123"  # Dispatch work
 cmux send-key --workspace <ref> Enter              # Execute
 ```
 
 **tmux** (same capability):
 ```bash
-tmux capture-pane -t <session>:<window>.<pane> -p | tail -15  # Check
+worker-idle --pane <pane-id>                                  # exit 0 = idle, 1 = busy
 tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
 ```
 
@@ -467,14 +467,14 @@ The `/monitor-workers` command can **send commands directly** to idle worker ses
 
 **cmux** (reads screens and sends keystrokes):
 ```bash
-cmux read-screen --workspace <ref> --lines 15    # Check if idle
+worker-idle --all                                # Which are idle (NOT a screen grep)
 cmux send --workspace <ref> "/autocoder:fix 123"  # Dispatch work
 cmux send-key --workspace <ref> Enter              # Execute
 ```
 
 **tmux** (same capability):
 ```bash
-tmux capture-pane -t <session>:<window>.<pane> -p | tail -15  # Check
+worker-idle --pane <pane-id>                                  # exit 0 = idle, 1 = busy
 tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix 123" Enter
 ```
 

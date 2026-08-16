@@ -88,6 +88,9 @@ fi
 # ── Agent launch config ───────────────────────────────────────────────────────
 # shellcheck source=worker-launch-lib.sh
 source "$SCRIPT_DIR/worker-launch-lib.sh"
+
+# Every pane reports ctx/mem/model/worktree/branch. Advisory: never blocks launch.
+ensure_statusline --quiet
 # shellcheck source=issue-source-lib.sh
 source "$SCRIPT_DIR/issue-source-lib.sh"
 # shellcheck source=swarm-manifest-lib.sh

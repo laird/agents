@@ -93,14 +93,16 @@ for wt_dir in $(git worktree list --porcelain | grep "^worktree " | sed 's/^work
 done
 ```
 
-Read each known worker's pane from the saved topology:
+Classify each known worker's pane from the saved topology:
 
 ```bash
-# From the Worker Topology table in MANAGER-STATE.md, get pane IDs
-tmux capture-pane -t <pane_id> -p | tail -8
+worker-idle --all --json
 ```
 
-For each pane, determine: `idle` (bare prompt / IDLE_NO_WORK_AVAILABLE) or `active` (tool calls visible).
+This resolves pane IDs itself, so it also catches workers the saved topology
+does not know about. A bare `❯` prompt is **not** idle — the TUI shows an empty
+input box mid-turn too — so do not substitute a `capture-pane | tail` for this
+check. Panes reported `SELF` are this manager session and are never workers.
 
 ### Step 3: Compute delta
 

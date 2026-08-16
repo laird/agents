@@ -43,8 +43,16 @@ done < <(find . -name "plugin.json" -o -name "marketplace.json" | grep -v "^./.g
 # .agents, codex-plugins/*/.codex-plugin), and glob skips those by default. An
 # earlier version of this check used glob, scanned zero files, found zero
 # mismatches, and passed — while .factory-plugin sat twelve versions behind.
+#
+# gemini-extension.json is in the list for the same reason: it is the manifest
+# the Gemini/Antigravity platform reads, it carries a `version`, and because
+# this check only looked for plugin.json/marketplace.json it was never compared
+# to anything. All six copies were written once at port time and never bumped
+# again, so Gemini advertised autocoder 3.8.0 and modernize 3.2.0 — the values
+# those plugins held on the day of the port — while every other platform moved
+# on to 4.x. Internally consistent, and nine minor versions stale.
 manifest_list_file="$(mktemp)"
-find . \( -name 'plugin.json' -o -name 'marketplace.json' \) \
+find . \( -name 'plugin.json' -o -name 'marketplace.json' -o -name 'gemini-extension.json' \) \
   -not -path './.git/*' -not -path '*/node_modules/*' | sort > "$manifest_list_file"
 
 # The file list arrives as argv, not stdin: a `python3 - <<'PY'` heredoc already
