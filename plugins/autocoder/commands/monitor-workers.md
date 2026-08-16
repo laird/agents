@@ -35,12 +35,17 @@ Before doing anything else, check whether this manager session is approaching co
 ```bash
 # The manager typically runs in window 1, pane 0 — adjust session/pane if different
 SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null)
-tmux capture-pane -t "${SESSION}:1.0" -p 2>/dev/null | grep -i "auto-compact\|context.*limit\|compressing\|% until" | tail -3
+tmux capture-pane -t "${SESSION}:1.0" -p 2>/dev/null | grep -oE 'ctx [0-9]+%' | tail -1
 ```
 
-Also look for the `until auto-compact` percentage in any recent output visible in this session.
+`ctx NN%` comes from the status line this repo installs (`install-statusline.sh`) and always
+means context **used**. Prefer it over anything in the built-in footer: that text is not a
+stable contract across versions, and some of its forms report context *remaining*, so mixing
+the two eventually inverts the reading. If no `ctx` segment appears, the status line is not
+installed in this session — install it rather than guessing from the footer.
 
-**If context pressure is detected** (e.g., "N% until auto-compact" where N ≤ 15, or any "compressing context" / "context limit" message):
+**If context pressure is detected** (`ctx NN%` where N ≥ 85, or an explicit "compressing
+context" / "context limit" message):
 
 1. Immediately invoke the handoff skill to save state:
    ```
@@ -242,18 +247,41 @@ AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
 
 ### Step 4c: Hand off workers approaching the context limit (≥95%)
 
-**Every tick, read each worker's `NN% context used` line and hand off any worker at ≥95%
-context — do NOT let it keep working up to 100% and wedge.** This is distinct from Step 4b
+**Every tick, read each worker's context percentage off its status line and hand off any
+worker at ≥95% context — do NOT let it keep working up to 100% and wedge.** This is distinct from Step 4b
 (which restarts a worker that is *already* wedged): Step 4c is **proactive**, triggered by
 context %, and it **preserves** the worker's in-flight task via a handoff rather than
 discarding uncommitted work.
 
-Read each worker's context percentage from its pane:
+Read each worker's context percentage from its pane. The swarm installs a status line
+(`install-statusline.sh`, wired into every launch path) that renders one line per pane:
+
+```
+ctx 47% of 1M | mem 12 | Sonnet 5 | wt athena2-wt-3 | branch feature/issue-264
+```
+
+That line is the intended read for this step — it also tells you, in the same glance, which
+worktree and branch the pane is actually on, which is how you catch two workers that have
+drifted onto the same branch.
 
 ```bash
-# per worker pane
-tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE '[0-9]+% context used' | tail -1
+# per worker pane -- the status line is the ONLY reliable source
+tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE 'ctx [0-9]+%' | tail -1
 ```
+
+**Do not fall back to the built-in footer.** The footer's context text is not a stable
+contract: it varies across Claude Code versions and session states, it is suppressed on a
+pane that has a custom status line, and — the trap that matters — **some forms report
+context REMAINING, not USED**. `47% context used` and `Context left until auto-compact:
+47%` are the same string shape carrying opposite meanings, so a grep that accepts whichever
+matches will eventually read a worker at 53% used as 47% used, or a worker at 95% used as
+comfortably fine. An inverted context alarm is worse than no alarm, because it fires
+reassuringly at exactly the moment the worker is about to wedge.
+
+`ctx NN%` from the status line always means **used**, on every pane, in every version,
+because this repo renders it. If a pane shows no `ctx` segment, the status line is not
+installed there — fix that (`install-statusline.sh`) rather than parsing the footer. A pane
+with no `ctx` reading is **unknown**, not healthy; report it as unknown.
 
 For **any worker at ≥95% context**, orchestrate handoff → clear → resume so nothing is lost:
 

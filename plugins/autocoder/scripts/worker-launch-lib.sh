@@ -26,6 +26,20 @@
 # layout — killing the worker but never relaunching it (issue #94).
 WORKER_LAUNCH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Install the ctx/mem/model/worktree/branch status line into the user's Claude
+# settings, so every pane reports its own health and the manager can read
+# context pressure straight off a capture-pane instead of guessing.
+#
+# Deliberately advisory: a missing jq or an unwritable settings file must not
+# stop a swarm from launching. Resolved from WORKER_LAUNCH_LIB_DIR for the same
+# reason claude-worker-loop.sh is (see the note above) -- the repo_root walk is
+# wrong under an installed plugin.
+ensure_statusline() {
+  local installer="$WORKER_LAUNCH_LIB_DIR/install-statusline.sh"
+  [ -f "$installer" ] || return 0
+  bash "$installer" "$@" || true
+}
+
 resolve_worker_launch() {
   local agent="$1"
   local repo_root="$2"

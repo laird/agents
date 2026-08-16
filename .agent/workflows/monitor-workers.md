@@ -220,16 +220,34 @@ AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
 
 ### Step 4c: Hand off workers approaching the context limit (≥95%)
 
-**Every tick, read each worker's `NN% context used` line and hand off any worker at ≥95%
-context — do NOT let it keep working up to 100% and wedge.** Distinct from Step 4b (which
+**Every tick, read each worker's context percentage off its status line and hand off any
+worker at ≥95% context — do NOT let it keep working up to 100% and wedge.** Distinct from Step 4b (which
 restarts an *already*-wedged worker): Step 4c is **proactive**, triggered by context %, and
 **preserves** the worker's in-flight task via a handoff rather than discarding uncommitted work.
 
-Read each worker's context percentage from its pane:
+Read each worker's context percentage from its pane. Claude workers get a status line
+installed at launch (`install-statusline.sh`) that renders one line per pane:
+
+```
+ctx 47% of 1M | mem 12 | Sonnet 5 | wt athena2-wt-3 | branch feature/issue-264
+```
+
+That line is the intended read for this step — it also shows, in the same glance, which
+worktree and branch the pane is on, which is how you catch two workers drifted onto the
+same branch.
 
 ```bash
-tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE '[0-9]+% context used' | tail -1
+# the status line is the ONLY reliable source
+tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE 'ctx [0-9]+%' | tail -1
 ```
+
+**Do not fall back to the built-in footer.** Its context text is not a stable contract: it
+varies by version and session state, it is suppressed when a custom status line is
+configured, and **some forms report context REMAINING rather than USED**. Accepting
+whichever pattern matches will eventually invert the reading — and an inverted context
+alarm is worse than none, since it reads reassuringly right when the worker is about to
+wedge. `ctx NN%` always means used. A pane with no `ctx` reading is **unknown**, not
+healthy: install the status line there and report it as unknown until then.
 
 For **any worker at ≥95% context**, orchestrate handoff → clear → resume:
 
