@@ -236,27 +236,42 @@ while true; do
         # Issue unclaimed — try to dispatch a worker
         IDLE_DISPATCHED=false
 
+        # Idle detection is a DOUBLE SAMPLE, not a pattern match. The previous
+        # version grepped the last 15 lines for "❯|╰|\$|waiting|idle" and
+        # dispatched on a hit — but the agent TUI renders a bare `❯` input box
+        # while a turn is running, and `╰` is part of its border, so every
+        # busy worker matched. Two samples a few seconds apart settle it: a
+        # working agent's status line ticks a per-second elapsed timer, so its
+        # screen changes even when the command it is running prints nothing.
+        # The manager's own pane ($TMUX_PANE) is skipped — it shares the
+        # session with its workers, and dispatching to it types the command
+        # into the manager's own input box.
         if [ "$SWARM_ENV" = "tmux" ]; then
-          # Read worker screens to find idle agents
           for pane in $(tmux list-panes -t "$SESSION_NAME:0" -F '#{pane_index}' 2>/dev/null); do
-            SCREEN=$(tmux capture-pane -t "$SESSION_NAME:0.$pane" -p 2>/dev/null | tail -15)
-            if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
-              echo "🚀 Dispatching idle worker (pane $pane) to issue #$issue_num"
-              tmux send-keys -t "$SESSION_NAME:0.$pane" "/autocoder:fix $issue_num" Enter
-              IDLE_DISPATCHED=true
-              break
-            fi
+            TARGET="$SESSION_NAME:0.$pane"
+            [ "$(tmux display-message -p -t "$TARGET" '#{pane_id}' 2>/dev/null)" = "${TMUX_PANE:-}" ] && continue
+            S1=$(tmux capture-pane -t "$TARGET" -p 2>/dev/null | tail -40)
+            sleep 4
+            S2=$(tmux capture-pane -t "$TARGET" -p 2>/dev/null | tail -40)
+            [ "$S1" != "$S2" ] && continue                                   # output changed => busy
+            echo "$S2" | grep -qE '\([0-9]+m [0-9]+s|\([0-9]+s |esc to interrupt' && continue
+            echo "🚀 Dispatching idle worker (pane $pane) to issue #$issue_num"
+            tmux send-keys -t "$TARGET" "/autocoder:fix $issue_num" Enter
+            IDLE_DISPATCHED=true
+            break
           done
         elif [ "$SWARM_ENV" = "cmux" ]; then
           for ws in $(cmux list-workspaces 2>/dev/null | grep "wt"); do
-            SCREEN=$(cmux read-screen --workspace "$ws" --lines 15 2>/dev/null)
-            if echo "$SCREEN" | grep -qiE "(no.*issues|waiting|idle|╰|❯|\\\$)"; then
-              echo "🚀 Dispatching idle worker ($ws) to issue #$issue_num"
-              cmux send --workspace "$ws" "/autocoder:fix $issue_num"
-              cmux send-key --workspace "$ws" Enter
-              IDLE_DISPATCHED=true
-              break
-            fi
+            S1=$(cmux read-screen --workspace "$ws" --lines 40 2>/dev/null)
+            sleep 4
+            S2=$(cmux read-screen --workspace "$ws" --lines 40 2>/dev/null)
+            [ "$S1" != "$S2" ] && continue
+            echo "$S2" | grep -qE '\([0-9]+m [0-9]+s|\([0-9]+s |esc to interrupt' && continue
+            echo "🚀 Dispatching idle worker ($ws) to issue #$issue_num"
+            cmux send --workspace "$ws" "/autocoder:fix $issue_num"
+            cmux send-key --workspace "$ws" Enter
+            IDLE_DISPATCHED=true
+            break
           done
         fi
 

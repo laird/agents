@@ -98,7 +98,31 @@ for doc in "$ROOT/plugins/autocoder/commands/monitor-workers.md" \
   fi
 done
 
-# ── Test 6: Claude and Antigravity copies of Step 3 stay in parity (CLAUDE.md
+# ── Test 6: modernize's swarm dispatch is EXECUTABLE code, and it carried the
+#    same bug in a worse form: it grepped the last 15 lines for `❯|╰|$` and
+#    auto-dispatched on a hit. `╰` is part of the TUI's own border, so every
+#    busy worker matched. It must not pattern-match a prompt again.
+MOD="$ROOT/plugins/modernize/commands/modernize.md"
+if grep -qE 'grep -qiE "\(no\.\*issues\|waiting\|idle\|╰\|❯' "$MOD" 2>/dev/null; then
+  echo "FAIL: modernize.md still dispatches on a prompt-character grep"; FAIL=$((FAIL + 1))
+else
+  echo "PASS: modernize.md does not dispatch on a prompt-character grep"; PASS=$((PASS + 1))
+fi
+assert_eq "modernize.md double-samples before dispatching" "yes" \
+  "$(grep -qE 'S1" != "\$S2' "$MOD" && echo yes || echo no)"
+assert_eq "modernize.md skips the manager's own pane" "yes" \
+  "$(grep -q 'TMUX_PANE' "$MOD" && echo yes || echo no)"
+
+# ── Test 7: the README's "How Dispatching Works" examples are copy-pasted by
+#    operators, so a stale `capture-pane | tail -15  # Check` there reintroduces
+#    the rule regardless of what the commands say.
+RM="$ROOT/plugins/autocoder/README.md"
+assert_eq "README does not teach a tail-based idle check" "0" \
+  "$(grep -cE 'read-screen .*# Check if idle|capture-pane .*tail -15 +# Check' "$RM")"
+assert_eq "README points at worker-idle" "yes" \
+  "$(grep -q 'worker-idle' "$RM" && echo yes || echo no)"
+
+# ── Test 8: Claude and Antigravity copies of Step 3 stay in parity (CLAUDE.md
 #    requires it; the wrong rule lived in both).
 A=$(sed -n '/### Step 3: Decide Which Workers Are Idle/,/### Step 4:/p' "$ROOT/plugins/autocoder/commands/monitor-workers.md")
 B=$(sed -n '/### Step 3: Decide Which Workers Are Idle/,/### Step 4:/p' "$ROOT/.agent/workflows/monitor-workers.md")

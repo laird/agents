@@ -533,6 +533,7 @@ agents/
 │           ├── start-issue-work.sh      # Atomic issue claim + branch setup (used by Codex)
 │           ├── worker-launch-lib.sh     # Per-agent launch/loop configuration
 │           ├── worker-health.sh         # Worker liveness checks for manager
+│           ├── worker-idle.sh           # Idle vs busy per pane (double-sample; a bare ❯ is NOT idle)
 │           ├── swarm-manifest-lib.sh    # Swarm state tracking
 │           ├── issue-fns.sh             # issue_claim / issue_release / issue_update wrappers
 │           ├── issue-source-lib.sh      # Issue backend detection (file / github / jira / ado)
@@ -675,6 +676,7 @@ Based on retrospective analysis of RawRabbit modernization, 5 evidence-based imp
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.38.0 | 2026-08-16 | **Autocoder v4.17.0**: fixed manager idle detection — `monitor-workers` listed "bare prompt `❯` with no active tool calls" as an idle indicator, but the agent TUI renders an empty input box mid-turn too, so the rule was always true and managers dispatched over live work. New `worker-idle.sh` decides by double-sampling the pane (any change = busy) and excludes the manager's own pane, which was previously classified as a fourth worker. Same bug removed from `modernize`'s executable auto-dispatch (it grepped for `❯|╰|$`). **Version sync**: autocoder had drifted to 4.16.1 on Claude vs 4.15.0 on Droid/Codex, and the six `gemini-extension.json` files had never been bumped since their port — Gemini advertised autocoder 3.8.0 / modernize 3.2.0. All manifests now agree, and `test_manifest_versions.sh` covers `gemini-extension.json` so it cannot silently rot again. |
 | 3.32.1 | 2026-08-07 | **Autocoder v4.10.1**: Jira backend migrated to `/rest/api/3/search/jql` (Atlassian removed the v2 search API — HTTP 410); nextPageToken pagination, explicit fields, ADF descriptions flattened to plain text. Validated LIVE against a real Jira Cloud site (full lifecycle + search); test fakes now 410 the removed endpoint so the migration can't regress. |
 | 3.32.0 | 2026-08-07 | **Autocoder v4.10.0**: ship gate (`verify-shipped.sh` — issues close only when their work reaches the ship branch), claim lock held to a terminal outcome (#14), branch-claimed issues excluded from the candidate list (#48). Platform-packaging drift repaired across Claude/Codex/Gemini/Droid (drift checker now covers `retro`; Codex/Droid skill trees unified). New repo skill: **harden** — run/grade/fix/log validation loop for platform stabilization. Planning-pipeline spec/plan docs landed. |
 | 3.31.0 | 2026-08-02 | **Swarm quickstart guides** — per-platform install+run docs for Claude, Gemini/Antigravity, Codex, and Droid (`docs/swarm-quickstart-*.md`). Removed all project-specific and EY-specific content: triage corpus rewritten with generic SaaS domain, install docs use generic paths, HISTORY.md anonymized, scripts parameterized. |
