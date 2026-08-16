@@ -21,6 +21,7 @@
   - `plugins/autocoder/scripts/start-parallel-agents.sh` (start a swarm; for cmux+Codex: `start-parallel-agents.sh N --mux cmux --agent codex`)
   - `plugins/autocoder/scripts/add-worker.sh` (add one worker to a running swarm)
   - `plugins/autocoder/scripts/worker-health.sh` (report worker RSS + stall; flags UNHEALTHY = stalled AND high memory)
+  - `plugins/autocoder/scripts/worker-idle.sh` (idle vs busy per pane, by double-sampling; a bare `❯` prompt is NOT idle)
   - `plugins/autocoder/scripts/restart-worker.sh` (restart a wedged worker in place on the same worktree/issue)
   - `plugins/autocoder/scripts/fetch-blocked-issues.sh`
   - `plugins/autocoder/scripts/approve-blocked-issue.sh`
@@ -49,6 +50,7 @@ If the remote branch exists but the `working` label and start comment are absent
 - If the issue-start helper fails, do not work that issue; select another claimable issue or report idle.
 - When an issue's work is committed and tests pass, land it on the shared integration branch with `plugins/autocoder/scripts/merge-to-integration.sh`. Auto-detect the branch first: `INTEGRATION_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"`. Then: `plugins/autocoder/scripts/merge-to-integration.sh --feature feature/issue-N --issue N --integration "$INTEGRATION_BRANCH" --test-cmd "<repo test command>"`. After a successful merge, delete the local feature branch: `git branch -d feature/issue-N 2>/dev/null || git branch -D feature/issue-N 2>/dev/null || true`. It is worktree-safe (never checks out the integration branch locally), re-runs tests on the combined tree, and pushes with retry. **Never** merge into or push the per-worktree `main-wt-N` branch — that strands work off the integration branch and fragments the swarm's output.
 - Prefer existing repo scripts for automation-heavy steps.
+- As manager, decide idle-vs-busy with `worker-idle.sh --all`, never by eyeballing a pane capture: the agent TUI renders a bare `❯` input box while a turn is running, so reading the prompt line dispatches work over a busy worker. Panes it reports as `SELF` are the manager's own and must never be dispatched to.
 - When acting as the manager of a swarm, periodically run `worker-health.sh`; for any worker it reports as UNHEALTHY (stalled AND high memory), run `restart-worker.sh --worktree <path> --agent codex` to recover it in place.
 - Translate Claude slash commands into direct actions instead of preserving slash syntax.
 - Continuous loops should be implemented with shell/session control, not Claude hooks.

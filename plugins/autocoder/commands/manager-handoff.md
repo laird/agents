@@ -78,14 +78,18 @@ for wt_dir in $(git worktree list --porcelain | grep "^worktree " | sed 's/^work
 done
 ```
 
-Read each worker's screen to determine idle vs. active:
+Determine idle vs. active for each worker:
 
 ```bash
-# tmux — read pane matching each worktree path
-tmux capture-pane -t <pane_id> -p | tail -5
+worker-idle --all
 ```
 
-Look for: `IDLE_NO_WORK_AVAILABLE`, bare `❯` prompt, `Brewed for Xm`.
+Do not judge this from a pane capture by eye. A bare `❯` prompt is **not** an
+idle signal — the TUI renders an empty input box while a turn is running, so
+reading it as idle records a busy worker as free in the handoff and the next
+manager dispatches over live work. `worker-idle` samples twice and calls any
+change BUSY; it also marks this session's own pane `SELF` so the manager does
+not record itself as a worker.
 
 ### Step 2: Prompt for session notes
 
