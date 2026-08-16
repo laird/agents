@@ -292,12 +292,16 @@ For **any worker at ≥95% context**, orchestrate handoff → clear → resume s
    manager captures the handoff note on the issue on its behalf.
 2. **`/clear`** — free the context window:
    ```bash
-   tmux send-keys -t <session>:<window>.<pane> "/clear" Enter
+   tmux send-keys -t <session>:<window>.<pane> "/clear"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
    ```
 3. **Resume** — a fresh-context session re-reads the handoff (issue + branch + note) and
    continues its assigned issue:
    ```bash
-   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
    ```
 
 **Why 95%, not 100%:** a worker that runs to 100% wedges mid-task while holding a large
@@ -318,7 +322,27 @@ bucket already excludes blocked and working issues by directory):
 issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
 ```
 
-For each idle worker with an unworked issue available, send the fix command:
+For each idle worker with an unworked issue available, send the fix command.
+
+**The Enter must be its own `send-keys` call.** `send-keys "$text" Enter` in one
+call reliably leaves the text sitting UNSUBMITTED in the agent's input box — the
+TUI receives the burst as a single paste and treats the trailing newline as
+pasted content, not as submit. The `sleep` is what lets the TUI leave paste
+mode; zero works *sometimes*, which is worse than never working. Scripts should
+call `send_tmux_text_enter` from `mux-send-lib.sh`, which does this correctly.
+
+**Verifying delivery: grepping the pane for your marker is NOT enough.** Text
+parked in the input box shows up in `capture-pane` exactly like text the agent
+received, so a marker grep returns success on a dispatch that did nothing. Check
+that the pane actually *submitted*:
+
+```bash
+sleep 8
+tmux capture-pane -t <pane> -p | tail -6
+# Submitted: prompt is clear and an activity marker (spinner/token meter) is present.
+# NOT submitted: your prompt text is still visible above the status line with no
+# activity marker -- send a bare `tmux send-keys -t <pane> Enter` and re-check.
+```
 
 **cmux:**
 ```bash
@@ -328,7 +352,9 @@ cmux send-key --workspace <ref> Enter
 
 **tmux:**
 ```bash
-tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 **Codex workers:** send the shell wrapper instead of the Claude slash command.
@@ -337,7 +363,9 @@ The wrapper runs the issue-start handshake before launching Codex:
 cmux send --workspace <ref> "bash scripts/codex-autocoder.sh fix <issue_number>"
 cmux send-key --workspace <ref> Enter
 
-tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>" Enter
+tmux send-keys -t <session>:<window>.<pane> "bash scripts/codex-autocoder.sh fix <issue_number>"
+sleep 0.4          # let the TUI leave paste mode
+tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
 
 After dispatching, verify the worker started by reading its screen again after a few seconds.
