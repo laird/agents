@@ -236,32 +236,21 @@ After installation, commands will be available as slash commands in Claude Code:
 /autocoder-help    # Overview of autonomous coding workflow
 ```
 
-### Recommended Companion Plugins
+### Optional Companion Plugins
 
-These plugins enhance the capabilities of modernize and autocoder:
+Autocoder and modernize work fine without these. Install them when you hit the scenarios below.
 
-| Plugin | Purpose | When to Install |
-|--------|---------|-----------------|
-| **superpowers** | Structured problem-solving skills (debugging, planning, verification) | Recommended for complex issues requiring systematic approaches |
-| **quint** | Structured reasoning for human-guided decision making | Recommended for ultra-complex decisions requiring human judgment |
-
-**Install recommended plugins:**
+| Plugin | Install when… |
+|--------|--------------|
+| **superpowers** | You encounter complex multi-file issues and want systematic debugging, planning, and verification skills |
+| **quint** | You need structured human-in-the-loop decisions for ultra-complex or irreversible changes |
 
 ```bash
-# superpowers - for complex problem-solving
-/plugin install superpowers
-
-# quint - for ultra-complex decisions (https://quint.codes/)
-/plugin install quint
+/plugin install superpowers   # optional: structured problem-solving
+/plugin install quint         # optional: human-guided decisions
 ```
 
-**How they're used:**
-
-- **superpowers**: Automatically invoked by `/fix` for complex issues (>10 test failures, multi-file changes, feature implementations). Provides systematic debugging, brainstorming, planning, and verification skills.
-
-- **quint**: Automatically invoked for ultra-complex issues that exceed autonomous resolution capabilities (>100 test failures, major architecture decisions, irreversible consequences). Guides structured reasoning with human collaboration.
-
-If these plugins are not installed, the workflows use direct problem-solving approaches instead.
+When installed, `/fix` invokes them automatically for the right issue types. When absent, the workflow uses direct problem-solving instead — no configuration needed either way.
 
 ### Droid (Factory)
 
@@ -472,119 +461,12 @@ A validation and refinement loop for **stabilizing** a platform — not security
 See [`skills/improve/SKILL.md`](skills/improve/SKILL.md) for the full loop protocol including swarm-mode cadence and cost discipline.
 
 ---
+
 ## Repository Structure
----
 
-agents/
-├── .agent/                              # Antigravity agent configuration (rules, workflows)
-├── .claude-plugin/                      # Claude Code plugin configuration
-├── .factory/                            # Droid (Factory) configuration
-│   ├── settings.json                   # Hooks (stop hook for continuous operation)
-│   ├── skills/
-│   │   ├── autocoder/                  # Droid autocoder skill + references
-│   │   └── modernize/                  # Droid modernize skill + references
-│   └── droids/
-│       ├── architect.md                # Specialist subagent: architecture
-│       ├── coder.md                    # Specialist subagent: implementation
-│       ├── documentation.md            # Specialist subagent: documentation
-│       ├── migration-coordinator.md    # Specialist subagent: orchestration
-│       ├── security.md                 # Specialist subagent: security
-│       └── tester.md                   # Specialist subagent: testing
-├── .factory-plugin/                     # Droid plugin marketplace configuration
-│   ├── marketplace.json                # Marketplace metadata (2 plugins)
-│   └── plugins/
-│       ├── modernize/
-│       │   └── plugin.json
-│       └── autocoder/
-│           └── plugin.json
-│   ├── marketplace.json                 # Marketplace metadata (2 plugins)
-│   └── plugins/
-│       ├── modernize/
-│       │   └── plugin.json              # Modernize plugin definition
-│       └── autocoder/
-│           └── plugin.json              # Autocoder plugin definition
-├── plugins/                             # Plugin implementations
-│   ├── modernize/                       # Modernize plugin (6 commands, 6 agents, protocols)
-│   │   ├── commands/
-│   │   │   ├── help.md                 # Plugin help and workflow overview
-│   │   │   ├── assess.md               # Assessment protocol
-│   │   │   ├── plan.md                 # Planning protocol
-│   │   │   ├── modernize.md            # Full modernization workflow
-│   │   │   ├── retro.md                # Retrospective analysis
-│   │   │   └── retro-apply.md          # Improvement application
-│   │   ├── agents/
-│   │   │   ├── architect.md            # Technology decisions and ADRs
-│   │   │   ├── coder.md                # Implementation and fixes
-│   │   │   ├── documentation.md        # User-facing guides
-│   │   │   ├── migration-coordinator.md # Multi-stage orchestration
-│   │   │   ├── security.md             # Vulnerability scanning
-│   │   │   └── tester.md               # Comprehensive testing
-│   │   └── protocols/                   # Protocol documentation (10 protocols)
-│   │       ├── 00-PROTOCOL-INDEX.md    # Protocol index
-│   │       ├── adr-lifecycle.md        # ADR lifecycle protocol
-│   │       ├── agent-logging.md        # Agent logging protocol
-│   │       ├── agents-overview.md      # Agents overview
-│   │       ├── documentation-plan.md   # Documentation planning
-│   │       ├── documentation-protocol.md # Documentation protocol
-│   │       ├── incremental-documentation.md # Incremental docs
-│   │       ├── protocols-overview.md   # Protocols overview
-│   │       ├── security-scanning-protocol.md # Security scanning
-│   │       └── testing-protocol.md     # Testing protocol
-│   └── autocoder/                         # Autocoder plugin (12 commands)
-│       ├── commands/
-│       │   ├── help.md                 # Plugin help and workflow overview
-│       │   ├── fix.md           # Autonomous issue resolution
-│       │   ├── fix-loop.md      # Continuous autonomous resolution
-│       │   ├── stop-loop.md            # Stop the continuous loop
-│       │   ├── list-proposals.md       # View pending proposals
-│       │   ├── approve-proposal.md     # Approve a proposal
-│       │   ├── list-needs-design.md    # List issues needing design
-│       │   ├── list-needs-feedback.md  # List issues needing feedback
-│       │   ├── brainstorm-issue.md     # Brainstorm design for an issue
-│       │   ├── full-regression-test.md # Run comprehensive test suite
-│       │   ├── improve-test-coverage.md # Analyze and improve coverage
-│       │   ├── review-blocked.md       # Review and unblock labeled issues
-│       │   ├── monitor-workers.md     # Monitor workers, dispatch idle agents, deploy
-│       │   └── install.md              # Install all plugin components
-│       ├── agents/
-│       │   ├── architect.md            # Technology decisions and ADRs
-│       │   ├── coder.md                # Implementation and fixes
-│       │   ├── documentation.md        # User-facing guides
-│       │   ├── migration-coordinator.md # Multi-stage orchestration
-│       │   ├── security.md             # Vulnerability scanning
-│       │   └── tester.md               # Comprehensive testing
-│       └── scripts/
-│           ├── claude-worker-loop.sh   # Shell loop: fresh Claude process per issue (clean context)
-│           ├── start-parallel-agents.sh # Launch manager + N worker panes (tmux/cmux)
-│           ├── join-parallel-agents.sh  # Attach to an existing swarm session
-│           ├── end-parallel-agents.sh   # Tear down the swarm
-│           ├── add-worker.sh            # Add a worker to a running swarm
-│           ├── remove-worker.sh         # Remove a worker from a running swarm
-│           ├── restart-worker.sh        # Restart an unhealthy worker
-│           ├── start-issue-work.sh      # Atomic issue claim + branch setup (used by Codex)
-│           ├── worker-launch-lib.sh     # Per-agent launch/loop configuration
-│           ├── worker-health.sh         # Worker liveness checks for manager
-│           ├── worker-idle.sh           # Idle vs busy per pane (double-sample; a bare ❯ is NOT idle)
-│           ├── swarm-manifest-lib.sh    # Swarm state tracking
-│           ├── issue-fns.sh             # issue_claim / issue_release / issue_update wrappers
-│           ├── issue-source-lib.sh      # Issue backend detection (file / github / jira / ado)
-│           ├── issues-file.py           # File-backend issue store
-│           ├── issues-gh.sh             # GitHub-backend issue store
-│           ├── merge-to-integration.sh  # Land worktree work on shared integration branch
-│           ├── regression-test.sh       # Full test suite with GitHub integration
-│           ├── fetch-blocked-issues.sh  # List blocked/needs-review issues
-│           ├── add-blocking-label.sh    # Label an issue as blocked
-│           ├── approve-blocked-issue.sh # Approve a blocked issue
-│           └── reject-blocked-issue.sh  # Reject a blocked issue
-└── README.md
-```
+Two plugins (`modernize`, `autocoder`) each with their own `commands/`, `agents/`, and `scripts/` — fully independent and separately installable. Both share the same 6 specialist agents (architect, coder, documentation, migration-coordinator, security, tester). Per-platform directories (`.agent/`, `.factory/`, `codex-plugins/`, `.agents/`) mirror the Claude Code `plugins/` content for their respective agent CLIs; `skills/improve/` is platform-neutral and ships once.
 
-**Structure Notes**:
-
-- **Parallel plugin architecture**: Each plugin has its own commands/, agents/, and scripts/
-- **Complete separation**: Plugins are independent and can be installed individually
-- **Shared agent definitions**: Both plugins include the same 6 specialized agents (architecture, coder, documentation, migration-coordinator, security, tester)
-- **Self-contained**: Each plugin can evolve independently without affecting the other
+See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the full annotated directory tree.
 
 ---
 
