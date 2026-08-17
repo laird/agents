@@ -190,3 +190,108 @@ def test_env_var_beats_claude_md_and_repo_pins_nothing(repo):
             ".envrc must not pin CLAUDE_CODE_SHIP_BRANCH — this repo ships from "
             "the repo default branch (master)"
         )
+
+
+# ── Default branch always ships (issue #76) ─────────────────────────────────
+# A commit on the repo's default branch is always treated as SHIPPED, even
+# when SHIP_BRANCH is set to something else. This prevents two worktrees with
+# different CLAUDE.md files from returning different verdicts for the same commit.
+
+@pytest.fixture
+def two_worktree_repo(tmp_path):
+    """A repo that simulates two worktrees with different CLAUDE.md files.
+
+    master is the default. A feature commit lands on master (simulating the ship).
+    origin/HEAD is explicitly set so resolve_default_branch returns 'master'.
+    """
+    r = tmp_path / "repo"
+    r.mkdir()
+    sh("git init -q -b master", r)
+    sh("git config user.email t@t; git config user.name t", r)
+
+    (r / "a.txt").write_text("base\n")
+    sh("git add -A && git commit -qm base", r)
+
+    sh("git checkout -q -b feature", r)
+    (r / "fix.txt").write_text("fix\n")
+    sh("git add -A && git commit -qm fix", r)
+    feature_commit = sh("git rev-parse HEAD", r).stdout.strip()
+
+    # Merge feature into master (the commit is now shipped)
+    sh("git checkout -q master && git merge -q --no-ff feature -m 'ship feature'", r)
+
+    # Set up origin so resolve_default_branch can find the default branch.
+    # Using a bare clone as origin ensures origin/HEAD is properly set.
+    origin = tmp_path / "origin.git"
+    sh(f"git clone -q --bare '{r}' '{origin}'", tmp_path)
+    sh(f"git remote add origin '{origin}'", r)
+    sh("git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'", r)
+    sh("git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/master", r)
+
+    return r, feature_commit
+
+
+def test_default_branch_verdict_when_ship_branch_is_integration(two_worktree_repo):
+    """Issue #76: a commit on master is SHIPPED even when CLAUDE.md designates
+    an integration branch as the ship branch.
+
+    Without the fix, a worktree whose CLAUDE.md says '**Ship branch**: integration'
+    would report the commit as NOT_SHIPPED even though it reached master.
+    """
+    r, commit = two_worktree_repo
+    # Simulate a worktree whose CLAUDE.md pins a different ship branch
+    (r / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SHIP_BRANCH"}
+    res = subprocess.run(["bash", str(SCRIPT), commit], cwd=str(r),
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 0, (
+        "commit on master should be SHIPPED even when CLAUDE.md pins integration: "
+        f"{res.stdout}{res.stderr}"
+    )
+    assert "SHIPPED" in res.stdout
+
+
+def test_verdict_consistent_across_worktrees(two_worktree_repo):
+    """Issue #76 core property: both the 'ship-branch CLAUDE.md' worktree and
+    the 'no CLAUDE.md' worktree return the same verdict for a commit on master.
+    """
+    r, commit = two_worktree_repo
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SHIP_BRANCH"}
+
+    # Worktree 1: CLAUDE.md designates integration as ship branch
+    (r / "CLAUDE.md").write_text("**Ship branch**: `integration`\n")
+    res1 = subprocess.run(["bash", str(SCRIPT), commit], cwd=str(r),
+                          capture_output=True, text=True, env=env)
+
+    # Worktree 2: no CLAUDE.md (repo default wins)
+    (r / "CLAUDE.md").unlink()
+    res2 = subprocess.run(["bash", str(SCRIPT), commit], cwd=str(r),
+                          capture_output=True, text=True, env=env)
+
+    assert res1.returncode == res2.returncode, (
+        f"Inconsistent verdicts across worktrees: "
+        f"with CLAUDE.md={res1.returncode}, without={res2.returncode}"
+    )
+
+
+def test_not_shipped_when_only_on_feature_branch(two_worktree_repo):
+    """Issue #35 regression: a commit only on a feature branch must not be
+    considered shipped because the default branch check passes (it doesn't).
+    """
+    r, _ = two_worktree_repo
+    # Create a new commit that is only on a feature branch, never merged to master
+    sh("git checkout -q -b stranded", r)
+    (r / "stranded.txt").write_text("stranded\n")
+    sh("git add -A && git commit -qm 'stranded commit'", r)
+    stranded_commit = sh("git rev-parse HEAD", r).stdout.strip()
+
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SHIP_BRANCH"}
+    # Pass master explicitly so ship branch resolves (default-branch detection
+    # does not work against the in-process bare clone used by this fixture).
+    res = subprocess.run(["bash", str(SCRIPT), stranded_commit, "master"], cwd=str(r),
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 1, (
+        "a commit only on a feature branch must be NOT_SHIPPED, "
+        f"got {res.returncode}: {res.stdout}{res.stderr}"
+    )
+    assert "NOT_SHIPPED" in res.stdout
