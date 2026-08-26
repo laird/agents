@@ -343,7 +343,9 @@ those):
    ```
 5. **Resume** in the fresh pane, which re-reads the branch + handoff note:
    ```bash
-   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
+   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
+   sleep 0.4          # let the TUI leave paste mode
+   tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
    ```
 
 Confirm the pane actually came back up before reporting recovery — `restart-worker.sh`

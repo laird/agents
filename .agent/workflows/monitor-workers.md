@@ -287,7 +287,13 @@ worker's earlier commits are already safe on its branch and step 1 rescues the r
    resumed worker re-claims cleanly.
 4. **Hard restart** — a kill, **not** send-keys `/clear`, which is what is jammed:
    `bash plugins/autocoder/scripts/restart-worker.sh --worktree <worktree>`
-5. **Resume:** `tmux send-keys -t <pane> "/autocoder:fix <issue_number>" Enter`
+5. **Resume** — text and Enter in separate `send-keys` calls, or the TUI treats the
+   trailing newline as pasted content and never submits:
+   ```bash
+   tmux send-keys -t <pane> "/autocoder:fix <issue_number>"
+   sleep 0.4
+   tmux send-keys -t <pane> Enter
+   ```
 
 Confirm the pane actually came back up before reporting recovery — `restart-worker.sh` kills
 first, so a failed relaunch leaves a bare shell and a dead worker.
