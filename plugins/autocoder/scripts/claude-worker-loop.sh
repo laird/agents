@@ -28,6 +28,7 @@
 #   ISSUE_DIR_PATH        Path to .issues/ directory, passed through to Claude
 #   AUTOCODER_LOG_DIR     Where raw stream-json transcripts land (default: /tmp/autocoder-logs)
 #   AUTOCODER_STREAM      0 to disable streaming output entirely (plain -p text)
+#   AUTOCODER_METRICS     0 to skip posting per-fix cost/time metrics to the issue
 
 set -euo pipefail
 
@@ -48,18 +49,28 @@ while [[ $# -gt 0 ]]; do
 done
 
 RENDER="$SCRIPT_DIR/stream-render.sh"
+POST_METRICS="$SCRIPT_DIR/post-issue-metrics.sh"
 [ -x "$RENDER" ] || STREAM=0
 mkdir -p "$LOG_DIR"
+
+# Set by run_claude to the transcript it just wrote, so the caller can attribute
+# that session's cost to the issue. A local would be invisible to the caller and
+# a recomputed path would race the `date +%H%M%S` in the filename.
+LAST_TRANSCRIPT=""
 
 # Run one headless Claude session. $1 labels the log file; the rest is the prompt.
 # stderr deliberately bypasses the renderer so a crash message reaches the pane raw.
 run_claude() {
   local label="$1"; shift
   local log="$LOG_DIR/worker-$$-${label}-$(date +%H%M%S).jsonl"
+  # Only the streaming branch writes a transcript. Claiming one in the plain-text
+  # branch would point the metrics step at a file that does not exist.
+  LAST_TRANSCRIPT=""
   # `< /dev/null` on both: the prompt is an argument, so claude has no use for
   # stdin, and without it it stalls 3s per session waiting for piped input and
   # competes with the loop for the pane's keyboard. Ctrl-C still reaches it.
   if [ "$STREAM" = "1" ]; then
+    LAST_TRANSCRIPT="$log"
     echo "   ⤷ transcript: $log"
     claude -p --output-format stream-json --verbose \
       --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null \
@@ -103,6 +114,15 @@ while true; do
       run_claude "fix-$ISSUE_NUM" "/autocoder:fix $ISSUE_NUM"
       echo ""
       echo "✅ $(date +%H:%M:%S) Fix session for issue #$ISSUE_NUM completed"
+
+      # Attribute what that session cost to the issue, while the transcript is
+      # still on disk — LOG_DIR defaults to /tmp, so this is the only moment the
+      # number is reliably available. Never fatal: `|| true` keeps a metrics
+      # failure (offline backend, missing python3, a fix that died before its
+      # first result event) from ending a worker's loop, and `set -e` is on.
+      if [ -n "$LAST_TRANSCRIPT" ] && [ -x "$POST_METRICS" ]; then
+        "$POST_METRICS" "$ISSUE_NUM" --session "$LAST_TRANSCRIPT" || true
+      fi
       echo ""
     fi
     # Loop immediately back to gate — no idle sleep after completing work

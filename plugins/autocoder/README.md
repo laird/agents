@@ -735,6 +735,34 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 | `approve-blocked-issue.sh` | Approve and unblock an issue | `bash ~/.claude/plugins/autocoder/scripts/approve-blocked-issue.sh <issue_num> <label> <approach>` |
 | `reject-blocked-issue.sh` | Reject and close a blocked issue | `bash ~/.claude/plugins/autocoder/scripts/reject-blocked-issue.sh <issue_num> <reason>` |
 
+### Cost and Time Attribution
+
+Each worker session is tee'd to a stream-json transcript in `AUTOCODER_LOG_DIR`
+(default `/tmp/autocoder-logs`), whose terminal `result` event carries the tokens,
+turn count, wall-clock and `total_cost_usd` for that session. These two scripts turn
+that into a per-issue record before `/tmp` loses it.
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `issue-metrics.py` | Aggregate transcripts per issue; table, `--json`, or a markdown comment body | `python3 ~/.claude/plugins/autocoder/scripts/issue-metrics.py [--since YYYY-MM-DD] [--json] [--markdown [ISSUE...]] [--session PATH --issue N --markdown]` |
+| `post-issue-metrics.sh` | Post that comment on the issue via the configured backend | `bash ~/.claude/plugins/autocoder/scripts/post-issue-metrics.sh <issue> [--session PATH] [--dry-run] [--force]` |
+
+`claude-worker-loop.sh` runs the poster automatically after each fix session, passing
+`--session` so the comment describes that attempt alone. Set `AUTOCODER_METRICS=0` to
+turn it off. Posting is fail-soft in every direction — a missing transcript, an offline
+backend, or no `python3` exits 0 and never ends a worker's loop.
+
+Three attribution rules are deliberate, and the rendered comment states them:
+
+- **Gate transcripts are excluded.** A gate tick surveys the whole backlog; charging it
+  to whichever issue it happened to claim would inflate that issue. Consequence: the
+  per-issue numbers sum to less than total swarm spend.
+- **Aggregate mode counts every session for an issue**, including retried and abandoned
+  attempts — that is the true cost of resolving it, not the cost of the successful run.
+- **A session still running is reported as in-flight**, never folded into the totals; its
+  transcript has no `result` event yet, and treating that as finished would publish
+  "$0.00, 0 turns" for work in progress (`--session` on one exits 3).
+
 ### Testing
 
 | Script | Purpose | Usage |

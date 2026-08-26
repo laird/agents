@@ -77,6 +77,8 @@ agents/
 │       │   └── tester.md                # Comprehensive testing
 │       └── scripts/
 │           ├── claude-worker-loop.sh    # Fresh Claude process per issue (clean context)
+│           ├── issue-metrics.py         # Tokens/time/cost per issue from worker transcripts
+│           ├── post-issue-metrics.sh    # Comment those metrics onto the issue (idempotent)
 │           ├── start-parallel-agents.sh # Launch manager + N worker panes (tmux/cmux)
 │           ├── join-parallel-agents.sh  # Attach to an existing swarm session
 │           ├── end-parallel-agents.sh   # Tear down the swarm
