@@ -1124,12 +1124,32 @@ else
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
   # escalates conflicts to a label instead of stranding work on main-wt-N).
-  "${SCRIPT_DIR}/merge-to-integration.sh" \
+  # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
+  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
+  # failure, not a flake, if merge-to-integration.sh runs inline. This only
+  # STARTS the job (setsid, fully detached) and returns almost immediately.
+  "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "feature/issue-${ISSUE_NUM}" \
     --issue "$ISSUE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
-    --test-cmd "$TEST_COMMAND" \
-    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+    --test-cmd "$TEST_COMMAND"
+
+  # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
+  # sleep-loop packed into a single call (that just relocates the 2-minute
+  # problem into the loop itself). Each call sleeps ~60s then reports back:
+  #   exit 75        → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  # merge-launch.sh refuses to start a duplicate for the same issue, so if you
+  # land back on this step after a restart, relaunching is a safe no-op and
+  # polling below just resumes the job already in flight.
+  MERGE_EXIT=0
+  "${SCRIPT_DIR}/merge-poll.sh" --issue "$ISSUE_NUM" || MERGE_EXIT=$?
+  if [ "$MERGE_EXIT" -eq 75 ]; then
+    echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
+    exit 75
+  elif [ "$MERGE_EXIT" -ne 0 ]; then
+    echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
+  fi
 
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
@@ -1391,12 +1411,32 @@ else
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
   # escalates conflicts to a label instead of stranding work on main-wt-N).
-  "${SCRIPT_DIR}/merge-to-integration.sh" \
+  # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
+  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
+  # failure, not a flake, if merge-to-integration.sh runs inline. This only
+  # STARTS the job (setsid, fully detached) and returns almost immediately.
+  "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "feature/issue-${ISSUE_NUM}" \
     --issue "$ISSUE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
-    --test-cmd "$TEST_COMMAND" \
-    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+    --test-cmd "$TEST_COMMAND"
+
+  # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
+  # sleep-loop packed into a single call (that just relocates the 2-minute
+  # problem into the loop itself). Each call sleeps ~60s then reports back:
+  #   exit 75        → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  # merge-launch.sh refuses to start a duplicate for the same issue, so if you
+  # land back on this step after a restart, relaunching is a safe no-op and
+  # polling below just resumes the job already in flight.
+  MERGE_EXIT=0
+  "${SCRIPT_DIR}/merge-poll.sh" --issue "$ISSUE_NUM" || MERGE_EXIT=$?
+  if [ "$MERGE_EXIT" -eq 75 ]; then
+    echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
+    exit 75
+  elif [ "$MERGE_EXIT" -ne 0 ]; then
+    echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
+  fi
 
   # Clean up the local feature branch (merge-to-integration.sh already removed the remote)
   git branch -d "$FIX_BRANCH" 2>/dev/null || git branch -D "$FIX_BRANCH" 2>/dev/null || true
@@ -2220,12 +2260,32 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
   # escalates conflicts to a label instead of stranding work on main-wt-N).
-  "${SCRIPT_DIR}/merge-to-integration.sh" \
+  # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
+  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
+  # failure, not a flake, if merge-to-integration.sh runs inline. This only
+  # STARTS the job (setsid, fully detached) and returns almost immediately.
+  "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "enhancement/issue-${ENHANCE_NUM}-auto" \
     --issue "$ENHANCE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
-    --test-cmd "$TEST_COMMAND" \
-    || { echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1; }
+    --test-cmd "$TEST_COMMAND"
+
+  # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
+  # sleep-loop packed into a single call (that just relocates the 2-minute
+  # problem into the loop itself). Each call sleeps ~60s then reports back:
+  #   exit 75        → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  # merge-launch.sh refuses to start a duplicate for the same issue, so if you
+  # land back on this step after a restart, relaunching is a safe no-op and
+  # polling below just resumes the job already in flight.
+  MERGE_EXIT=0
+  "${SCRIPT_DIR}/merge-poll.sh" --issue "$ENHANCE_NUM" || MERGE_EXIT=$?
+  if [ "$MERGE_EXIT" -eq 75 ]; then
+    echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ENHANCE_NUM} again next turn."
+    exit 75
+  elif [ "$MERGE_EXIT" -ne 0 ]; then
+    echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
+  fi
 
   # Clean up the local enhancement branch (merge-to-integration.sh already removed the remote)
   git branch -d "$ENHANCE_BRANCH" 2>/dev/null || git branch -D "$ENHANCE_BRANCH" 2>/dev/null || true
