@@ -426,13 +426,16 @@ if [ "$MUX" = "tmux" ]; then
 
   # Create tmux session with first window (parallel agents)
   echo "🖥️  Creating tmux session: $SESSION_NAME"
-  tmux new-session -d -s "$SESSION_NAME" -n "agents"
+  # Capture the window id (@N) rather than assuming index 0: tmux honours the
+  # user's `base-index` setting, so a `base-index 1` config makes every
+  # hardcoded ":0" target fail with "can't find window: 0".
+  AGENTS_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "agents" -P -F '#{window_id}')
   WORKER_TARGETS=()
   WORKER_JSONS=()
 
   # First pane (leftmost) - worker 1 in wt-1
   echo "   Setting up worker agent 1..."
-  PANE_ID=$(tmux display-message -p -t "$SESSION_NAME:0.0" '#{pane_id}')
+  PANE_ID=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{pane_id}')
   WORKER_TARGETS+=("$PANE_ID")
   if [ "$USE_WORKTREES" = true ]; then
     send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'"
@@ -454,7 +457,7 @@ if [ "$MUX" = "tmux" ]; then
   # Create panes for remaining workers
   for i in $(seq 2 $NUM_AGENTS); do
     echo "   Setting up worker agent $i..."
-    PANE_ID=$(tmux split-window -h -t "$SESSION_NAME:0" -P -F '#{pane_id}')
+    PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
     WORKER_TARGETS+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
@@ -475,7 +478,7 @@ if [ "$MUX" = "tmux" ]; then
   done
 
   # Balance the panes to make them equal width
-  tmux select-layout -t "$SESSION_NAME:0" even-horizontal
+  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
 
   # Launch agent in each pane sequentially with individual waits
   echo ""
@@ -518,8 +521,8 @@ if [ "$MUX" = "tmux" ]; then
   # Create second window for review/planning (single pane)
   echo ""
   echo "📋 Setting up review/planning window..."
-  tmux new-window -t "$SESSION_NAME:1" -n "review"
-  MANAGER_TARGET=$(tmux display-message -p -t "$SESSION_NAME:1.0" '#{pane_id}')
+  REVIEW_WINDOW=$(tmux new-window -t "$SESSION_NAME" -n "review" -P -F '#{window_id}')
+  MANAGER_TARGET=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
 
   # Set up review window
   echo "   Starting coordinator..."
@@ -552,7 +555,11 @@ if [ "$MUX" = "tmux" ]; then
   fi
 
   # Select the first window (agents) by default
-  tmux select-window -t "$SESSION_NAME:0"
+  tmux select-window -t "$AGENTS_WINDOW"
+
+  # Report the real window indexes: they follow the user's `base-index`.
+  AGENTS_WINDOW_INDEX=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{window_index}')
+  REVIEW_WINDOW_INDEX=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{window_index}')
 
   echo ""
   echo "✅ Parallel agent system started!"
@@ -563,23 +570,23 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
   if [ "$PAUSED" = true ]; then
-    echo "   Window 0: $NUM_AGENTS worker agents configured and paused"
-    echo "   Window 1: Manager readiness instructions"
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents configured and paused"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager readiness instructions"
     echo "   Manifest: $MANIFEST_PATH"
     echo ""
     echo "The swarm is ready for issue review and worker start commands:"
     echo "   add-worker"
     echo "   add-worker 2"
   elif [ "$SEND_WORKER_LOOP" = true ]; then
-    echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-    echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager in main repo running $MANAGER_CMD"
   else
-    echo "   Window 0: $NUM_AGENTS worker agents idle (manager-routing; no self-claim loop)"
-    echo "   Window 1: Manager in main repo running $MANAGER_CMD (sole assigner)"
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents idle (manager-routing; no self-claim loop)"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager in main repo running $MANAGER_CMD (sole assigner)"
   fi
   echo ""
   echo "🔧 Useful tmux commands:"
-  echo "   Switch windows: Ctrl+b then 0 or 1"
+  echo "   Switch windows: Ctrl+b then $AGENTS_WINDOW_INDEX or $REVIEW_WINDOW_INDEX"
   echo "   Detach: Ctrl+b then d"
   echo "   Reattach: tmux attach -t $SESSION_NAME"
   echo "   Kill session: tmux kill-session -t $SESSION_NAME"

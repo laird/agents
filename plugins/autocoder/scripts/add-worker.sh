@@ -196,45 +196,53 @@ if [ "$MUX" = "tmux" ]; then
     exit 1
   fi
 
-  # Add a pane to window 0 (agents window)
-  tmux split-window -h -t "$SESSION_NAME:0"
-  PANE_INDEX=$(tmux list-panes -t "$SESSION_NAME:0" -F '#{pane_index}' | tail -1)
+  # Resolve the agents window by name (falling back to the first window) rather
+  # than assuming index 0: tmux honours the user's `base-index` setting, so a
+  # hardcoded ":0" fails with "can't find window: 0" under `base-index 1`.
+  AGENTS_WINDOW=$(tmux list-windows -t "$SESSION_NAME" -F '#{window_id} #{window_name}' \
+    | awk '$2 == "agents" { print $1; exit }')
+  if [ -z "$AGENTS_WINDOW" ]; then
+    AGENTS_WINDOW=$(tmux list-windows -t "$SESSION_NAME" -F '#{window_id}' | head -1)
+  fi
 
-  tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" "cd '$WORKER_DIR'" C-m
+  # Add a pane to the agents window; address it by pane id, not by index
+  PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
+  PANE_INDEX=$(tmux display-message -p -t "$PANE_ID" '#{pane_index}')
+
+  tmux send-keys -t "$PANE_ID" "cd '$WORKER_DIR'" C-m
   if [ -n "${ISSUE_SOURCE:-}" ]; then
     while IFS= read -r line; do
-      [ -n "$line" ] && tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" "$line" C-m
+      [ -n "$line" ] && tmux send-keys -t "$PANE_ID" "$line" C-m
     done < <(issue_env_exports)
   fi
 
   if [ "$AGENT" = "claude" ]; then
     TASK_LIST_ID=$(tmux show-environment -t "$SESSION_NAME" CLAUDE_CODE_TASK_LIST_ID 2>/dev/null | cut -d= -f2 || true)
-    [ -n "$TASK_LIST_ID" ] && tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" \
+    [ -n "$TASK_LIST_ID" ] && tmux send-keys -t "$PANE_ID" \
       "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
-    tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" \
+    tmux send-keys -t "$PANE_ID" \
       "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
   fi
 
-  tmux select-layout -t "$SESSION_NAME:0" even-horizontal
+  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
-    tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" "$AGENT_LAUNCH_CMD" C-m
+    tmux send-keys -t "$PANE_ID" "$AGENT_LAUNCH_CMD" C-m
     sleep 5
   fi
 
   if [ "$HAS_MANIFEST" = true ]; then
-    PANE_ID=$(tmux display-message -p -t "$SESSION_NAME:0.${PANE_INDEX}" '#{pane_id}')
     WORKER_JSON=$(manifest_worker_json "$WORKER_NUM" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" "$([ -n "$AGENT_LAUNCH_CMD" ] && echo true || echo false)" "$PANE_ID" "" paused)
     manifest_add_worker_json "$MANIFEST_PATH" "$WORKER_JSON"
     echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
     bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
   else
-    tmux send-keys -t "$SESSION_NAME:0.${PANE_INDEX}" "$WORKER_CMD" C-m
+    tmux send-keys -t "$PANE_ID" "$WORKER_CMD" C-m
   fi
 
   # Focus the new pane so the user can see the worker starting
-  tmux select-window -t "$SESSION_NAME:0"
-  tmux select-pane -t "$SESSION_NAME:0.${PANE_INDEX}"
+  tmux select-window -t "$AGENTS_WINDOW"
+  tmux select-pane -t "$PANE_ID"
 
   echo "✅ Worker $WORKER_NUM added to tmux session '$SESSION_NAME' (pane $PANE_INDEX)"
   echo "   Worktree: $WORKER_DIR"

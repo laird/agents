@@ -278,40 +278,47 @@ if [ "$MUX" = "tmux" ]; then
 
   # Create tmux session with first window (parallel agents)
   echo "🖥️  Creating tmux session: $SESSION_NAME"
-  tmux new-session -d -s "$SESSION_NAME" -n "agents"
+  # Capture the window/pane ids rather than assuming index 0: tmux honours the
+  # user's `base-index`/`pane-base-index` settings, so hardcoded ":0" / ".0"
+  # targets fail with "can't find window: 0" under a `base-index 1` config.
+  AGENTS_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "agents" -P -F '#{window_id}')
+  WORKER_PANES=()
 
   # First pane (leftmost) - worker 1 in wt-1
   echo "   Setting up worker agent 1..."
+  PANE_ID=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{pane_id}')
+  WORKER_PANES+=("$PANE_ID")
   if [ "$USE_WORKTREES" = true ]; then
-    tmux send-keys -t "$SESSION_NAME:0.0" "cd '${WORKTREE_PATHS[0]}'" C-m
+    tmux send-keys -t "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'" C-m
   else
-    tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_ROOT'" C-m
+    tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
   fi
 
   # Set environment variables for Antigravity coordination
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:0.0" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
-    tmux send-keys -t "$SESSION_NAME:0.0" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
+    tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
   fi
 
   # Create panes for remaining workers
   for i in $(seq 2 $NUM_AGENTS); do
     echo "   Setting up worker agent $i..."
-    tmux split-window -h -t "$SESSION_NAME:0"
+    PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
+    WORKER_PANES+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '${WORKTREE_PATHS[$((i-1))]}'" C-m
+      tmux send-keys -t "$PANE_ID" "cd '${WORKTREE_PATHS[$((i-1))]}'" C-m
     else
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "cd '$PROJECT_ROOT'" C-m
+      tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
     fi
 
     if [ "$AGENT" = "claude" ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$((i-1))" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+      tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
     fi
   done
 
   # Balance the panes to make them equal width
-  tmux select-layout -t "$SESSION_NAME:0" even-horizontal
+  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
 
   # Launch agent in each pane sequentially with individual waits
   echo ""
@@ -320,7 +327,7 @@ if [ "$MUX" = "tmux" ]; then
   for i in $(seq 0 $((NUM_AGENTS - 1))); do
     echo "   Starting worker $((i+1))/$NUM_AGENTS..."
     if [ -n "$AGENT_LAUNCH_CMD" ]; then
-      tmux send-keys -t "$SESSION_NAME:0.$i" "$AGENT_LAUNCH_CMD" C-m
+      tmux send-keys -t "${WORKER_PANES[$i]}" "$AGENT_LAUNCH_CMD" C-m
       sleep 5
     fi
   done
@@ -333,9 +340,9 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Starting $WORKER_CMD in all agents (sequential)..."
   for i in $(seq 0 $((NUM_AGENTS - 1))); do
     echo "   → Agent $((i+1)): sending $WORKER_CMD..."
-    tmux send-keys -t "$SESSION_NAME:0.$i" "$WORKER_CMD"
+    tmux send-keys -t "${WORKER_PANES[$i]}" "$WORKER_CMD"
     sleep 0.5
-    tmux send-keys -t "$SESSION_NAME:0.$i" "Enter"
+    tmux send-keys -t "${WORKER_PANES[$i]}" "Enter"
 
     # Wait for THIS agent to fully process $WORKER_CMD before starting next
     echo "   → Agent $((i+1)): waiting for initialization..."
@@ -347,26 +354,31 @@ if [ "$MUX" = "tmux" ]; then
   # Create second window for review/planning (single pane)
   echo ""
   echo "📋 Setting up review/planning window..."
-  tmux new-window -t "$SESSION_NAME:1" -n "review"
+  REVIEW_WINDOW=$(tmux new-window -t "$SESSION_NAME" -n "review" -P -F '#{window_id}')
+  MANAGER_PANE=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
 
   # Set up review window
   echo "   Starting coordinator..."
-  tmux send-keys -t "$SESSION_NAME:1.0" "cd '$PROJECT_ROOT'" C-m
+  tmux send-keys -t "$MANAGER_PANE" "cd '$PROJECT_ROOT'" C-m
 
   if [ "$AGENT" = "claude" ]; then
-    tmux send-keys -t "$SESSION_NAME:1.0" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
-    tmux send-keys -t "$SESSION_NAME:1.0" "$AGENT_LAUNCH_CMD" C-m
+    tmux send-keys -t "$MANAGER_PANE" "$AGENT_LAUNCH_CMD" C-m
     sleep 5
   fi
-  tmux send-keys -t "$SESSION_NAME:1.0" "$MANAGER_CMD"
+  tmux send-keys -t "$MANAGER_PANE" "$MANAGER_CMD"
   sleep 0.5
-  tmux send-keys -t "$SESSION_NAME:1.0" "Enter"
+  tmux send-keys -t "$MANAGER_PANE" "Enter"
 
   # Select the first window (agents) by default
-  tmux select-window -t "$SESSION_NAME:0"
+  tmux select-window -t "$AGENTS_WINDOW"
+
+  # Report the real window indexes: they follow the user's `base-index`.
+  AGENTS_WINDOW_INDEX=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{window_index}')
+  REVIEW_WINDOW_INDEX=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{window_index}')
 
   echo ""
   echo "✅ Parallel agent system started!"
@@ -376,11 +388,11 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Multiplexer: tmux"
   echo "   Agent framework: $AGENT"
   echo "   Task list ID: $TASK_LIST_ID"
-  echo "   Window 0: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
-  echo "   Window 1: Manager in main repo running $MANAGER_CMD"
+  echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+  echo "   Window $REVIEW_WINDOW_INDEX: Manager in main repo running $MANAGER_CMD"
   echo ""
   echo "🔧 Useful tmux commands:"
-  echo "   Switch windows: Ctrl+b then 0 or 1"
+  echo "   Switch windows: Ctrl+b then $AGENTS_WINDOW_INDEX or $REVIEW_WINDOW_INDEX"
   echo "   Detach: Ctrl+b then d"
   echo "   Reattach: tmux attach -t $SESSION_NAME"
   echo "   Kill session: tmux kill-session -t $SESSION_NAME"
