@@ -31,7 +31,16 @@ This command installs all autocoder plugin components:
   - `join-parallel` → `join-parallel-agents.sh`
   - `end-parallel` → `end-parallel-agents.sh`
   - `stop-parallel` → `stop-parallel-agents.sh`
-- **Purpose**: Terminal commands to launch, add/start/remove workers, join, end, and stop parallel agent sessions
+  - `worker-idle` → `worker-idle.sh`
+  - `worker-health` → `worker-health.sh`
+  - `restart-worker` → `restart-worker.sh`
+- **Purpose**: Terminal commands to launch, add/start/remove workers, join, end, and stop parallel
+  agent sessions, plus the worker-inspection commands the manager workflows shell out to by bare
+  name. `worker-idle` in particular is REQUIRED by `/autocoder:manager-handoff` and
+  `/autocoder:manager-resume`: they call it to tell an idle worker from a busy one, and warn that
+  eyeballing a pane is unsafe (a TUI renders an empty prompt box mid-turn, so a busy worker reads
+  as idle and the next manager dispatches over live work). If it is not on PATH the check fails
+  silently and the handoff records the wrong topology.
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
 
@@ -410,7 +419,7 @@ echo "🔍 Scripts directory: $SCRIPT_DIR"
 echo ""
 
 # Check if already installed
-if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/add-worker" ] && [ -f "$INSTALL_DIR/remove-worker" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ]; then
+if [ -f "$INSTALL_DIR/start-parallel" ] && [ -f "$INSTALL_DIR/add-worker" ] && [ -f "$INSTALL_DIR/remove-worker" ] && [ -f "$INSTALL_DIR/join-parallel" ] && [ -f "$INSTALL_DIR/end-parallel" ] && [ -f "$INSTALL_DIR/stop-parallel" ] && [ -f "$INSTALL_DIR/worker-idle" ] && [ -f "$INSTALL_DIR/worker-health" ] && [ -f "$INSTALL_DIR/restart-worker" ]; then
   echo "✅ Parallel agent scripts already installed"
   INSTALL_SCRIPTS=false
 else
@@ -422,6 +431,9 @@ else
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
   echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
   echo "  stop-parallel  -> $SCRIPT_DIR/stop-parallel-agents.sh"
+  echo "  worker-idle    -> $SCRIPT_DIR/worker-idle.sh"
+  echo "  worker-health  -> $SCRIPT_DIR/worker-health.sh"
+  echo "  restart-worker -> $SCRIPT_DIR/restart-worker.sh"
   echo ""
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
@@ -493,6 +505,13 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   ln -sf "$SCRIPT_DIR/join-parallel-agents.sh" "$INSTALL_DIR/join-parallel"
   ln -sf "$SCRIPT_DIR/end-parallel-agents.sh" "$INSTALL_DIR/end-parallel"
   ln -sf "$SCRIPT_DIR/stop-parallel-agents.sh" "$INSTALL_DIR/stop-parallel"
+  # Worker-inspection commands. The manager workflows invoke these by BARE NAME, so they must be
+  # on PATH, not merely present in the plugin cache. worker-idle is load-bearing for
+  # manager-handoff/manager-resume (idle-vs-busy detection); without it the handoff silently
+  # skips the check and can record a busy worker as free.
+  ln -sf "$SCRIPT_DIR/worker-idle.sh" "$INSTALL_DIR/worker-idle"
+  ln -sf "$SCRIPT_DIR/worker-health.sh" "$INSTALL_DIR/worker-health"
+  ln -sf "$SCRIPT_DIR/restart-worker.sh" "$INSTALL_DIR/restart-worker"
 
   echo "✅ Symlinks created:"
   echo "   $INSTALL_DIR/start-parallel"
@@ -501,6 +520,9 @@ if [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "   $INSTALL_DIR/join-parallel"
   echo "   $INSTALL_DIR/end-parallel"
   echo "   $INSTALL_DIR/stop-parallel"
+  echo "   $INSTALL_DIR/worker-idle"
+  echo "   $INSTALL_DIR/worker-health"
+  echo "   $INSTALL_DIR/restart-worker"
 
   # Add to PATH if needed
   if [ "$PATH_OK" = false ]; then
@@ -608,6 +630,9 @@ if [ "$INSTALL_SCRIPTS" = true ] && [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "     → join-parallel: Rejoin existing session"
   echo "     → end-parallel: End session and clean up worktrees"
   echo "     → stop-parallel: Stop sessions (no cleanup)"
+  echo "     → worker-idle: Idle-vs-busy detection (REQUIRED by manager-handoff/resume)"
+  echo "     → worker-health: Per-worker health report"
+  echo "     → restart-worker: Restart a stuck worker"
 else
   echo "  ⏭️  Parallel agent scripts (skipped)"
 fi
@@ -700,6 +725,11 @@ rm ~/.local/bin/start-parallel
 rm ~/.local/bin/add-worker
 rm ~/.local/bin/remove-worker
 rm ~/.local/bin/join-parallel
+rm ~/.local/bin/end-parallel
+rm ~/.local/bin/stop-parallel
+rm ~/.local/bin/worker-idle
+rm ~/.local/bin/worker-health
+rm ~/.local/bin/restart-worker
 
 # Remove PATH (edit manually)
 # Remove aliases (edit manually)

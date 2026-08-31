@@ -23,7 +23,13 @@ This command installs the agents framework into your project:
 - **Files**: Optional symlinks in `~/.local/bin/`
   - `start-parallel` → Framework path to `start-parallel-agents.sh`
   - `join-parallel` → Framework path to `join-parallel-agents.sh`
-- **Purpose**: Terminal commands to manage parallel agents
+  - `end-parallel` → Framework path to `end-parallel-agents.sh`
+  - `stop-parallel` → Framework path to `stop-parallel-agents.sh`
+  - `worker-idle` → Framework path to `worker-idle.sh`
+- **Purpose**: Terminal commands to manage parallel agents. `worker-idle` is not optional in
+  practice — the manager workflows call it by bare name to distinguish an idle worker from a
+  busy one (a TUI shows an empty prompt box mid-turn, so reading the pane is unsafe). Leaving
+  it unlinked makes that check fail silently and a busy worker gets recorded as free.
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
 
@@ -173,7 +179,7 @@ Ask if they want global script access:
 ```
 Question: "Install parallel agent scripts globally?"
 Options:
-- "Yes, install scripts" - "Add start-parallel and join-parallel commands to ~/.local/bin"
+- "Yes, install scripts" - "Add start-parallel, join-parallel, end-parallel, stop-parallel and worker-idle commands to ~/.local/bin"
 - "No, skip scripts" - "Use scripts directly from .agent/scripts/ directory"
 ```
 
@@ -185,12 +191,22 @@ FRAMEWORK_PATH="<detected-framework-path>"
 # Ensure ~/.local/bin exists
 mkdir -p ~/.local/bin
 
-# Create symlinks
+# Create symlinks — link EVERY command .agent/scripts ships that the workflows invoke by
+# bare name, not just the two launchers. Linking a subset is what left `worker-idle` off
+# PATH while the manager docs told managers to run it (see plugins/autocoder/README.md):
+# the call then fails silently and the handoff cannot tell an idle worker from a busy one,
+# so the next manager dispatches over live work.
 ln -sf "$FRAMEWORK_PATH/.agent/scripts/start-parallel-agents.sh" ~/.local/bin/start-parallel
 ln -sf "$FRAMEWORK_PATH/.agent/scripts/join-parallel-agents.sh" ~/.local/bin/join-parallel
+ln -sf "$FRAMEWORK_PATH/.agent/scripts/end-parallel-agents.sh" ~/.local/bin/end-parallel
+ln -sf "$FRAMEWORK_PATH/.agent/scripts/stop-parallel-agents.sh" ~/.local/bin/stop-parallel
+ln -sf "$FRAMEWORK_PATH/.agent/scripts/worker-idle.sh" ~/.local/bin/worker-idle
 
 echo "✓ Installed: ~/.local/bin/start-parallel"
 echo "✓ Installed: ~/.local/bin/join-parallel"
+echo "✓ Installed: ~/.local/bin/end-parallel"
+echo "✓ Installed: ~/.local/bin/stop-parallel"
+echo "✓ Installed: ~/.local/bin/worker-idle   (idle-vs-busy detection; used by the manager workflows)"
 echo ""
 
 # Check if ~/.local/bin is in PATH
