@@ -73,6 +73,7 @@ OUT=$(printf '%s' "{
 }" | bash "$SL")
 assert_contains "context renders with 1M window" "ctx 47% of 1M" "$OUT"
 assert_contains "model renders" "Sonnet 5" "$OUT"
+assert_contains "repo name renders in a worktree" "repo repo" "$OUT"
 assert_contains "worktree name renders" "wt repo-wt-3" "$OUT"
 assert_contains "branch renders" "branch feature/issue-264" "$OUT"
 
@@ -106,6 +107,14 @@ assert_eq "empty payload prints nothing" "" "$OUT"
 OUT=$(printf '%s' "{\"workspace\":{\"current_dir\":\"$REPO\"}}" | bash "$SL")
 assert_contains "main checkout still shows branch" "branch main" "$OUT"
 assert_not_contains "main checkout shows no wt segment" "wt " "$OUT"
+# The repo segment is the half that must survive here: with no wt to name it,
+# it is the only thing identifying which project the pane belongs to.
+assert_contains "main checkout still shows repo" "repo repo" "$OUT"
+
+# ── Test 6b: outside a git repo the repo segment stays silent rather than
+#    naming whatever directory happens to be the parent.
+OUT=$(printf '%s' "{\"model\":{\"display_name\":\"Opus\"},\"workspace\":{\"current_dir\":\"$TMP\"}}" | bash "$SL")
+assert_eq "non-repo cwd renders no repo segment" "Opus" "$OUT"
 
 # ── Test 7: installer writes settings.json and preserves every other key.
 H="$TMP/home1"; mkdir -p "$H/.claude"

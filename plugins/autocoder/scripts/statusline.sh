@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Claude Code status line: context | memory | model | worktree | branch | quota
+# Claude Code status line: context | memory | model | repo | worktree | branch | quota
 #
 # Renders one line like:
-#   ctx 47% of 1M | mem 12 | Sonnet 5 | wt athena2-wt-3 | branch feature/issue-264
+#   ctx 47% of 1M | mem 12 | Sonnet 5 | repo athena2 | wt athena2-wt-3 | branch feature/issue-264
 #
 # In a swarm this is the manager's only cheap read on worker health. `tmux
 # capture-pane` shows it on every worker pane, so context exhaustion is visible
@@ -14,7 +14,7 @@
 #   - context_window.* is null before the first API call and after /compact
 #   - rate_limits.* exists only for Claude.ai Pro/Max sessions; on Vertex or
 #     a raw API key it is absent, and an absent quota must not render as 0%.
-#   - worktree/branch are silent outside a git repo (no error noise).
+#   - repo/worktree/branch are silent outside a git repo (no error noise).
 #
 # Installed to a stable path by install-statusline.sh; do not point settings.json
 # at this file directly, since its plugin directory is version-scoped and moves
@@ -54,13 +54,34 @@ fi
 model=$(j '.model.display_name // empty')
 [ -n "$model" ] && parts+=("$model")
 
+cwd=$(j '.workspace.current_dir // .cwd // empty')
+
+# --- repo --------------------------------------------------------------------
+# The repository, as distinct from the worktree. A worker sits in
+# `<repo>-wt-N`, and a manager reading a wall of panes needs to know WHICH
+# repo a worker belongs to -- with several swarms running, the worktree name
+# alone is easy to misread across projects.
+#
+# Derived from the common git dir rather than the toplevel: for a linked
+# worktree the toplevel is the worktree itself, while the common dir always
+# points into the main checkout (`/path/to/repo/.git`), so its parent is the
+# repo under both layouts. --path-format=absolute matters because a plain
+# checkout otherwise reports a bare relative `.git`.
+if [ -n "$cwd" ]; then
+  common=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute \
+    --git-common-dir 2>/dev/null)
+  if [ -n "$common" ]; then
+    repo=$(basename "$(dirname "$common")")
+    [ -n "$repo" ] && [ "$repo" != "/" ] && parts+=("repo $repo")
+  fi
+fi
+
 # --- worktree ------------------------------------------------------------
 # Prefer the explicit fields Claude Code provides (worktree.name for a
 # --worktree session, workspace.git_worktree for a linked worktree the
 # session merely happens to be in). Fall back to deriving it from git so a
 # plain worktree checkout -- which is what every autocoder worker runs in --
 # still shows a name instead of silence.
-cwd=$(j '.workspace.current_dir // .cwd // empty')
 wt=$(j '.worktree.name // .workspace.git_worktree // empty')
 if [ -z "$wt" ] && [ -n "$cwd" ]; then
   gitdir=$(git -C "$cwd" --no-optional-locks rev-parse --git-dir 2>/dev/null)
