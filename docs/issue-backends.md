@@ -106,6 +106,50 @@ written to the repo:**
 If a token is ever exposed (pasted into chat, committed by accident), revoke and
 rotate it at the provider.
 
+## Restricting the swarm to approved issues
+
+By default every open, unblocked issue is fair game. That is right for a repo
+whose whole backlog is meant to be worked, and wrong for one where the backlog
+mixes "yes, please" with "not yet, and definitely not by a robot". Without a
+gate the only way to hold an issue back is to give it a blocking label, which
+overloads labels that mean something else — `needs-design` on an issue that
+needs no design — and reads as a defect to anyone browsing the tracker.
+
+Set `requiredLabel` and approval becomes an explicit, positive act:
+
+```json
+{ "issueSource": "github", "requiredLabel": "swarm" }
+```
+
+Now an issue is claimable only if it carries the `swarm` label (a *tag* on
+Azure DevOps). Tag it and the workers may take it; leave it untagged and they
+will not, no matter how the issue is reached.
+
+The gate applies at two points, and the second is the one that matters:
+
+| Point | Effect |
+|---|---|
+| `list --state open`, `any-claimable` | the queue only offers approved issues |
+| `claim <number>` | an unapproved issue is refused, exit `1` |
+
+Filtering the queue alone would not be enough. Issues reach a worker by number
+from paths the queue never touches — a manager dispatch, `/fix N`, a resumed
+loop — so a queue-only gate looks correct in every listing while unapproved
+work still gets done. Refusing the claim is what makes the approval
+authoritative.
+
+`working` and `blocked` listings are deliberately **not** gated: an issue
+claimed before the gate was configured must stay visible to the manager rather
+than look like a worker that vanished.
+
+`AUTOCODER_REQUIRED_LABEL` overrides the config for one command. Setting it to
+a different label gates on that instead; setting it to the empty string turns
+the gate off entirely, so a one-off manual run needs no edit to committed
+config.
+
+Unset, there is no gate — every repo that has never configured `requiredLabel`
+behaves exactly as before.
+
 ## Configuration precedence
 
 For a given repo, `issue-config.sh` resolves the source as: explicit

@@ -63,6 +63,47 @@ BLOCKING_LABELS = frozenset({
 
 
 # ---------------------------------------------------------------------------
+# Approved-work gate
+# ---------------------------------------------------------------------------
+# Mirrors issue-approval-lib.sh for the shell backends. When a required label
+# is configured, an issue is claimable only if it carries that label, so
+# approval is an explicit positive act rather than the absence of a blocking
+# label. Unconfigured means no gate, which is the pre-existing behaviour.
+
+
+def required_label() -> str:
+    """The configured approval label, or "" when the gate is off.
+
+    An explicitly empty AUTOCODER_REQUIRED_LABEL disables the gate even when
+    the repo config sets one, so a one-off manual run needs no config edit.
+    """
+    env = os.environ.get("AUTOCODER_REQUIRED_LABEL")
+    if env is not None:
+        return env
+
+    try:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+    except Exception:
+        return ""
+    if not root:
+        return ""
+
+    config = Path(root) / ".autocoder.json"
+    try:
+        value = json.loads(config.read_text()).get("requiredLabel", "")
+    except Exception:
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def labels_approved(labels, required: str) -> bool:
+    return not required or required in (labels or [])
+
+
+# ---------------------------------------------------------------------------
 # Directory resolution
 # ---------------------------------------------------------------------------
 
@@ -242,6 +283,13 @@ def cmd_list(args):
                 labels = data.get("labels") or []
                 if args.label not in labels:
                     continue
+            # Only the claimable queue is gated. `working` and `blocked` are
+            # deliberately not: an issue claimed before the gate was configured
+            # must stay visible rather than look like a vanished worker.
+            if bucket == "open" and not labels_approved(
+                data.get("labels"), required_label()
+            ):
+                continue
             results.append(to_gh_json(data))
     if args.limit:
         results = results[:args.limit]
@@ -384,6 +432,28 @@ def cmd_create(args):
 def cmd_claim(args):
     issues_dir = get_issues_dir()
     src = issue_path(issues_dir, "open", args.number)
+    # Gate the claim itself, not just the queue. Issues reach a worker by
+    # number from several paths -- a manager dispatch, /fix N, a resumed loop
+    # -- and a filtered queue constrains none of them. Exit 1 is the clean
+    # negative callers already handle for a lost claim race.
+    required = required_label()
+    if required:
+        try:
+            data = parse_issue_file(src)
+        except FileNotFoundError:
+            sys.exit(1)
+        if not labels_approved(data.get("labels"), required):
+            print(
+                f"Issue #{args.number} is not approved for autonomous work: "
+                f"it does not carry the '{required}' label.",
+                file=sys.stderr,
+            )
+            print(
+                "Add the label to approve it, or unset requiredLabel in "
+                ".autocoder.json to disable the gate.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     _ensure_bucket(issues_dir, "working")
     dst = issue_path(issues_dir, "working", args.number)
     try:
@@ -436,8 +506,18 @@ def cmd_any_claimable(args):
     open_dir = issues_dir / "open"
     if not open_dir.is_dir():
         sys.exit(3)
+    required = required_label()
     for p in open_dir.glob("*.md"):
-        if not p.name.startswith("."):
+        if p.name.startswith("."):
+            continue
+        if not required:
+            sys.exit(0)
+        try:
+            data = parse_issue_file(p)
+        except FileNotFoundError:
+            # Concurrent claim renamed it out from under us; keep looking.
+            continue
+        if labels_approved(data.get("labels"), required):
             sys.exit(0)
     sys.exit(1)
 

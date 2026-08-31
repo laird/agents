@@ -30,6 +30,19 @@
 
 set -e
 
+# The approved-work gate: when a required label is configured, only issues
+# carrying it are claimable. See issue-approval-lib.sh.
+_igh_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-approval-lib.sh
+source "${_igh_DIR}/issue-approval-lib.sh"
+REQUIRED_LABEL="$(required_issue_label)"
+
+# Render the gate as a search qualifier, empty when the gate is off.
+_igh_required_search() {
+  [ -n "$REQUIRED_LABEL" ] || return 0
+  printf ' label:"%s"' "$REQUIRED_LABEL"
+}
+
 # Exclude each blocking label with `-label:"X"`. NOT `no:label "X"` — `no:label`
 # is a valueless qualifier meaning "issue has no labels at all", so that form
 # matches only unlabeled issues and silently hides every real issue, leaving the
@@ -53,7 +66,11 @@ cmd_list() {
   done
   local search=""
   case "$state" in
-    open)    search="$BLOCKING_SEARCH" ;;
+    # Only the claimable queue is gated. `working` and `blocked` deliberately
+    # are not: an issue claimed before the gate was configured must stay
+    # visible to the manager, and hiding in-flight work would read as the
+    # worker having vanished.
+    open)    search="$BLOCKING_SEARCH$(_igh_required_search)" ;;
     working) search='label:"working"' ;;
     blocked) search="$BLOCKED_LABEL_SEARCH" ;;
     closed)  args+=(--state closed) ;;
@@ -148,6 +165,19 @@ cmd_create() {
 # ── claim (best-effort) ────────────────────────────────────────────────────
 cmd_claim() {
   local n="$1"
+  # Gate the claim itself, not just the queue. Issues reach a worker by number
+  # from several paths -- a manager dispatch, /fix N, a resumed loop -- and a
+  # filtered queue does not constrain any of them. Refusing here is what makes
+  # the approval actually authoritative. Exit 1: a clean negative, the same
+  # code a lost claim race returns, so callers already handle it.
+  if [ -n "$REQUIRED_LABEL" ]; then
+    local labels
+    labels=$(gh issue view "$n" --json labels --jq '.labels[].name' 2>/dev/null) || exit 3
+    if ! issue_labels_approved "$labels"; then
+      issue_approval_refusal "$n" "$REQUIRED_LABEL"
+      exit 1
+    fi
+  fi
   gh issue edit "$n" --add-label working >/dev/null || exit 3
   # Best-effort: gh has no atomic single-writer label edit. See spec §4.
 }
@@ -162,7 +192,7 @@ cmd_release() {
 cmd_any_claimable() {
   local count
   count=$(gh issue list --state open \
-    --search "$BLOCKING_SEARCH" \
+    --search "$BLOCKING_SEARCH$(_igh_required_search)" \
     -L 1 --json number --jq 'length') || exit 3
   [ "$count" -gt 0 ]
 }

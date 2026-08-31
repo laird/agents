@@ -641,6 +641,26 @@ Every backend accepts the same 9 verbs:
 
 Note: `--priority` is translated to `--label` by `issue-fns.sh` before reaching backends. Backends only receive `--label`.
 
+### Restricting the Swarm to Approved Issues
+
+Set `requiredLabel` in `.autocoder.json` and workers may only claim issues
+carrying that label:
+
+```json
+{
+  "issueSource": "github",
+  "requiredLabel": "swarm"
+}
+```
+
+Approval becomes a positive act — tag an issue `swarm` and the swarm may take
+it — instead of the absence of a blocking label. The gate applies to the
+claimable queue *and* to `claim` itself, so it holds for issues dispatched by
+number as well (`/fix N`, a manager dispatch, a resumed loop). `working` and
+`blocked` listings stay ungated so in-flight work remains visible.
+`AUTOCODER_REQUIRED_LABEL` overrides it for one command; empty disables it.
+Unset, nothing changes. See [docs/issue-backends.md](docs/issue-backends.md).
+
 ### Registering a Custom Backend
 
 The built-in sources (`file`, `github`, `jira`, `ado`) need only `issueSource`. A custom backend additionally points `issueBackend` at an executable:

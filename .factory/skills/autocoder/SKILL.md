@@ -19,6 +19,7 @@ Use this skill when the user wants Droid to operate the repo's autonomous issue-
 - **CONTEXT COMPACTION IS MANDATORY (NON-NEGOTIABLE).** Before starting work on ANY new issue in a fix loop, you MUST clear/compact the session context (the Droid equivalent of Claude's `/compact`). Every issue, every time, no exceptions. Each issue starts from a fresh, compacted context; never carry over detailed investigation notes from a previous issue. Skipping this WILL exhaust the context window and crash the worker mid-issue. See "Context Management (MANDATORY)" in `plugins/autocoder/commands/fix.md`.
 - Prioritize: triage -> bugs -> regression failures -> approved enhancements -> proposals.
 - Respect blocking labels: `needs-approval`, `needs-design`, `needs-clarification`, `too-complex`.
+- If `requiredLabel` is set in `.autocoder.json`, only issues carrying that label (conventionally `swarm`) may be worked. A claim on an unapproved issue is refused with exit 1; that is a decision, not a failure — pick another issue and do not retry it.
 - Use `plugins/autocoder/scripts/regression-test.sh` for full regression runs when appropriate.
 - Use `scripts/append-to-history.sh` to log significant work.
 - Treat `AGENTS.md` as the primary configuration source; use `CLAUDE.md` only as legacy fallback.

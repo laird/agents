@@ -79,6 +79,13 @@ except Exception:
 PY
 }
 
+# The approved-work gate: when a required label is configured, only work items
+# carrying it as a tag are claimable. See issue-approval-lib.sh.
+_iado_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-approval-lib.sh
+source "${_iado_DIR}/issue-approval-lib.sh"
+REQUIRED_LABEL="$(required_issue_label)"
+
 ADO_ORG_URL="${ADO_ORG_URL:-$(_ado_cfg orgUrl)}"
 if [ -z "$ADO_ORG_URL" ]; then
   _ado_org="${ADO_ORG:-$(_ado_cfg org)}"
@@ -142,6 +149,10 @@ _ado_not_tags() {  # AND [System.Tags] NOT CONTAINS 'x' ... for each blocking ta
   for t in $ADO_BLOCKING_TAGS; do out="$out AND [System.Tags] NOT CONTAINS '$t'"; done
   printf '%s' "$out"
 }
+_ado_required_tag() { # AND [System.Tags] CONTAINS 'swarm', or nothing
+  [ -n "$REQUIRED_LABEL" ] || return 0
+  printf " AND [System.Tags] CONTAINS '%s'" "$REQUIRED_LABEL"
+}
 _ado_blocked_or() { # ([System.Tags] CONTAINS 'a' OR ...)
   local out="" t
   for t in $ADO_BLOCKED_TAGS; do [ -n "$out" ] && out="$out OR "; out="$out[System.Tags] CONTAINS '$t'"; done
@@ -151,7 +162,10 @@ _ado_blocked_or() { # ([System.Tags] CONTAINS 'a' OR ...)
 _ado_state_wiql() {
   local done_in; done_in=$(_ado_done_in)
   case "$1" in
-    open)    printf "SELECT [System.Id] FROM WorkItems WHERE [System.State] NOT IN (%s)%s" "$done_in" "$(_ado_not_tags)" ;;
+    # Gated at the single definition of "claimable" that both `list --state
+    # open` and any-claimable share.
+    open)    printf "SELECT [System.Id] FROM WorkItems WHERE [System.State] NOT IN (%s)%s%s" \
+               "$done_in" "$(_ado_not_tags)" "$(_ado_required_tag)" ;;
     working) printf "SELECT [System.Id] FROM WorkItems WHERE [System.State] NOT IN (%s) AND [System.Tags] CONTAINS 'working'" "$done_in" ;;
     blocked) printf "SELECT [System.Id] FROM WorkItems WHERE [System.State] NOT IN (%s) AND %s" "$done_in" "$(_ado_blocked_or)" ;;
     closed)  printf "SELECT [System.Id] FROM WorkItems WHERE [System.State] IN (%s)" "$done_in" ;;
@@ -385,7 +399,22 @@ PY
 }
 
 # ── claim / release (best-effort) ────────────────────────────────────────────
-cmd_claim()   { _ado_edit_tags "$1" "add:working"; }
+# Gate the claim itself, not just the queue: work items reach a worker by id
+# from paths the queue never filters (manager dispatch, /fix N, a resumed
+# loop). Exit 1 is the clean negative callers already handle.
+cmd_claim() {
+  if [ -n "$REQUIRED_LABEL" ]; then
+    _ado_request_ok GET "/_apis/wit/workitems/${1}?fields=System.Tags&api-version=${API_VERSION}"
+    local tags
+    tags=$(printf '%s' "$_ADO_BODY" | python3 -c \
+      'import json,sys; print(" ".join(t.strip() for t in ((json.load(sys.stdin).get("fields",{}) or {}).get("System.Tags") or "").split(";") if t.strip()))' 2>/dev/null) || exit 3
+    if ! issue_labels_approved "$tags"; then
+      issue_approval_refusal "$1" "$REQUIRED_LABEL"
+      exit 1
+    fi
+  fi
+  _ado_edit_tags "$1" "add:working"
+}
 cmd_release() { _ado_edit_tags "$1" "remove:working"; }
 
 # ── any-claimable ────────────────────────────────────────────────────────────

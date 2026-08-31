@@ -96,6 +96,13 @@ except Exception:
 PY
 }
 
+# The approved-work gate: when a required label is configured, only issues
+# carrying it are claimable. See issue-approval-lib.sh.
+_ijira_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-approval-lib.sh
+source "${_ijira_DIR}/issue-approval-lib.sh"
+REQUIRED_LABEL="$(required_issue_label)"
+
 JIRA_BASE_URL="${JIRA_BASE_URL:-$(_jira_cfg baseUrl)}"
 JIRA_PROJECT="${JIRA_PROJECT:-$(_jira_cfg project)}"
 JIRA_EMAIL="${JIRA_EMAIL:-}"
@@ -179,9 +186,18 @@ _jira_label_tuple() {
 # still returns issues that carry NO labels at all via the explicit
 # `labels is EMPTY` disjunct. Without it, `labels not in (...)` silently drops
 # unlabeled issues and the autocoder loop idles forever (cf. GitHub #57).
+# Gated here rather than at each call site: this is the single definition of
+# "claimable" that both `list --state open` and any-claimable share. Note the
+# required label also cancels the `labels is EMPTY` disjunct -- an unlabeled
+# issue cannot carry the approval label, so it must not slip through.
 _jira_open_jql() {
   local tuple
   tuple=$(_jira_label_tuple "$JIRA_BLOCKING_LABELS")
+  if [ -n "$REQUIRED_LABEL" ]; then
+    printf 'project = "%s" AND statusCategory != Done AND labels = "%s" AND labels not in %s' \
+      "$JIRA_PROJECT" "$REQUIRED_LABEL" "$tuple"
+    return 0
+  fi
   printf 'project = "%s" AND statusCategory != Done AND (labels is EMPTY OR labels not in %s)' \
     "$JIRA_PROJECT" "$tuple"
 }
@@ -518,6 +534,19 @@ PY
 cmd_claim() {
   local key
   key=$(_jira_key "$1")
+  # Gate the claim itself, not just the queue: issues reach a worker by number
+  # from paths the queue never filters (manager dispatch, /fix N, a resumed
+  # loop). Exit 1 is the clean negative callers already handle.
+  if [ -n "$REQUIRED_LABEL" ]; then
+    _jira_request_ok GET "/rest/api/2/issue/${key}?fields=labels"
+    local labels
+    labels=$(printf '%s' "$_JIRA_BODY" | python3 -c \
+      'import json,sys; print(" ".join(json.load(sys.stdin).get("fields",{}).get("labels") or []))' 2>/dev/null) || exit 3
+    if ! issue_labels_approved "$labels"; then
+      issue_approval_refusal "$1" "$REQUIRED_LABEL"
+      exit 1
+    fi
+  fi
   _jira_edit_labels "$key" "add:working"
   # Best-effort: Jira has no atomic single-writer label edit. See header note.
 }
