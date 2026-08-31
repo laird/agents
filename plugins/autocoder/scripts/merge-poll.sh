@@ -13,8 +13,11 @@
 #
 # Exit codes:
 #   0    merge finished successfully — same meaning as merge-to-integration.sh's own 0
-#   1    merge finished with a conflict/push failure (or died with no exit code recorded)
+#   1    merge finished with a push failure (or died with no exit code recorded)
 #   2    merge finished with the combined-tree tests failing
+#   3    merge conflict — left unresolved in the shared worktree; the caller resolves it
+#        directly (same meaning as merge-to-integration.sh's own 3) and only escalates to
+#        needs-clarification if ITS OWN resolution attempt also fails (#1766)
 #   75   still running — call this again next turn (EX_TEMPFAIL)
 #   64   no merge job recorded for this issue (never launched, or already reaped) (EX_USAGE)
 set -uo pipefail
