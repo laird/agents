@@ -67,6 +67,24 @@ resolve_worker_launch gemini "$REPO"
 assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
 
+# "No goal support" must be simulated through the real signal -- what `codex
+# features list` reports -- not by hiding probe-codex-goals.sh from the repo
+# tree. The probe now ships beside this lib and is found there, which is the
+# whole point: under an installed plugin there is no repo tree to hide it in.
+# Distinct fake versions keep the probe's /tmp/codex-goals-probe-<version>
+# cache from carrying a verdict between the two cases (or from the developer's
+# real codex).
+cat > "$TMP/bin/codex" <<'SH'
+#!/bin/sh
+case "$1" in
+  --version) echo "codex-cli 0.0.0-test-nogoals" ;;
+  features)  echo "goals    false" ;;
+esac
+exit 0
+SH
+chmod +x "$TMP/bin/codex"
+rm -f /tmp/codex-goals-probe-codex-cli-0.0.0-test-nogoals
+
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "shell" "Codex without goal support uses shell fallback"
 assert_eq "$WORKER_COMMAND_MODE" "shell" "Codex shell fallback command mode"
@@ -74,14 +92,14 @@ assert_eq "$MANAGER_LAUNCH_MODE" "shell" "Codex shell fallback manager mode"
 
 cat > "$TMP/bin/codex" <<'SH'
 #!/bin/sh
+case "$1" in
+  --version) echo "codex-cli 0.0.0-test-goals" ;;
+  features)  echo "goals    true" ;;
+esac
 exit 0
 SH
 chmod +x "$TMP/bin/codex"
-cat > "$REPO/scripts/probe-codex-goals.sh" <<'SH'
-#!/bin/sh
-exit 0
-SH
-chmod +x "$REPO/scripts/probe-codex-goals.sh"
+rm -f /tmp/codex-goals-probe-codex-cli-0.0.0-test-goals
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Codex with goal support launches interactively"
 assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Codex with goal support receives agent input"

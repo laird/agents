@@ -1,0 +1,796 @@
+#!/bin/bash
+# Start parallel AI agents using a terminal multiplexer and git worktrees
+# Supports both tmux and cmux multiplexers, and Claude, Gemini, and Codex agent frameworks
+#
+# Usage: start-parallel-agents.sh [num_agents] [options]
+#
+# Options:
+#   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
+#   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --issue-source file|github|jira|ado  Issue backend for this swarm run
+#   --issue-dir PATH       File issue directory when --issue-source file
+#   --route self|manager   Issue-routing mode (default: self). In manager mode
+#                          workers do NOT self-claim: they idle at a ready prompt
+#                          and only act on a manager-dispatched /autocoder:fix <N>.
+#   --manager-routing      Alias for --route manager
+#   --paused, --no-start, --idle
+#                          Create the swarm but do not start worker loops
+#   --no-worktrees         Run all agents in the same directory
+#
+# Examples:
+#   start-parallel-agents.sh 3 --mux tmux --agent claude
+#   start-parallel-agents.sh 4 --mux cmux --agent gemini
+#   start-parallel-agents.sh 3 --mux tmux --agent codex
+#   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused
+#   start-parallel-agents.sh 5 --mux tmux --agent claude --route manager
+#   start-parallel-agents.sh 2 --no-worktrees
+
+set -e
+
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_PATH" ]; do
+  SOURCE_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+  SOURCE_PATH="$(readlink "$SOURCE_PATH")"
+  [[ "$SOURCE_PATH" != /* ]] && SOURCE_PATH="$SOURCE_DIR/$SOURCE_PATH"
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
+AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# shellcheck source=worker-launch-lib.sh
+source "$SCRIPT_DIR/worker-launch-lib.sh"
+
+# Every pane reports ctx/mem/model/worktree/branch. Advisory: never blocks launch.
+ensure_statusline --quiet
+# shellcheck source=issue-source-lib.sh
+source "$SCRIPT_DIR/issue-source-lib.sh"
+# shellcheck source=swarm-manifest-lib.sh
+source "$SCRIPT_DIR/swarm-manifest-lib.sh"
+# shellcheck source=mux-send-lib.sh
+source "$SCRIPT_DIR/mux-send-lib.sh"
+
+# Defaults
+NUM_AGENTS=3
+USE_WORKTREES=true
+MUX=""
+AGENT=""
+PAUSED=false
+CLI_ISSUE_SOURCE=""
+CLI_ISSUE_DIR=""
+ROUTE="self"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --mux)
+      MUX="$2"
+      shift 2
+      ;;
+    --agent)
+      AGENT="$2"
+      shift 2
+      ;;
+    --no-worktrees)
+      USE_WORKTREES=false
+      shift
+      ;;
+    --paused|--no-start|--idle)
+      PAUSED=true
+      shift
+      ;;
+    --issue-source)
+      CLI_ISSUE_SOURCE="$2"
+      shift 2
+      ;;
+    --issue-dir)
+      CLI_ISSUE_DIR="$2"
+      shift 2
+      ;;
+    --route)
+      ROUTE="$2"
+      shift 2
+      ;;
+    --manager-routing)
+      ROUTE="manager"
+      shift
+      ;;
+    [0-9]*)
+      NUM_AGENTS="$1"
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: start-parallel-agents.sh [num_agents] [options]"
+      echo ""
+      echo "Options:"
+      echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
+      echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
+      echo "  --issue-dir PATH       File issue directory when --issue-source file"
+      echo "  --route self|manager   Issue-routing mode (default: self). In manager mode"
+      echo "                         workers do NOT self-claim — they idle at a ready prompt"
+      echo "                         and only act on a manager-dispatched /autocoder:fix <N>."
+      echo "  --manager-routing      Alias for --route manager"
+      echo "  --paused, --no-start, --idle"
+      echo "                         Create swarm but do not start worker or manager loops"
+      echo "  --no-worktrees         Run all agents in the same directory"
+      echo ""
+      echo "Examples:"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
+      echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
+      echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"
+      echo "  start-parallel-agents.sh 5 --mux tmux --agent claude --route manager"
+      exit 0
+      ;;
+    *)
+      echo "❌ Unknown argument: $1" >&2
+      echo "   Use --help for usage information" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Validate routing mode
+case "$ROUTE" in
+  self|manager) ;;
+  *)
+    echo "❌ Error: Unknown route '$ROUTE'. Use 'self' or 'manager'" >&2
+    exit 1
+    ;;
+esac
+
+# In manager-routing mode the manager (`/autocoder:monitor-workers`) is the SINGLE
+# assigner: workers are launched WITHOUT the self-claim fix-loop, so they never
+# select their own issue (zero worker-vs-worker claim races). They idle at a ready
+# prompt and only act on a manager-dispatched `/autocoder:fix <N>`.
+SEND_WORKER_LOOP=true
+if [ "$ROUTE" = "manager" ]; then
+  SEND_WORKER_LOOP=false
+fi
+
+# Auto-detect multiplexer if not specified.
+# Prefer cmux only when it is actually running — see cmux_is_running().
+if [ -z "$MUX" ]; then
+  if cmux_is_running; then
+    MUX="cmux"
+  elif command -v tmux &> /dev/null; then
+    MUX="tmux"
+    if command -v cmux &> /dev/null; then
+      echo "ℹ️  cmux installed but not running — falling back to tmux"
+    fi
+  else
+    echo "❌ Error: No terminal multiplexer found." >&2
+    echo "" >&2
+    echo "Install tmux or cmux, then re-run:" >&2
+    echo "" >&2
+    echo "  tmux  (recommended — available on all platforms)" >&2
+    echo "    macOS:   brew install tmux" >&2
+    echo "    Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+    echo "             sudo dnf install tmux  (Fedora/RHEL)" >&2
+    echo "    Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+    echo "" >&2
+    echo "  cmux  (macOS GUI terminal multiplexer)" >&2
+    echo "    macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "    Info:    https://manaflow.ai/cmux" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# Validate multiplexer choice
+case "$MUX" in
+  tmux|cmux)
+    if ! command -v "$MUX" &> /dev/null; then
+      echo "❌ Error: $MUX is not installed." >&2
+      echo "" >&2
+      case "$MUX" in
+        tmux)
+          echo "Install tmux:" >&2
+          echo "  macOS:   brew install tmux" >&2
+          echo "  Linux:   sudo apt install tmux  (Debian/Ubuntu)" >&2
+          echo "           sudo dnf install tmux  (Fedora/RHEL)" >&2
+          echo "  Docs:    https://github.com/tmux/tmux/wiki/Installing" >&2
+          ;;
+        cmux)
+          echo "Install cmux:" >&2
+          echo "  macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+          echo "  Info:    https://manaflow.ai/cmux" >&2
+          echo "" >&2
+          echo "  (cmux is macOS-only; use --mux tmux on Linux)" >&2
+          ;;
+      esac
+      echo "" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+    exit 1
+    ;;
+esac
+
+# Auto-detect agent framework if not specified
+if [ -z "$AGENT" ]; then
+  if command -v claude &> /dev/null; then
+    AGENT="claude"
+  elif command -v gemini &> /dev/null; then
+    AGENT="gemini"
+  elif command -v codex &> /dev/null; then
+    AGENT="codex"
+  elif command -v droid &> /dev/null; then
+    AGENT="droid"
+  else
+    echo "❌ Error: No agent framework found" >&2
+    echo "" >&2
+    echo "Install one of the following:" >&2
+    echo "  Claude Code: https://claude.ai/download" >&2
+    echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
+    echo "  Codex CLI:   codex" >&2
+    echo "  Droid CLI:   https://docs.factory.ai/" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# Validate agent choice and set launch/loop commands
+case "$AGENT" in
+  claude)
+    if ! command -v claude &> /dev/null; then
+      echo "❌ Error: claude command is not installed" >&2
+      echo "   Install Claude Code: https://claude.ai/download" >&2
+      exit 1
+    fi
+    ;;
+  gemini)
+    if ! command -v gemini &> /dev/null; then
+      echo "❌ Error: gemini command is not installed" >&2
+      echo "   Install Gemini CLI: https://github.com/google-gemini/gemini-cli" >&2
+      exit 1
+    fi
+    ;;
+  codex)
+    if ! command -v codex &> /dev/null; then
+      echo "❌ Error: codex command is not installed" >&2
+      exit 1
+    fi
+    ;;
+  droid)
+    if ! command -v droid &> /dev/null; then
+      echo "❌ Error: droid command is not installed" >&2
+      echo "   Install Droid: https://docs.factory.ai/" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
+    exit 1
+    ;;
+esac
+
+resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
+if [ "$AGENT" = "codex" ]; then
+  if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    echo "✅ Codex /goal available — using native goal loop"
+  else
+    echo "⚠️  Codex /goal not available — using shell loop fallback"
+  fi
+fi
+resolve_manager_readiness_mode "$AGENT"
+
+# Validate we're in a git repo (if using worktrees)
+if [ "$USE_WORKTREES" = true ]; then
+  if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo "❌ Error: Not in a git repository" >&2
+    echo "   Use --no-worktrees flag to run without git worktrees" >&2
+    exit 1
+  fi
+fi
+
+# Get project info
+PROJECT_ROOT=$(pwd)
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+SESSION_NAME="${AGENT}-${PROJECT_NAME}"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+
+resolve_effective_issue_source "$CLI_ISSUE_SOURCE" "$CLI_ISSUE_DIR" "$(resolve_main_worktree)" || exit 1
+
+# Generate shared task list ID for coordination
+TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
+
+echo "🚀 Starting parallel agent system"
+echo "   Project: $PROJECT_NAME"
+echo "   Main path: $PROJECT_ROOT"
+echo "   Num agents: $NUM_AGENTS"
+echo "   Multiplexer: $MUX"
+echo "   Agent framework: $AGENT"
+echo "   Issue source: $ISSUE_SOURCE"
+if [ "$ISSUE_SOURCE" = "file" ]; then
+  echo "   Issue dir: $ISSUE_DIR_PATH"
+fi
+echo "   Task list ID: $TASK_LIST_ID"
+echo "   Branch: $CURRENT_BRANCH"
+echo "   Routing mode: $ROUTE$([ "$ROUTE" = manager ] && echo " (manager is the sole assigner; workers do not self-claim)")"
+if [ "$PAUSED" = true ]; then
+  echo "   Mode: paused (workers will not pull issues yet)"
+fi
+echo ""
+
+# Create worktrees if needed
+WORKTREE_PATHS=()
+
+if [ "$USE_WORKTREES" = true ]; then
+  echo "📁 Setting up git worktrees..."
+
+  # Create N worktrees for N agents (all workers in worktrees)
+  for i in $(seq 1 $NUM_AGENTS); do
+    WORKTREE_PATH="${PROJECT_ROOT}-wt-${i}"
+    WORKTREE_BRANCH="${CURRENT_BRANCH}-wt-${i}"
+
+    if [ -d "$WORKTREE_PATH" ]; then
+      echo "   ✓ Worktree already exists: $WORKTREE_PATH"
+    else
+      echo "   Creating worktree: $WORKTREE_PATH"
+
+      # Create branch if it doesn't exist
+      if ! git show-ref --verify --quiet "refs/heads/$WORKTREE_BRANCH"; then
+        git branch "$WORKTREE_BRANCH" "$CURRENT_BRANCH"
+      fi
+
+      git worktree add "$WORKTREE_PATH" "$WORKTREE_BRANCH"
+    fi
+
+    WORKTREE_PATHS+=("$WORKTREE_PATH")
+  done
+
+  # Replicate .agent symlink to worktrees if it exists (for Gemini/Antigravity)
+  if [ -L "$PROJECT_ROOT/.agent" ]; then
+    AGENT_TARGET=$(readlink "$PROJECT_ROOT/.agent")
+    echo ""
+    echo "📁 Detected .agent/ symlink, replicating to worktrees..."
+
+    for i in $(seq 1 $NUM_AGENTS); do
+      WORKTREE_PATH="${WORKTREE_PATHS[$((i-1))]}"
+
+      if [ ! -L "$WORKTREE_PATH/.agent" ]; then
+        ln -s "$AGENT_TARGET" "$WORKTREE_PATH/.agent"
+        echo "   ✓ Created symlink in worktree $i: .agent -> $AGENT_TARGET"
+      else
+        echo "   ✓ Symlink already exists in worktree $i"
+      fi
+    done
+  fi
+
+  echo ""
+else
+  echo "⚠️  Running without worktrees (all agents in same directory)"
+  echo ""
+fi
+
+READY_REL="$SWARM_STATE_DIR/${SESSION_NAME}.ready.txt"
+READY_FILE="$PROJECT_ROOT/$READY_REL"
+MANIFEST_PATH=$(manifest_path_for_session "$PROJECT_ROOT" "$SESSION_NAME")
+
+write_ready_file() {
+  mkdir -p "$(dirname "$READY_FILE")"
+  cat > "$READY_FILE" <<EOF
+The autocoder swarm is ready and paused.
+
+Workers have been configured, but they are not pulling issues yet.
+The manager agent was not launched because paused mode keeps manager
+instructions visible without submitting a manager prompt.
+
+Issue source: $ISSUE_SOURCE
+Session: $SESSION_NAME
+Readiness file: $READY_REL
+
+From this shell you can start workers:
+- add-worker
+- add-worker 2
+
+To review issues or run manager slash commands, launch the manager agent
+manually in this pane, then use:
+- /list-issues
+- /review-blocked
+- /monitor-loop
+EOF
+}
+
+send_issue_env_tmux() {
+  local target="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_tmux_command "$target" "$line"
+  done < <(issue_env_exports)
+}
+
+send_issue_env_cmux() {
+  local workspace="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_cmux_command "$workspace" "$line"
+  done < <(issue_env_exports)
+}
+
+# ============================================================================
+# TMUX MODE
+# ============================================================================
+if [ "$MUX" = "tmux" ]; then
+
+  # Check if session already exists
+  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "⚠️  Session '$SESSION_NAME' already exists"
+    echo "   Attaching to existing session..."
+    tmux attach-session -t "$SESSION_NAME"
+    exit 0
+  fi
+
+  # Create tmux session with first window (parallel agents)
+  echo "🖥️  Creating tmux session: $SESSION_NAME"
+  # Capture the window id (@N) rather than assuming index 0: tmux honours the
+  # user's `base-index` setting, so a `base-index 1` config makes every
+  # hardcoded ":0" target fail with "can't find window: 0".
+  AGENTS_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "agents" -P -F '#{window_id}')
+  WORKER_TARGETS=()
+  WORKER_JSONS=()
+
+  # First pane (leftmost) - worker 1 in wt-1
+  echo "   Setting up worker agent 1..."
+  PANE_ID=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{pane_id}')
+  WORKER_TARGETS+=("$PANE_ID")
+  if [ "$USE_WORKTREES" = true ]; then
+    send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'"
+    WORKER_DIR="${WORKTREE_PATHS[0]}"
+  else
+    send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+    WORKER_DIR="$PROJECT_ROOT"
+  fi
+  send_issue_env_tmux "$PANE_ID"
+
+  # Set environment variables for Claude Code coordination
+  if [ "$AGENT" = "claude" ]; then
+    send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+    send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+    send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
+  fi
+  WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
+
+  # Create panes for remaining workers
+  for i in $(seq 2 $NUM_AGENTS); do
+    echo "   Setting up worker agent $i..."
+    PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
+    WORKER_TARGETS+=("$PANE_ID")
+
+    if [ "$USE_WORKTREES" = true ]; then
+      send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[$((i-1))]}'"
+      WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
+    else
+      send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+      WORKER_DIR="$PROJECT_ROOT"
+    fi
+    send_issue_env_tmux "$PANE_ID"
+
+    if [ "$AGENT" = "claude" ]; then
+      send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
+    fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
+  done
+
+  # Balance the panes to make them equal width
+  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
+
+  # Launch agent in each pane sequentially with individual waits
+  echo ""
+  echo "🤖 Starting $AGENT sessions..."
+
+  for i in $(seq 0 $((NUM_AGENTS - 1))); do
+    echo "   Starting worker $((i+1))/$NUM_AGENTS..."
+    target="${WORKER_TARGETS[$i]}"
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
+      send_tmux_command "$target" "$AGENT_LAUNCH_CMD"
+      sleep 5
+      WORKER_JSONS[$i]="$(echo "${WORKER_JSONS[$i]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
+    fi
+  done
+
+  # Wait for all instances to be fully ready
+  echo "   Waiting for all instances to stabilize..."
+  sleep 3
+
+  if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
+    # Send $WORKER_CMD command to agents ONE AT A TIME with full initialization wait
+    echo "   Starting $WORKER_CMD in all agents (sequential)..."
+    for i in $(seq 0 $((NUM_AGENTS - 1))); do
+      echo "   → Agent $((i+1)): sending $WORKER_CMD..."
+      send_tmux_text_enter "${WORKER_TARGETS[$i]}" "$WORKER_CMD"
+
+      # Wait for THIS agent to fully process $WORKER_CMD before starting next
+      echo "   → Agent $((i+1)): waiting for initialization..."
+      sleep 10
+    done
+    echo "   All agents initialized"
+  elif [ "$PAUSED" = false ]; then
+    # Manager-routing mode: workers stay idle at a ready prompt (no self-claim
+    # fix-loop). The manager dispatches /autocoder:fix <N> to each idle worker.
+    echo "   Manager-routing mode: workers idle at ready prompt (no self-claim loop)"
+  else
+    echo "   Paused mode: worker loop commands were not sent"
+  fi
+
+  # Create second window for review/planning (single pane)
+  echo ""
+  echo "📋 Setting up review/planning window..."
+  REVIEW_WINDOW=$(tmux new-window -t "$SESSION_NAME" -n "review" -P -F '#{window_id}')
+  MANAGER_TARGET=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
+
+  # Set up review window
+  echo "   Starting coordinator..."
+  send_tmux_command "$MANAGER_TARGET" "cd '$PROJECT_ROOT'"
+  send_issue_env_tmux "$MANAGER_TARGET"
+
+  # Thread routing mode to the manager loop so /autocoder:monitor-workers knows
+  # whether it is the sole assigner (manager) or a co-monitor of self-claiming
+  # workers (self). Exported before the REPL launches so the agent inherits it.
+  send_tmux_command "$MANAGER_TARGET" "export AUTOCODER_ROUTE='$ROUTE'"
+
+  if [ "$AGENT" = "claude" ]; then
+    send_tmux_command "$MANAGER_TARGET" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+  fi
+
+  if [ "$PAUSED" = false ]; then
+    if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
+      # MANAGER_COMMAND_MODE=argv passes the manager prompt as an argument to the
+      # launch command instead of typing it into the TUI after a fixed sleep.
+      # `claude --dangerously-skip-permissions` opens a consent dialog whose
+      # default selection is "No, exit". A blind post-launch Enter answers that
+      # dialog rather than submitting the prompt, so the manager exits to a bare
+      # shell and the review window looks like an unrelated login session. With
+      # the prompt in argv there is no stray Enter: the dialog waits for a real
+      # keypress and the prompt runs once it is accepted.
+      if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
+        send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
+      else
+        send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD"
+        sleep 5
+        send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
+      fi
+    else
+      send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
+    fi
+  else
+    write_ready_file
+    send_tmux_command "$MANAGER_TARGET" "cat '$READY_FILE'"
+    WORKERS_JSON=$(printf '%s\n' "${WORKER_JSONS[@]}" | json_array_from_lines)
+    MANAGER_JSON=$(manifest_manager_json shell false shell "$READY_REL" "$MANAGER_TARGET" "")
+    write_paused_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+      "$ISSUE_SOURCE" "$ISSUE_SOURCE_ORIGIN" "${ISSUE_BACKEND:-}" "${ISSUE_DIR_PATH:-}" "$TASK_LIST_ID" \
+      "$CURRENT_BRANCH" "$WORKERS_JSON" "$MANAGER_JSON"
+  fi
+
+  # Select the first window (agents) by default
+  tmux select-window -t "$AGENTS_WINDOW"
+
+  # Report the real window indexes: they follow the user's `base-index`.
+  AGENTS_WINDOW_INDEX=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{window_index}')
+  REVIEW_WINDOW_INDEX=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{window_index}')
+
+  echo ""
+  echo "✅ Parallel agent system started!"
+  echo ""
+  echo "📊 Session Info:"
+  echo "   Session name: $SESSION_NAME"
+  echo "   Multiplexer: tmux"
+  echo "   Agent framework: $AGENT"
+  echo "   Task list ID: $TASK_LIST_ID"
+  if [ "$PAUSED" = true ]; then
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents configured and paused"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager readiness instructions"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo ""
+    echo "The swarm is ready for issue review and worker start commands:"
+    echo "   add-worker"
+    echo "   add-worker 2"
+  elif [ "$SEND_WORKER_LOOP" = true ]; then
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents in worktrees running $WORKER_CMD"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager in main repo running $MANAGER_CMD"
+  else
+    echo "   Window $AGENTS_WINDOW_INDEX: $NUM_AGENTS worker agents idle (manager-routing; no self-claim loop)"
+    echo "   Window $REVIEW_WINDOW_INDEX: Manager in main repo running $MANAGER_CMD (sole assigner)"
+  fi
+  echo ""
+  echo "🔧 Useful tmux commands:"
+  echo "   Switch windows: Ctrl+b then $AGENTS_WINDOW_INDEX or $REVIEW_WINDOW_INDEX"
+  echo "   Detach: Ctrl+b then d"
+  echo "   Reattach: tmux attach -t $SESSION_NAME"
+  echo "   Kill session: tmux kill-session -t $SESSION_NAME"
+  echo ""
+  echo "📌 To join this session later, use:"
+  echo "   tmux attach -t $SESSION_NAME"
+  echo ""
+
+  # Attach to the session
+  tmux attach-session -t "$SESSION_NAME"
+
+# ============================================================================
+# CMUX MODE
+# ============================================================================
+elif [ "$MUX" = "cmux" ]; then
+
+  # Verify cmux is running (it's a GUI app, must be open)
+  if ! cmux ping &>/dev/null; then
+    echo "❌ Error: cmux is not running" >&2
+    echo "   Please launch cmux.app first, then re-run this script" >&2
+    exit 1
+  fi
+
+  # Extract workspace ref (e.g. "workspace:3") from "OK workspace:3" output
+  parse_ws_ref() {
+    echo "$1" | grep -o 'workspace:[0-9]*'
+  }
+
+  WORKER_WS_REFS=()
+  WORKER_JSONS=()
+
+  # --- Create one workspace per worker agent ---
+  echo "🤖 Starting $AGENT worker sessions..."
+  echo ""
+
+  for i in $(seq 1 $NUM_AGENTS); do
+    echo "   Setting up worker agent $i/$NUM_AGENTS..."
+
+    # Create a new workspace in the worktree directory
+    if [ "$USE_WORKTREES" = true ]; then
+      WS_OUTPUT=$(cmux new-workspace --cwd "${WORKTREE_PATHS[$((i-1))]}")
+      WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
+    else
+      WS_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
+      WORKER_DIR="$PROJECT_ROOT"
+    fi
+    WS_REF=$(parse_ws_ref "$WS_OUTPUT")
+    echo "   Created $WS_REF"
+
+    if [ -z "$WS_REF" ]; then
+      echo "   ⚠️  Could not parse workspace ref from: $WS_OUTPUT"
+      continue
+    fi
+
+    WORKER_WS_REFS+=("$WS_REF")
+    sleep 1
+
+    # Rename workspace: wt<N>-<project>
+    cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
+
+    # Set environment variables for Claude Code coordination
+    send_issue_env_cmux "$WS_REF"
+    if [ "$AGENT" = "claude" ]; then
+      send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_cmux_command "$WS_REF" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
+      sleep 0.5
+    fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "$WS_REF" paused)")
+
+    # Launch agent
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
+      echo "   Starting $AGENT in worker $i..."
+      send_cmux_command "$WS_REF" "$AGENT_LAUNCH_CMD"
+      sleep 5
+      WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
+    fi
+
+    if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
+      # Send worker command
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      send_cmux_command "$WS_REF" "$WORKER_CMD"
+
+      echo "   → Worker $i: waiting for initialization..."
+      sleep 10
+    fi
+  done
+
+  if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
+    echo "   All workers initialized"
+  elif [ "$PAUSED" = false ]; then
+    # Manager-routing mode: workers idle at a ready prompt; the manager dispatches
+    # /autocoder:fix <N> to each idle worker (no self-claim fix-loop).
+    echo "   Manager-routing mode: workers idle at ready prompt (no self-claim loop)"
+  else
+    echo "   Paused mode: worker loop commands were not sent"
+  fi
+
+  # --- Review Workspace ---
+  echo ""
+  echo "📋 Setting up review/planning workspace..."
+  REVIEW_OUTPUT=$(cmux new-workspace --cwd "$PROJECT_ROOT")
+  MANAGER_WS_REF=$(parse_ws_ref "$REVIEW_OUTPUT")
+  echo "   Created $MANAGER_WS_REF"
+  sleep 1
+
+  if [ -n "$MANAGER_WS_REF" ]; then
+    # Manager workspace: manager-<project> (same pattern as wt<N>-<project> workers)
+    cmux rename-workspace --workspace "$MANAGER_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
+
+    if [ "$AGENT" = "claude" ]; then
+      send_issue_env_cmux "$MANAGER_WS_REF"
+      send_cmux_command "$MANAGER_WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      sleep 0.5
+    else
+      send_issue_env_cmux "$MANAGER_WS_REF"
+    fi
+
+    # Thread routing mode to the manager loop (see tmux path for rationale).
+    send_cmux_command "$MANAGER_WS_REF" "export AUTOCODER_ROUTE='$ROUTE'"
+
+    if [ "$PAUSED" = false ]; then
+      if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
+        echo "   Starting coordinator..."
+        # See the tmux path for why argv mode exists.
+        if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
+        else
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD"
+          sleep 5
+          echo "   → Manager: sending $MANAGER_CMD..."
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
+        fi
+      else
+        echo "   → Manager: sending $MANAGER_CMD..."
+        send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
+      fi
+    else
+      write_ready_file
+      send_cmux_command "$MANAGER_WS_REF" "cat '$READY_FILE'"
+      WORKERS_JSON=$(printf '%s\n' "${WORKER_JSONS[@]}" | json_array_from_lines)
+      MANAGER_JSON=$(manifest_manager_json shell false shell "$READY_REL" "" "$MANAGER_WS_REF")
+      write_paused_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+        "$ISSUE_SOURCE" "$ISSUE_SOURCE_ORIGIN" "${ISSUE_BACKEND:-}" "${ISSUE_DIR_PATH:-}" "$TASK_LIST_ID" \
+        "$CURRENT_BRANCH" "$WORKERS_JSON" "$MANAGER_JSON"
+    fi
+  else
+    echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
+  fi
+
+  # Switch back to the first worker workspace
+  if [ -n "${WORKER_WS_REFS[0]}" ]; then
+    cmux select-workspace --workspace "${WORKER_WS_REFS[0]}" >/dev/null || true
+  fi
+
+  echo ""
+  echo "✅ Parallel agent system started!"
+  echo ""
+  echo "📊 Session Info:"
+  echo "   Multiplexer: cmux"
+  echo "   Agent framework: $AGENT"
+  echo "   Task list ID: $TASK_LIST_ID"
+  if [ "$PAUSED" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces configured and paused"
+    echo "   1 manager workspace with readiness instructions"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo ""
+    echo "The swarm is ready for issue review and worker start commands:"
+    echo "   add-worker"
+    echo "   add-worker 2"
+  elif [ "$SEND_WORKER_LOOP" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
+    echo "   1 manager workspace running $MANAGER_CMD"
+  else
+    echo "   $NUM_AGENTS worker workspaces idle (manager-routing; no self-claim loop)"
+    echo "   1 manager workspace running $MANAGER_CMD (sole assigner)"
+  fi
+  echo ""
+  echo "   Worker workspaces: ${WORKER_WS_REFS[*]}"
+  if [ -n "$MANAGER_WS_REF" ]; then
+    echo "   Review workspace: $MANAGER_WS_REF"
+  fi
+  echo ""
+  echo "🔧 Useful cmux commands:"
+  echo "   List workspaces:  cmux list-workspaces"
+  echo "   List panes:       cmux list-panes --workspace <ref>"
+  echo "   Read screen:      cmux read-screen --workspace <ref>"
+  echo "   Send text:        cmux send --workspace <ref> \"text\""
+  echo "   Send enter:       cmux send-key --workspace <ref> enter"
+  echo "   Close workspace:  cmux close-workspace --workspace <ref>"
+  echo ""
+
+fi
