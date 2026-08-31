@@ -17,6 +17,9 @@
 # MANAGER_LAUNCH_CMD:  command that starts the manager agent REPL, or empty.
 # MANAGER_CMD:         command that starts manager monitoring.
 # MANAGER_LAUNCH_MODE: interactive|shell
+# MANAGER_COMMAND_MODE: argv|agent-input|shell -- how MANAGER_CMD reaches the
+#                      manager. `argv` appends it to MANAGER_LAUNCH_CMD instead of
+#                      typing it into the TUI after launch; see start-parallel-agents.sh.
 
 # Directory this lib was sourced from. Scripts that ship alongside it (e.g.
 # claude-worker-loop.sh) MUST be resolved from here, not from repo_root: callers
@@ -51,6 +54,7 @@ resolve_worker_launch() {
   MANAGER_LAUNCH_CMD=""
   MANAGER_CMD=""
   MANAGER_LAUNCH_MODE="shell"
+  MANAGER_COMMAND_MODE="shell"
 
   case "$agent" in
     claude)
@@ -71,6 +75,7 @@ resolve_worker_launch() {
       MANAGER_LAUNCH_CMD="claude --dangerously-skip-permissions --model $MANAGER_MODEL"
       MANAGER_CMD="/autocoder:monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
+      MANAGER_COMMAND_MODE="argv"
       ;;
     gemini)
       # Workers: interactive Gemini session running /fix-loop (matches .agent/workflows/).
@@ -82,6 +87,7 @@ resolve_worker_launch() {
       MANAGER_LAUNCH_CMD="gemini --sandbox=false"
       MANAGER_CMD="/monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
+      MANAGER_COMMAND_MODE="agent-input"
       ;;
     codex)
       local probe_script="$repo_root/scripts/probe-codex-goals.sh"
@@ -93,6 +99,7 @@ resolve_worker_launch() {
         MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
         MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
         MANAGER_LAUNCH_MODE="interactive"
+        MANAGER_COMMAND_MODE="agent-input"
       else
         WORKER_CMD="bash '$repo_root/scripts/codex-fix-loop.sh'"
         WORKER_LAUNCH_MODE="shell"

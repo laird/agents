@@ -540,10 +540,24 @@ if [ "$MUX" = "tmux" ]; then
 
   if [ "$PAUSED" = false ]; then
     if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
-      send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD"
-      sleep 5
+      # MANAGER_COMMAND_MODE=argv passes the manager prompt as an argument to the
+      # launch command instead of typing it into the TUI after a fixed sleep.
+      # `claude --dangerously-skip-permissions` opens a consent dialog whose
+      # default selection is "No, exit". A blind post-launch Enter answers that
+      # dialog rather than submitting the prompt, so the manager exits to a bare
+      # shell and the review window looks like an unrelated login session. With
+      # the prompt in argv there is no stray Enter: the dialog waits for a real
+      # keypress and the prompt runs once it is accepted.
+      if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
+        send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
+      else
+        send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD"
+        sleep 5
+        send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
+      fi
+    else
+      send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
     fi
-    send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
   else
     write_ready_file
     send_tmux_command "$MANAGER_TARGET" "cat '$READY_FILE'"
@@ -711,11 +725,19 @@ elif [ "$MUX" = "cmux" ]; then
     if [ "$PAUSED" = false ]; then
       if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
         echo "   Starting coordinator..."
-        send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD"
-        sleep 5
+        # See the tmux path for why argv mode exists.
+        if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
+        else
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD"
+          sleep 5
+          echo "   → Manager: sending $MANAGER_CMD..."
+          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
+        fi
+      else
+        echo "   → Manager: sending $MANAGER_CMD..."
+        send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
       fi
-      echo "   → Manager: sending $MANAGER_CMD..."
-      send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
     else
       write_ready_file
       send_cmux_command "$MANAGER_WS_REF" "cat '$READY_FILE'"
