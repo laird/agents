@@ -1123,7 +1123,8 @@ if [ "$MERGE_MODE" = "pr" ]; then
 else
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  # leaves conflicts on disk for the caller to self-resolve, escalating to a label
+  # only on a second failure (#1766), instead of stranding work on main-wt-N).
   # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
   # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
@@ -1137,8 +1138,8 @@ else
   # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
   # sleep-loop packed into a single call (that just relocates the 2-minute
   # problem into the loop itself). Each call sleeps ~60s then reports back:
-  #   exit 75        → still running; issue this exact line again next turn
-  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  #   exit 75            → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 / 3 → finished; same contract merge-to-integration.sh always had
   # merge-launch.sh refuses to start a duplicate for the same issue, so if you
   # land back on this step after a restart, relaunching is a safe no-op and
   # polling below just resumes the job already in flight.
@@ -1147,6 +1148,43 @@ else
   if [ "$MERGE_EXIT" -eq 75 ]; then
     echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
     exit 75
+  fi
+  if [ "$MERGE_EXIT" -eq 3 ]; then
+    # Conflict left ON DISK by merge-to-integration.sh (#1766) — this worker just wrote
+    # the fix and has full context, so resolve it directly instead of escalating on the
+    # first failure. Escalate to needs-clarification only if THIS attempt also fails.
+    echo "⚠️  Merge conflict on feature/issue-${ISSUE_NUM} — resolving directly before escalating."
+    git status --short
+    # Resolve every conflict marker git status lists above (Read/Edit those files),
+    # then stage and complete the merge commit merge-to-integration.sh already started:
+    #   git add -A && git commit --no-edit
+    # Re-launch: origin/${INTEGRATION_BRANCH} is already merged in now, so this re-run
+    # just re-tests the combined tree, pushes, and verifies — same contract as above.
+    "${SCRIPT_DIR}/merge-launch.sh" \
+      --feature "feature/issue-${ISSUE_NUM}" \
+      --issue "$ISSUE_NUM" \
+      --integration "$INTEGRATION_BRANCH" \
+      --test-cmd "$TEST_COMMAND"
+    MERGE_EXIT=0
+    "${SCRIPT_DIR}/merge-poll.sh" --issue "$ISSUE_NUM" || MERGE_EXIT=$?
+    if [ "$MERGE_EXIT" -eq 75 ]; then
+      echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
+      exit 75
+    fi
+    if [ "$MERGE_EXIT" -ne 0 ]; then
+      echo "❌ Resolution attempt did not complete cleanly — escalating for human review (second failure, not the first)."
+      # Explicit release (comment FIRST, then drop the lock) — same convention as every
+      # other blocked/abandoned exit in this file, so a stale lock is never ambiguous.
+      issue_comment "$ISSUE_NUM" --body "🔓 **Releasing claim — auto-merge conflict, self-resolution failed**
+
+**Reason**: merge conflict against \`${INTEGRATION_BRANCH}\`; this worker's own resolution attempt did not complete cleanly (second failure, not the first — see #1766).
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (fix committed, conflict unresolved)
+
+Needs manual resolution against \`${INTEGRATION_BRANCH}\`. Releasing the \`working\` lock so another agent (or a human) can pick this up." 2>/dev/null || true
+      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      issue_update "$ISSUE_NUM" --add-label "needs-clarification" 2>/dev/null || true
+      exit 1
+    fi
   elif [ "$MERGE_EXIT" -ne 0 ]; then
     echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
   fi
@@ -1410,7 +1448,8 @@ if [ "$MERGE_MODE" = "pr" ]; then
 else
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  # leaves conflicts on disk for the caller to self-resolve, escalating to a label
+  # only on a second failure (#1766), instead of stranding work on main-wt-N).
   # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
   # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
@@ -1424,8 +1463,8 @@ else
   # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
   # sleep-loop packed into a single call (that just relocates the 2-minute
   # problem into the loop itself). Each call sleeps ~60s then reports back:
-  #   exit 75        → still running; issue this exact line again next turn
-  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  #   exit 75            → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 / 3 → finished; same contract merge-to-integration.sh always had
   # merge-launch.sh refuses to start a duplicate for the same issue, so if you
   # land back on this step after a restart, relaunching is a safe no-op and
   # polling below just resumes the job already in flight.
@@ -1434,6 +1473,43 @@ else
   if [ "$MERGE_EXIT" -eq 75 ]; then
     echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
     exit 75
+  fi
+  if [ "$MERGE_EXIT" -eq 3 ]; then
+    # Conflict left ON DISK by merge-to-integration.sh (#1766) — this worker just wrote
+    # the fix and has full context, so resolve it directly instead of escalating on the
+    # first failure. Escalate to needs-clarification only if THIS attempt also fails.
+    echo "⚠️  Merge conflict on feature/issue-${ISSUE_NUM} — resolving directly before escalating."
+    git status --short
+    # Resolve every conflict marker git status lists above (Read/Edit those files),
+    # then stage and complete the merge commit merge-to-integration.sh already started:
+    #   git add -A && git commit --no-edit
+    # Re-launch: origin/${INTEGRATION_BRANCH} is already merged in now, so this re-run
+    # just re-tests the combined tree, pushes, and verifies — same contract as above.
+    "${SCRIPT_DIR}/merge-launch.sh" \
+      --feature "feature/issue-${ISSUE_NUM}" \
+      --issue "$ISSUE_NUM" \
+      --integration "$INTEGRATION_BRANCH" \
+      --test-cmd "$TEST_COMMAND"
+    MERGE_EXIT=0
+    "${SCRIPT_DIR}/merge-poll.sh" --issue "$ISSUE_NUM" || MERGE_EXIT=$?
+    if [ "$MERGE_EXIT" -eq 75 ]; then
+      echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ISSUE_NUM} again next turn."
+      exit 75
+    fi
+    if [ "$MERGE_EXIT" -ne 0 ]; then
+      echo "❌ Resolution attempt did not complete cleanly — escalating for human review (second failure, not the first)."
+      # Explicit release (comment FIRST, then drop the lock) — same convention as every
+      # other blocked/abandoned exit in this file, so a stale lock is never ambiguous.
+      issue_comment "$ISSUE_NUM" --body "🔓 **Releasing claim — auto-merge conflict, self-resolution failed**
+
+**Reason**: merge conflict against \`${INTEGRATION_BRANCH}\`; this worker's own resolution attempt did not complete cleanly (second failure, not the first — see #1766).
+**Branch**: \`feature/issue-${ISSUE_NUM}\` (fix committed, conflict unresolved)
+
+Needs manual resolution against \`${INTEGRATION_BRANCH}\`. Releasing the \`working\` lock so another agent (or a human) can pick this up." 2>/dev/null || true
+      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      issue_update "$ISSUE_NUM" --add-label "needs-clarification" 2>/dev/null || true
+      exit 1
+    fi
   elif [ "$MERGE_EXIT" -ne 0 ]; then
     echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
   fi
@@ -2259,7 +2335,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the
   # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
+  # leaves conflicts on disk for the caller to self-resolve, escalating to a label
+  # only on a second failure (#1766), instead of stranding work on main-wt-N).
   # Launch the merge DETACHED (#1693): the gate run takes 25-30 minutes and a
   # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
@@ -2273,8 +2350,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # Poll it with REPEATED, SEPARATE Bash-tool calls — one call per turn, not a
   # sleep-loop packed into a single call (that just relocates the 2-minute
   # problem into the loop itself). Each call sleeps ~60s then reports back:
-  #   exit 75        → still running; issue this exact line again next turn
-  #   exit 0 / 1 / 2 → finished; same contract merge-to-integration.sh always had
+  #   exit 75            → still running; issue this exact line again next turn
+  #   exit 0 / 1 / 2 / 3 → finished; same contract merge-to-integration.sh always had
   # merge-launch.sh refuses to start a duplicate for the same issue, so if you
   # land back on this step after a restart, relaunching is a safe no-op and
   # polling below just resumes the job already in flight.
@@ -2283,6 +2360,43 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   if [ "$MERGE_EXIT" -eq 75 ]; then
     echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ENHANCE_NUM} again next turn."
     exit 75
+  fi
+  if [ "$MERGE_EXIT" -eq 3 ]; then
+    # Conflict left ON DISK by merge-to-integration.sh (#1766) — this worker just wrote
+    # the enhancement and has full context, so resolve it directly instead of escalating
+    # on the first failure. Escalate to needs-clarification only if THIS attempt also fails.
+    echo "⚠️  Merge conflict on enhancement/issue-${ENHANCE_NUM}-auto — resolving directly before escalating."
+    git status --short
+    # Resolve every conflict marker git status lists above (Read/Edit those files),
+    # then stage and complete the merge commit merge-to-integration.sh already started:
+    #   git add -A && git commit --no-edit
+    # Re-launch: origin/${INTEGRATION_BRANCH} is already merged in now, so this re-run
+    # just re-tests the combined tree, pushes, and verifies — same contract as above.
+    "${SCRIPT_DIR}/merge-launch.sh" \
+      --feature "enhancement/issue-${ENHANCE_NUM}-auto" \
+      --issue "$ENHANCE_NUM" \
+      --integration "$INTEGRATION_BRANCH" \
+      --test-cmd "$TEST_COMMAND"
+    MERGE_EXIT=0
+    "${SCRIPT_DIR}/merge-poll.sh" --issue "$ENHANCE_NUM" || MERGE_EXIT=$?
+    if [ "$MERGE_EXIT" -eq 75 ]; then
+      echo "⏳ Still running — call \"\${SCRIPT_DIR}/merge-poll.sh\" --issue ${ENHANCE_NUM} again next turn."
+      exit 75
+    fi
+    if [ "$MERGE_EXIT" -ne 0 ]; then
+      echo "❌ Resolution attempt did not complete cleanly — escalating for human review (second failure, not the first)."
+      # Explicit release (comment FIRST, then drop the lock) — same convention as every
+      # other blocked/abandoned exit in this file, so a stale lock is never ambiguous.
+      issue_comment "$ENHANCE_NUM" --body "🔓 **Releasing claim — auto-merge conflict, self-resolution failed**
+
+**Reason**: merge conflict against \`${INTEGRATION_BRANCH}\`; this worker's own resolution attempt did not complete cleanly (second failure, not the first — see #1766).
+**Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\` (fix committed, conflict unresolved)
+
+Needs manual resolution against \`${INTEGRATION_BRANCH}\`. Releasing the \`working\` lock so another agent (or a human) can pick this up." 2>/dev/null || true
+      issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+      issue_update "$ENHANCE_NUM" --add-label "needs-clarification" 2>/dev/null || true
+      exit 1
+    fi
   elif [ "$MERGE_EXIT" -ne 0 ]; then
     echo "⚠️  Merge to ${INTEGRATION_BRANCH} did not complete (see output above)."; exit 1
   fi

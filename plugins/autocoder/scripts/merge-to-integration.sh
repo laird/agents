@@ -13,7 +13,11 @@
 #   This helper instead lands the work on origin/<integration-branch> WITHOUT checking out
 #   that branch locally (so it never contends with other worktrees), re-runs the test suite
 #   on the combined tree, and pushes with a fetch+merge+retry loop to survive sibling workers
-#   racing to push. Conflicts escalate to a human label instead of stranding work.
+#   racing to push. A merge conflict is left ON DISK (not aborted) for the caller — the /fix
+#   worker that just wrote this fix, sharing this same checkout — to resolve directly with
+#   full context; only a caller that gives up applies the human-review label (#1766: this
+#   script used to abort+escalate to needs-clarification on the FIRST conflict, before the
+#   worker that could trivially resolve it ever got a look).
 #
 # USAGE:
 #   merge-to-integration.sh --feature <branch> --issue <num> \
@@ -21,8 +25,11 @@
 #
 # Assumes the current HEAD is (or can be switched to) <feature>. Returns:
 #   0  merged + pushed to <integration>
-#   1  conflict or push failure (issue is labelled needs-clarification on conflict)
+#   1  push failure after a successful merge (no conflict — see exit 3 for that)
 #   2  tests failed on the integrated tree
+#   3  merge conflict — left unresolved in the worktree (NOT aborted, NO label change) for
+#      the caller to resolve directly and re-launch; the caller escalates to
+#      needs-clarification itself only if ITS OWN resolution attempt also fails
 
 set -uo pipefail
 
@@ -52,14 +59,15 @@ _MTI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=issue-fns.sh
 source "${_MTI_DIR}/issue-fns.sh"
 
-_escalate_conflict() {
-  echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
-  echo "   Aborting the merge and escalating issue #${ISSUE_NUM} for human resolution."
-  git merge --abort 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --add-label "needs-clarification" 2>/dev/null || true
-  issue_comment "$ISSUE_NUM" --body "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue." 2>/dev/null || true
-  exit 1
+_advise_conflict() {
+  echo "⚠️  Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
+  echo "   Leaving the conflict ON DISK (not aborting) for the caller to resolve directly."
+  # Deliberately NOT: git merge --abort, NOT touching the 'working' label, NOT adding
+  # needs-clarification. The caller (this same worktree's /fix worker) just wrote this
+  # fix and can usually resolve a mechanical conflict itself; a label change here would
+  # be visible before that attempt even starts (#1766).
+  issue_comment "$ISSUE_NUM" --body "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\`. The fix is committed there; the conflict has been left unresolved in the worktree for direct resolution. This is advisory only — no label change yet. If resolution doesn't succeed shortly, the issue will be escalated with \`needs-clarification\`." 2>/dev/null || true
+  exit 3
 }
 
 # Make sure we are on the feature branch that holds the work.
@@ -70,7 +78,7 @@ git checkout "$FEATURE" 2>/dev/null || true
 git fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; exit 1; }
 if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
        -m "Merge origin/${INTEGRATION_BRANCH} into ${FEATURE} (pre-integration sync)"; then
-  _escalate_conflict
+  _advise_conflict
 fi
 
 # 2. Re-run the test suite on the COMBINED tree (this fix + everyone else's merged work).
@@ -98,7 +106,7 @@ for attempt in 1 2 3 4 5; do
   git fetch origin "$INTEGRATION_BRANCH" || break
   if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
          -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
-    _escalate_conflict
+    _advise_conflict
   fi
 done
 
