@@ -127,6 +127,17 @@ resolve_worker_launch() {
         MANAGER_LAUNCH_MODE="shell"
       fi
       ;;
+    pi)
+      # Pi has no permission prompts and a first-class non-interactive mode, so
+      # both roles run as shell loops: nothing is typed into a TUI, so there is
+      # no readiness race and no consent dialog for a stray Enter to answer.
+      WORKER_CMD="bash '$(_wll_script pi-fix-loop.sh "$repo_root")'"
+      WORKER_LAUNCH_MODE="shell"
+      WORKER_COMMAND_MODE="shell"
+      MANAGER_CMD="bash '$(_wll_script pi-manage-workers-loop.sh "$repo_root")'"
+      MANAGER_LAUNCH_MODE="shell"
+      MANAGER_COMMAND_MODE="shell"
+      ;;
     droid)
       AGENT_LAUNCH_CMD=""
       WORKER_CMD="bash '$(_wll_script droid-fix-loop.sh "$repo_root")'"

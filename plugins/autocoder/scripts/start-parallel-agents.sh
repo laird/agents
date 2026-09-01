@@ -6,7 +6,7 @@
 #
 # Options:
 #   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
-#   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --agent claude|gemini|codex|droid|pi  Agent framework to use (default: auto-detect)
 #   --issue-source file|github|jira|ado  Issue backend for this swarm run
 #   --issue-dir PATH       File issue directory when --issue-source file
 #   --route self|manager   Issue-routing mode (default: self). In manager mode
@@ -104,7 +104,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
-      echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --agent claude|gemini|codex|droid|pi  Agent framework (default: auto-detect)"
       echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
       echo "  --issue-dir PATH       File issue directory when --issue-source file"
       echo "  --route self|manager   Issue-routing mode (default: self). In manager mode"
@@ -221,6 +221,8 @@ if [ -z "$AGENT" ]; then
     AGENT="codex"
   elif command -v droid &> /dev/null; then
     AGENT="droid"
+  elif command -v pi &> /dev/null; then
+    AGENT="pi"
   else
     echo "❌ Error: No agent framework found" >&2
     echo "" >&2
@@ -263,8 +265,15 @@ case "$AGENT" in
       exit 1
     fi
     ;;
+  pi)
+    if ! command -v pi &> /dev/null; then
+      echo "❌ Error: pi command is not installed" >&2
+      echo "   Install Pi: curl -fsSL https://pi.dev/install.sh | sh" >&2
+      exit 1
+    fi
+    ;;
   *)
-    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', 'droid', or 'pi'" >&2
     exit 1
     ;;
 esac
