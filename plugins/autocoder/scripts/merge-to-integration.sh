@@ -77,9 +77,24 @@ fi
 #    This is the step that catches cross-fix breakage before it lands on the integration branch.
 if [ -n "$TEST_CMD" ]; then
   echo "🧪 Re-running tests on the integrated tree: $TEST_CMD"
-  if ! bash -c "$TEST_CMD"; then
-    echo "❌ Tests fail after integrating '${INTEGRATION_BRANCH}'. NOT pushing."
-    echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
+  bash -c "$TEST_CMD"
+  TEST_EXIT=$?
+  if [ "$TEST_EXIT" -ne 0 ]; then
+    # An exit code >=128 means bash -c's own child was killed by a signal (128+N),
+    # not that it ran to completion and reported failure. The in-process OOM
+    # detection for the vitest subshell (issue #1250, athena2 scripts/run-changed-
+    # tests-gate.sh) cannot fire here: if the OOM killer instead hits this
+    # bash -c "$TEST_CMD" invocation itself (an ancestor of the vitest subshell),
+    # the process dies before any of that in-process messaging runs, and this
+    # script would otherwise report the generic "tests fail" message below --
+    # indistinguishable from a real regression (athena2 #1540).
+    if [ "$TEST_EXIT" -ge 128 ]; then
+      SIGNAL=$((TEST_EXIT - 128))
+      echo "::error::merge-to-integration.sh's test invocation was killed by signal ${SIGNAL} (exit ${TEST_EXIT}) -- this matches an ancestor OOM-kill under shared-host memory pressure, not a test failure. Re-run once host load drops; do not treat this as evidence of a regression on '${FEATURE}'."
+    else
+      echo "❌ Tests fail after integrating '${INTEGRATION_BRANCH}'. NOT pushing."
+      echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
+    fi
     exit 2
   fi
 else
