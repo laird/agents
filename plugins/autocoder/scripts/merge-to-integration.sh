@@ -64,6 +64,12 @@ _escalate_conflict() {
 
 # Make sure we are on the feature branch that holds the work.
 git checkout "$FEATURE" 2>/dev/null || true
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$CURRENT_BRANCH" != "$FEATURE" ]; then
+  echo "❌ Could not check out '${FEATURE}' in this worktree (currently on '${CURRENT_BRANCH}')."
+  echo "   Refusing to merge/push against the wrong branch."
+  exit 1
+fi
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.
@@ -72,6 +78,17 @@ if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
        -m "Merge origin/${INTEGRATION_BRANCH} into ${FEATURE} (pre-integration sync)"; then
   _escalate_conflict
 fi
+
+# Pin the commit we intend to land RIGHT NOW, while we know HEAD is correct. Every
+# step from here on pushes/verifies this SHA explicitly instead of re-reading the
+# worktree's mutable HEAD (athena2 #1736): a concurrent /fix invocation that reuses
+# this same worktree directory for a different issue does `git checkout -b
+# feature/issue-N origin/<integration>` mid-flight, silently repointing .git/HEAD.
+# The test run below can take minutes, which is plenty of time for that to happen.
+# A captured SHA is a git object reference, valid regardless of what HEAD points to
+# later, so pushing/verifying against it can't be fooled by the hijack the way
+# re-reading HEAD was.
+TARGET_SHA=$(git rev-parse HEAD)
 
 # 2. Re-run the test suite on the COMBINED tree (this fix + everyone else's merged work).
 #    This is the step that catches cross-fix breakage before it lands on the integration branch.
@@ -90,7 +107,7 @@ fi
 #    meantime the push is rejected; re-sync and retry.
 PUSHED=0
 for attempt in 1 2 3 4 5; do
-  if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
+  if git push origin "${TARGET_SHA}:${INTEGRATION_BRANCH}"; then
     PUSHED=1
     break
   fi
@@ -100,6 +117,9 @@ for attempt in 1 2 3 4 5; do
          -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
     _escalate_conflict
   fi
+  # The re-sync merge above creates a NEW commit on top of the old TARGET_SHA — re-pin
+  # it, still reading HEAD only immediately after our own merge, never at push/verify time.
+  TARGET_SHA=$(git rev-parse HEAD)
 done
 
 # 3b. If the git transport itself is blocked (e.g. a proxy rejecting
@@ -107,7 +127,7 @@ done
 #     publishing through the GitHub API, which reaches api.github.com instead.
 if [ "$PUSHED" -ne 1 ]; then
   echo "⚠️  git push failed after 5 attempts — trying the GitHub API fallback…"
-  if python3 "${_MTI_DIR}/api-push.py" HEAD \
+  if python3 "${_MTI_DIR}/api-push.py" "$TARGET_SHA" \
        --target "$INTEGRATION_BRANCH" \
        --base "origin/${INTEGRATION_BRANCH}" \
        --message "Merge issue #${ISSUE_NUM} (${FEATURE}) into ${INTEGRATION_BRANCH}
@@ -126,9 +146,12 @@ fi
 # 3c. Trust nothing: confirm the integration ref actually contains this work.
 #     A zero exit status is not proof, and `git push --dry-run` is worse than
 #     useless here — it succeeds against a blocked transport because it never
-#     sends the pack. Compare the trees.
+#     sends the pack. Compare the trees. Deliberately against $TARGET_SHA, not
+#     HEAD: if this worktree has been reused by a concurrent /fix invocation for
+#     a different issue since we pinned it, HEAD no longer points at our commit,
+#     but $TARGET_SHA still resolves to the exact object we pushed (athena2 #1736).
 git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
-LOCAL_TREE=$(git rev-parse "HEAD^{tree}")
+LOCAL_TREE=$(git rev-parse "${TARGET_SHA}^{tree}")
 REMOTE_TREE=$(git rev-parse "origin/${INTEGRATION_BRANCH}^{tree}" 2>/dev/null || echo "")
 if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
   echo "❌ Publication could not be verified for '${INTEGRATION_BRANCH}'."
