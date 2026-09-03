@@ -466,7 +466,7 @@ if [ "$MUX" = "tmux" ]; then
   # Create panes for remaining workers
   for i in $(seq 2 $NUM_AGENTS); do
     echo "   Setting up worker agent $i..."
-    PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
+    PANE_ID=$(tmux split-window -v -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
     WORKER_TARGETS+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
@@ -486,8 +486,10 @@ if [ "$MUX" = "tmux" ]; then
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" paused)")
   done
 
-  # Balance the panes to make them equal width
-  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
+  # Stack the panes full-width, one per row. Side-by-side panes on a normal
+  # terminal are ~47 columns each, which wraps every tool-call line into three
+  # and truncates the status line -- the one place `ctx NN%` is readable.
+  tmux select-layout -t "$AGENTS_WINDOW" even-vertical
 
   # Launch agent in each pane sequentially with individual waits
   echo ""

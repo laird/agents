@@ -488,7 +488,7 @@ See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the full annotated directory tree
 - 📊 **Enforced quality** - 100% test pass rate, security score ≥45/100
 - 📝 **Systematic workflows** - 7-phase migration, 6-phase testing, 8-stage ADR lifecycle
 - 🧠 **Model-tiered swarms** - Manager on `claude-opus-5` (coordination), workers on `claude-sonnet-5` (implementation); overridable via `WORKER_MODEL`/`MANAGER_MODEL`
-- 🆕 **Fresh context per issue** - `claude-worker-loop.sh` restarts Claude for each issue; each worker is a visible tmux pane the user can inspect and interact with
+- 🆕 **Fresh context per issue** - `/autocoder:fix` mandates a `/compact` before every issue; each worker is a visible, interactive tmux pane the user can inspect and talk to, and whose status line the manager reads for context pressure
 - 🔒 **Robust issue claiming** - Atomic file-backend rename + GitHub race-detection via `[autocoder-claim]` markers; task scope gate checks CONTEXT FIT and WORKTREE INDEPENDENCE before branching
 - 📐 **Worktree-safe decomposition** - Over-large issues are split into sub-tasks with "Files Affected" fields so parallel workers never collide
 - 🛡️ **Swarm resilience** - Manager monitors worker health, restarts unhealthy workers, and can scale the fleet mid-run with `add-worker.sh`

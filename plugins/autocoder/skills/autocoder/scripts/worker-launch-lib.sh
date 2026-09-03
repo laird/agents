@@ -77,20 +77,35 @@ resolve_worker_launch() {
 
   case "$agent" in
     claude)
-      # Workers: shell loop that restarts Claude per issue (fresh context per fix).
-      # Each worker is visible as its own tmux pane running claude-worker-loop.sh.
-      # Manager: interactive Claude session using the smarter opus model for coordination.
+      # Workers: interactive Claude session running /autocoder:fix-loop, matching
+      # how gemini and codex workers launch.
+      #
+      # This deliberately replaces the previous headless shell loop
+      # (claude-worker-loop.sh, `claude -p` per issue). That loop got fresh
+      # context per issue for free from the process boundary, but it renders no
+      # TUI, and everything the manager uses to supervise a worker is a TUI
+      # artifact:
+      #   - monitor-workers Step 4c reads `ctx NN%` off the status line to hand
+      #     a worker off before it wedges. Headless panes have no status line,
+      #     so the check is dead and workers run to 100%.
+      #   - worker-idle.sh proves BUSY from `(Nm Ns·`, `↓ N tokens`,
+      #     `esc to interrupt`, `✽ Determining…` — every one a TUI artifact a
+      #     headless pane can never emit. It therefore reported busy workers
+      #     IDLE 32 times with zero true positives, and the dispatcher's
+      #     ambiguity fallthrough resolves to IDLE, which is the unsafe default.
+      #
+      # Fresh context per issue is preserved by instruction rather than by
+      # process boundary: /autocoder:fix mandates /compact before every issue
+      # ("Context Management (MANDATORY — NON-NEGOTIABLE)"), and Step 4c is the
+      # backstop that only works in this mode. That is a real weakening — an
+      # instruction can be skipped where a process boundary cannot — but a
+      # supervisable worker beats an unsupervisable one.
       WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
       MANAGER_MODEL="${MANAGER_MODEL:-claude-opus-5}"
-      AGENT_LAUNCH_CMD=""
-      local worker_loop="$WORKER_LAUNCH_LIB_DIR/claude-worker-loop.sh"
-      if [ ! -f "$worker_loop" ]; then
-        echo "❌ claude-worker-loop.sh not found next to worker-launch-lib.sh ($worker_loop)" >&2
-        return 1
-      fi
-      WORKER_CMD="bash '$worker_loop'"
-      WORKER_LAUNCH_MODE="shell"
-      WORKER_COMMAND_MODE="shell"
+      AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions --model $WORKER_MODEL"
+      WORKER_CMD="/autocoder:fix-loop"
+      WORKER_LAUNCH_MODE="interactive"
+      WORKER_COMMAND_MODE="agent-input"
       MANAGER_LAUNCH_CMD="claude --dangerously-skip-permissions --model $MANAGER_MODEL"
       MANAGER_CMD="/autocoder:monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"

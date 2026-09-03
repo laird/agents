@@ -28,6 +28,9 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# shellcheck source=mux-send-lib.sh
+source "$SCRIPT_DIR/mux-send-lib.sh"
+
 MUX=""
 AGENT=""
 WORKTREE=""
@@ -159,6 +162,10 @@ if [ "$MUX" = "tmux" ]; then
   if [ "$WORKER_STATE" = "paused" ]; then
     [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    # Into an agent TUI: the Enter must be a separate send-keys call or the text
+    # sits unsubmitted in the input box and the relaunch silently no-ops.
+    send_tmux_text_enter "$PANE" "$WORKER_CMD"
   else
     tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
 

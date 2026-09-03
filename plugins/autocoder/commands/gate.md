@@ -78,9 +78,12 @@ if [ -n "${AUTOCODER_NEXT_FIX_FILE:-}" ]; then
 fi
 ```
 
-**Inline mode** (fallback when gate is invoked standalone or via `/loop`): dispatch via Skill
-tool in the current session. Context will accumulate across issues in this mode — prefer
-shell-loop mode for multi-issue worker sessions.
+**Inline mode** (gate invoked standalone, via `/loop`, or from an interactive worker — which is
+how Claude workers launch now): dispatch via Skill tool in the current session. Nothing in this
+mode gives you a fresh process per issue, so the freshness has to come from the instruction:
+`/autocoder:fix` requires a `/compact` before every issue ("Context Management (MANDATORY —
+NON-NEGOTIABLE)"). Honour it — an interactive worker that skips it accumulates context across
+issues and eventually wedges.
 
 ```
 Use the Skill tool to invoke: autocoder:fix

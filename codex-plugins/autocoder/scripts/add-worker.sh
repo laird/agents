@@ -206,7 +206,7 @@ if [ "$MUX" = "tmux" ]; then
   fi
 
   # Add a pane to the agents window; address it by pane id, not by index
-  PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
+  PANE_ID=$(tmux split-window -v -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
   PANE_INDEX=$(tmux display-message -p -t "$PANE_ID" '#{pane_index}')
 
   tmux send-keys -t "$PANE_ID" "cd '$WORKER_DIR'" C-m
@@ -224,7 +224,7 @@ if [ "$MUX" = "tmux" ]; then
       "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
   fi
 
-  tmux select-layout -t "$AGENTS_WINDOW" even-horizontal
+  tmux select-layout -t "$AGENTS_WINDOW" even-vertical
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
     tmux send-keys -t "$PANE_ID" "$AGENT_LAUNCH_CMD" C-m
@@ -236,6 +236,10 @@ if [ "$MUX" = "tmux" ]; then
     manifest_add_worker_json "$MANIFEST_PATH" "$WORKER_JSON"
     echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
     bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    # Into an agent TUI: the Enter must be a separate send-keys call or the text
+    # sits unsubmitted in the input box. See send_tmux_text_enter's note.
+    send_tmux_text_enter "$PANE_ID" "$WORKER_CMD"
   else
     tmux send-keys -t "$PANE_ID" "$WORKER_CMD" C-m
   fi

@@ -25,43 +25,35 @@ assert_eq() {
 }
 
 resolve_worker_launch claude "$REPO"
-# Claude workers run a SHELL LOOP, not an interactive session: 3124b99 made each
-# issue get a fresh Claude process so its context window starts clean. The manager
-# stays interactive because it coordinates across issues.
-assert_eq "$WORKER_LAUNCH_MODE" "shell" "Claude workers launch via the shell loop"
-assert_eq "$WORKER_COMMAND_MODE" "shell" "Claude workers take shell commands"
+# Claude workers run an INTERACTIVE session, like gemini and codex. The previous
+# headless shell loop (claude-worker-loop.sh, `claude -p` per issue) got a fresh
+# context per issue from the process boundary, but it renders no TUI -- and every
+# supervision signal the manager has is a TUI artifact: monitor-workers Step 4c
+# reads `ctx NN%` off the status line, and worker-idle.sh proves BUSY from
+# `(Nm Ns·` / `↓ N tokens` / `esc to interrupt`, none of which a headless pane can
+# emit (32 false IDLE reports, zero true positives). Fresh context per issue is now
+# preserved by instruction: /autocoder:fix mandates /compact before every issue.
+assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Claude workers launch interactively"
+assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Claude workers take agent input"
 assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Claude manager launches interactively"
-# Assert the intent, not just the mode strings — the loop script is what gives
-# each issue a fresh context, and the tiers are what keep workers off opus.
-case "$WORKER_CMD" in
-  *claude-worker-loop.sh*) ;;
-  *) echo "FAIL: Claude worker should run claude-worker-loop.sh, got '$WORKER_CMD'" >&2; exit 1 ;;
-esac
+# Assert the intent, not just the mode strings — the fix-loop is what makes the
+# worker self-claim, and the tiers are what keep workers off opus.
+assert_eq "$WORKER_CMD" "/autocoder:fix-loop" "Claude worker runs the fix loop"
 assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the sonnet tier"
 assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
-
-# The worker-loop path must resolve to a file that EXISTS, not just to a
-# plausible-looking string. Installed plugins live at
-# cache/plugin-marketplace/autocoder/<version>/scripts, so a repo_root derived as
-# SCRIPT_DIR/../../.. lands on the cache root; appending plugins/autocoder/scripts
-# yields a hybrid path that is real in neither layout (issue #94). The loop script
-# always ships beside this lib, so resolve it from the lib's own directory.
-BOGUS_ROOT="$TMP/not-a-repo-checkout"
-mkdir -p "$BOGUS_ROOT"
-resolve_worker_launch claude "$BOGUS_ROOT"
-WORKER_LOOP_PATH="${WORKER_CMD#bash \'}"
-WORKER_LOOP_PATH="${WORKER_LOOP_PATH%\'}"
-if [ ! -f "$WORKER_LOOP_PATH" ]; then
-  echo "FAIL: Claude worker loop path does not exist: '$WORKER_LOOP_PATH'" >&2
-  exit 1
-fi
-case "$WORKER_LOOP_PATH" in
-  "$BOGUS_ROOT"*)
-    echo "FAIL: worker loop path was derived from repo_root instead of the lib dir: '$WORKER_LOOP_PATH'" >&2
-    exit 1 ;;
+case "$AGENT_LAUNCH_CMD" in
+  claude\ *--model\ claude-sonnet-5) ;;
+  *) echo "FAIL: Claude worker launch command should start claude on the worker tier, got '$AGENT_LAUNCH_CMD'" >&2; exit 1 ;;
 esac
-# Restore the normal-layout resolution for any later assertions.
-resolve_worker_launch claude "$REPO"
+
+# The issue-#94 check that used to live here — "the claude worker loop path must
+# resolve to a file that EXISTS under an installed plugin, not to a repo_root
+# path real in neither layout" — no longer has a subject: the claude branch
+# resolves no loop driver at all now. It is NOT dropped coverage. The invariant
+# moved to where it belongs, tests/test_script_packaging.sh, which asserts both
+# that each platform package ships its own driver beside worker-launch-lib.sh and
+# that the lib never addresses a driver as "$repo_root/scripts/<name>". Asserting
+# it here would need a driver the claude package deliberately does not carry.
 
 resolve_worker_launch gemini "$REPO"
 assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"

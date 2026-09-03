@@ -752,6 +752,14 @@ that into a per-issue record before `/tmp` loses it.
 turn it off. Posting is fail-soft in every direction — a missing transcript, an offline
 backend, or no `python3` exits 0 and never ends a worker's loop.
 
+**Gap: interactive workers post no metrics.** Since Claude workers launch as interactive
+sessions rather than through `claude-worker-loop.sh`, nothing calls the poster and no
+stream-json transcript is written to `AUTOCODER_LOG_DIR` for it to read — so per-issue cost
+and time attribution is unavailable in the default Claude swarm. The scripts still work for
+Codex/Droid shell-loop workers, and by hand: run `post-issue-metrics.sh <issue>` against a
+transcript you have. Restoring automatic attribution for interactive workers needs a
+transcript source that does not depend on `claude -p`.
+
 Three attribution rules are deliberate, and the rendered comment states them:
 
 - **Gate transcripts are excluded.** A gate tick surveys the whole backlog; charging it
