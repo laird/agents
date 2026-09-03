@@ -56,7 +56,8 @@ capture_search() {
 }
 
 BLOCKING_LABELS=(working needs-design needs-clarification needs-feedback \
-                 needs-approval too-complex future proposal awaiting-integration)
+                 needs-approval too-complex future proposal awaiting-integration \
+                 decomposed blocked)
 
 # ── list --state open must exclude each blocking label ─────────────────────
 SEARCH=$(capture_search list --state open --limit 10)
@@ -79,6 +80,16 @@ assert_not_contains "list --state blocked does not negate needs-design" '-label:
 # human decision". It must suppress the issue from the claimable queue without
 # showing up in /review-blocked.
 assert_not_contains "blocked search excludes awaiting-integration" 'awaiting-integration' "$SEARCH"
+
+# `decomposed` is the same category: an umbrella is waiting on its own sub-tasks,
+# not on a human, so it must be unclaimable without cluttering /review-blocked.
+assert_not_contains "blocked search excludes decomposed" 'decomposed' "$SEARCH"
+
+# `blocked` IS a human/prerequisite gate — it belongs in /review-blocked. NOTE
+# this asserts the search STRING only: against real GitHub the whole OR-chain
+# returns 0 rows (see the KNOWN DEFECT comment on BLOCKED_LABEL_SEARCH), so a
+# green here does not mean /review-blocked sees anything.
+assert_contains "list --state blocked selects blocked" 'label:"blocked"' "$SEARCH"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

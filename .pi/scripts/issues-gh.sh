@@ -47,11 +47,29 @@ _igh_required_search() {
 # is a valueless qualifier meaning "issue has no labels at all", so that form
 # matches only unlabeled issues and silently hides every real issue, leaving the
 # autocoder loop permanently idle. See tests/test_issues_gh_search.sh.
-# `awaiting-integration` is excluded from the claimable queue but deliberately
-# absent from BLOCKED_LABEL_SEARCH below: the work is finished and waiting to be
-# merged, not blocked on a human decision, so /review-blocked must not surface it.
-BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration"'
-BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal"'
+# `awaiting-integration` and `decomposed` are excluded from the claimable queue
+# but deliberately absent from BLOCKED_LABEL_SEARCH below: the first is finished
+# work waiting to be merged, the second is an umbrella waiting on its own
+# sub-tasks. Neither is blocked on a human decision, so /review-blocked must not
+# surface them.
+#
+# `decomposed` and `blocked` were missing here while `fix-loop-gate.sh` and
+# `fix.md` both filtered them, so whether an umbrella was dispatchable depended
+# on which path selected it: worker self-claim skipped it, but the raw
+# `issue_list --state open` that monitor-workers Step 5 dispatches from returned
+# every umbrella (41 of them in athena2). Handing an umbrella to a worker either
+# duplicates its sub-tasks or wedges on scope no single worker can close.
+BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration" -label:"decomposed" -label:"blocked"'
+# KNOWN DEFECT (pre-existing, not introduced with `blocked`): this OR-chain
+# returns ZERO results. `gh issue list --search 'label:"blocked"'` finds 40 open
+# issues in athena2, but ANY `OR` between two label qualifiers collapses the
+# result to 0 — verified at 2, 3 and 7 terms, quoted and unquoted. So
+# `--state blocked` has always been empty and /review-blocked has been reviewing
+# nothing. Fixing it means dropping the OR form (query each label and merge, or
+# move to `gh search issues`), which is a behaviour change to a script the live
+# swarm is executing — deliberately NOT bundled with the umbrella fix above.
+# `blocked` is listed here for when that lands; it is inert until then.
+BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal" OR label:"blocked"'
 
 # ── list ───────────────────────────────────────────────────────────────────
 cmd_list() {
