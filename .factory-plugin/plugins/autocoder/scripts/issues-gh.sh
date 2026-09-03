@@ -80,7 +80,14 @@ cmd_list() {
   [ "$state" = "open" ] || [ "$state" = "working" ] || [ "$state" = "blocked" ] && args+=(--state open)
   [ -n "$search" ] && args+=(--search "$search")
   [ -n "$label" ] && args+=(--label "$label")
-  [ -n "$limit" ] && args+=(--limit "$limit")
+  # Default the page size well above gh's own default of 30. With --search in
+  # play gh goes through the search API, whose ordering is "best match" over a
+  # purely negative query — so a 30-issue page is an arbitrary slice, not the
+  # newest or the highest priority. Callers rank P0>P1>P2>P3 *after* this call,
+  # which only ever reorders whatever the slice happened to contain: an
+  # unblocked P0 outside the page is invisible, not deprioritised, and the
+  # swarm reports IDLE_NO_WORK_AVAILABLE with real work outstanding.
+  args+=(--limit "${limit:-200}")
   gh issue list "${args[@]}" --json number,title,body,labels,state || exit 3
 }
 
