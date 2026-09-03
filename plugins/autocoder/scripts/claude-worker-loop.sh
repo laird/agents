@@ -49,8 +49,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 RENDER="$SCRIPT_DIR/stream-render.sh"
+STATUS_RENDER="$SCRIPT_DIR/stream-status.sh"
 POST_METRICS="$SCRIPT_DIR/post-issue-metrics.sh"
 [ -x "$RENDER" ] || STREAM=0
+# Headless sessions never invoke the status line hook, so statusline.sh renders
+# nothing on a worker pane no matter what settings.json says. STATUS_RENDER
+# rebuilds the same line from the stream; without it monitor-workers Step 4c has
+# nothing to read and the >=95% context handoff can never fire.
+STATUS_LINE="${AUTOCODER_STATUS:-1}"
+[ -x "$STATUS_RENDER" ] || STATUS_LINE=0
 mkdir -p "$LOG_DIR"
 
 # Set by run_claude to the transcript it just wrote, so the caller can attribute
@@ -72,9 +79,15 @@ run_claude() {
   if [ "$STREAM" = "1" ]; then
     LAST_TRANSCRIPT="$log"
     echo "   ⤷ transcript: $log"
-    claude -p --output-format stream-json --verbose \
-      --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null \
-      | tee "$log" | "$RENDER" || true
+    if [ "$STATUS_LINE" = "1" ]; then
+      claude -p --output-format stream-json --verbose \
+        --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null \
+        | tee "$log" | AUTOCODER_STATUS=1 "$RENDER" | "$STATUS_RENDER" || true
+    else
+      claude -p --output-format stream-json --verbose \
+        --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null \
+        | tee "$log" | "$RENDER" || true
+    fi
   else
     claude -p --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null || true
   fi
