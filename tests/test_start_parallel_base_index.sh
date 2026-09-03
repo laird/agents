@@ -48,8 +48,25 @@ else
   # A tmux socket path is capped near 100 chars, so keep TMUX_TMPDIR short.
   TMPROOT=$(mktemp -d /tmp/spbi.XXXXXX)
   export TMUX_TMPDIR="$TMPROOT/s"
+  # Inside a tmux pane $TMUX names the caller's socket, and tmux prefers it over
+  # TMUX_TMPDIR. Left set, every tmux call below runs against the developer's real
+  # server: the sandbox never applies (so base-index is not even under test) and
+  # cleanup's kill-server destroys their sessions. Agents run inside tmux, so this
+  # is the common case, not the edge case.
+  unset TMUX
   mkdir -p "$TMUX_TMPDIR" "$TMPROOT/bin" "$TMPROOT/proj"
-  cleanup() { tmux kill-server 2>/dev/null; rm -rf "$TMPROOT"; }
+  # kill-server is unrecoverable, so never take the sandbox on faith: ask the server
+  # we would actually reach where its socket lives, and refuse if it is not ours.
+  cleanup() {
+    local sock
+    sock=$(tmux display-message -p '#{socket_path}' 2>/dev/null || true)
+    case "$sock" in
+      "$TMPROOT"/*) tmux kill-server 2>/dev/null ;;
+      "")           : ;;  # no server reachable — nothing to tear down
+      *)            echo "WARNING: refusing 'tmux kill-server' — socket '$sock' is outside the sandbox ($TMPROOT)" >&2 ;;
+    esac
+    rm -rf "$TMPROOT"
+  }
   trap cleanup EXIT
 
   # Stub agent: the launcher only needs *a* `claude` on PATH to detect and run.
