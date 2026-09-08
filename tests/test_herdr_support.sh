@@ -39,10 +39,36 @@ STUB_DIR=$(mktemp -d)
 trap 'rm -rf "$STUB_DIR"' EXIT
 
 # Stub `herdr` that behaves per $HERDR_STUB_MODE and records every argv line.
+# Per-subcommand knobs simulate the agent-start failure shapes seen live:
+#   HERDR_AGENT_START_MODE: ok | timeout | conflict | conflict-once
+#   HERDR_AGENT_GET_MODE:   ok | absent
 make_herdr_stub() {
   cat > "$STUB_DIR/herdr" <<'STUB'
 #!/bin/bash
 [ -n "${HERDR_ARGV_CAPTURE:-}" ] && printf '%s\n' "$*" >> "$HERDR_ARGV_CAPTURE"
+if [ "$1 $2" = "agent start" ]; then
+  case "${HERDR_AGENT_START_MODE:-ok}" in
+    ok) exit 0 ;;
+    timeout)
+      echo '{"error":{"code":"timeout","message":"timed out waiting for agent startup"},"id":"cli:agent:start"}' >&2
+      exit 1 ;;
+    conflict)
+      echo '{"error":{"code":"agent_name_conflict","message":"name already in use"},"id":"cli:agent:start"}' >&2
+      exit 1 ;;
+    conflict-once)
+      if [ ! -f "${HERDR_STUB_STATE:?}" ]; then
+        touch "$HERDR_STUB_STATE"
+        echo '{"error":{"code":"agent_name_conflict","message":"name already in use"},"id":"cli:agent:start"}' >&2
+        exit 1
+      fi
+      exit 0 ;;
+  esac
+fi
+if [ "$1 $2" = "agent get" ]; then
+  [ "${HERDR_AGENT_GET_MODE:-ok}" = "ok" ] && exit 0
+  echo '{"error":{"code":"agent_not_found"}}' >&2
+  exit 1
+fi
 case "${HERDR_STUB_MODE:-running}" in
   running) exit 0 ;;
   dead)    echo '{"error":{"code":"server_not_running"}}'; exit 1 ;;
@@ -248,9 +274,9 @@ assert_contains "prompt_herdr_agent uses herdr agent prompt" \
 # 9e. The launcher/lifecycle scripts register agents instead of only typing
 for rel in start-parallel-agents.sh add-worker.sh restart-worker.sh; do
   s="$ROOT/plugins/autocoder/scripts/$rel"
-  grep -q 'start_herdr_agent' "$s" \
-    && pass "$rel registers workers via start_herdr_agent" \
-    || fail "$rel never calls start_herdr_agent (workers stay anonymous)"
+  grep -q 'launch_herdr_agent' "$s" \
+    && pass "$rel registers workers via launch_herdr_agent" \
+    || fail "$rel never calls launch_herdr_agent (workers stay anonymous)"
 done
 for rel in start-parallel-agents.sh start-workers.sh add-worker.sh restart-worker.sh; do
   s="$ROOT/plugins/autocoder/scripts/$rel"
@@ -258,6 +284,49 @@ for rel in start-parallel-agents.sh start-workers.sh add-worker.sh restart-worke
     && pass "$rel prompts through the agent surface" \
     || fail "$rel never calls prompt_herdr_agent"
 done
+
+# 9f. launch_herdr_agent recovery paths — pins the SLOW-START pathology seen
+# live: `agent start` timed out while claude booted (it resumed a stale
+# scheduled task), and the old typed fallback then injected the launch
+# command into the agent's INPUT BOX. On timeout the helper must poll for
+# the agent and claim the name with `agent rename`, never type.
+: > "$CAPTURE"
+HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
+  HERDR_AGENT_START_MODE=timeout HERDR_AGENT_GET_MODE=ok \
+  AUTOCODER_HERDR_OCCUPANCY_TRIES=2 AUTOCODER_HERDR_OCCUPANCY_DELAY=0 \
+  bash -c "source '$LIB'; launch_herdr_agent wt1-proj claude w1:p1 'claude --model m'" >/dev/null \
+  || fail "launch_herdr_agent exited non-zero on the slow-start path"
+assert_contains "slow start: helper claims the late agent via agent rename" \
+  "agent rename w1:p1 wt1-proj" "$(cat "$CAPTURE")"
+if grep -q 'pane send-text' "$CAPTURE"; then
+  fail "slow start: helper TYPED into a pane that contains an agent (input-box injection)"
+else
+  pass "slow start: helper never types into the occupied pane"
+fi
+
+# 9g. Name conflict: the pane is a free shell; retry under a pane-derived name
+: > "$CAPTURE"
+STATE="$STUB_DIR/conflict-state"; rm -f "$STATE"
+HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
+  HERDR_AGENT_START_MODE=conflict-once HERDR_STUB_STATE="$STATE" \
+  bash -c "source '$LIB'; launch_herdr_agent wt1-proj claude w1:p1 'claude --model m'" >/dev/null \
+  || fail "launch_herdr_agent exited non-zero on the name-conflict path"
+if [ "$(grep -c 'agent start' "$CAPTURE")" = "2" ] && grep -q 'agent start wt1-proj-w1p1' "$CAPTURE"; then
+  pass "name conflict: helper retries once under a pane-derived name"
+else
+  fail "name conflict: expected a second agent start under a pane-derived name; got: $(grep 'agent start' "$CAPTURE")"
+fi
+
+# 9h. Pane genuinely empty after timeout: LAST resort is typing the launch cmd
+: > "$CAPTURE"
+HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
+  HERDR_AGENT_START_MODE=timeout HERDR_AGENT_GET_MODE=absent \
+  AUTOCODER_HERDR_OCCUPANCY_TRIES=1 AUTOCODER_HERDR_OCCUPANCY_DELAY=0 \
+  AUTOCODER_MUX_SUBMIT_DELAY=0.1 \
+  bash -c "source '$LIB'; launch_herdr_agent wt1-proj claude w1:p1 'claude --model m'" >/dev/null \
+  || fail "launch_herdr_agent exited non-zero on the empty-pane path"
+assert_contains "empty pane: helper falls back to typing the launch command" \
+  "pane send-text w1:p1 claude --model m" "$(cat "$CAPTURE")"
 
 # ── 10. Under herdr, claude workers are interactive (fix-loop), not claude -p ─
 # The headless `claude -p` worker loop is undetectable by herdr, so the mux

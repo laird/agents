@@ -294,19 +294,8 @@ for ws in data.get('result', {}).get('workspaces', []):
     if [ "$WORKER_LAUNCH_MODE" = "interactive" ]; then
       # Re-register under the worker's name so the restarted worker reclaims
       # its own entry in herdr's agent list (the old entry died with the old
-      # workspace). Fall back to a pane-derived name, then to typing.
-      WORKER_NAME=$(herdr_agent_name "wt${WT_NUM:-x}-${PROJECT_NAME}")
-      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
-      if start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      elif WORKER_NAME=$(herdr_agent_name "wt${WT_NUM:-x}-${PANE_ID//:/}") && \
-           start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      else
-        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-        sleep 5
-      fi
+      # workspace).
+      launch_herdr_agent "$(herdr_agent_name "wt${WT_NUM:-x}-${PROJECT_NAME}")" "$AGENT" "$PANE_ID" "$AGENT_LAUNCH_CMD"
     else
       send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
       sleep 5

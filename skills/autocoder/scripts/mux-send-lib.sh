@@ -120,14 +120,78 @@ herdr_agent_name() {
 AUTOCODER_HERDR_START_TIMEOUT_SECONDS="${AUTOCODER_HERDR_START_TIMEOUT_SECONDS:-45}"
 
 # start_herdr_agent NAME KIND PANE [agent-args...] — start an interactive
-# agent in an existing shell pane and register it under NAME. Non-zero exit
-# means herdr never detected a ready agent; callers fall back to typing the
-# launch command into the pane (works, but stays anonymous in the UI).
+# agent in an existing shell pane and register it under NAME. On failure,
+# HERDR_START_ERROR holds the herdr error code ("timeout", "agent_pane_busy",
+# a name-conflict code, ...) so callers can pick the right recovery.
 start_herdr_agent() {
   local name="$1" kind="$2" pane="$3"
   shift 3
-  run_with_timeout "$AUTOCODER_HERDR_START_TIMEOUT_SECONDS" \
-    herdr agent start "$name" --kind "$kind" --pane "$pane" -- "$@" >/dev/null
+  local err
+  HERDR_START_ERROR=""
+  if err=$(run_with_timeout "$AUTOCODER_HERDR_START_TIMEOUT_SECONDS" \
+      herdr agent start "$name" --kind "$kind" --pane "$pane" -- "$@" 2>&1 >/dev/null); then
+    return 0
+  fi
+  HERDR_START_ERROR=$(printf '%s' "$err" | python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.stdin.read().strip().splitlines()[-1])["error"]["code"])
+except Exception:
+    pass' 2>/dev/null)
+  return 1
+}
+
+# How long launch_herdr_agent keeps polling for a slow-starting agent after
+# `agent start` itself timed out (tries × delay seconds).
+AUTOCODER_HERDR_OCCUPANCY_TRIES="${AUTOCODER_HERDR_OCCUPANCY_TRIES:-10}"
+AUTOCODER_HERDR_OCCUPANCY_DELAY="${AUTOCODER_HERDR_OCCUPANCY_DELAY:-3}"
+
+# launch_herdr_agent NAME KIND PANE LAUNCH_CMD — register the interactive
+# agent for a swarm pane, handling the failure shapes seen in production:
+#
+#   1. Slow startup: `agent start` times out but the agent IS still coming up
+#      in the pane (seen live: a worker resumed a stale scheduled task the
+#      moment it booted). Typing the launch command now would inject it into
+#      the agent's INPUT BOX, so poll for occupancy and claim the name with
+#      `agent rename` instead.
+#   2. Name conflict: a stale agent from a previous swarm still holds the
+#      name; the pane is a free shell, so retry once under a pane-derived name.
+#   3. Pane genuinely empty after all that: type the launch command into the
+#      shell as the last resort (works, but stays anonymous in the UI).
+launch_herdr_agent() {
+  local name="$1" kind="$2" pane="$3" launch_cmd="$4"
+  local -a argv
+  read -r -a argv <<< "$launch_cmd"
+
+  if start_herdr_agent "$name" "$kind" "$pane" "${argv[@]:1}"; then
+    echo "   ✓ Registered herdr agent '$name'"
+    return 0
+  fi
+
+  if [ "$HERDR_START_ERROR" = "timeout" ] || [ -z "$HERDR_START_ERROR" ]; then
+    local tries="$AUTOCODER_HERDR_OCCUPANCY_TRIES"
+    while [ "$tries" -gt 0 ]; do
+      if run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr agent get "$pane" >/dev/null 2>&1; then
+        run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr agent rename "$pane" "$name" >/dev/null 2>&1 || true
+        echo "   ✓ Agent came up after a slow start; named '$name'"
+        return 0
+      fi
+      tries=$((tries - 1))
+      sleep "$AUTOCODER_HERDR_OCCUPANCY_DELAY"
+    done
+  else
+    local alt
+    alt=$(herdr_agent_name "$(printf '%.24s' "$name")-${pane//:/}")
+    if start_herdr_agent "$alt" "$kind" "$pane" "${argv[@]:1}"; then
+      echo "   ✓ Registered herdr agent '$alt'"
+      return 0
+    fi
+  fi
+
+  echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+  send_herdr_command "$pane" "$launch_cmd"
+  sleep 5
+  return 0
 }
 
 # Submit a prompt through herdr's agent surface (target: agent name or the

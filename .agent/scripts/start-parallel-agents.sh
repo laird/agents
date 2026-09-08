@@ -610,18 +610,8 @@ elif [ "$MUX" = "herdr" ]; then
     # The kind is the launch command's executable (gemini for Antigravity).
     if [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting $AGENT in worker $i..."
-      WORKER_NAME=$(herdr_agent_name "wt${i}-${PROJECT_NAME}")
       read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
-      if start_herdr_agent "$WORKER_NAME" "${LAUNCH_ARGV[0]}" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      elif WORKER_NAME=$(herdr_agent_name "wt${i}-${PANE_ID//:/}") && \
-           start_herdr_agent "$WORKER_NAME" "${LAUNCH_ARGV[0]}" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      else
-        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-        sleep 5
-      fi
+      launch_herdr_agent "$(herdr_agent_name "wt${i}-${PROJECT_NAME}")" "${LAUNCH_ARGV[0]}" "$PANE_ID" "$AGENT_LAUNCH_CMD"
 
       # Interactive agent: submit the loop through the agent surface.
       echo "   → Worker $i: sending $WORKER_CMD..."
@@ -654,18 +644,8 @@ elif [ "$MUX" = "herdr" ]; then
 
     if [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting coordinator..."
-      MANAGER_NAME=$(herdr_agent_name "manager-${PROJECT_NAME}")
       read -r -a MANAGER_ARGV <<< "$AGENT_LAUNCH_CMD"
-      if start_herdr_agent "$MANAGER_NAME" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
-      elif MANAGER_NAME=$(herdr_agent_name "manager-${MANAGER_PANE_ID//:/}") && \
-           start_herdr_agent "$MANAGER_NAME" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
-      else
-        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-        send_herdr_command "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
-        sleep 5
-      fi
+      launch_herdr_agent "$(herdr_agent_name "manager-${PROJECT_NAME}")" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
       echo "   → Manager: sending $MANAGER_CMD..."
       prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
     else

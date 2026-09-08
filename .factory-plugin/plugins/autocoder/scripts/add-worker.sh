@@ -344,18 +344,7 @@ elif [ "$MUX" = "herdr" ]; then
     if [ "$WORKER_LAUNCH_MODE" = "interactive" ]; then
       # Register as a named herdr agent so the new worker gets its own entry
       # in the agent list, like the workers created at swarm start.
-      WORKER_NAME=$(herdr_agent_name "wt${WORKER_NUM}-${PROJECT_NAME}")
-      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
-      if start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      elif WORKER_NAME=$(herdr_agent_name "wt${WORKER_NUM}-${PANE_ID//:/}") && \
-           start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      else
-        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-        sleep 5
-      fi
+      launch_herdr_agent "$(herdr_agent_name "wt${WORKER_NUM}-${PROJECT_NAME}")" "$AGENT" "$PANE_ID" "$AGENT_LAUNCH_CMD"
     else
       send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
       sleep 5

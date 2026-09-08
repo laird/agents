@@ -890,20 +890,7 @@ elif [ "$MUX" = "herdr" ]; then
     # so no sleep heuristics are needed before prompting it.
     if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting $AGENT in worker $i..."
-      WORKER_NAME=$(herdr_agent_name "wt${i}-${PROJECT_NAME}")
-      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
-      if start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      # A leftover agent from a previous swarm on this project may still hold
-      # the name; retry once with a pane-derived name before going anonymous.
-      elif WORKER_NAME=$(herdr_agent_name "wt${i}-${PANE_ID//:/}") && \
-           start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
-        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
-      else
-        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-        sleep 5
-      fi
+      launch_herdr_agent "$(herdr_agent_name "wt${i}-${PROJECT_NAME}")" "$AGENT" "$PANE_ID" "$AGENT_LAUNCH_CMD"
       WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
     fi
 
@@ -959,18 +946,7 @@ elif [ "$MUX" = "herdr" ]; then
         if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
           send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
         else
-          MANAGER_NAME=$(herdr_agent_name "manager-${PROJECT_NAME}")
-          read -r -a MANAGER_ARGV <<< "$MANAGER_LAUNCH_CMD"
-          if start_herdr_agent "$MANAGER_NAME" "$AGENT" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
-            echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
-          elif MANAGER_NAME=$(herdr_agent_name "manager-${MANAGER_PANE_ID//:/}") && \
-               start_herdr_agent "$MANAGER_NAME" "$AGENT" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
-            echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
-          else
-            echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
-            send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
-            sleep 5
-          fi
+          launch_herdr_agent "$(herdr_agent_name "manager-${PROJECT_NAME}")" "$AGENT" "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
           echo "   → Manager: sending $MANAGER_CMD..."
           prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
         fi
