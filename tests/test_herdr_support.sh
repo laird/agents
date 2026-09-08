@@ -202,7 +202,91 @@ for rel in start-parallel-agents.sh start-workers.sh add-worker.sh \
   else fail "$rel has no herdr branch"; fi
 done
 
-# ── 9. The scripts stay syntactically valid ──────────────────────────────────
+# ── 9. Workers surface as NAMED herdr agents, not anonymous terminals ────────
+# herdr's agent list only shows panes registered via `herdr agent start`, so a
+# manager + N workers must produce N+1 named entries the user can click on.
+# Typing the launch command into the pane is only the fallback.
+
+# 9a. The lib defines the agent-surface helpers
+for fn in herdr_agent_name start_herdr_agent prompt_herdr_agent; do
+  if grep -q "${fn}()" "$LIB"; then pass "mux-send-lib.sh defines $fn"
+  else fail "mux-send-lib.sh does not define $fn"; fi
+done
+
+# 9b. herdr_agent_name produces a valid name: [a-z][a-z0-9_-]{0,31}
+NAME_OUT=$(bash -c "source '$LIB'; herdr_agent_name 'wt1-My.Repo Name'")
+[ "$NAME_OUT" = "wt1-my-repo-name" ] \
+  && pass "herdr_agent_name lowercases and replaces invalid chars" \
+  || fail "herdr_agent_name gave '$NAME_OUT', want 'wt1-my-repo-name'"
+NAME_OUT=$(bash -c "source '$LIB'; herdr_agent_name '123---'")
+case "$NAME_OUT" in
+  [a-z]*) pass "herdr_agent_name forces a leading letter ('$NAME_OUT')" ;;
+  *)      fail "herdr_agent_name produced invalid leading char: '$NAME_OUT'" ;;
+esac
+NAME_OUT=$(bash -c "source '$LIB'; herdr_agent_name 'w$(printf 'x%.0s' $(seq 1 60))'")
+[ "${#NAME_OUT}" -le 32 ] \
+  && pass "herdr_agent_name truncates to 32 chars" \
+  || fail "herdr_agent_name returned ${#NAME_OUT} chars"
+
+# 9c. start_herdr_agent registers through `herdr agent start ... --kind ... --pane ... --`
+: > "$CAPTURE"
+HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
+  bash -c "source '$LIB'; start_herdr_agent wt1-proj claude w1:p1 --dangerously-skip-permissions --model claude-sonnet-5" \
+  || fail "start_herdr_agent exited non-zero against a healthy stub"
+assert_contains "start_herdr_agent registers a NAMED agent in the pane" \
+  "agent start wt1-proj --kind claude --pane w1:p1 -- --dangerously-skip-permissions --model claude-sonnet-5" \
+  "$(cat "$CAPTURE")"
+
+# 9d. prompt_herdr_agent submits through the agent surface (one ordered write)
+: > "$CAPTURE"
+HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
+  bash -c "source '$LIB'; prompt_herdr_agent w1:p1 '/autocoder:fix-loop'" \
+  || fail "prompt_herdr_agent exited non-zero against a healthy stub"
+assert_contains "prompt_herdr_agent uses herdr agent prompt" \
+  "agent prompt w1:p1 /autocoder:fix-loop" "$(cat "$CAPTURE")"
+
+# 9e. The launcher/lifecycle scripts register agents instead of only typing
+for rel in start-parallel-agents.sh add-worker.sh restart-worker.sh; do
+  s="$ROOT/plugins/autocoder/scripts/$rel"
+  grep -q 'start_herdr_agent' "$s" \
+    && pass "$rel registers workers via start_herdr_agent" \
+    || fail "$rel never calls start_herdr_agent (workers stay anonymous)"
+done
+for rel in start-parallel-agents.sh start-workers.sh add-worker.sh restart-worker.sh; do
+  s="$ROOT/plugins/autocoder/scripts/$rel"
+  grep -q 'prompt_herdr_agent' "$s" \
+    && pass "$rel prompts through the agent surface" \
+    || fail "$rel never calls prompt_herdr_agent"
+done
+
+# ── 10. Under herdr, claude workers are interactive (fix-loop), not claude -p ─
+# The headless `claude -p` worker loop is undetectable by herdr, so the mux
+# argument must flip claude to an interactive launch there — and must NOT
+# change the tmux/cmux resolution.
+WLL="$ROOT/plugins/autocoder/scripts/worker-launch-lib.sh"
+HERDR_RESOLVE=$(bash -c "source '$WLL'; resolve_worker_launch claude '$ROOT' herdr >/dev/null 2>&1; \
+  printf '%s|%s|%s|%s|%s' \"\$WORKER_LAUNCH_MODE\" \"\$WORKER_COMMAND_MODE\" \"\$WORKER_CMD\" \"\$AGENT_LAUNCH_CMD\" \"\$MANAGER_COMMAND_MODE\"")
+case "$HERDR_RESOLVE" in
+  "interactive|agent-input|/autocoder:fix-loop|claude "*"|agent-input")
+    pass "claude+herdr resolves to an interactive fix-loop worker" ;;
+  *)
+    fail "claude+herdr resolved to '$HERDR_RESOLVE'" ;;
+esac
+TMUX_RESOLVE=$(bash -c "source '$WLL'; resolve_worker_launch claude '$ROOT' tmux >/dev/null 2>&1; \
+  printf '%s|%s' \"\$WORKER_LAUNCH_MODE\" \"\$WORKER_COMMAND_MODE\"")
+[ "$TMUX_RESOLVE" = "shell|shell" ] \
+  && pass "claude+tmux keeps the shell worker loop (fresh context per issue)" \
+  || fail "claude+tmux resolution changed to '$TMUX_RESOLVE'"
+
+# 10b. Every resolve_worker_launch caller passes the mux through
+for rel in start-parallel-agents.sh start-workers.sh add-worker.sh restart-worker.sh; do
+  s="$ROOT/plugins/autocoder/scripts/$rel"
+  grep -Eq 'resolve_worker_launch .*"\$(MUX|MANIFEST_MUX)"' "$s" \
+    && pass "$rel passes the mux to resolve_worker_launch" \
+    || fail "$rel calls resolve_worker_launch without the mux"
+done
+
+# ── 11. The scripts stay syntactically valid ─────────────────────────────────
 for s in "$LIB" "$MANIFEST_LIB" "${PLUGIN_SCRIPTS[@]}" \
          "$ROOT/plugins/autocoder/scripts/start-workers.sh" \
          "$ROOT/plugins/autocoder/scripts/restart-worker.sh" \

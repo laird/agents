@@ -604,19 +604,36 @@ elif [ "$MUX" = "herdr" ]; then
       sleep 0.5
     fi
 
-    # Launch agent
+    # Launch agent. Register it via `herdr agent start` so every worker gets
+    # its OWN named entry in herdr's agent list — a swarm of one manager and
+    # N workers must show as N+1 clickable agents, not anonymous terminals.
+    # The kind is the launch command's executable (gemini for Antigravity).
     if [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting $AGENT in worker $i..."
-      send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-      sleep 5
+      WORKER_NAME=$(herdr_agent_name "wt${i}-${PROJECT_NAME}")
+      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
+      if start_herdr_agent "$WORKER_NAME" "${LAUNCH_ARGV[0]}" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      elif WORKER_NAME=$(herdr_agent_name "wt${i}-${PANE_ID//:/}") && \
+           start_herdr_agent "$WORKER_NAME" "${LAUNCH_ARGV[0]}" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      else
+        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+        sleep 5
+      fi
+
+      # Interactive agent: submit the loop through the agent surface.
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+    else
+      # Shell-loop agent (codex/droid): type the command into the raw pane.
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      send_herdr_command "$PANE_ID" "$WORKER_CMD"
+
+      echo "   → Worker $i: waiting for initialization..."
+      sleep 10
     fi
-
-    # Send worker command
-    echo "   → Worker $i: sending $WORKER_CMD..."
-    send_herdr_command "$PANE_ID" "$WORKER_CMD"
-
-    echo "   → Worker $i: waiting for initialization..."
-    sleep 10
   done
 
   echo "   All workers initialized"
@@ -637,11 +654,24 @@ elif [ "$MUX" = "herdr" ]; then
 
     if [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting coordinator..."
-      send_herdr_command "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
-      sleep 5
+      MANAGER_NAME=$(herdr_agent_name "manager-${PROJECT_NAME}")
+      read -r -a MANAGER_ARGV <<< "$AGENT_LAUNCH_CMD"
+      if start_herdr_agent "$MANAGER_NAME" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
+      elif MANAGER_NAME=$(herdr_agent_name "manager-${MANAGER_PANE_ID//:/}") && \
+           start_herdr_agent "$MANAGER_NAME" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
+      else
+        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+        send_herdr_command "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
+        sleep 5
+      fi
+      echo "   → Manager: sending $MANAGER_CMD..."
+      prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+    else
+      echo "   → Manager: sending $MANAGER_CMD..."
+      send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
     fi
-    echo "   → Manager: sending $MANAGER_CMD..."
-    send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
   else
     echo "   ⚠️  Could not create the manager workspace"
   fi
@@ -667,6 +697,9 @@ elif [ "$MUX" = "herdr" ]; then
   fi
   echo ""
   echo "🔧 Useful herdr commands:"
+  echo "   List agents:      herdr agent list"
+  echo "   Prompt agent:     herdr agent prompt <name-or-pane-id> \"text\""
+  echo "   Read agent:       herdr agent read <name-or-pane-id> --source recent-unwrapped"
   echo "   List workspaces:  herdr workspace list"
   echo "   Read screen:      herdr pane read <pane-id>"
   echo "   Send text:        herdr pane send-text <pane-id> \"text\""

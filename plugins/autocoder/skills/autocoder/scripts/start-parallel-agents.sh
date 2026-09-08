@@ -296,7 +296,7 @@ case "$AGENT" in
     ;;
 esac
 
-resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
+resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 if [ "$AGENT" = "codex" ]; then
   if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
     echo "✅ Codex /goal available — using native goal loop"
@@ -883,21 +883,41 @@ elif [ "$MUX" = "herdr" ]; then
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "" paused "$PANE_ID")")
 
-    # Launch agent
+    # Launch agent. Register it via `herdr agent start` so every worker gets
+    # its OWN named entry in herdr's agent list — a swarm of one manager and
+    # N workers must show as N+1 clickable agents, not anonymous terminals.
+    # `agent start` blocks until the agent is detected and ready for input,
+    # so no sleep heuristics are needed before prompting it.
     if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting $AGENT in worker $i..."
-      send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-      sleep 5
+      WORKER_NAME=$(herdr_agent_name "wt${i}-${PROJECT_NAME}")
+      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
+      if start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      # A leftover agent from a previous swarm on this project may still hold
+      # the name; retry once with a pane-derived name before going anonymous.
+      elif WORKER_NAME=$(herdr_agent_name "wt${i}-${PANE_ID//:/}") && \
+           start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      else
+        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+        sleep 5
+      fi
       WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
     fi
 
     if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
       # Send worker command
       echo "   → Worker $i: sending $WORKER_CMD..."
-      send_herdr_command "$PANE_ID" "$WORKER_CMD"
-
-      echo "   → Worker $i: waiting for initialization..."
-      sleep 10
+      if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+        # Agent surface: the pane ID resolves to the agent occupying it.
+        prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+      else
+        send_herdr_command "$PANE_ID" "$WORKER_CMD"
+        echo "   → Worker $i: waiting for initialization..."
+        sleep 10
+      fi
     fi
   done
 
@@ -932,14 +952,27 @@ elif [ "$MUX" = "herdr" ]; then
     if [ "$PAUSED" = false ]; then
       if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
         echo "   Starting coordinator..."
-        # See the tmux path for why argv mode exists.
+        # See the tmux path for why argv mode exists. argv mode cannot go
+        # through `agent start` (the appended argv IS the prompt), so it keeps
+        # the typed form; interactive agents register like the workers do so
+        # the manager is the swarm's final named entry in the agent list.
         if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
           send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
         else
-          send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
-          sleep 5
+          MANAGER_NAME=$(herdr_agent_name "manager-${PROJECT_NAME}")
+          read -r -a MANAGER_ARGV <<< "$MANAGER_LAUNCH_CMD"
+          if start_herdr_agent "$MANAGER_NAME" "$AGENT" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
+            echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
+          elif MANAGER_NAME=$(herdr_agent_name "manager-${MANAGER_PANE_ID//:/}") && \
+               start_herdr_agent "$MANAGER_NAME" "$AGENT" "$MANAGER_PANE_ID" "${MANAGER_ARGV[@]:1}"; then
+            echo "   ✓ Registered herdr agent '$MANAGER_NAME'"
+          else
+            echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+            send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
+            sleep 5
+          fi
           echo "   → Manager: sending $MANAGER_CMD..."
-          send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+          prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
         fi
       else
         echo "   → Manager: sending $MANAGER_CMD..."
@@ -992,6 +1025,9 @@ elif [ "$MUX" = "herdr" ]; then
   fi
   echo ""
   echo "🔧 Useful herdr commands:"
+  echo "   List agents:      herdr agent list"
+  echo "   Prompt agent:     herdr agent prompt <name-or-pane-id> \"text\""
+  echo "   Read agent:       herdr agent read <name-or-pane-id> --source recent-unwrapped"
   echo "   List workspaces:  herdr workspace list"
   echo "   Read screen:      herdr pane read <pane-id>"
   echo "   Send text:        herdr pane send-text <pane-id> \"text\""

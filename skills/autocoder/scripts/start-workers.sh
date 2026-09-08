@@ -104,7 +104,7 @@ if [ -n "$MUX" ] && [ "$MUX" != "$MANIFEST_MUX" ]; then
 fi
 AGENT="${AGENT:-$MANIFEST_AGENT}"
 MUX="${MUX:-$MANIFEST_MUX}"
-resolve_worker_launch "$MANIFEST_AGENT" "$AGENTS_REPO_ROOT" || exit 1
+resolve_worker_launch "$MANIFEST_AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 
 mkdir -p "$(dirname "$LOCK_PATH")"
 exec 9>"$LOCK_PATH"
@@ -295,7 +295,11 @@ while IFS= read -r worker_json; do
         continue
       fi
     fi
-    if send_herdr_command "$herdr_pane" "$WORKER_CMD"; then
+    # agent-input workers host an interactive agent (registered at swarm
+    # start), so the command goes through the agent surface; typing into the
+    # raw pane stays the shell-mode path and the fallback.
+    if { [ "$command_mode" = "agent-input" ] && prompt_herdr_agent "$herdr_pane" "$WORKER_CMD"; } \
+       || send_herdr_command "$herdr_pane" "$WORKER_CMD"; then
       manifest_update_worker_state "$MANIFEST_PATH" "$number" started
       echo "✅ Worker $number command sent to $herdr_pane"
     else

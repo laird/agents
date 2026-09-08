@@ -100,6 +100,45 @@ validate_herdr_target() {
   run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane get "$pane" >/dev/null 2>&1
 }
 
+# herdr distinguishes LAYOUT (workspaces/tabs/panes) from AGENTS: only a pane
+# whose occupant was registered via `herdr agent start <name>` gets its own
+# named, clickable entry in herdr's agent list. Typing a launch command into a
+# pane produces an anonymous terminal instead, so a swarm of one manager and N
+# workers must issue N+1 `agent start` calls to appear as N+1 agents.
+
+# Agent names must match [a-z][a-z0-9_-]{0,31} and be unique among live agents.
+herdr_agent_name() {
+  local name
+  name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^[^a-z]*//')
+  [ -z "$name" ] && name="agent"
+  printf '%.32s' "$name"
+}
+
+# `herdr agent start` blocks until the agent is detected and ready for input
+# (herdr's own default is 30s), so the wrapper timeout must sit ABOVE that or
+# every slow-but-successful start would be misreported as a failure.
+AUTOCODER_HERDR_START_TIMEOUT_SECONDS="${AUTOCODER_HERDR_START_TIMEOUT_SECONDS:-45}"
+
+# start_herdr_agent NAME KIND PANE [agent-args...] — start an interactive
+# agent in an existing shell pane and register it under NAME. Non-zero exit
+# means herdr never detected a ready agent; callers fall back to typing the
+# launch command into the pane (works, but stays anonymous in the UI).
+start_herdr_agent() {
+  local name="$1" kind="$2" pane="$3"
+  shift 3
+  run_with_timeout "$AUTOCODER_HERDR_START_TIMEOUT_SECONDS" \
+    herdr agent start "$name" --kind "$kind" --pane "$pane" -- "$@" >/dev/null
+}
+
+# Submit a prompt through herdr's agent surface (target: agent name or the
+# pane ID hosting it). Unlike send_herdr_command this honors bracketed paste
+# and submits text+enter as one ordered write, so no settle-delay heuristics.
+prompt_herdr_agent() {
+  local target="$1"
+  local text="$2"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr agent prompt "$target" "$text" >/dev/null
+}
+
 send_cmux_command() {
   local workspace="$1"
   local text="$2"

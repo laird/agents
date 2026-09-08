@@ -86,7 +86,7 @@ ensure_statusline --quiet
 source "$SCRIPT_DIR/issue-source-lib.sh"
 # shellcheck source=swarm-manifest-lib.sh
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
-resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" || exit 1
+resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 
 PROJECT_ROOT=$(resolve_main_worktree)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
@@ -291,13 +291,33 @@ for ws in data.get('result', {}).get('workspaces', []):
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
-    send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
-    sleep 5
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ]; then
+      # Re-register under the worker's name so the restarted worker reclaims
+      # its own entry in herdr's agent list (the old entry died with the old
+      # workspace). Fall back to a pane-derived name, then to typing.
+      WORKER_NAME=$(herdr_agent_name "wt${WT_NUM:-x}-${PROJECT_NAME}")
+      read -r -a LAUNCH_ARGV <<< "$AGENT_LAUNCH_CMD"
+      if start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      elif WORKER_NAME=$(herdr_agent_name "wt${WT_NUM:-x}-${PANE_ID//:/}") && \
+           start_herdr_agent "$WORKER_NAME" "$AGENT" "$PANE_ID" "${LAUNCH_ARGV[@]:1}"; then
+        echo "   ✓ Registered herdr agent '$WORKER_NAME'"
+      else
+        echo "   ⚠️  herdr agent start failed; typing launch command into the pane"
+        send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+        sleep 5
+      fi
+    else
+      send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+      sleep 5
+    fi
   fi
 
   if [ "$WORKER_STATE" = "paused" ]; then
     [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
   else
     send_herdr_command "$PANE_ID" "$WORKER_CMD"
   fi

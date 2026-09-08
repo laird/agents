@@ -7,8 +7,13 @@
 #
 # Usage:
 #   source "$(dirname "$0")/worker-launch-lib.sh"
-#   resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT"
+#   resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" ["$MUX"]
 #   # -> sets globals AGENT_LAUNCH_CMD and WORKER_CMD
+#
+# The optional third argument is the multiplexer in use. herdr is the only
+# value that changes the result: its UI lists a pane as a named, interactive
+# agent only when a real agent TUI occupies it, so claude workers switch from
+# the headless `claude -p` shell loop to an interactive session there.
 #
 # AGENT_LAUNCH_CMD: command that starts the agent REPL (may be empty for droid).
 # WORKER_CMD:       command sent to the agent to begin the continuous fix loop.
@@ -65,6 +70,7 @@ ensure_statusline() {
 resolve_worker_launch() {
   local agent="$1"
   local repo_root="$2"
+  local mux="${3:-}"
 
   AGENT_LAUNCH_CMD=""
   WORKER_CMD=""
@@ -95,6 +101,19 @@ resolve_worker_launch() {
       MANAGER_CMD="/autocoder:monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       MANAGER_COMMAND_MODE="argv"
+      if [ "$mux" = "herdr" ]; then
+        # herdr's agent list only shows panes occupied by an interactive agent
+        # it can detect; a `claude -p` shell loop is invisible there and cannot
+        # be clicked on or interacted with. Under herdr, workers therefore run
+        # an interactive claude driven by /autocoder:fix-loop (the same shape
+        # the gemini path uses), and the manager takes its prompt through
+        # `herdr agent prompt` instead of an argv-appended one.
+        AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions --model $WORKER_MODEL"
+        WORKER_CMD="/autocoder:fix-loop"
+        WORKER_LAUNCH_MODE="interactive"
+        WORKER_COMMAND_MODE="agent-input"
+        MANAGER_COMMAND_MODE="agent-input"
+      fi
       ;;
     gemini)
       # Workers: interactive Gemini session running /fix-loop (matches .agent/workflows/).
