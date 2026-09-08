@@ -37,8 +37,11 @@ required_issue_label() {
     return 0
   fi
 
-  local root json
-  root=$(git worktree list --porcelain 2>/dev/null | grep -m1 "^worktree" | cut -d' ' -f2)
+  local root json worktree_list
+  # See issue-config.sh for why this is two steps: piping git straight into
+  # grep -m1 races git's own write completion under a caller's pipefail.
+  worktree_list=$(git worktree list --porcelain 2>/dev/null)
+  root=$(printf '%s\n' "$worktree_list" | grep -m1 "^worktree" | cut -d' ' -f2)
   [ -n "$root" ] || root=$(git rev-parse --show-toplevel 2>/dev/null)
   [ -n "$root" ] || return 0
   json="${root}/.autocoder.json"

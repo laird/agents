@@ -10,7 +10,15 @@
 # the inherited value only stands when the config supplies nothing.
 _ic_INHERITED_SOURCE="${ISSUE_SOURCE:-}"
 
-_ic_MAIN_WORKTREE=$(git worktree list --porcelain 2>/dev/null | grep -m1 "^worktree" | cut -d' ' -f2)
+# Two steps, not one piped command: `git worktree list` can take long enough
+# on a host with many worktrees that `grep -m1` reads its match and exits
+# before git finishes writing, killing git with SIGPIPE. Under a caller's
+# `set -e -o pipefail` (e.g. fix-loop-gate.sh) that non-zero status aborts
+# the whole script before it decides anything. Capturing the full output
+# first lets git run to completion undisturbed; the -m1 filter then runs
+# against a static string with no live producer to race against.
+_ic_WORKTREE_LIST=$(git worktree list --porcelain 2>/dev/null)
+_ic_MAIN_WORKTREE=$(printf '%s\n' "$_ic_WORKTREE_LIST" | grep -m1 "^worktree" | cut -d' ' -f2)
 _ic_JSON="${_ic_MAIN_WORKTREE}/.autocoder.json"
 
 # ── 1. Read cached config ──────────────────────────────────────────────────

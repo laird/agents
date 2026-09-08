@@ -86,7 +86,10 @@ else
   # If given a bare filename (no directory component, e.g. "HISTORY.md"), resolve
   # to the main git worktree root so parallel fix-loop workers all write to one file.
   if [[ "$HISTORY_FILE" != */* ]]; then
-    MAIN_WT=$(git worktree list --porcelain 2>/dev/null | grep -m1 '^worktree ' | sed 's/^worktree //')
+    # See issue-config.sh for why this is two steps: piping git straight into
+    # grep -m1 races git's own write completion under a caller's pipefail.
+    _ath_WORKTREE_LIST=$(git worktree list --porcelain 2>/dev/null)
+    MAIN_WT=$(printf '%s\n' "$_ath_WORKTREE_LIST" | grep -m1 '^worktree ' | sed 's/^worktree //')
     if [ -n "$MAIN_WT" ] && [ "$MAIN_WT" != "$(pwd)" ]; then
       HISTORY_FILE="${MAIN_WT}/${HISTORY_FILE}"
     fi
