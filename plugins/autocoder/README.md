@@ -348,6 +348,9 @@ start-parallel 3 --mux tmux --agent claude
 # Or use cmux
 start-parallel 3 --mux cmux --agent claude
 
+# Or use herdr
+start-parallel 3 --mux herdr --agent claude
+
 # Start a configured swarm without workers pulling issues yet
 start-parallel 5 --mux tmux --agent codex --issue-source github --paused
 ```
@@ -538,7 +541,7 @@ join-parallel --mux cmux
 | **Codex CLI** | `codex` | Codex goal loop or shell-loop fallback |
 | **Droid** | shell-loop wrapper | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
 
-Auto-detection prefers cmux over tmux, and then checks available agents in order. Override with `--mux` and `--agent`.
+Auto-detection prefers a *running* cmux, then a *running* herdr, then tmux — except when launched from inside a herdr pane (`HERDR_ENV=1`), where herdr wins. A merely installed cmux or herdr with no live server never captures the swarm. Agents are then checked in order. Override with `--mux` and `--agent`.
 
 ### How It Works
 
@@ -580,7 +583,7 @@ start-parallel [num_workers] [options]
 | Option | Values | Purpose |
 |--------|--------|---------|
 | `num_workers` | number | Worker count. Defaults to `3`. |
-| `--mux` | `tmux`, `cmux` | Terminal multiplexer. Auto-detects when omitted. |
+| `--mux` | `tmux`, `cmux`, `herdr` | Terminal multiplexer. Auto-detects when omitted. |
 | `--agent` | `claude`, `gemini`, `codex`, `droid` | Agent framework. Auto-detects when omitted. |
 | `--issue-source` | `file`, `github` | Issue backend for this swarm run. |
 | `--issue-dir` | path | File issue directory when using `--issue-source file`. |
@@ -618,12 +621,12 @@ These are the key commands for managing the parallel agent lifecycle:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
-| `start-parallel` | **Start** parallel agent system | `[num_workers] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused] [--no-worktrees]` |
-| `add-worker` | **Add and start** one or more workers | `[count] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
-| `remove-worker` | **Stop** one or more workers | `WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
-| `join-parallel` | **Join** (rejoin) existing session | `[--mux tmux\|cmux] [session_name]` |
+| `start-parallel` | **Start** parallel agent system | `[num_workers] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused] [--no-worktrees]` |
+| `add-worker` | **Add and start** one or more workers | `[count] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
+| `remove-worker` | **Stop** one or more workers | `WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
+| `join-parallel` | **Join** (rejoin) existing session | `[--mux tmux\|cmux\|herdr] [session_name]` |
 | `end-parallel` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
-| `stop-parallel` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux]` |
+| `stop-parallel` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux\|herdr]` |
 
 **Start** creates worktrees, launches agents, and opens the manager session. With `--paused`, it opens the swarm without starting workers. **Add-worker** first starts existing idle workers, then adds and starts new worker capacity if needed. **Remove-worker** stops selected manifest-backed workers and keeps their worktrees unless `--remove-worktree` is passed. **Join** reconnects to an existing session. **End** tears down the session and optionally removes worktrees. **Stop** kills sessions without worktree cleanup.
 

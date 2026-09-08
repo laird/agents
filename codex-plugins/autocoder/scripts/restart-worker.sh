@@ -11,7 +11,7 @@
 # worker-health.sh flags a worker as UNHEALTHY (stalled AND high memory).
 #
 # Usage:
-#   restart-worker.sh --worktree <path> [--mux tmux|cmux] [--agent claude|gemini|codex|droid]
+#   restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid]
 #
 # Examples:
 #   restart-worker.sh --worktree /Users/me/src/agents-wt-2
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --agent)    AGENT="$2";    shift 2 ;;
     --worktree) WORKTREE="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux] [--agent claude|gemini|codex|droid]"
+      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid]"
       exit 0
       ;;
     *)
@@ -55,11 +55,16 @@ fi
 # Normalize to an absolute path with no trailing slash.
 WORKTREE="$(cd "$WORKTREE" 2>/dev/null && pwd)" || { echo "❌ Worktree not found: $WORKTREE" >&2; exit 1; }
 
+# shellcheck source=mux-send-lib.sh
+source "$SCRIPT_DIR/mux-send-lib.sh"
+
 # ── Auto-detect multiplexer ──────────────────────────────────────────────────
 if [ -z "$MUX" ]; then
-  if command -v cmux &>/dev/null; then MUX="cmux"
+  if [ "${HERDR_ENV:-}" = "1" ] && herdr_is_running; then MUX="herdr"
+  elif command -v cmux &>/dev/null; then MUX="cmux"
+  elif herdr_is_running; then MUX="herdr"
   elif command -v tmux &>/dev/null; then MUX="tmux"
-  else echo "❌ No terminal multiplexer found (tmux or cmux)" >&2; exit 1
+  else echo "❌ No terminal multiplexer found (tmux, cmux, or herdr)" >&2; exit 1
   fi
 fi
 
@@ -238,7 +243,68 @@ elif [ "$MUX" = "cmux" ]; then
 
   echo "✅ Worker restarted in cmux workspace $WS_REF (worktree: $WORKTREE)"
 
+# ── herdr: close the wedged workspace and reopen one at the same cwd ─────────
+elif [ "$MUX" = "herdr" ]; then
+
+  if ! herdr_is_running; then
+    echo "❌ No herdr server is running. Launch herdr first (run \`herdr\` or \`herdr server\`)." >&2
+    exit 1
+  fi
+
+  # Derive the workspace label from the worktree index (matches add-worker.sh:
+  # `${PROJECT_ROOT}-wt-N` -> workspace `wtN-<project>`), and look it up over
+  # the socket API.
+  WT_NUM=$(echo "$WORKTREE" | sed -n 's/.*-wt-\([0-9]\{1,\}\)$/\1/p')
+  OLD_WS=""
+  if [ -n "$WT_NUM" ]; then
+    OLD_WS=$(herdr workspace list 2>/dev/null | python3 -c "
+import json, sys
+label = 'wt${WT_NUM}-${PROJECT_NAME}'
+data = json.load(sys.stdin)
+for ws in data.get('result', {}).get('workspaces', []):
+    if ws.get('label') == label:
+        print(ws.get('workspace_id', ''))
+        break
+" 2>/dev/null)
+  fi
+
+  if [ -n "$OLD_WS" ]; then
+    echo "   Closing wedged workspace $OLD_WS ..."
+    herdr workspace close "$OLD_WS" >/dev/null 2>&1 || true
+    sleep 1
+  else
+    echo "   ⚠️  Could not locate the old herdr workspace by label; opening a fresh one." >&2
+  fi
+
+  PANE_ID=$(herdr workspace create --cwd "$WORKTREE" --label "wt${WT_NUM:-x}-${PROJECT_NAME}" --no-focus \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])' 2>/dev/null)
+  [ -z "$PANE_ID" ] && { echo "❌ Could not create herdr workspace" >&2; exit 1; }
+
+  if [ -n "${ISSUE_SOURCE:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && send_herdr_command "$PANE_ID" "$line"
+    done < <(issue_env_exports)
+  fi
+
+  if [ "$AGENT" = "claude" ]; then
+    send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+  fi
+
+  if [ -n "$AGENT_LAUNCH_CMD" ]; then
+    send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+    sleep 5
+  fi
+
+  if [ "$WORKER_STATE" = "paused" ]; then
+    [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
+    echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  else
+    send_herdr_command "$PANE_ID" "$WORKER_CMD"
+  fi
+
+  echo "✅ Worker restarted in herdr pane $PANE_ID (worktree: $WORKTREE)"
+
 else
-  echo "❌ Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+  echo "❌ Unknown multiplexer '$MUX'. Use 'tmux', 'cmux', or 'herdr'" >&2
   exit 1
 fi

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Join an existing parallel agent session
-# Supports both tmux and cmux multiplexers
+# Supports the tmux, cmux, and herdr multiplexers
 #
 # Usage: join-parallel-agents.sh [options] [session_name]
 #
 # Options:
-#   --mux tmux|cmux  Terminal multiplexer to use (default: auto-detect)
+#   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
 
 SOURCE_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE_PATH" ]; do
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: join-parallel-agents.sh [options] [session_name]"
       echo ""
       echo "Options:"
-      echo "  --mux tmux|cmux  Terminal multiplexer (default: auto-detect)"
+      echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
       echo ""
       echo "If no session name is given, auto-detects from current directory."
       exit 0
@@ -45,14 +45,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Auto-detect multiplexer if not specified.
-# Prefer cmux only when it is actually running — see cmux_is_running().
+# Prefer cmux/herdr only when actually running — see cmux_is_running() /
+# herdr_is_running(). Inside a herdr pane (HERDR_ENV=1), prefer herdr.
 if [ -z "$MUX" ]; then
-  if cmux_is_running; then
+  if [ "${HERDR_ENV:-}" = "1" ] && herdr_is_running; then
+    MUX="herdr"
+  elif cmux_is_running; then
     MUX="cmux"
+  elif herdr_is_running; then
+    MUX="herdr"
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
     if command -v cmux &> /dev/null; then
       echo "ℹ️  cmux installed but not running — falling back to tmux"
+    fi
+    if command -v herdr &> /dev/null; then
+      echo "ℹ️  herdr installed but not running — falling back to tmux"
     fi
   else
     echo "❌ Error: No terminal multiplexer found" >&2
@@ -60,6 +68,7 @@ if [ -z "$MUX" ]; then
     echo "Install one of the following:" >&2
     echo "  tmux:  brew install tmux" >&2
     echo "  cmux:  brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
+    echo "  herdr: https://herdr.dev" >&2
     echo "" >&2
     exit 1
   fi
@@ -67,14 +76,14 @@ fi
 
 # Validate multiplexer choice
 case "$MUX" in
-  tmux|cmux)
+  tmux|cmux|herdr)
     if ! command -v "$MUX" &> /dev/null; then
       echo "❌ Error: $MUX is not installed" >&2
       exit 1
     fi
     ;;
   *)
-    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux', 'cmux', or 'herdr'" >&2
     exit 1
     ;;
 esac
@@ -163,6 +172,58 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Read screen:      cmux read-screen --workspace <ref>"
   echo "   Send text:        cmux send --workspace <ref> \"text\""
   echo "   Send enter:       cmux send-key --workspace <ref> enter"
+  echo ""
+
+# ============================================================================
+# HERDR MODE
+# ============================================================================
+elif [ "$MUX" = "herdr" ]; then
+
+  if ! herdr_is_running; then
+    echo "❌ Error: no herdr server is running" >&2
+    echo "   Launch herdr first (run \`herdr\` or \`herdr server\`)" >&2
+    exit 1
+  fi
+
+  echo "📋 herdr Workspaces:"
+  echo ""
+
+  # Pretty-print the workspace list (label + workspace id)
+  herdr workspace list 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for ws in data.get("result", {}).get("workspaces", []):
+    print(f"   {ws.get(\"workspace_id\",\"?\"):6} {ws.get(\"label\",\"\")}")
+' || herdr workspace list
+
+  # If a session name was provided, focus the workspace whose label matches
+  if [ -n "$SESSION_NAME" ]; then
+    echo ""
+    echo "🔗 Focusing workspace matching: $SESSION_NAME"
+    WS_ID=$(herdr workspace list 2>/dev/null | python3 -c "
+import json, sys
+wanted = '$SESSION_NAME'
+data = json.load(sys.stdin)
+for ws in data.get('result', {}).get('workspaces', []):
+    if wanted in ws.get('label', ''):
+        print(ws.get('workspace_id', ''))
+        break
+" 2>/dev/null)
+    if [ -n "$WS_ID" ]; then
+      herdr workspace focus "$WS_ID" >/dev/null 2>&1 || true
+    else
+      echo "⚠️  No workspace matching '$SESSION_NAME' found"
+    fi
+  fi
+
+  echo ""
+  echo "🔧 Useful herdr commands:"
+  echo "   List workspaces:  herdr workspace list"
+  echo "   Focus workspace:  herdr workspace focus <workspace-id>"
+  echo "   Read screen:      herdr pane read <pane-id>"
+  echo "   Send text:        herdr pane send-text <pane-id> \"text\""
+  echo "   Send enter:       herdr pane send-keys <pane-id> enter"
+  echo "   Attach TUI:       herdr"
   echo ""
 
 fi

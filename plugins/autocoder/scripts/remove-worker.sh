@@ -25,7 +25,7 @@ REMOVE_WORKTREE=false
 WORKERS=()
 
 usage() {
-  echo "Usage: remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux|cmux] [--agent claude|gemini|codex|droid] [--session SESSION] [--remove-worktree]"
+  echo "Usage: remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--remove-worktree]"
   echo ""
   echo "Stops the selected worker panes/workspaces and removes them from the swarm manifest."
   echo "Worktrees are preserved unless --remove-worktree is passed."
@@ -134,6 +134,7 @@ while IFS= read -r worker_json; do
   worktree=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("worktree") or "")' "$worker_json")
   tmux_target=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("tmuxTarget") or "")' "$worker_json")
   cmux_workspace=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("cmuxWorkspace") or "")' "$worker_json")
+  herdr_pane=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("herdrPane") or "")' "$worker_json")
 
   echo "Removing worker $number..."
   if [ "$MUX" = "tmux" ]; then
@@ -159,6 +160,20 @@ while IFS= read -r worker_json; do
       fi
     else
       echo "   cmux workspace already gone or missing: $cmux_workspace"
+    fi
+  elif [ "$MUX" = "herdr" ]; then
+    # The worker's whole workspace is closed; its id is the pane id's prefix
+    # (w3:p1 -> w3).
+    if [ -n "$herdr_pane" ] && validate_herdr_target "$herdr_pane"; then
+      if run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr workspace close "${herdr_pane%%:*}" >/dev/null; then
+        echo "   Closed herdr workspace ${herdr_pane%%:*}"
+      else
+        echo "❌ Failed to close herdr workspace ${herdr_pane%%:*}" >&2
+        remove_failed=1
+        continue
+      fi
+    else
+      echo "   herdr pane already gone or missing: $herdr_pane"
     fi
   else
     echo "❌ Unknown mux in manifest: $MUX" >&2

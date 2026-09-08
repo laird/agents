@@ -4,7 +4,7 @@
 # Usage: add-worker.sh [count] [options]
 #
 # Options:
-#   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
+#   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)
 #   --no-worktrees         Run in the same directory as the main repo
 #
@@ -13,6 +13,7 @@
 #   add-worker.sh 2
 #   add-worker.sh --mux tmux --agent claude
 #   add-worker.sh --mux cmux --agent codex
+#   add-worker.sh --mux herdr --agent claude
 
 set -e
 
@@ -41,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     --no-worktrees) USE_WORKTREES=false; shift ;;
     --no-attach) NO_ATTACH=true; shift ;;
     -h|--help)
-      echo "Usage: add-worker.sh [count] [--mux tmux|cmux] [--agent claude|gemini|codex|droid] [--no-worktrees]"
+      echo "Usage: add-worker.sh [count] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--no-worktrees]"
       echo ""
       echo "Adds and starts one or more workers in an existing swarm."
       exit 0
@@ -58,16 +59,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Auto-detect multiplexer ──────────────────────────────────────────────────
-# Prefer cmux only when it is actually running — see cmux_is_running().
+# Prefer cmux/herdr only when actually running — see cmux_is_running() /
+# herdr_is_running(). Inside a herdr pane (HERDR_ENV=1), prefer herdr.
 if [ -z "$MUX" ]; then
-  if cmux_is_running; then MUX="cmux"
+  if [ "${HERDR_ENV:-}" = "1" ] && herdr_is_running; then MUX="herdr"
+  elif cmux_is_running; then MUX="cmux"
+  elif herdr_is_running; then MUX="herdr"
   elif command -v tmux &>/dev/null; then
     MUX="tmux"
     if command -v cmux &>/dev/null; then
       echo "ℹ️  cmux installed but not running — falling back to tmux"
     fi
+    if command -v herdr &>/dev/null; then
+      echo "ℹ️  herdr installed but not running — falling back to tmux"
+    fi
   else
-    echo "❌ No terminal multiplexer found (tmux or cmux)" >&2
+    echo "❌ No terminal multiplexer found (tmux, cmux, or herdr)" >&2
     exit 1
   fi
 fi
@@ -305,6 +312,52 @@ elif [ "$MUX" = "cmux" ]; then
   cmux select-workspace --workspace "$WS_REF" >/dev/null || true
 
   echo "✅ Worker $WORKER_NUM added to cmux fleet ($WS_REF: wt${WORKER_NUM}-${PROJECT_NAME})"
+  echo "   Worktree: $WORKER_DIR"
+
+elif [ "$MUX" = "herdr" ]; then
+
+  if ! herdr_is_running; then
+    echo "❌ No herdr server is running. Launch herdr first (run \`herdr\` or \`herdr server\`)." >&2
+    exit 1
+  fi
+
+  # One workspace per worker, labeled wt<N>-<project> like the cmux layout.
+  # The workspace's root pane is the send target.
+  PANE_ID=$(herdr workspace create --cwd "$WORKER_DIR" --label "wt${WORKER_NUM}-${PROJECT_NAME}" --no-focus \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])' 2>/dev/null)
+
+  if [ -z "$PANE_ID" ]; then
+    echo "❌ Could not create herdr workspace" >&2
+    exit 1
+  fi
+
+  if [ -n "${ISSUE_SOURCE:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && send_herdr_command "$PANE_ID" "$line"
+    done < <(issue_env_exports)
+  fi
+  if [ "$AGENT" = "claude" ]; then
+    send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+  fi
+
+  if [ -n "$AGENT_LAUNCH_CMD" ]; then
+    send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+    sleep 5
+  fi
+
+  if [ "$HAS_MANIFEST" = true ]; then
+    WORKER_JSON=$(manifest_worker_json "$WORKER_NUM" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" "$([ -n "$AGENT_LAUNCH_CMD" ] && echo true || echo false)" "" "" paused "$PANE_ID")
+    manifest_add_worker_json "$MANIFEST_PATH" "$WORKER_JSON"
+    echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
+    bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
+  else
+    send_herdr_command "$PANE_ID" "$WORKER_CMD"
+  fi
+
+  # Focus the new workspace so the user can see the worker starting
+  herdr workspace focus "${PANE_ID%%:*}" >/dev/null 2>&1 || true
+
+  echo "✅ Worker $WORKER_NUM added to herdr fleet (pane $PANE_ID: wt${WORKER_NUM}-${PROJECT_NAME})"
   echo "   Worktree: $WORKER_DIR"
 
 fi

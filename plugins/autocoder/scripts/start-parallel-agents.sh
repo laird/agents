@@ -1,11 +1,11 @@
 #!/bin/bash
 # Start parallel AI agents using a terminal multiplexer and git worktrees
-# Supports both tmux and cmux multiplexers, and Claude, Gemini, and Codex agent frameworks
+# Supports the tmux, cmux, and herdr multiplexers, and Claude, Gemini, and Codex agent frameworks
 #
 # Usage: start-parallel-agents.sh [num_agents] [options]
 #
 # Options:
-#   --mux tmux|cmux        Terminal multiplexer to use (default: auto-detect)
+#   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid|pi  Agent framework to use (default: auto-detect)
 #   --issue-source file|github|jira|ado  Issue backend for this swarm run
 #   --issue-dir PATH       File issue directory when --issue-source file
@@ -20,6 +20,7 @@
 # Examples:
 #   start-parallel-agents.sh 3 --mux tmux --agent claude
 #   start-parallel-agents.sh 4 --mux cmux --agent gemini
+#   start-parallel-agents.sh 3 --mux herdr --agent claude
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
 #   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused
@@ -103,7 +104,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: start-parallel-agents.sh [num_agents] [options]"
       echo ""
       echo "Options:"
-      echo "  --mux tmux|cmux        Terminal multiplexer (default: auto-detect)"
+      echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid|pi  Agent framework (default: auto-detect)"
       echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
       echo "  --issue-dir PATH       File issue directory when --issue-source file"
@@ -118,6 +119,7 @@ while [[ $# -gt 0 ]]; do
       echo "Examples:"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
       echo "  start-parallel-agents.sh 4 --mux cmux --agent gemini"
+      echo "  start-parallel-agents.sh 3 --mux herdr --agent claude"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
       echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"
@@ -151,19 +153,28 @@ if [ "$ROUTE" = "manager" ]; then
 fi
 
 # Auto-detect multiplexer if not specified.
-# Prefer cmux only when it is actually running — see cmux_is_running().
+# Prefer cmux/herdr only when actually running — see cmux_is_running() /
+# herdr_is_running(). A run launched from inside a herdr pane (HERDR_ENV=1)
+# prefers herdr, so the swarm lands in the multiplexer the user is looking at.
 if [ -z "$MUX" ]; then
-  if cmux_is_running; then
+  if [ "${HERDR_ENV:-}" = "1" ] && herdr_is_running; then
+    MUX="herdr"
+  elif cmux_is_running; then
     MUX="cmux"
+  elif herdr_is_running; then
+    MUX="herdr"
   elif command -v tmux &> /dev/null; then
     MUX="tmux"
     if command -v cmux &> /dev/null; then
       echo "ℹ️  cmux installed but not running — falling back to tmux"
     fi
+    if command -v herdr &> /dev/null; then
+      echo "ℹ️  herdr installed but not running — falling back to tmux"
+    fi
   else
     echo "❌ Error: No terminal multiplexer found." >&2
     echo "" >&2
-    echo "Install tmux or cmux, then re-run:" >&2
+    echo "Install tmux, cmux, or herdr, then re-run:" >&2
     echo "" >&2
     echo "  tmux  (recommended — available on all platforms)" >&2
     echo "    macOS:   brew install tmux" >&2
@@ -175,13 +186,16 @@ if [ -z "$MUX" ]; then
     echo "    macOS:   brew tap manaflow-ai/cmux && brew install --cask cmux" >&2
     echo "    Info:    https://manaflow.ai/cmux" >&2
     echo "" >&2
+    echo "  herdr  (terminal workspace manager for AI coding agents)" >&2
+    echo "    Info:    https://herdr.dev" >&2
+    echo "" >&2
     exit 1
   fi
 fi
 
 # Validate multiplexer choice
 case "$MUX" in
-  tmux|cmux)
+  tmux|cmux|herdr)
     if ! command -v "$MUX" &> /dev/null; then
       echo "❌ Error: $MUX is not installed." >&2
       echo "" >&2
@@ -200,13 +214,17 @@ case "$MUX" in
           echo "" >&2
           echo "  (cmux is macOS-only; use --mux tmux on Linux)" >&2
           ;;
+        herdr)
+          echo "Install herdr:" >&2
+          echo "  Info:    https://herdr.dev" >&2
+          ;;
       esac
       echo "" >&2
       exit 1
     fi
     ;;
   *)
-    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux' or 'cmux'" >&2
+    echo "❌ Error: Unknown multiplexer '$MUX'. Use 'tmux', 'cmux', or 'herdr'" >&2
     exit 1
     ;;
 esac
@@ -417,6 +435,13 @@ send_issue_env_cmux() {
   local workspace="$1"
   while IFS= read -r line; do
     [ -n "$line" ] && send_cmux_command "$workspace" "$line"
+  done < <(issue_env_exports)
+}
+
+send_issue_env_herdr() {
+  local pane="$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] && send_herdr_command "$pane" "$line"
   done < <(issue_env_exports)
 }
 
@@ -800,6 +825,178 @@ elif [ "$MUX" = "cmux" ]; then
   echo "   Send text:        cmux send --workspace <ref> \"text\""
   echo "   Send enter:       cmux send-key --workspace <ref> enter"
   echo "   Close workspace:  cmux close-workspace --workspace <ref>"
+  echo ""
+
+# ============================================================================
+# HERDR MODE
+# ============================================================================
+elif [ "$MUX" = "herdr" ]; then
+
+  # Verify a herdr server is up (herdr status alone only describes the client).
+  if ! herdr_is_running; then
+    echo "❌ Error: no herdr server is running" >&2
+    echo "   Launch herdr first (run \`herdr\` or \`herdr server\`), then re-run this script" >&2
+    exit 1
+  fi
+
+  # `herdr workspace create` answers in JSON; the root pane of each worker's
+  # workspace is the send target recorded in the manifest, and its workspace id
+  # is always recoverable as the pane id's prefix (w3:p1 -> w3).
+  parse_herdr_pane_id() {
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])' 2>/dev/null
+  }
+
+  WORKER_PANE_IDS=()
+  WORKER_JSONS=()
+
+  # --- Create one workspace per worker agent (mirrors the cmux layout) ---
+  echo "🤖 Starting $AGENT worker sessions..."
+  echo ""
+
+  for i in $(seq 1 $NUM_AGENTS); do
+    echo "   Setting up worker agent $i/$NUM_AGENTS..."
+
+    # Workspace label matches the cmux convention: wt<N>-<project>.
+    if [ "$USE_WORKTREES" = true ]; then
+      WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
+    else
+      WORKER_DIR="$PROJECT_ROOT"
+    fi
+    PANE_ID=$(herdr workspace create --cwd "$WORKER_DIR" --label "wt${i}-${PROJECT_NAME}" --no-focus | parse_herdr_pane_id)
+
+    if [ -z "$PANE_ID" ]; then
+      echo "   ⚠️  Could not create herdr workspace for worker $i"
+      continue
+    fi
+    echo "   Created workspace wt${i}-${PROJECT_NAME} (pane $PANE_ID)"
+
+    WORKER_PANE_IDS+=("$PANE_ID")
+    sleep 1
+
+    # Set environment variables for Claude Code coordination
+    send_issue_env_herdr "$PANE_ID"
+    if [ "$AGENT" = "claude" ]; then
+      send_herdr_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+      send_herdr_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-claude-sonnet-5}'"
+      sleep 0.5
+    fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "" paused "$PANE_ID")")
+
+    # Launch agent
+    if [ "$WORKER_LAUNCH_MODE" = "interactive" ] && [ -n "$AGENT_LAUNCH_CMD" ]; then
+      echo "   Starting $AGENT in worker $i..."
+      send_herdr_command "$PANE_ID" "$AGENT_LAUNCH_CMD"
+      sleep 5
+      WORKER_JSONS[$((i-1))]="$(echo "${WORKER_JSONS[$((i-1))]}" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["agentLaunched"]=True; print(json.dumps(d))')"
+    fi
+
+    if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
+      # Send worker command
+      echo "   → Worker $i: sending $WORKER_CMD..."
+      send_herdr_command "$PANE_ID" "$WORKER_CMD"
+
+      echo "   → Worker $i: waiting for initialization..."
+      sleep 10
+    fi
+  done
+
+  if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
+    echo "   All workers initialized"
+  elif [ "$PAUSED" = false ]; then
+    # Manager-routing mode: workers idle at a ready prompt; the manager dispatches
+    # /autocoder:fix <N> to each idle worker (no self-claim fix-loop).
+    echo "   Manager-routing mode: workers idle at ready prompt (no self-claim loop)"
+  else
+    echo "   Paused mode: worker loop commands were not sent"
+  fi
+
+  # --- Review Workspace ---
+  echo ""
+  echo "📋 Setting up review/planning workspace..."
+  MANAGER_PANE_ID=$(herdr workspace create --cwd "$PROJECT_ROOT" --label "manager-${PROJECT_NAME}" --no-focus | parse_herdr_pane_id)
+
+  if [ -n "$MANAGER_PANE_ID" ]; then
+    echo "   Created workspace manager-${PROJECT_NAME} (pane $MANAGER_PANE_ID)"
+    sleep 1
+
+    send_issue_env_herdr "$MANAGER_PANE_ID"
+    if [ "$AGENT" = "claude" ]; then
+      send_herdr_command "$MANAGER_PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
+      sleep 0.5
+    fi
+
+    # Thread routing mode to the manager loop (see tmux path for rationale).
+    send_herdr_command "$MANAGER_PANE_ID" "export AUTOCODER_ROUTE='$ROUTE'"
+
+    if [ "$PAUSED" = false ]; then
+      if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
+        echo "   Starting coordinator..."
+        # See the tmux path for why argv mode exists.
+        if [ "$MANAGER_COMMAND_MODE" = "argv" ]; then
+          send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD $(printf '%q' "$MANAGER_CMD")"
+        else
+          send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
+          sleep 5
+          echo "   → Manager: sending $MANAGER_CMD..."
+          send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+        fi
+      else
+        echo "   → Manager: sending $MANAGER_CMD..."
+        send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+      fi
+    else
+      write_ready_file
+      send_herdr_command "$MANAGER_PANE_ID" "cat '$READY_FILE'"
+      WORKERS_JSON=$(printf '%s\n' "${WORKER_JSONS[@]}" | json_array_from_lines)
+      MANAGER_JSON=$(manifest_manager_json shell false shell "$READY_REL" "" "" "$MANAGER_PANE_ID")
+      write_paused_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+        "$ISSUE_SOURCE" "$ISSUE_SOURCE_ORIGIN" "${ISSUE_BACKEND:-}" "${ISSUE_DIR_PATH:-}" "$TASK_LIST_ID" \
+        "$CURRENT_BRANCH" "$WORKERS_JSON" "$MANAGER_JSON"
+    fi
+  else
+    echo "   ⚠️  Could not create the manager workspace"
+  fi
+
+  # Focus the first worker workspace (pane id prefix is the workspace id).
+  if [ -n "${WORKER_PANE_IDS[0]:-}" ]; then
+    herdr workspace focus "${WORKER_PANE_IDS[0]%%:*}" >/dev/null 2>&1 || true
+  fi
+
+  echo ""
+  echo "✅ Parallel agent system started!"
+  echo ""
+  echo "📊 Session Info:"
+  echo "   Multiplexer: herdr"
+  echo "   Agent framework: $AGENT"
+  echo "   Task list ID: $TASK_LIST_ID"
+  if [ "$PAUSED" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces configured and paused"
+    echo "   1 manager workspace with readiness instructions"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo ""
+    echo "The swarm is ready for issue review and worker start commands:"
+    echo "   add-worker"
+    echo "   add-worker 2"
+  elif [ "$SEND_WORKER_LOOP" = true ]; then
+    echo "   $NUM_AGENTS worker workspaces running $WORKER_CMD"
+    echo "   1 manager workspace running $MANAGER_CMD"
+  else
+    echo "   $NUM_AGENTS worker workspaces idle (manager-routing; no self-claim loop)"
+    echo "   1 manager workspace running $MANAGER_CMD (sole assigner)"
+  fi
+  echo ""
+  echo "   Worker panes: ${WORKER_PANE_IDS[*]}"
+  if [ -n "${MANAGER_PANE_ID:-}" ]; then
+    echo "   Review pane: $MANAGER_PANE_ID"
+  fi
+  echo ""
+  echo "🔧 Useful herdr commands:"
+  echo "   List workspaces:  herdr workspace list"
+  echo "   Read screen:      herdr pane read <pane-id>"
+  echo "   Send text:        herdr pane send-text <pane-id> \"text\""
+  echo "   Send enter:       herdr pane send-keys <pane-id> enter"
+  echo "   Close workspace:  herdr workspace close <workspace-id>"
   echo ""
 
 fi

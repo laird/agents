@@ -255,11 +255,12 @@ manifest_worker_json() {
   local tmux_target="$6"
   local cmux_workspace="$7"
   local state="${8:-paused}"
+  local herdr_pane="${9:-}"
   python3 - "$number" "$worktree" "$launch_mode" "$command_mode" "$agent_launched" \
-    "$tmux_target" "$cmux_workspace" "$state" "$(now_utc_iso)" <<'PY'
+    "$tmux_target" "$cmux_workspace" "$state" "$herdr_pane" "$(now_utc_iso)" <<'PY'
 import json
 import sys
-number, worktree, launch_mode, command_mode, agent_launched, tmux_target, cmux_workspace, state, ts = sys.argv[1:]
+number, worktree, launch_mode, command_mode, agent_launched, tmux_target, cmux_workspace, state, herdr_pane, ts = sys.argv[1:]
 print(json.dumps({
     "number": int(number),
     "worktree": worktree,
@@ -268,6 +269,7 @@ print(json.dumps({
     "agentLaunched": agent_launched == "true",
     "tmuxTarget": tmux_target or None,
     "cmuxWorkspace": cmux_workspace or None,
+    "herdrPane": herdr_pane or None,
     "state": state,
     "stateUpdatedAt": ts,
 }))
@@ -281,10 +283,11 @@ manifest_manager_json() {
   local ready_file="$4"
   local tmux_target="$5"
   local cmux_workspace="$6"
-  python3 - "$launch_mode" "$agent_launched" "$readiness_mode" "$ready_file" "$tmux_target" "$cmux_workspace" <<'PY'
+  local herdr_pane="${7:-}"
+  python3 - "$launch_mode" "$agent_launched" "$readiness_mode" "$ready_file" "$tmux_target" "$cmux_workspace" "$herdr_pane" <<'PY'
 import json
 import sys
-launch_mode, agent_launched, readiness_mode, ready_file, tmux_target, cmux_workspace = sys.argv[1:]
+launch_mode, agent_launched, readiness_mode, ready_file, tmux_target, cmux_workspace, herdr_pane = sys.argv[1:]
 print(json.dumps({
     "launchMode": launch_mode,
     "agentLaunched": agent_launched == "true",
@@ -292,6 +295,7 @@ print(json.dumps({
     "readyFile": ready_file,
     "tmuxTarget": tmux_target or None,
     "cmuxWorkspace": cmux_workspace or None,
+    "herdrPane": herdr_pane or None,
 }))
 PY
 }

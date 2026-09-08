@@ -30,7 +30,7 @@ YES=false
 
 if [ "$CMD_NAME" = "start-worker" ]; then
   if [ $# -lt 1 ] || [[ "$1" == --* ]]; then
-    echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]" >&2
+    echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]" >&2
     exit 2
   fi
   WORKER_NUMBER="$1"
@@ -45,9 +45,9 @@ while [[ $# -gt 0 ]]; do
     --yes) YES=true; shift ;;
     -h|--help)
       if [ "$CMD_NAME" = "start-worker" ]; then
-        echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
+        echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
       else
-        echo "Usage: start-workers [--mux tmux|cmux] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
+        echo "Usage: start-workers [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
       fi
       exit 0
       ;;
@@ -210,6 +210,7 @@ while IFS= read -r worker_json; do
   command_mode=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["commandMode"])' "$worker_json")
   tmux_target=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("tmuxTarget") or "")' "$worker_json")
   cmux_workspace=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("cmuxWorkspace") or "")' "$worker_json")
+  herdr_pane=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("herdrPane") or "")' "$worker_json")
 
   echo "Starting worker $number..."
   if [ "$MANIFEST_MUX" = "tmux" ]; then
@@ -271,6 +272,36 @@ while IFS= read -r worker_json; do
       manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
       delivery_failed=1
       echo "❌ Worker $number command delivery failed: $cmux_workspace" >&2
+    fi
+  elif [ "$MANIFEST_MUX" = "herdr" ]; then
+    if ! validate_herdr_target "$herdr_pane"; then
+      echo "❌ Worker $number target missing: $herdr_pane" >&2
+      manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
+      delivery_failed=1
+      continue
+    fi
+    if [ "$command_mode" = "shell" ]; then
+      env_failed=0
+      while IFS= read -r line; do
+        if [ -n "$line" ] && ! send_herdr_command "$herdr_pane" "$line"; then
+          env_failed=1
+          break
+        fi
+      done < <(issue_env_exports)
+      if [ "$env_failed" -ne 0 ]; then
+        manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
+        delivery_failed=1
+        echo "❌ Worker $number issue-source export failed: $herdr_pane" >&2
+        continue
+      fi
+    fi
+    if send_herdr_command "$herdr_pane" "$WORKER_CMD"; then
+      manifest_update_worker_state "$MANIFEST_PATH" "$number" started
+      echo "✅ Worker $number command sent to $herdr_pane"
+    else
+      manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
+      delivery_failed=1
+      echo "❌ Worker $number command delivery failed: $herdr_pane" >&2
     fi
   else
     echo "❌ Unknown mux in manifest: $MANIFEST_MUX" >&2

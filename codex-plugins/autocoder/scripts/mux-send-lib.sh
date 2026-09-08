@@ -70,6 +70,36 @@ validate_tmux_target() {
   run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux display-message -p -t "$target" '#{pane_id}' >/dev/null
 }
 
+# Is a herdr server actually RUNNING, not merely installed?
+#
+# Same trap as cmux: the `herdr` binary stays on $PATH once installed and says
+# nothing about whether a server is up, so presence must never decide
+# auto-detect on its own. `herdr workspace list` is a cheap read-only socket
+# call that exits non-zero (server_not_running) when no server is listening.
+AUTOCODER_HERDR_PROBE_SECONDS="${AUTOCODER_HERDR_PROBE_SECONDS:-5}"
+
+herdr_is_running() {
+  command -v herdr &> /dev/null || return 1
+  run_with_timeout "$AUTOCODER_HERDR_PROBE_SECONDS" herdr workspace list >/dev/null 2>&1
+}
+
+# Targets are herdr pane IDs (e.g. "w1:p1") — the root pane of the worker's
+# workspace. The enter is a separate send-keys call with a settle delay for
+# the same reason send_tmux_text_enter's is (see above): one burst reads as a
+# paste and the trailing newline never submits.
+send_herdr_command() {
+  local pane="$1"
+  local text="$2"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane send-text "$pane" "$text" >/dev/null || return 1
+  sleep "$AUTOCODER_MUX_SUBMIT_DELAY"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane send-keys "$pane" enter >/dev/null
+}
+
+validate_herdr_target() {
+  local pane="$1"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane get "$pane" >/dev/null 2>&1
+}
+
 send_cmux_command() {
   local workspace="$1"
   local text="$2"
