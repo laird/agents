@@ -17,6 +17,11 @@
 #   merge subtree down with it. It returns almost immediately; the caller
 #   polls with merge-poll.sh.
 #
+#   It also resolves $FEATURE to a commit SHA before returning (#1821) and
+#   passes that fixed SHA through, so the merge tests and pushes the tree that
+#   was actually finished here — not whatever branch happens to be checked
+#   out in this directory by the time the detached process gets scheduled.
+#
 # DUPLICATE DETECTION:
 #   Refuses to start a second merge for the same issue while one is already
 #   running — the caller should poll the existing job (merge-poll.sh) instead.
@@ -60,6 +65,19 @@ if [ -z "$FEATURE" ] || [ -z "$ISSUE_NUM" ]; then
 fi
 : "${INTEGRATION_BRANCH:=main}"
 
+# Resolve the feature branch to a fixed commit NOW, synchronously, before the
+# caller can move on. merge-to-integration.sh used to `git checkout "$FEATURE"`
+# lazily, inside the detached background process, in whatever directory it
+# inherited as CWD. The /fix loop routinely reuses that same directory for the
+# NEXT issue before this merge finishes (#1821) — by the time the background
+# process ran, the checkout had already been swapped out from under it, so the
+# gate tested (and could push) an unrelated branch. A SHA captured here, before
+# returning, is immune to every checkout that happens in this directory after
+# we return. Empty is a valid fallback: merge-to-integration.sh re-resolves
+# $FEATURE itself when no SHA is supplied (e.g. this isn't run inside a git
+# checkout, as in tests/test_merge_launch_poll.sh's fixtures).
+FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
+
 _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
 PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
@@ -87,8 +105,8 @@ rm -f "$EXITFILE"
 {
   printf '#!/bin/bash\n'
   printf 'echo $$ > %q\n' "$PIDFILE"
-  printf '%q --feature %q --issue %q --integration %q --test-cmd %q > %q 2>&1\n' \
-    "${_MLI_DIR}/merge-to-integration.sh" "$FEATURE" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD" "$LOG"
+  printf '%q --feature %q --feature-sha %q --issue %q --integration %q --test-cmd %q > %q 2>&1\n' \
+    "${_MLI_DIR}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD" "$LOG"
   printf 'echo $? > %q\n' "$EXITFILE"
 } > "$RUNSCRIPT"
 chmod +x "$RUNSCRIPT"
