@@ -24,8 +24,9 @@ repo's worktrees; the manager is the entry whose `cwd` is the main checkout — 
 Note: a swarm can outlive its launch environment (`$AUTOCODER_MUX` may be unset in a
 resumed manager session), so detect from live state, never from env alone.
 
-**Known gap:** `worker-idle` and `worker-health` are tmux/cmux-only. Under herdr use the
-native `agent_status` plus the corroboration steps below — do not fall back to eyeballing.
+Both monitoring helpers work here: `worker-idle` supports herdr natively (`--mux herdr`,
+auto-detected — uses `agent_status` as a BUSY fast path plus the same double-sample), and
+`worker-health` is multiplexer-agnostic by construction (it matches processes by cwd).
 
 ## Usage
 
@@ -179,8 +180,9 @@ cmux read-screen --workspace <ref> --lines 40 > /tmp/s2
 diff -q /tmp/s1 /tmp/s2 >/dev/null && echo IDLE || echo BUSY
 ```
 
-**herdr equivalent** — herdr tracks agent state natively; `agent_status` from
-`herdr agent list` is the primary signal, no screen-diffing needed:
+**herdr** — `worker-idle --all` works here too (auto-detects herdr; force with
+`--mux herdr`). It uses herdr's native `agent_status` as a BUSY fast path and keeps the
+double-sample as the load-bearing IDLE check. For reference, the native states mean:
 
 - `working` → busy, never dispatch
 - `idle` / `done` → dispatch candidate, but corroborate first (below): a worker parked
@@ -257,13 +259,11 @@ kills the hung process (`tmux respawn-pane -k` / `cmux close-workspace`), and
 relaunches the agent's fix-loop in the same worktree. After restarting, re-read
 the worker's screen after a few seconds to confirm it came back up.
 
-**herdr:** `worker-health` doesn't support herdr yet — do the *detection* by hand:
-match agent processes by cwd (`readlink /proc/<pid>/cwd` inside the worktree — NEVER
-kill by command-line pattern on a shared host); stall = same git + screen evidence as
-above. The *restart itself* is already implemented — `restart-worker --worktree <path>`
-auto-detects herdr (closes the wedged workspace, reopens one at the same cwd) — so use
-it; do not hand-roll the kill/relaunch. Manual fallback ONLY if the script is
-unavailable in this checkout:
+**herdr:** `worker-health` works unchanged (its memory/stall detection is cwd-based,
+no multiplexer calls), and `restart-worker --worktree <path>` auto-detects herdr
+(closes the wedged workspace, reopens one at the same cwd) — use them; do not
+hand-roll the kill/relaunch. Manual fallback ONLY if the scripts are unavailable
+in this checkout (NEVER kill by command-line pattern on a shared host):
 
 ```bash
 # 1. find + kill the wedged agent (cwd-verified PID; kill and relaunch in SEPARATE calls)
