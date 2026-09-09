@@ -768,7 +768,9 @@ else
 
     # Write idle status file for agents-ui TUI monitoring
     mkdir -p /tmp/agents-ui
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
     echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 
     echo "IDLE_NO_WORK_AVAILABLE"
@@ -869,7 +871,9 @@ echo ""
 
 # Write status file for agents-ui TUI monitoring
 mkdir -p /tmp/agents-ui
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
 echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"started\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 ```
 
@@ -1138,7 +1142,9 @@ Labelled \`awaiting-integration\` so it is findable rather than silently reopene
   fi
 
 # Write completion status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -1434,7 +1440,9 @@ Labelled \`awaiting-integration\` so it is findable rather than silently reopene
   fi
 
 # Write completion status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
 echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
@@ -2001,7 +2009,9 @@ echo "💡 Use '/list-proposals' to view all pending proposals"
 echo ""
 
 # Write idle status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
 echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 
 echo "IDLE_NO_WORK_AVAILABLE"
@@ -2220,7 +2230,9 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
 🤖 Auto-implemented by autonomous enhancement workflow"
 
   # Write completion status file for agents-ui TUI monitoring
-  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+  [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+  [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
   echo "{\"status\": \"idle\", \"issue\": ${ENHANCE_NUM}, \"title\": \"${ENHANCE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 fi
 ```
@@ -2427,7 +2439,9 @@ print(len(blocked))
     echo ""
 
     # Write idle status file for agents-ui TUI monitoring
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "unknown")
+    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
     echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 
     echo "IDLE_NO_WORK_AVAILABLE"
