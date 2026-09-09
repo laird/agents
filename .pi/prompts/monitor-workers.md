@@ -1,13 +1,36 @@
 ---
-description: Monitor worker agents in worktrees, detect stale work, assign unblocked issues to idle workers via cmux/tmux, and deploy when all work is complete
+description: Monitor worker agents in worktrees, detect stale work, assign unblocked issues to idle workers via the swarm's multiplexer (tmux, cmux, or herdr), and deploy when all work is complete
 ---
 <!-- Generated from plugins/autocoder/commands/monitor-workers.md by scripts/package-plugin-scripts.py. Edit the source. -->
 
 # Monitor Workers
 
-Monitor worker agents in worktrees, detect stale work, assign unblocked issues to idle workers via cmux/tmux, and deploy when all work is complete.
+Monitor worker agents in worktrees, detect stale work, assign unblocked issues to idle workers via the swarm's multiplexer (tmux, cmux, or herdr), and deploy when all work is complete.
 
 **This command is designed for the manager session** — run it in the main project directory (not a worktree) alongside `/review-blocked`.
+
+## Multiplexer detection — do this once, first
+
+Every read/dispatch step below has a per-multiplexer form. Detect which one hosts the
+swarm before Step 0 and use that form consistently for the whole run:
+
+```bash
+# herdr wins if its server is running AND it hosts agents in this project's worktrees
+herdr agent list 2>/dev/null | grep -q '"agents"' && echo herdr
+tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null | grep -q "$(basename "$(pwd)")" && echo tmux
+cmux tree --all >/dev/null 2>&1 && echo cmux
+```
+
+herdr identifies workers by **cwd**, not by naming conventions: `herdr agent list`
+returns one JSON entry per agent with `cwd`, `pane_id` (e.g. `w6:p1`), `agent_status`,
+and optional `name` (`wt<N>-<project>` / `manager-<project>` when launched by
+`start-parallel-agents.sh`). A worker pane is any agent whose `cwd` is one of this
+repo's worktrees; the manager is the entry whose `cwd` is the main checkout — skip it.
+Note: a swarm can outlive its launch environment (`$AUTOCODER_MUX` may be unset in a
+resumed manager session), so detect from live state, never from env alone.
+
+**Known gap:** `worker-idle` and `worker-health` are tmux/cmux-only. Under herdr use the
+native `agent_status` plus the corroboration steps below — do not fall back to eyeballing.
 
 ## Usage
 
@@ -22,7 +45,7 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 ## What This Does
 
 1. **Check worktree status** — For each worker worktree, report branch, last commit time, and whether actively working
-2. **Read worker screens** — Use cmux/tmux to check if agents are idle or active
+2. **Read worker screens** — Use the multiplexer (tmux/cmux/herdr) to check if agents are idle or active
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
@@ -38,9 +61,12 @@ Monitor worker agents in worktrees, detect stale work, assign unblocked issues t
 Before doing anything else, check whether this manager session is approaching context limits. Read the manager's own tmux pane:
 
 ```bash
-# The manager typically runs in window 1, pane 0 — adjust session/pane if different
+# tmux: the manager typically runs in window 1, pane 0 — adjust session/pane if different
 SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null)
 tmux capture-pane -t "${SESSION}:1.0" -p 2>/dev/null | grep -oE 'ctx [0-9]+%' | tail -1
+
+# herdr: the manager is the agent whose cwd is the main checkout
+herdr agent read <manager-pane-id> --lines 4 --format text 2>/dev/null | grep -oE 'ctx [0-9]+%' | tail -1
 ```
 
 `ctx NN%` comes from the status line this repo installs (`install-statusline.sh`) and always
@@ -72,11 +98,18 @@ cmux tree --all 2>/dev/null
 # Find tmux sessions (if tmux available)
 tmux list-sessions 2>/dev/null
 tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_path}' 2>/dev/null
+
+# Find herdr agents (if herdr available) — one line per agent: pane_id, status, cwd
+herdr agent list 2>/dev/null | python3 -c "
+import sys, json
+for a in json.load(sys.stdin)['result']['agents']:
+    print(a['pane_id'], a.get('name') or '-', a['agent_status'], a['cwd'])"
 ```
 
-Map each worktree directory to its cmux workspace or tmux pane. Naming conventions:
+Map each worktree directory to its cmux workspace, tmux pane, or herdr pane. Naming conventions:
 - **cmux**: Workspaces named `claude-<project>-worker-N` or `wt<N>-<project>`
 - **tmux**: Session named `claude-<project>`, workers in window 0 panes
+- **herdr**: match on `cwd` (authoritative); names like `wt<N>-<project>` are a hint, not a contract — panes relaunched by hand lose them
 
 ### Step 2: Gather Status
 
@@ -181,6 +214,20 @@ cmux read-screen --workspace <ref> --lines 40 > /tmp/s2
 diff -q /tmp/s1 /tmp/s2 >/dev/null && echo IDLE || echo BUSY
 ```
 
+**herdr equivalent** — herdr tracks agent state natively; `agent_status` from
+`herdr agent list` is the primary signal, no screen-diffing needed:
+
+- `working` → busy, never dispatch
+- `idle` / `done` → dispatch candidate, but corroborate first (below): a worker parked
+  at a permission prompt or waiting on a long background shell can read `idle`
+- `blocked` → read the screen; usually an approval prompt that needs the human
+- missing/`unknown` → treat as busy, investigate by reading the screen
+
+Corroborate an `idle`/`done` reading with one screen read
+(`herdr agent read <pane_id> --lines 25 --format text`): a genuinely finished worker
+shows a completed final message (e.g. "✻ Cogitated for Xm") with no spinner and no
+`Running…` tool call. Then apply the same git/working-label corroboration as tmux.
+
 ### Step 4: Detect Stale "working" Labels
 
 For each issue with the "working" label, check if work is actually happening:
@@ -245,6 +292,25 @@ kills the hung process (`tmux respawn-pane -k` / `cmux close-workspace`), and
 relaunches the agent's fix-loop in the same worktree. After restarting, re-read
 the worker's screen after a few seconds to confirm it came back up.
 
+**herdr:** `worker-health` doesn't support herdr yet — do the same check by hand.
+Memory: match agent processes by cwd (`readlink /proc/<pid>/cwd` inside the worktree —
+NEVER kill by command-line pattern on a shared host). Stall: same git + screen evidence
+as above. To restart in place:
+
+```bash
+# 1. find + kill the wedged agent (cwd-verified PID; kill and relaunch in SEPARATE calls)
+for p in $(pgrep -x claude); do
+  [ "$(readlink /proc/$p/cwd)" = "<worktree>" ] && kill "$p"
+done
+# 2. the pane drops to its shell; relaunch a FRESH agent — never `claude --resume`
+#    (herdr helpfully prints a --resume hint on exit; resuming restores the very
+#    session that wedged, 100%-full context and all)
+herdr pane send-text <pane_id> "claude --dangerously-skip-permissions --model <model>"
+herdr pane send-keys <pane_id> Enter          # separate call
+# 3. wait ~10s for the TUI, confirm the status line rendered, then dispatch via
+herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"   # or /autocoder:fix-loop
+```
+
 **When to restart automatically vs. ask:** during `--watch`, restart `UNHEALTHY`
 workers automatically (they are both wedged and bloated, so there is no progress
 to lose). For one-shot runs, prefer confirming with the human first via
@@ -272,6 +338,9 @@ drifted onto the same branch.
 ```bash
 # per worker pane -- the status line is the ONLY reliable source
 tmux capture-pane -t <session>:<window>.<pane> -p | grep -oE 'ctx [0-9]+%' | tail -1
+
+# herdr form of the same read
+herdr agent read <pane_id> --lines 6 --format text | grep -oE 'ctx [0-9]+%' | tail -1
 ```
 
 **Do not fall back to the built-in footer.** The footer's context text is not a stable
@@ -300,6 +369,9 @@ For **any worker at ≥95% context**, orchestrate handoff → clear → resume s
    tmux send-keys -t <session>:<window>.<pane> "/clear"
 sleep 0.4          # let the TUI leave paste mode
 tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
+
+   # herdr: prompt submits properly on its own — no separate Enter dance
+   herdr agent prompt <pane_id> "/clear"
    ```
 3. **Resume** — a fresh-context session re-reads the handoff (issue + branch + note) and
    continues its assigned issue:
@@ -307,6 +379,9 @@ tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it neve
    tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
 sleep 0.4          # let the TUI leave paste mode
 tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
+
+   # herdr
+   herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"
    ```
 
 **Why 95%, not 100%:** a worker that runs to 100% wedges mid-task while holding a large
@@ -345,12 +420,17 @@ those):
 4. **Hard restart** the pane — a kill, **not** send-keys `/clear`, which is what is jammed:
    ```bash
    bash plugins/autocoder/scripts/restart-worker.sh --worktree <worktree>
+   # herdr: use the cwd-verified kill + fresh relaunch from Step 4b — and never
+   # `claude --resume`, which restores the jammed 100%-full session
    ```
 5. **Resume** in the fresh pane, which re-reads the branch + handoff note:
    ```bash
    tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
    sleep 0.4          # let the TUI leave paste mode
    tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
+
+   # herdr
+   herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"
    ```
 
 Confirm the pane actually came back up before reporting recovery — `restart-worker.sh`
@@ -407,6 +487,17 @@ tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
 sleep 0.4          # let the TUI leave paste mode
 tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 ```
+
+**herdr:** `agent prompt` performs the submit itself — one call, no paste-mode sleep,
+no separate Enter:
+```bash
+herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"
+```
+The same delivery verification applies: re-read the pane after ~8s and require an
+activity marker (spinner / token meter), not just your text appearing. If a pane holds
+a bare shell instead of a running agent (e.g. after a manual kill), `agent prompt` has
+no agent to talk to — launch one first via `herdr pane send-text` + `herdr pane
+send-keys <pane_id> Enter` (Enter as its own call, same rule as tmux).
 
 **Codex workers:** send the shell wrapper instead of the Claude slash command.
 The wrapper runs the issue-start handshake before launching Codex:
@@ -490,7 +581,7 @@ If `/tmp/agents-ui/` exists (indicating agents-tui is running), write a JSON sum
 
 ```bash
 if [ -d /tmp/agents-ui ]; then
-  SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "unknown")
+  SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null || herdr session list 2>/dev/null | jq -r '.result.sessions[0].name' 2>/dev/null || echo "unknown")
 
   # Build JSON with worker statuses — use the data gathered in Steps 2-5
   # Each worker entry should include pane, status, issue number, and title
@@ -581,7 +672,7 @@ done
 
 ## Key Principles
 
-- **Use cmux/tmux to dispatch** — Send commands directly to idle workers, don't just report
+- **Use the multiplexer to dispatch** — Send commands directly to idle workers via tmux/cmux/herdr, don't just report
 - **Detect stale locks** — Ask before removing "working" labels that appear abandoned
 - **Restart wedged workers in place** — A worker that is stalled AND holding high memory has run out of headroom; kill and relaunch it on the same worktree/issue rather than letting it hang
 - **Priority order** — Assign highest priority issues first (P0 > P1 > P2 > P3)
