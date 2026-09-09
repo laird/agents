@@ -292,10 +292,13 @@ kills the hung process (`tmux respawn-pane -k` / `cmux close-workspace`), and
 relaunches the agent's fix-loop in the same worktree. After restarting, re-read
 the worker's screen after a few seconds to confirm it came back up.
 
-**herdr:** `worker-health` doesn't support herdr yet — do the same check by hand.
-Memory: match agent processes by cwd (`readlink /proc/<pid>/cwd` inside the worktree —
-NEVER kill by command-line pattern on a shared host). Stall: same git + screen evidence
-as above. To restart in place:
+**herdr:** `worker-health` doesn't support herdr yet — do the *detection* by hand:
+match agent processes by cwd (`readlink /proc/<pid>/cwd` inside the worktree — NEVER
+kill by command-line pattern on a shared host); stall = same git + screen evidence as
+above. The *restart itself* is already implemented — `restart-worker --worktree <path>`
+auto-detects herdr (closes the wedged workspace, reopens one at the same cwd) — so use
+it; do not hand-roll the kill/relaunch. Manual fallback ONLY if the script is
+unavailable in this checkout:
 
 ```bash
 # 1. find + kill the wedged agent (cwd-verified PID; kill and relaunch in SEPARATE calls)
