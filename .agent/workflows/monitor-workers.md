@@ -320,17 +320,26 @@ healthy: install the status line there and report it as unknown until then.
 
 For **any worker at ≥95% context**, orchestrate handoff → clear → resume:
 
-1. **Handoff** — preserve state before clearing: commit WIP to the branch (even partial,
-   WIP-tagged) **and** post a handoff note (plan, key findings, next steps) as a comment on
-   the GitHub issue the worker is on, so it survives the clear. If the worker can't
-   self-handoff (near 100%/jammed), the manager writes the handoff note on its behalf.
-2. **`/clear`** — `tmux send-keys -t <pane> "/clear"
+1. **Handoff** — preserve state before clearing. Prompt the worker to run its
+   session-handoff skill — `ce-handoff` if installed, else `create-handoff` (the same
+   substitution the `/fix` optional-skills mapping makes for the "session handoff" role) —
+   and in the same prompt require the durable, skill-independent records: commit WIP to
+   the branch (even partial, WIP-tagged) **and** post a handoff note (plan, key findings,
+   next steps) as a comment on the GitHub issue the worker is on, so it survives the
+   clear. If neither skill is installed the inline commit + note IS the handoff. If the
+   worker can't self-handoff (near 100%/jammed), the manager writes the handoff note on
+   its behalf.
+2. **Reset** — `/clear` keeps the session (`tmux send-keys -t <pane> "/clear"
 sleep 0.4          # let the TUI leave paste mode
-tmux send-keys -t <pane> Enter    # separate call, or it never submits`.
+tmux send-keys -t <pane> Enter    # separate call, or it never submits`); exiting and
+   relaunching the agent fresh is often **faster** at very high context and also picks up
+   plugin updates installed since launch — either works. Never resume the retired session.
 3. **Resume** — `tmux send-keys -t <pane> "/autocoder:fix <issue_number>"
 sleep 0.4          # let the TUI leave paste mode
 tmux send-keys -t <pane> Enter    # separate call, or it never submits` (fresh
-   context re-reads the issue + branch + handoff note and continues).
+   context re-reads the issue + branch + handoff note and continues; if step 1 wrote a
+   skill handoff doc, resume it via the matching skill — `ce-handoff` resumes its own,
+   `resume-handoff` pairs with `create-handoff`).
 
 **Why 95%, not 100%:** at 100% the worker wedges and the built-in `/clear` is often
 un-submittable via tmux (jammed) — forcing the heavier `restart-worker`, which discards

@@ -28,6 +28,14 @@ cat MANAGER-STATE.md 2>/dev/null || echo "NO_STATE_FILE"
 
 If no file exists: print `No MANAGER-STATE.md found — starting fresh.` and skip to Step 2 (skip the delta comparison; treat everything as new).
 
+Also check for a skill-written handoff from the previous session: if
+`compound-engineering:ce-handoff` or `peters-toolkit:resume-handoff` is in your
+available-skills list, invoke it now (`ce-handoff` resumes its own handoffs;
+`resume-handoff` pairs with `create-handoff`). It restores the conversational context —
+in-flight reasoning, half-formed plans — that `MANAGER-STATE.md`'s fixed template
+doesn't carry. If the skill reports no handoff to resume, continue; `MANAGER-STATE.md`
+plus live GitHub state is the complete picture.
+
 Parse the saved file for:
 - Save timestamp (to calculate staleness)
 - Worker topology table (pane→worktree→branch→issue)

@@ -151,6 +151,17 @@ git commit -m "chore: save manager handoff state"
 
 If the commit fails (nothing to stage, etc.), that's fine — continue.
 
+### Step 4b: Run the session-handoff skill (if installed)
+
+If a session-handoff skill is in your available-skills list, invoke it now —
+`compound-engineering:ce-handoff` if installed, else `peters-toolkit:create-handoff`
+(the same substitution the optional-skills mapping makes for the "session handoff"
+role). It captures conversational context the fixed `MANAGER-STATE.md` template
+can't: in-flight reasoning, half-formed plans, why-not decisions. `MANAGER-STATE.md`
+remains the authoritative swarm-topology record either way; the skill handoff
+supplements it, never replaces it. If neither skill is installed, skip this step —
+Steps 1–4 are the complete handoff.
+
 ### Step 5: Print resume instructions
 
 Output exactly:
@@ -161,12 +172,16 @@ Manager state saved → MANAGER-STATE.md
 
 To reset context:
   1. Type /clear  (clears conversation history, keeps this session)
-     OR exit and relaunch Claude Code in this directory
+     OR exit and relaunch Claude Code in this directory — often faster at
+     very high context, and picks up plugin updates installed since launch
 
 To restore after reset:
   2. Run: /autocoder:manager-resume
+  3. If a skill handoff was written (ce-handoff / create-handoff), resume it
+     with the matching skill (ce-handoff resumes its own; resume-handoff
+     pairs with create-handoff)
 
-Workers continue running in their tmux panes — no action needed.
+Workers continue running in their multiplexer panes — no action needed.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 

@@ -357,22 +357,40 @@ with no `ctx` reading is **unknown**, not healthy; report it as unknown.
 
 For **any worker at ≥95% context**, orchestrate handoff → clear → resume so nothing is lost:
 
-1. **Handoff** — have the worker preserve state *before* clearing: commit its WIP to the
+1. **Handoff** — have the worker preserve state *before* clearing. Prompt it to run its
+   session-handoff skill — `compound-engineering:ce-handoff` if installed, else
+   `peters-toolkit:create-handoff` (the same substitution the `/fix` optional-skills
+   mapping makes for the "session handoff" role). In the same prompt, require the two
+   durable, skill-independent records regardless of which skill ran: commit its WIP to the
    branch (even partial, WIP-tagged) **and** post a handoff note (its plan, key findings,
-   concrete next steps) as a comment on the GitHub issue it is working, so the state
-   survives the clear. If the worker cannot self-handoff (already near 100%/jammed), the
-   manager captures the handoff note on the issue on its behalf.
-2. **`/clear`** — free the context window:
+   concrete next steps) as a comment on the GitHub issue it is working — that is what the
+   resumed session re-reads even when no handoff skill is installed. If neither skill is
+   available, the inline commit + note IS the handoff. If the worker cannot self-handoff
+   (already near 100%/jammed), the manager captures the handoff note on the issue on its
+   behalf.
+2. **Reset** — free the context window. `/clear` keeps the session; exiting and
+   relaunching the agent fresh is often **faster** at very high context, and it also picks
+   up any plugin updates installed since the worker launched. Either works:
    ```bash
+   # Option A — /clear in place
    tmux send-keys -t <session>:<window>.<pane> "/clear"
 sleep 0.4          # let the TUI leave paste mode
 tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
 
    # herdr: prompt submits properly on its own — no separate Enter dance
    herdr agent prompt <pane_id> "/clear"
+
+   # Option B — exit + relaunch fresh (often faster; loads updated plugins)
+   herdr agent prompt <pane_id> "/exit"    # or the Step 4b cwd-verified kill
+   herdr pane send-text <pane_id> "claude --dangerously-skip-permissions --model <model>"
+   herdr pane send-keys <pane_id> enter    # separate call, same rule as tmux
+   # never `claude --resume` — it restores the full session you just retired
    ```
 3. **Resume** — a fresh-context session re-reads the handoff (issue + branch + note) and
-   continues its assigned issue:
+   continues its assigned issue. If step 1 wrote a skill handoff doc, the resumed worker
+   picks it up via the matching skill (`ce-handoff` resumes its own handoffs;
+   `peters-toolkit:resume-handoff` pairs with `create-handoff`) — the `/autocoder:fix`
+   optional-skills mapping drives that automatically:
    ```bash
    tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
 sleep 0.4          # let the TUI leave paste mode
