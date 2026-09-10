@@ -45,7 +45,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
-6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via cmux/tmux
+6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via the multiplexer (tmux/cmux/herdr)
 7. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
@@ -230,7 +230,7 @@ shows a completed final message (e.g. "✻ Cogitated for Xm") with no spinner an
 For each issue with the "working" label, check if work is actually happening:
 
 1. **Check worktree match**: Is there a worktree with a branch containing the issue number? If so, has it had commits in the last 60 minutes?
-2. **Check screen**: Can you find an agent actively working on this issue via cmux/tmux screen?
+2. **Check screen**: Can you find an agent actively working on this issue via the multiplexer screen read (tmux/cmux/herdr)?
 3. **Check issue timestamps**: Is the issue's most recent comment/update older than 60 minutes?
 
 **A "working" label is stale if ALL of these are true:**
@@ -525,7 +525,7 @@ add-worker --agent claude   # or gemini, codex, droid
 add-worker --mux tmux       # or cmux
 ```
 
-This creates a new worktree, adds a pane/workspace to the existing session, and focuses it so the new worker is immediately visible. The script is safe to call from within the manager session — it detects it's already inside tmux/cmux and skips re-attaching.
+This creates a new worktree, adds a pane/workspace to the existing session, and focuses it so the new worker is immediately visible. The script is safe to call from within the manager session — it detects it's already inside tmux/cmux/herdr and skips re-attaching.
 
 **When to add a worker:**
 - Human explicitly asks ("add a worker", "scale up", "we need more workers")

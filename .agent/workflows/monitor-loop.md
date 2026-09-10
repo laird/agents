@@ -16,10 +16,17 @@ Run `/monitor-workers` in a continuous loop. This is the default command for the
 
 Repeats `/monitor-workers` on a recurring interval. Each iteration:
 
-1. Checks worker status via cmux/tmux
+1. Checks worker status via the swarm's multiplexer (tmux, cmux, or herdr)
 2. Detects stale `working` labels
 3. Dispatches idle workers to unblocked issues
 4. Runs `/review-blocked` when all remaining issues are blocked
+
+`/monitor-workers` detects the hosting multiplexer itself from live state
+(its "Multiplexer detection" section) and carries the tmux, cmux, **and herdr**
+read/dispatch forms natively — including herdr-aware `worker-idle`, `worker-health`,
+and `restart-worker`. Run it **bare**; do not append per-multiplexer instructions
+to the loop prompt. An appended note goes stale (e.g. one claiming the helpers are
+tmux-only) and then overrides the newer, correct protocol on every tick.
 
 ## Instructions
 
