@@ -717,3 +717,13 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Plugin consumers can receive the new Autocoder release metadata; local file issue parsing no longer trips over unquoted title colons in ignored .issues files.
 
+
+---
+
+## 2026-09-16 21:29:49 - Add idle sentinel and bump autocoder to 4.28.0
+
+**What Changed**: Added plugins/autocoder/scripts/idle-sentinel.sh (zero-spend swarm monitoring between work waves: script-only polling of issue state, health probes, manager heartbeat/wedge detection, and manager wake-spawning), start-parallel-agents.sh --manager-only plus a swarm-manifest manager identity marker written on every launch path, non-interactive /manager-resume, standing-condition declarations and step-down reasons in /manager-handoff, monitor-workers quiescence step-down (Step 6b), sentinel health-alert reading (Step 0b), unattended mode, and end-of-iteration heartbeat (Step 9), an opt-in sentinel cron install in install.sh, and tests (tests/test_idle_sentinel.sh, tests/test_sentinel_stepdown_docs.sh). Propagated scripts to every platform package via package-plugin-scripts.py, hand-adapted the Antigravity .agent/ workflows and launcher, and bumped autocoder to 4.28.0 with marketplaces at 3.49.0.
+
+**Why Changed**: An idle swarm kept an LLM manager looping through "nothing to do" iterations, replaying a full context on every tick for zero decisions; between work waves monitoring should cost nothing and a manager should exist only while there is work to manage.
+
+**Impact**: Quiescent swarms now step down into a cron/loop-scheduled shell sentinel that polls at zero token cost and respawns an unattended manager only when its wake predicates fire (claimable work, stale claims, dead/wedged manager, health alerts), with manifest-verified manager identity preventing double-manager spawns.

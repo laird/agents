@@ -49,6 +49,21 @@ helpers are tmux-only) and then overrides the newer, correct protocol on every t
   eliminates the worker-vs-worker claim races that the best-effort self-claim path
   can hit. When `AUTOCODER_ROUTE` is unset, treat it as `self`.
 
+## Relationship to the Idle Sentinel
+
+- **Step-down deletes this loop's job.** When `/autocoder:monitor-workers` detects
+  sustained quiescence (its Step 6b), it hands off, schedules the idle sentinel
+  (`idle-sentinel.sh --ensure`), deletes the loop job this command created
+  (CronDelete in `/loop` mode; killing the sleep loop in fallback mode), and exits
+  the manager session. A loop job that disappears this way is the normal end of a
+  work wave, not a failure.
+- **Sentinel-woken managers run this loop unattended.** A manager spawned by the
+  idle sentinel carries `AUTOCODER_UNATTENDED=1` in its environment (its spawn
+  prompt runs `/autocoder:manager-resume --non-interactive`, then this command);
+  every monitor-workers iteration then applies its "Unattended Mode" policy —
+  autonomous defaults plus durable records instead of AskUserQuestion. See
+  `docs/specs/2026-09-16-idle-sentinel-design.md`.
+
 ## How It Works
 
 **Mode 1: `/loop` command (preferred, when CronCreate tool is available)**

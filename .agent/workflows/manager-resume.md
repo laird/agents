@@ -1,21 +1,21 @@
 # Manager Resume — Restore Context After Reset
 
-Load a fresh manager session with full situational awareness. Reads `MANAGER-STATE.md` (saved by `/autocoder:manager-handoff`), then queries live GitHub state and worker screens to show the delta since the save.
+Load a fresh manager session with full situational awareness. Reads `MANAGER-STATE.md` (saved by `/manager-handoff`), then queries live GitHub state and worker screens to show the delta since the save.
 
-**Run this at the start of a new manager session, after `/clear` or a fresh Claude Code launch.**
+**Run this at the start of a new manager session, after `/clear` or a fresh agent launch.**
 
 ## Usage
 
 ```bash
-/autocoder:manager-resume
-/autocoder:manager-resume --non-interactive
+/manager-resume
+/manager-resume --non-interactive
 ```
 
 ## Non-Interactive Mode
 
 Treat this command as non-interactive when EITHER holds:
 
-- it was invoked as `/autocoder:manager-resume --non-interactive`, or
+- it was invoked as `/manager-resume --non-interactive`, or
 - `AUTOCODER_UNATTENDED=1` is set in the environment (the idle sentinel exports it into
   every manager it spawns — see `docs/specs/2026-09-16-idle-sentinel-design.md`).
 
@@ -211,7 +211,7 @@ Unblocked Issues (ready to assign):
 origin/main: <sha>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Ready. Run /autocoder:monitor-workers to dispatch work.
+Ready. Run /monitor-workers to dispatch work.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -251,7 +251,7 @@ If no, leave it as-is.
 
 **Non-interactive mode:** skip this step entirely. NEVER archive `MANAGER-STATE.md` in
 an unattended session — archival happens only when a successful step-down handoff
-(`/autocoder:manager-handoff`) replaces the file (CDR #12). The idle sentinel's standing
+(`/manager-handoff`) replaces the file (CDR #12). The idle sentinel's standing
 conditions also live in this file; archiving it out from under the sentinel would erase
 them mid-flight.
 
@@ -267,8 +267,8 @@ them mid-flight.
 
 ## Relationship to Other Commands
 
-- Run after `/autocoder:manager-handoff` + `/clear` or session restart
-- After resume, the manager's typical next step is `/autocoder:monitor-workers`
-- If all issues are blocked, `/autocoder:review-blocked` surfaces them for human decision
-- A sentinel-woken manager runs `/autocoder:manager-resume --non-interactive` first, then
-  starts `/autocoder:monitor-loop` (the sentinel sequences both in its spawn prompt)
+- Run after `/manager-handoff` + `/clear` or session restart
+- After resume, the manager's typical next step is `/monitor-workers`
+- If all issues are blocked, `/review-blocked` surfaces them for human decision
+- A sentinel-woken manager runs `/manager-resume --non-interactive` first, then
+  starts `/monitor-loop` (the sentinel sequences both in its spawn prompt)

@@ -40,6 +40,49 @@ cp -r .agent "$OLDPWD/"
 cd "$OLDPWD"
 rm -rf "$TEMP_DIR"
 
+# Optional: idle-sentinel cron install (OFF by default; opt-in only).
+# The sentinel polls for work between waves at zero token cost and wakes an LLM
+# manager only when its wake predicate fires — see
+# docs/specs/2026-09-16-idle-sentinel-design.md (spend model: steady trickle
+# load is cheaper on a warm monitor loop, so this is never installed silently).
+# Non-interactive installs (curl | bash, no TTY) always skip this step.
+SENTINEL="$TARGET_DIR/scripts/idle-sentinel.sh"
+if [ -t 0 ] && [ -f "$SENTINEL" ]; then
+    echo ""
+    read -p "🕐 Install the idle-sentinel cron job (zero-spend monitoring between work waves)? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        mkdir -p .autocoder
+        # Cron ticks run with a minimal environment; sentinel-env restores PATH
+        # and AUTOCODER_* configuration. Never clobber an existing one.
+        if [ ! -f .autocoder/sentinel-env ]; then
+            cat > .autocoder/sentinel-env <<EOF
+# Sourced by every idle-sentinel.sh tick (cron runs with a minimal environment).
+# PATH must reach gh and your multiplexer (tmux/cmux/herdr).
+export PATH="$PATH"
+# Uncomment and set to override sentinel defaults:
+# export AUTOCODER_SENTINEL_INTERVAL=15m
+# export AUTOCODER_SENTINEL_DUTY_INTERVAL=6h
+# export AUTOCODER_SENTINEL_ERROR_TOLERANCE=2
+# export AUTOCODER_GH_USER=
+# export AUTOCODER_MUX=
+# export AUTOCODER_AGENT=
+# export AUTOCODER_SESSION=
+EOF
+            echo "📝 Wrote .autocoder/sentinel-env (edit it to pin AUTOCODER_* settings)"
+        else
+            echo "📝 Keeping existing .autocoder/sentinel-env"
+        fi
+        # --ensure is idempotent: it inspects crontab, systemd user timers, and
+        # running --loop processes, and installs a crontab entry running
+        # `idle-sentinel.sh --once` at AUTOCODER_SENTINEL_INTERVAL (default 15m)
+        # only when nothing is scheduled yet — it never double-installs.
+        bash "$SENTINEL" --ensure || echo "⚠️  Sentinel scheduling failed — run 'bash $SENTINEL --ensure' manually."
+    else
+        echo "⏭️  Skipping idle sentinel (enable later with: bash $SENTINEL --ensure)"
+    fi
+fi
+
 echo "✅ Antigravity agents installed successfully!"
 echo ""
 echo "Available workflows:"

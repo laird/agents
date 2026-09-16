@@ -7,9 +7,14 @@
 # Options:
 #   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
 #   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --manager-only         Zero workers: create only the manager pane and the
+#                          swarm manifest, and dispatch NOTHING to the manager
+#                          (the caller — e.g. the idle sentinel — owns the
+#                          dispatch). Implies --no-worktrees.
 #   --no-worktrees         Run all agents in the same directory
 #
 # Examples:
+#   start-parallel-agents.sh --manager-only --mux tmux --agent claude
 #   start-parallel-agents.sh 3 --mux tmux --agent claude
 #   start-parallel-agents.sh 4 --mux cmux --agent gemini
 #   start-parallel-agents.sh 3 --mux herdr --agent claude
@@ -31,12 +36,15 @@ AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=mux-send-lib.sh
 source "$SCRIPT_DIR/mux-send-lib.sh"
+# shellcheck source=swarm-manifest-lib.sh
+source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 
 # Defaults
 NUM_AGENTS=3
 USE_WORKTREES=true
 MUX=""
 AGENT=""
+MANAGER_ONLY=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -48,6 +56,10 @@ while [[ $# -gt 0 ]]; do
     --agent)
       AGENT="$2"
       shift 2
+      ;;
+    --manager-only)
+      MANAGER_ONLY=true
+      shift
       ;;
     --no-worktrees)
       USE_WORKTREES=false
@@ -63,6 +75,10 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
       echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --manager-only         Zero workers: create only the manager pane and the"
+      echo "                         swarm manifest, and dispatch NOTHING to the manager"
+      echo "                         (the caller — e.g. the idle sentinel — owns the"
+      echo "                         dispatch). Implies --no-worktrees."
       echo "  --no-worktrees         Run all agents in the same directory"
       echo ""
       echo "Examples:"
@@ -196,6 +212,15 @@ case "$AGENT" in
     ;;
 esac
 
+# --manager-only (idle-sentinel spec, CDR #4): zero workers — no worktrees
+# and no worker panes — a manifest carrying the manager entry only, and NO
+# auto-dispatch to the manager pane. Exactly one party dispatches the manager
+# command, and with this flag that party is the caller, not this script.
+if [ "$MANAGER_ONLY" = true ]; then
+  NUM_AGENTS=0
+  USE_WORKTREES=false
+fi
+
 # Validate we're in a git repo (if using worktrees)
 if [ "$USE_WORKTREES" = true ]; then
   if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -213,6 +238,49 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Generate shared task list ID for coordination
 TASK_LIST_ID="parallel-$(date +%Y%m%d-%H%M%S)"
+
+# Swarm manifest + manager identity (idle-sentinel spec, R2-F1/R2-F4): every
+# launch path writes the swarm manifest, and every manager pane exports
+# AUTOCODER_MANAGER=<session> BEFORE any agent launch so the manager process
+# (and only it) carries the marker in its environment. The idle sentinel's
+# two-manager guard verifies manifest pid + pid_start_time and corroborates
+# via this marker; pane ids and titles are never identity.
+MANIFEST_PATH=$(manifest_path_for_session "$PROJECT_ROOT" "$SESSION_NAME")
+MANAGER_MARKER="AUTOCODER_MANAGER=$SESSION_NAME"
+WORKER_JSONS=()
+
+# R2-F1 (idle-sentinel spec): EVERY launch path — live and manager-only, all
+# three muxes — writes the swarm manifest. Live launches discover the manager
+# PID by its environment marker (best-effort: the REPL appears asynchronously;
+# on timeout the manifest records pid null and the sentinel's own probes
+# refresh it — a wrong pid would be worse than an absent one).
+#   $1 swarm state  $2 manager launchMode  $3 manager agentLaunched
+#   $4 tmux target  $5 cmux workspace      $6 herdr pane
+write_launch_manifest() {
+  local state="$1" mgr_launch_mode="$2" mgr_launched="$3"
+  local tmux_target="$4" cmux_ws="$5" herdr_pane="$6"
+  local pid="" pid_start=""
+  if [ "$mgr_launched" = "true" ]; then
+    if pid=$(wait_for_manager_pid "$SESSION_NAME" "${AUTOCODER_MANAGER_PID_WAIT:-15}"); then
+      pid_start=$(process_start_time "$pid") || pid_start=""
+    else
+      pid=""
+      echo "   ⚠️  Manager process not visible by marker yet — manifest records pid null"
+    fi
+  fi
+  local workers_json manager_json
+  workers_json=$(printf '%s\n' "${WORKER_JSONS[@]-}" | json_array_from_lines)
+  manager_json=$(manifest_manager_json "$mgr_launch_mode" "$mgr_launched" shell "" \
+    "$tmux_target" "$cmux_ws" "$herdr_pane" "$pid" "$pid_start" "$MANAGER_MARKER")
+  write_swarm_manifest "$MANIFEST_PATH" "$SESSION_NAME" "$PROJECT_ROOT" "$PROJECT_NAME" "$AGENT" "$MUX" \
+    "" "" "" "" "$TASK_LIST_ID" \
+    "$CURRENT_BRANCH" "$workers_json" "$manager_json" "$state"
+}
+
+# Manifest launch/command mode for workers and manager on this launcher:
+# interactive agents (Antigravity/Gemini) get a REPL, codex/droid run shell loops.
+LAUNCH_MODE=shell
+[ -n "$AGENT_LAUNCH_CMD" ] && LAUNCH_MODE=interactive
 
 echo "🚀 Starting parallel agent system"
 echo "   Project: $PROJECT_NAME"
@@ -282,9 +350,37 @@ if [ "$MUX" = "tmux" ]; then
 
   # Check if session already exists
   if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    if [ "$MANAGER_ONLY" = true ]; then
+      # Manager-only callers (the idle sentinel, cron) have no tty to attach
+      # from; an existing session means there is nothing for this mode to do.
+      echo "⚠️  Session '$SESSION_NAME' already exists — nothing to bootstrap"
+      echo "   Inspect it with: tmux attach -t $SESSION_NAME"
+      exit 0
+    fi
     echo "⚠️  Session '$SESSION_NAME' already exists"
     echo "   Attaching to existing session..."
     tmux attach-session -t "$SESSION_NAME"
+    exit 0
+  fi
+
+  # Manager-only bootstrap: a single review window, environment exported
+  # (including the identity marker), manifest written, and NOTHING dispatched
+  # — the caller launches the manager itself (idle-sentinel spec, CDR #4).
+  if [ "$MANAGER_ONLY" = true ]; then
+    echo "🖥️  Creating manager-only tmux session: $SESSION_NAME"
+    REVIEW_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "review" -P -F '#{window_id}')
+    MANAGER_PANE=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
+    tmux send-keys -t "$MANAGER_PANE" "cd '$PROJECT_ROOT'" C-m
+    tmux send-keys -t "$MANAGER_PANE" "export $MANAGER_MARKER" C-m
+    if [ "$AGENT" = "claude" ]; then
+      tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
+    fi
+    write_launch_manifest paused shell false "$MANAGER_PANE" "" ""
+    echo ""
+    echo "✅ Manager-only session ready (no workers, nothing dispatched)"
+    echo "   Manager pane: $MANAGER_PANE"
+    echo "   Manifest: $MANIFEST_PATH"
+    echo "   Attach: tmux attach -t $SESSION_NAME"
     exit 0
   fi
 
@@ -311,6 +407,8 @@ if [ "$MUX" = "tmux" ]; then
     tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
     tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
   fi
+  if [ "$USE_WORKTREES" = true ]; then WORKER_DIR="${WORKTREE_PATHS[0]}"; else WORKER_DIR="$PROJECT_ROOT"; fi
+  WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$LAUNCH_MODE" "$LAUNCH_MODE" false "$PANE_ID" "" started)")
 
   # Create panes for remaining workers
   for i in $(seq 2 $NUM_AGENTS); do
@@ -327,6 +425,8 @@ if [ "$MUX" = "tmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
     fi
+    if [ "$USE_WORKTREES" = true ]; then WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"; else WORKER_DIR="$PROJECT_ROOT"; fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$LAUNCH_MODE" "$LAUNCH_MODE" false "$PANE_ID" "" started)")
   done
 
   # Balance the panes to make them equal width
@@ -373,6 +473,10 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Starting coordinator..."
   tmux send-keys -t "$MANAGER_PANE" "cd '$PROJECT_ROOT'" C-m
 
+  # Identity marker: exported before the REPL launches so the manager process
+  # carries it in /proc/<pid>/environ (see MANAGER_MARKER above).
+  tmux send-keys -t "$MANAGER_PANE" "export $MANAGER_MARKER" C-m
+
   if [ "$AGENT" = "claude" ]; then
     tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
   fi
@@ -384,6 +488,9 @@ if [ "$MUX" = "tmux" ]; then
   tmux send-keys -t "$MANAGER_PANE" "$MANAGER_CMD"
   sleep 0.5
   tmux send-keys -t "$MANAGER_PANE" "Enter"
+
+  # R2-F1: live launches record the manifest too, not just manager-only ones.
+  write_launch_manifest running "$LAUNCH_MODE" true "$MANAGER_PANE" "" ""
 
   # Select the first window (agents) by default
   tmux select-window -t "$AGENTS_WINDOW"
@@ -466,6 +573,8 @@ elif [ "$MUX" = "cmux" ]; then
     fi
 
     WORKER_WS_REFS+=("$WS_REF")
+    if [ "$USE_WORKTREES" = true ]; then WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"; else WORKER_DIR="$PROJECT_ROOT"; fi
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$LAUNCH_MODE" "$LAUNCH_MODE" false "" "$WS_REF" started)")
     sleep 1
 
     # Rename workspace: wt<N>-<project>
@@ -507,18 +616,31 @@ elif [ "$MUX" = "cmux" ]; then
     # Manager workspace: manager-<project> (same pattern as wt<N>-<project> workers)
     cmux rename-workspace --workspace "$REVIEW_WS_REF" "manager-${PROJECT_NAME}" >/dev/null || true
 
+    # Identity marker: exported before the REPL launches so the manager
+    # process carries it in its environment (see MANAGER_MARKER above).
+    cmux_send_cmd "$REVIEW_WS_REF" "export $MANAGER_MARKER"
+
     if [ "$AGENT" = "claude" ]; then
       cmux_send_cmd "$REVIEW_WS_REF" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
     fi
 
-    if [ -n "$AGENT_LAUNCH_CMD" ]; then
-      echo "   Starting coordinator..."
-      cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
-      sleep 5
+    if [ "$MANAGER_ONLY" = true ]; then
+      # CDR #4: nothing is dispatched to the manager pane — the caller
+      # (the idle sentinel) owns the dispatch.
+      echo "   Manager-only: nothing dispatched (caller owns the dispatch)"
+      write_launch_manifest paused shell false "" "$REVIEW_WS_REF" ""
+    else
+      if [ -n "$AGENT_LAUNCH_CMD" ]; then
+        echo "   Starting coordinator..."
+        cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
+        sleep 5
+      fi
+      echo "   → Manager: sending $MANAGER_CMD..."
+      cmux_send_cmd "$REVIEW_WS_REF" "$MANAGER_CMD"
+      # R2-F1: live launches record the manifest too.
+      write_launch_manifest running "$LAUNCH_MODE" true "" "$REVIEW_WS_REF" ""
     fi
-    echo "   → Manager: sending $MANAGER_CMD..."
-    cmux_send_cmd "$REVIEW_WS_REF" "$MANAGER_CMD"
   else
     echo "   ⚠️  Could not parse workspace ref from: $REVIEW_OUTPUT"
   fi
@@ -595,6 +717,7 @@ elif [ "$MUX" = "herdr" ]; then
     echo "   Created workspace wt${i}-${PROJECT_NAME} (pane $PANE_ID)"
 
     WORKER_PANE_IDS+=("$PANE_ID")
+    WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$LAUNCH_MODE" "$LAUNCH_MODE" false "" "" started "$PANE_ID")")
     sleep 1
 
     # Set environment variables for Antigravity coordination
@@ -637,20 +760,33 @@ elif [ "$MUX" = "herdr" ]; then
     echo "   Created workspace manager-${PROJECT_NAME} (pane $MANAGER_PANE_ID)"
     sleep 1
 
+    # Identity marker: exported before the REPL launches so the manager
+    # process carries it in its environment (see MANAGER_MARKER above).
+    send_herdr_command "$MANAGER_PANE_ID" "export $MANAGER_MARKER"
+
     if [ "$AGENT" = "claude" ]; then
       send_herdr_command "$MANAGER_PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'"
       sleep 0.5
     fi
 
-    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+    if [ "$MANAGER_ONLY" = true ]; then
+      # CDR #4: nothing is dispatched to the manager pane — the caller
+      # (the idle sentinel) owns the dispatch.
+      echo "   Manager-only: nothing dispatched (caller owns the dispatch)"
+      write_launch_manifest paused shell false "" "" "$MANAGER_PANE_ID"
+    elif [ -n "$AGENT_LAUNCH_CMD" ]; then
       echo "   Starting coordinator..."
       read -r -a MANAGER_ARGV <<< "$AGENT_LAUNCH_CMD"
       launch_herdr_agent "$(herdr_agent_name "manager-${PROJECT_NAME}")" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
       echo "   → Manager: sending $MANAGER_CMD..."
       prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+      # R2-F1: live launches record the manifest too.
+      write_launch_manifest running "$LAUNCH_MODE" true "" "" "$MANAGER_PANE_ID"
     else
       echo "   → Manager: sending $MANAGER_CMD..."
       send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+      # R2-F1: live launches record the manifest too.
+      write_launch_manifest running "$LAUNCH_MODE" true "" "" "$MANAGER_PANE_ID"
     fi
   else
     echo "   ⚠️  Could not create the manager workspace"

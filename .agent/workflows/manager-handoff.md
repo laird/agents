@@ -1,13 +1,13 @@
 # Manager Handoff — Save State & Prepare for Context Reset
 
-Snapshot manager session state to `MANAGER-STATE.md` in the project root, then guide the manager through a clean context reset. Run `/autocoder:manager-resume` in the fresh session to reload.
+Snapshot manager session state to `MANAGER-STATE.md` in the project root, then guide the manager through a clean context reset. Run `/manager-resume` in the fresh session to reload.
 
 **Run this when the manager session is approaching context limits or needs a clean restart.**
 
 ## Usage
 
 ```bash
-/autocoder:manager-handoff
+/manager-handoff
 ```
 
 ## What This Does
@@ -151,7 +151,7 @@ _Saved: <ISO timestamp>_
 <the sentinel-standing fenced block built in Step 3b, or "(none)">
 
 ## Resume Command
-Run `/autocoder:manager-resume` at the start of the next session.
+Run `/manager-resume` at the start of the next session.
 ```
 
 ### Step 3b: Declare standing conditions (input to the idle sentinel)
@@ -227,11 +227,11 @@ Manager state saved → MANAGER-STATE.md
 
 To reset context:
   1. Type /clear  (clears conversation history, keeps this session)
-     OR exit and relaunch Claude Code in this directory — often faster at
+     OR exit and relaunch the agent in this directory — often faster at
      very high context, and picks up plugin updates installed since launch
 
 To restore after reset:
-  2. Run: /autocoder:manager-resume
+  2. Run: /manager-resume
   3. If a skill handoff was written (ce-handoff / create-handoff), resume it
      with the matching skill (ce-handoff resumes its own; resume-handoff
      pairs with create-handoff)

@@ -28,6 +28,20 @@ and `restart-worker`. Run it **bare**; do not append per-multiplexer instruction
 to the loop prompt. An appended note goes stale (e.g. one claiming the helpers are
 tmux-only) and then overrides the newer, correct protocol on every tick.
 
+## Relationship to the Idle Sentinel
+
+- **Step-down ends this loop.** When `/monitor-workers` detects sustained
+  quiescence (its Step 6b), it hands off, schedules the idle sentinel
+  (`idle-sentinel.sh --ensure`), stops the sleep loop this command runs, and exits
+  the manager session. A loop that disappears this way is the normal end of a
+  work wave, not a failure.
+- **Sentinel-woken managers run this loop unattended.** A manager spawned by the
+  idle sentinel carries `AUTOCODER_UNATTENDED=1` in its environment (its spawn
+  prompt runs `/manager-resume --non-interactive`, then this command);
+  every monitor-workers iteration then applies its "Unattended Mode" policy —
+  autonomous defaults plus durable records instead of blocking questions. See
+  `docs/specs/2026-09-16-idle-sentinel-design.md`.
+
 ## Instructions
 
 ```bash
