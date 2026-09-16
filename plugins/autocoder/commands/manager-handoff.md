@@ -15,9 +15,10 @@ Snapshot manager session state to `MANAGER-STATE.md` in the project root, then g
 1. Captures GitHub state (working issues, open PRs, blocked issues)
 2. Captures worker topology (tmux/cmux panes → worktrees → branches)
 3. Prompts for any session notes not yet filed as issues
-4. Writes `MANAGER-STATE.md` to the project root
-5. Commits the state file
-6. Prints the resume command and context-reset instructions
+4. Records the step-down reason and declares standing conditions for the idle sentinel
+5. Writes `MANAGER-STATE.md` to the project root
+6. Commits the state file
+7. Prints the resume command and context-reset instructions
 
 ## Instructions
 
@@ -99,6 +100,11 @@ Ask the manager (using AskUserQuestion or plain text prompt):
 
 Accept free-form text. If the manager says "none" or similar, use empty string.
 
+**Unattended sessions** (`AUTOCODER_UNATTENDED=1`, e.g. a quiescence step-down from
+monitor-workers Step 6b): skip the prompt — there is no one to answer. Use your own
+session summary as the notes: what happened this wave, why you are stepping down, and
+anything not yet filed as an issue.
+
 ### Step 3: Write MANAGER-STATE.md
 
 Write to `MANAGER-STATE.md` in the project root. Use this template — fill every section from the data collected above:
@@ -138,9 +144,58 @@ _Saved: <ISO timestamp>_
 ## Known Holds / Flags
 <anything the manager noted manually — e.g. "PR #980 held: wrong impl, wt-2 revising">
 
+## Step-down Reason
+<why this handoff: "context pressure (ctx NN%)", "quiescence — N consecutive quiescent iterations (monitor-workers Step 6b)", "manual restart", …>
+
+## Standing Conditions (sentinel)
+<the sentinel-standing fenced block built in Step 3b, or "(none)">
+
 ## Resume Command
 Run `/autocoder:manager-resume` at the start of the next session.
 ```
+
+### Step 3b: Declare standing conditions (input to the idle sentinel)
+
+If this handoff precedes a quiescence step-down (monitor-workers Step 6b) — or you
+know of open work no manager can currently action — declare each such condition so
+the idle sentinel subtracts it from its wake predicates instead of waking a fresh
+manager over it every poll (R2-F9, `docs/specs/2026-09-16-idle-sentinel-design.md`).
+Typical example: an `awaiting-integration` issue gated on a human-reviewed cross-repo
+PR.
+
+For EACH condition, capture the issue's `updatedAt` **now, at declaration time**:
+
+```bash
+gh issue view <number> --json updatedAt --jq .updatedAt
+```
+
+Then fill the "Standing Conditions (sentinel)" section of `MANAGER-STATE.md` with ONE
+fenced block, one line per condition:
+
+````
+```sentinel-standing
+SENTINEL-STANDING: <issue-number> <updatedAt-iso> <free-text reason>
+SENTINEL-STANDING: 2020 2026-09-14T21:33:12Z cross-repo PR 65, human-gated
+```
+````
+
+Format rules — the sentinel parses this mechanically (`idle-sentinel.sh` is the
+source of truth for the format):
+
+- The fence language must be exactly `sentinel-standing`; every line inside starts
+  with `SENTINEL-STANDING: `.
+- `<updatedAt-iso>` is the value captured above, verbatim. The sentinel drops a
+  condition the moment the issue's live `updatedAt` differs (someone touched it — it
+  may be actionable again), and expires ALL conditions at each duty wake; a later
+  handoff must re-declare the ones that still hold.
+- Declare only genuinely unactionable-but-open conditions. A standing condition
+  masks that issue from the sentinel's `awaiting-integration` and stale-claim wake
+  predicates — declaring actionable work here strands it until the next duty wake.
+
+If there are no standing conditions, write "(none)" in the section and omit the
+fenced block. Either way, record the step-down reason in the template's "Step-down
+Reason" section — the next manager (and any human reading the file) needs to know
+whether this was context pressure, quiescence, or a manual restart.
 
 ### Step 4: Commit the state file
 
@@ -192,4 +247,5 @@ Stop here. Do not run `/clear` — the manager does that manually.
 - **Workers are unaffected** — they run in separate tmux panes and keep working through any manager restart
 - **GitHub is the source of truth** — `working` labels, PRs, and issue state are always re-checked on resume
 - **MANAGER-STATE.md is ephemeral context glue** — it captures what GitHub can't: worker-to-pane mapping, in-session decisions, known holds that aren't filed as issues
+- **Standing conditions are sentinel input** — the `sentinel-standing` block is machine-parsed by `idle-sentinel.sh`; keep its format exact, and never declare actionable work there
 - **Commit is optional** — if the project has no open commit, the file is still written and readable; the commit just makes it visible in git log

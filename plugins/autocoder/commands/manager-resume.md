@@ -8,7 +8,29 @@ Load a fresh manager session with full situational awareness. Reads `MANAGER-STA
 
 ```bash
 /autocoder:manager-resume
+/autocoder:manager-resume --non-interactive
 ```
+
+## Non-Interactive Mode
+
+Treat this command as non-interactive when EITHER holds:
+
+- it was invoked as `/autocoder:manager-resume --non-interactive`, or
+- `AUTOCODER_UNATTENDED=1` is set in the environment (the idle sentinel exports it into
+  every manager it spawns — see `docs/specs/2026-09-16-idle-sentinel-design.md`).
+
+In this mode there is no human to answer questions. Skip ALL AskUserQuestion steps and
+apply the autonomous defaults instead:
+
+- **Step 5 (stale working labels):** do not ask — post an explanatory comment on the
+  issue, then release the label (exact commands in Step 5).
+- **Step 6 (archive prompt):** do not ask, and NEVER archive `MANAGER-STATE.md`.
+  Archival happens only when a successful step-down handoff replaces the file (CDR #12
+  in the idle-sentinel spec): a crashed or killed manager must never destroy the state
+  the next wake needs.
+
+Everything else — state read, live queries, delta computation, the Step 4 report — is
+unchanged; the resume brief lands in the session transcript.
 
 ## What This Does
 
@@ -205,6 +227,14 @@ gh issue edit <number> --remove-label "working"
 
 This is the same check monitor-workers does, but doing it at resume time avoids silent lock-outs.
 
+**Non-interactive mode:** skip the question and auto-release, leaving an explanatory
+comment on the issue first so the release is durable and attributable:
+
+```bash
+gh issue comment <number> --body "Releasing stale 'working' label: no worker activity for >60 minutes at manager resume (auto-released — unattended session)."
+gh issue edit <number> --remove-label "working"
+```
+
 ### Step 6: Clean up state file (optional)
 
 After the manager confirms the resume is complete, offer:
@@ -219,16 +249,26 @@ git mv MANAGER-STATE.md MANAGER-STATE.archived.md 2>/dev/null || \
 
 If no, leave it as-is.
 
+**Non-interactive mode:** skip this step entirely. NEVER archive `MANAGER-STATE.md` in
+an unattended session — archival happens only when a successful step-down handoff
+(`/autocoder:manager-handoff`) replaces the file (CDR #12). The idle sentinel's standing
+conditions also live in this file; archiving it out from under the sentinel would erase
+them mid-flight.
+
 ## Key Behaviors
 
 - **Always re-query GitHub** — saved state is a hint, not the truth; GitHub is authoritative
 - **Delta is the primary value** — the manager needs to know what changed, not just current state
 - **Stale lock detection** — catches issues that were "working" but the worker crashed/quit
 - **No-state-file graceful** — if there's no MANAGER-STATE.md, just report live state as a fresh start
-- **Non-destructive** — never removes labels or closes issues without asking
+- **Non-destructive** — never removes labels or closes issues without asking; non-interactive
+  mode substitutes the documented autonomous default and leaves an explanatory comment
+  instead of acting silently
 
 ## Relationship to Other Commands
 
 - Run after `/autocoder:manager-handoff` + `/clear` or session restart
 - After resume, the manager's typical next step is `/autocoder:monitor-workers`
 - If all issues are blocked, `/autocoder:review-blocked` surfaces them for human decision
+- A sentinel-woken manager runs `/autocoder:manager-resume --non-interactive` first, then
+  starts `/autocoder:monitor-loop` (the sentinel sequences both in its spawn prompt)
