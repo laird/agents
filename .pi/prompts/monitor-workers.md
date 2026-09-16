@@ -51,7 +51,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
 6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via the multiplexer (tmux/cmux/herdr)
-7. **Scale fleet if needed** — If the issue queue is backing up (more unblocked issues than workers) and the human asks, run `add-worker` to add a worker to the fleet
+7. **Scale the fleet dynamically** — Create workers+worktrees (`add-worker`) when the claimable queue outgrows the fleet, and retire idle workers (`remove-worker --remove-worktree`) once their work is banked, so capacity tracks the queue in both directions
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
 
@@ -533,30 +533,61 @@ tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it neve
 
 After dispatching, verify the worker started by reading its screen again after a few seconds.
 
-### Step 5b: Add a Worker When the Queue Is Backing Up
+### Step 5b: Scale the Fleet Up and Down (dynamic workers)
 
-If the human asks you to add a worker, or if the unblocked issue queue is significantly larger than the number of active workers, run:
+Match fleet size to the dispatchable queue on every iteration — workers and their
+worktrees are disposable capacity, not fixtures. A standing idle worker costs a
+multi-GB worktree (node_modules), a resident agent session, and recycle churn; a
+missing worker costs queue latency. Target: every dispatchable issue has a worker
+within one monitoring cycle, and no worker sits idle across two consecutive cycles
+with nothing it could claim.
+
+**Scale UP** when dispatchable issues (open, unblocked, unclaimed) outnumber live
+workers:
 
 ```bash
-add-worker
-```
-
-Or with explicit options:
-
-```bash
+add-worker                  # creates worktree + pane/workspace + fresh agent
 add-worker --agent claude   # or gemini, codex, droid
-add-worker --mux tmux       # or cmux
 ```
 
-This creates a new worktree, adds a pane/workspace to the existing session, and focuses it so the new worker is immediately visible. The script is safe to call from within the manager session — it detects it's already inside tmux/cmux/herdr and skips re-attaching.
+- Add workers **one at a time**, waiting ~60s and confirming the new worker claimed
+  a DISTINCT issue before adding the next — simultaneous launches all claim the same
+  top issue.
+- Respect a ceiling: `AUTOCODER_MAX_WORKERS` if set, else 5. Stop below the ceiling
+  when the host is resource-constrained (e.g. <10G disk free or heavy load) even if
+  the queue is deeper.
+- Size against the CLAIMABLE queue only — blocked/needs-*/already-working issues do
+  not justify capacity.
 
-**When to add a worker:**
-- Human explicitly asks ("add a worker", "scale up", "we need more workers")
-- Unblocked issues > active workers and queue isn't draining
+**Scale DOWN** when a worker has been idle for two consecutive monitoring cycles
+with no dispatchable issue for it:
 
-**When NOT to add a worker autonomously (require human confirmation):**
-- Queue is draining normally
-- Workers are catching up
+```bash
+remove-worker <N> --remove-worktree     # manifest-backed swarms
+```
+
+Pre-teardown safety checks — ALL must pass (banked-work-only rule):
+
+1. Worktree clean: `git -C <worktree> status --short` empty (untracked scratch like
+   `.upgrade-journal/` is fine)
+2. Nothing unpushed: `git -C <worktree> log --branches --not --remotes --oneline` empty
+3. Its issue(s) carry a READY/banked comment or are closed — never tear down a claim
+   without a durable record on the issue
+4. No merge gate or long-running job is executing from that worktree
+
+If any check fails, keep the worker (or finish banking first). If the swarm has no
+manifest (`remove-worker` refuses to run), tear down manually: cwd-verified kill of
+the agent process, close its pane/workspace, then `git worktree remove <path>` and
+`git worktree prune` — never `rm -rf` a registered worktree.
+
+- Scaling to **zero** workers between work waves is normal — the manager alone is a
+  valid fleet; recreate capacity when the next dispatchable issue appears.
+- Never scale down a mid-task worker, never remove the manager's own checkout, and
+  never touch panes that are not swarm workers.
+
+**Ask the human instead of acting** when: a worker's safety checks keep failing
+(suggests stuck work that needs triage, not deletion), or the queue calls for
+exceeding the ceiling.
 
 ### Step 5c: Run Review-Blocked When All Issues Are Blocked
 
@@ -698,5 +729,6 @@ done
 - **Restart wedged workers in place** — A worker that is stalled AND holding high memory has run out of headroom; kill and relaunch it on the same worktree/issue rather than letting it hang
 - **Priority order** — Assign highest priority issues first (P0 > P1 > P2 > P3)
 - **Don't double-assign** — Check "working" label before dispatching
+- **Scale capacity to the queue** — add workers when claimable issues outnumber the fleet; retire idle workers (worktree included) once their work is banked; zero workers between waves is fine
 - **Deploy only when ready** — All workers idle + no unblocked issues + new commits
 - **Deploy to staging only** — Never deploy to production without explicit user request
