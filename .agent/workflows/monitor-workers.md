@@ -604,7 +604,9 @@ after Step 6.
 **An iteration is quiescent only when ALL of these hold:**
 
 1. Zero claimable issues — `issue_list --state open` returns `[]`
-2. Zero `working` labels — `issue_list --state working` returns `[]`
+2. Zero `working` labels — `issue_list --label working --state open` returns `[]`
+   (this tree's backends predate the 9-verb contract and reject
+   `--state working`; the label filter expresses the same set)
 3. Zero non-standing `awaiting-integration` issues — subtract issues declared as
    standing conditions in the ```` ```sentinel-standing ```` block of
    `MANAGER-STATE.md` (written by `/manager-handoff`)
@@ -656,10 +658,27 @@ step down — in this exact order:
    cannot be performed by the exiting process itself. The sentinel's next tick
    observes the recorded pid dead, clears the entry under the manifest lock, and
    enters wake-spawning mode. Only the sentinel clears manager entries.
-6. **Exit the session**. This iteration writes no heartbeat and no report — the
-   step-down IS the outcome, and the sentinel detects the exit by the dead pid.
+6. **Write the step-down marker**: `date -u +%Y-%m-%dT%H:%M:%SZ > .autocoder/stepped-down`.
+   This is the sentinel-side fallback for step 7: an agent TUI launched via argv
+   has no reliable self-exit, so if the process lingers after this iteration, the
+   sentinel treats the marker as retirement on its next tick — it kills the
+   recorded pid, clears the manifest entry, removes the marker, and resumes
+   predicate mode immediately instead of waiting ~3× the interval for the
+   heartbeat-wedge path.
+7. **Exit the session**. This iteration writes no heartbeat and no report — the
+   step-down IS the outcome, and the sentinel detects the exit by the dead pid
+   (or, failing that, by the step 6 marker). The TUI process does not end on its
+   own when the turn completes, so end it explicitly as the FINAL shell action:
+   - **tmux**: `tmux kill-pane -t "$TMUX_PANE"` (kills the pane hosting this
+     session; `$TMUX_PANE` is set in every tmux pane).
+   - **No mux target known**: `kill <pid>` where `<pid>` is this manager's own
+     `pid` from the swarm manifest manager entry.
+   If the kill command is refused or the environment cannot be determined, just
+   end the turn — the step 6 marker guarantees the sentinel retires this process
+   on its next tick.
 
-If the counter is below 2, or the iteration was not quiescent, continue to Step 7.
+If the counter is below 2, or the iteration was not quiescent, do none of the
+above and continue to Step 7 (Write Structured Status) below.
 
 ### Step 7: Write Structured Status (for agents-tui)
 

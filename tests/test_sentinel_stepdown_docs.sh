@@ -53,6 +53,18 @@ grep -Eq 'manifest_set_manager.*null' "$MW" \
   && bad "monitor-workers instructs clearing the manifest manager entry (sentinel-owned)" \
   || ok "monitor-workers never instructs clearing the manifest manager entry"
 
+# Step-down exit must be executable (#15): a stepped-down marker the sentinel
+# consumes, plus a concrete per-mux exit mechanism (a TUI has no self-exit).
+grep -q '\.autocoder/stepped-down' "$MW" \
+  && ok "monitor-workers writes the stepped-down marker before exiting" \
+  || bad "monitor-workers lacks the .autocoder/stepped-down marker step"
+grep -q 'tmux kill-pane -t "\$TMUX_PANE"' "$MW" \
+  && ok "monitor-workers documents a concrete tmux exit mechanism" \
+  || bad "monitor-workers lacks the tmux kill-pane exit command"
+grep -q 'stepped-down' "$IS" \
+  && ok "idle-sentinel consumes the stepped-down marker (retire fallback)" \
+  || bad "idle-sentinel does not reference the stepped-down marker"
+
 # ── manager-handoff.md: the sentinel-standing fence format ─────────────────
 grep -q '```sentinel-standing' "$MH" \
   && ok "manager-handoff documents the sentinel-standing fence" \

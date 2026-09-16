@@ -59,14 +59,25 @@
 #     "scheduler_mode": "cron" | "systemd" | "loop" | "none",
 #     "last_tick_at": "<iso8601>",
 #     "last_tick_result": "quiescent"|"wake:<reason>"|"observe"|"error"|
-#                         "backoff:<reason>"|"wake-failed:<reason>",
+#                         "backoff:<reason>"|"wake-failed:<reason>"|
+#                         "wedge-killed"|"stalled:lock-held",
 #     "consecutive_errors": <int>,      // errored ticks + contended SKIPs
 #     "last_duty_wake_at": "<iso8601>",
 #     "last_wake": {"reason": "...", "issues_hash": "...", "at": "<iso>"},
 #     "dedup":   {"<reason>": {"hash": "<sha256>", "count": <int>}},
+#                // the reserved reason "wake-failed" counts consecutive
+#                // FAILED spawn attempts (any reason); reset on success
 #     "backoff": {"<reason>": {"until_epoch": <int>, "seconds": <int>}},
 #     "consent_dialog_at": "<iso8601>"  // last bootstrap-config failure
 #   }
+#
+#   Dedup/backoff semantics: constant-hash reasons (duty, error-escalation,
+#   wake-file, heartbeat-respawn) are EXEMPT from dedup — "no observable state
+#   change" is trivially true for them by construction, so dedup could only
+#   ever mis-fire and permanently silence the safety-net wakes. For hashed
+#   reasons, backoff EXPIRY permits exactly ONE probe wake; the backoff
+#   re-enters doubled only when that wake again produced no state change.
+#   Wakes therefore continue at a degraded cadence — they never stop.
 #
 # Configuration (defaults per the spec's table; durations accept 900, 15m, 6h):
 #   AUTOCODER_SENTINEL_INTERVAL          15m   poll cadence
@@ -86,6 +97,10 @@
 #   .autocoder/sentinel-hooks.sh               sentinel_extra_wake_conditions,
 #                                              sentinel_health_probe, sentinel_notify
 #   .autocoder/wake                            manual/external force-wake file
+#   .autocoder/stepped-down                    written by the manager's step-down
+#                                              (monitor-workers Step 6b); the
+#                                              sentinel retires a lingering
+#                                              manager process on sight of it
 
 set -o pipefail
 
@@ -183,7 +198,9 @@ STATE_FILE="$AC_DIR/sentinel-state.json"
 LOG_FILE="$AC_DIR/sentinel.log"
 LOCK_FILE="$AC_DIR/sentinel.tick.lock"
 SKIP_FILE="$AC_DIR/sentinel.skips"
+SKIP_NOTIFIED_FILE="$AC_DIR/sentinel.skips.notified"
 WAKE_FILE="$AC_DIR/wake"
+STEPDOWN_FILE="$AC_DIR/stepped-down"
 HEARTBEAT_FILE="$AC_DIR/manager-heartbeat"
 HEALTH_ALERT_FILE="$AC_DIR/health-alert"
 QUIESCENT_FILE="$AC_DIR/quiescent-iterations"
@@ -400,8 +417,16 @@ probe_awaiting() {
 }
 
 probe_working() {
+  # .AGENT ADAPTATION (#12): this tree's issue backends predate the 9-verb
+  # contract — issues-file.py rejects `--state working` (choices: open,
+  # closed, all) and the github arm passes --state through to `gh issue
+  # list`, which rejects it too. `--label working --state open` expresses
+  # the same set ("open issues carrying the working label") in the dialect
+  # both backends accept. Note: probe_claimable's `--state open` here does
+  # not subtract blocking labels (the older backends cannot), so predicate 1
+  # is broader than in the plugins tree — a known, logged-here limitation.
   local out
-  out=$(probe_backend issue_list --state working --limit 100 2>/dev/null) || return 1
+  out=$(probe_backend issue_list --label working --state open --limit 100 2>/dev/null) || return 1
   printf '%s' "$out" | json_issue_numbers || return 1
 }
 
@@ -530,6 +555,28 @@ pid_cwd_in_root() {
     "$PROJECT_ROOT"|"$PROJECT_ROOT"/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+pid_ppid() {
+  local pid="$1"
+  if [ -d /proc/self ]; then
+    awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null
+  else
+    ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '
+  fi
+}
+
+# pid_has_ancestor <pid> <ancestor-pid> — walk the PPid chain (bounded).
+pid_has_ancestor() {
+  local pid="$1" target="$2" depth=0
+  [ -n "$target" ] || return 1
+  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$depth" -lt 64 ]; do
+    pid=$(pid_ppid "$pid")
+    [ -n "$pid" ] || return 1
+    [ "$pid" = "$target" ] && return 0
+    depth=$((depth + 1))
+  done
+  return 1
 }
 
 pid_is_sentinel() {
@@ -698,11 +745,33 @@ manager_alive() {
 
 # Orphan sweep (R2-F6): marker-bearing, cwd-verified processes that do not
 # match the manifest identity are zombie managers from failed exits — kill.
+#
+# Kill only TREE ROOTS (#3): the manager pane exports the marker BEFORE the
+# agent launches, so every subprocess the live manager spawns (merge gates,
+# git, builds) inherits it in /proc environ. A genuine orphan manager is the
+# TOPMOST marker holder; anything whose ancestor chain reaches the manifest
+# MANAGER_PID — or any other marker-bearing pid — is a descendant, never an
+# orphan, and killing it would shoot the live manager's work mid-operation.
 orphan_sweep() {
-  local pid
+  local pids=() pid other skip
   while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
+    [ -n "$pid" ] && pids+=("$pid")
+  done < <(marker_pids_all)
+  [ "${#pids[@]}" -gt 0 ] || return 0
+  for pid in "${pids[@]}"; do
     [ "$pid" = "$MANAGER_PID" ] && continue
+    if [ -n "$MANAGER_PID" ] && pid_has_ancestor "$pid" "$MANAGER_PID"; then
+      continue  # live manager's descendant — not an orphan
+    fi
+    skip=false
+    for other in "${pids[@]}"; do
+      [ "$other" = "$pid" ] && continue
+      if pid_has_ancestor "$pid" "$other"; then
+        skip=true  # descendant of another marker holder: only roots die
+        break
+      fi
+    done
+    [ "$skip" = true ] && continue
     pid_cwd_in_root "$pid" || continue
     if [ "$DRY_RUN" = true ]; then
       echo "DRY-RUN would kill orphan marker process: pid $pid"
@@ -710,7 +779,7 @@ orphan_sweep() {
     fi
     log_event "ORPHAN killing marker-bearing pid $pid (not the manifest manager)"
     kill_pid_verified "$pid" ""
-  done < <(marker_pids_all)
+  done
 }
 
 # ── in-flight process checks (wake predicate 4; also gates heartbeat kill) ──
@@ -898,9 +967,22 @@ evaluate_predicate() {
 # ── wake-reason dedup + backoff (CDR #3b) ───────────────────────────────────
 # Returns 0 = go, 1 = suppressed. On suppression sets SUPPRESS_KIND.
 
+# Constant-hash reasons are EXEMPT from dedup entirely (#2): their hash can
+# never change (duty and error-escalation carry no issue set; wake-file and
+# heartbeat-respawn are events, not states), so "N fires with no state change"
+# is true by construction and dedup could only ever silence them permanently.
+# The spec's safety-net wakes ("wake regardless") must keep firing.
+dedup_exempt() {
+  case "$1" in
+    duty|error-escalation|wake-file|heartbeat-respawn) return 0 ;;
+  esac
+  return 1
+}
+
 dedup_gate() {
   local reason="$1" hash="$2"
   SUPPRESS_KIND=""
+  dedup_exempt "$reason" && return 0
   local prev_hash prev_count b_until now
   prev_hash=$(state_get "dedup.$reason.hash")
   prev_count=$(state_get "dedup.$reason.count")
@@ -916,6 +998,15 @@ dedup_gate() {
   if [ -n "$b_until" ] && [ "$b_until" -gt "$now" ] 2>/dev/null; then
     SUPPRESS_KIND="backoff(until $(date -d "@$b_until" 2>/dev/null || echo "$b_until"))"
     return 1
+  fi
+  if [ -n "$b_until" ] && [ "$b_until" -gt 0 ] 2>/dev/null; then
+    # Backoff EXPIRED (#2): permit exactly ONE probe wake at the degraded
+    # cadence. `.seconds` is kept, so if this wake again produces no state
+    # change the count>=N branch below re-enters a DOUBLED backoff on the
+    # next same-hash tick. Wakes degrade; they never stop.
+    state_merge "{\"backoff\": {\"$reason\": {\"until_epoch\": 0}}}"
+    log_event "BACKOFF expired for reason=$reason — permitting one probe wake"
+    return 0
   fi
   if [ "$prev_count" -ge "$DEDUP_N" ]; then
     local prev_s new_s
@@ -940,6 +1031,45 @@ record_wake() {
   count=$(state_get "dedup.$reason.count")
   count=$(( ${count:-0} + 1 ))
   state_merge "{\"dedup\": {\"$reason\": {\"hash\": \"$hash\", \"count\": $count}}, \"last_wake\": {\"reason\": \"$reason\", \"issues_hash\": \"$hash\", \"at\": \"$(now_iso)\"}}"
+}
+
+# ── failed-wake accounting (#28) ────────────────────────────────────────────
+# record_wake only counts SUCCESSFUL wakes, so a persistently failing spawn
+# (broken launch command, dead agent binary) would otherwise retry at full
+# poll cadence forever. Failed wakes count under the reserved "wake-failed"
+# reason: at DEDUP_N consecutive failures ALL wake attempts back off
+# (doubling, capped), because the broken seam is the spawn path itself, not
+# any one reason. A successful wake clears the debt.
+
+wake_failure_backoff_active() {
+  local b_until
+  b_until=$(state_get "backoff.wake-failed.until_epoch")
+  [ -n "$b_until" ] && [ "$b_until" -gt "$(now_epoch)" ] 2>/dev/null
+}
+
+record_wake_failure() {
+  local reason="$1" count prev_s new_s now
+  count=$(state_get "dedup.wake-failed.count")
+  count=$(( ${count:-0} + 1 ))
+  now=$(now_epoch)
+  if [ "$count" -ge "$DEDUP_N" ]; then
+    prev_s=$(state_get "backoff.wake-failed.seconds")
+    prev_s="${prev_s:-0}"
+    if [ "$prev_s" -le 0 ] 2>/dev/null; then
+      new_s="$BACKOFF_BASE_S"
+    else
+      new_s=$(( prev_s * 2 ))
+      [ "$new_s" -gt "$BACKOFF_CAP_S" ] && new_s="$BACKOFF_CAP_S"
+    fi
+    state_merge "{\"dedup\": {\"wake-failed\": {\"count\": $count}}, \"backoff\": {\"wake-failed\": {\"until_epoch\": $(( now + new_s )), \"seconds\": $new_s}}}"
+    notify "idle-sentinel: $count consecutive failed wakes (last reason: $reason) — backing off all wake attempts ${new_s}s"
+  else
+    state_merge "{\"dedup\": {\"wake-failed\": {\"count\": $count}}}"
+  fi
+}
+
+clear_wake_failures() {
+  state_merge "{\"dedup\": {\"wake-failed\": {\"count\": 0}}, \"backoff\": {\"wake-failed\": {\"until_epoch\": 0, \"seconds\": 0}}}"
 }
 
 # ── mux plumbing ────────────────────────────────────────────────────────────
@@ -1003,13 +1133,24 @@ validate_target() {
 
 CONSENT_DIALOG_PATTERN='No, exit|Bypass Permissions|bypass permissions'
 
+# Command namespace for the wake prompt. .AGENT ADAPTATION (#36): this
+# distribution's workflows are bare-named for EVERY agent (/manager-resume,
+# /monitor-loop — see .agent/workflows/), so the prefix is always empty; the
+# plugins tree prefixes autocoder: for claude only.
+wake_cmd_prefix() {
+  printf ''
+}
+
 build_wake_prompt() {
-  local reason="$1" detail="$2"
-  # Single argv prompt sequencing both commands (R2-F2 / CDR #9): a fresh
-  # `claude --dangerously-skip-permissions <prompt>` — never --resume, never
-  # post-spawn send-keys that the consent dialog would eat.
-  printf 'Run /autocoder:manager-resume --non-interactive and let it complete. Then run /autocoder:monitor-loop. You were woken by the idle sentinel (reason: %s%s).' \
-    "$reason" "${detail:+ — $detail}"
+  local reason="$1" detail="$2" p
+  p=$(wake_cmd_prefix)
+  # Single prompt sequencing both commands (R2-F2 / CDR #9): in argv mode a
+  # fresh `claude --dangerously-skip-permissions <prompt>` — never --resume,
+  # never post-spawn send-keys that the consent dialog would eat. Non-argv
+  # interactive agents receive this SAME prompt typed after the TUI settles
+  # (#27) — the resume-then-loop sequencing is required on every path.
+  printf 'Run /%smanager-resume --non-interactive and let it complete. Then run /%smonitor-loop. You were woken by the idle sentinel (reason: %s%s).' \
+    "$p" "$p" "$reason" "${detail:+ — $detail}"
 }
 
 # Resolve the manager launch command via the shared lib (single source of
@@ -1045,10 +1186,28 @@ ensure_manifest_exists() {
     "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" "[]" "$mgr_json" paused
 }
 
-# Locate-or-create the manager pane/workspace. Sets WAKE_TARGET and
-# WAKE_TARGET_KIND (tmux|cmux|herdr). In dry-run, prints the commands instead.
+# Remaining whole-wake budget in seconds (never below 1). WAKE_DEADLINE is
+# set at do_wake entry; outside a wake (dry-run direct calls) fall back to
+# the configured ceiling.
+wake_budget() {
+  local left
+  if [ -n "${WAKE_DEADLINE:-}" ]; then
+    left=$(( WAKE_DEADLINE - SECONDS ))
+  else
+    left="$WAKE_TIMEOUT_S"
+  fi
+  [ "$left" -lt 1 ] && left=1
+  printf '%s' "$left"
+}
+
+# Locate-or-create the manager pane/workspace. Sets WAKE_TARGET,
+# WAKE_TARGET_KIND (tmux|cmux|herdr) and WAKE_TARGET_CREATED (true when THIS
+# tick created the pane/window/workspace — the failure path must remove
+# exactly that, #28). Every mux call is timeout-wrapped (#16/#17): a wedged
+# mux server must surface as a failed wake, not hold the tick lock forever.
 prepare_manager_target() {
   WAKE_TARGET=""
+  WAKE_TARGET_CREATED=false
   local recorded
   recorded=$(manifest_target_for_mux "$MUX")
   if validate_target "$MUX" "$recorded"; then
@@ -1058,7 +1217,7 @@ prepare_manager_target() {
 
   case "$MUX" in
     tmux)
-      if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      if run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         # Session alive but manager pane gone: add a manager window ourselves
         # (going through --manager-only would no-op on an existing session).
         if [ "$DRY_RUN" = true ]; then
@@ -1067,8 +1226,9 @@ prepare_manager_target() {
           return 0
         fi
         local win
-        win=$(tmux new-window -t "$SESSION_NAME" -n manager -P -F '#{window_id}') || return 1
-        WAKE_TARGET=$(tmux display-message -p -t "$win" '#{pane_id}') || return 1
+        win=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux new-window -t "$SESSION_NAME" -n manager -P -F '#{window_id}') || return 1
+        WAKE_TARGET_CREATED=true
+        WAKE_TARGET=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux display-message -p -t "$win" '#{pane_id}') || return 1
         send_tmux_command "$WAKE_TARGET" "cd '$PROJECT_ROOT'"
         return 0
       fi
@@ -1079,7 +1239,9 @@ prepare_manager_target() {
         WAKE_TARGET="<bootstrap-tmux-pane>"
         return 0
       fi
-      (cd "$PROJECT_ROOT" && "$SCRIPT_DIR/start-parallel-agents.sh" --manager-only --mux tmux --agent "$AGENT_NAME") || return 1
+      run_with_timeout "$(wake_budget)" bash -c 'cd "$1" && exec "$2" --manager-only --mux tmux --agent "$3"' \
+        _ "$PROJECT_ROOT" "$SCRIPT_DIR/start-parallel-agents.sh" "$AGENT_NAME" || return 1
+      WAKE_TARGET_CREATED=true
       WAKE_TARGET=$(manifest_target_for_mux tmux)
       validate_target tmux "$WAKE_TARGET"
       return $?
@@ -1094,7 +1256,9 @@ prepare_manager_target() {
           WAKE_TARGET="<bootstrap-$MUX-workspace>"
           return 0
         fi
-        (cd "$PROJECT_ROOT" && "$SCRIPT_DIR/start-parallel-agents.sh" --manager-only --mux "$MUX" --agent "$AGENT_NAME") || return 1
+        run_with_timeout "$(wake_budget)" bash -c 'cd "$1" && exec "$2" --manager-only --mux "$3" --agent "$4"' \
+          _ "$PROJECT_ROOT" "$SCRIPT_DIR/start-parallel-agents.sh" "$MUX" "$AGENT_NAME" || return 1
+        WAKE_TARGET_CREATED=true
         WAKE_TARGET=$(manifest_target_for_mux "$MUX")
         validate_target "$MUX" "$WAKE_TARGET"
         return $?
@@ -1110,14 +1274,16 @@ prepare_manager_target() {
       fi
       if [ "$MUX" = cmux ]; then
         local out
-        out=$(cmux new-workspace --cwd "$PROJECT_ROOT") || return 1
+        out=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux new-workspace --cwd "$PROJECT_ROOT") || return 1
         WAKE_TARGET=$(echo "$out" | grep -o 'workspace:[0-9]*')
         [ -n "$WAKE_TARGET" ] || return 1
-        cmux rename-workspace --workspace "$WAKE_TARGET" "manager-${PROJECT_NAME}" >/dev/null 2>&1 || true
+        WAKE_TARGET_CREATED=true
+        run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux rename-workspace --workspace "$WAKE_TARGET" "manager-${PROJECT_NAME}" >/dev/null 2>&1 || true
       else
-        WAKE_TARGET=$(herdr workspace create --cwd "$PROJECT_ROOT" --label "manager-${PROJECT_NAME}" --no-focus |
+        WAKE_TARGET=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr workspace create --cwd "$PROJECT_ROOT" --label "manager-${PROJECT_NAME}" --no-focus |
           python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])' 2>/dev/null)
         [ -n "$WAKE_TARGET" ] || return 1
+        WAKE_TARGET_CREATED=true
       fi
       return 0
       ;;
@@ -1125,12 +1291,35 @@ prepare_manager_target() {
   return 1
 }
 
+# #28: remove the pane/window/workspace THIS tick created, on wake failure.
+# The spec (CDR #1) says a failed wake must never leave a zombie pane — and
+# a leaked one per tick is a window factory. Pre-existing targets (recorded
+# in the manifest) are never touched.
+cleanup_created_target() {
+  [ "${WAKE_TARGET_CREATED:-false}" = true ] || return 0
+  [ -n "$WAKE_TARGET" ] || return 0
+  case "$MUX" in
+    tmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux kill-window -t "$WAKE_TARGET" 2>/dev/null ;;
+    cmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux close-workspace --workspace "$WAKE_TARGET" >/dev/null 2>&1 ;;
+    herdr) run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr workspace close "${WAKE_TARGET%%:*}" >/dev/null 2>&1 ;;
+  esac
+  log_event "WAKE cleanup removed the $MUX pane/workspace created this tick ($WAKE_TARGET)"
+  WAKE_TARGET_CREATED=false
+}
+
 # Verify the freshly-spawned manager actually started working (R2-F2):
 # marker pid within the activity window, then a consent-dialog check.
 # Returns: 0 started, 1 no activity, 2 consent dialog visible.
+# The activity window is capped by the remaining whole-wake budget (#16):
+# ACTIVITY_TIMEOUT_S polling plus the settle sleep must never push the wake
+# past WAKE_TIMEOUT_S.
 verify_manager_started() {
-  local target="$1" pid cap
-  if ! pid=$(wait_for_manager_pid "$SESSION_NAME" "$ACTIVITY_TIMEOUT_S"); then
+  local target="$1" pid cap window
+  window="$ACTIVITY_TIMEOUT_S"
+  local budget
+  budget=$(wake_budget)
+  [ "$budget" -lt "$window" ] && window="$budget"
+  if ! pid=$(wait_for_manager_pid "$SESSION_NAME" "$window"); then
     # No marker process: either nothing launched or it died instantly. A
     # visible consent dialog is still worth distinguishing.
     cap=$(capture_target "$MUX" "$target")
@@ -1158,7 +1347,10 @@ record_spawn_in_manifest() {
     herdr) herdr_p="$WAKE_TARGET" ;;
   esac
   local json
-  json=$(manifest_manager_json interactive true shell "$SWARM_STATE_DIR/${SESSION_NAME}.ready.txt" \
+  # Record the REAL launch mode (#29): the heartbeat wedge detector only
+  # applies to interactive managers, so a shell-loop manager recorded as
+  # "interactive" would be wedge-killed on a cycle.
+  json=$(manifest_manager_json "${MANAGER_LAUNCH_MODE:-interactive}" true shell "$SWARM_STATE_DIR/${SESSION_NAME}.ready.txt" \
     "$tmux_t" "$cmux_w" "$herdr_p" "$pid" "$start" "$MANAGER_MARKER")
   manifest_set_manager "$MANIFEST_PATH" "$json"
 }
@@ -1194,12 +1386,16 @@ dispatch_manager() {
   # pane shell BEFORE the agent launches so /proc environ carries both.
   send_shell_line "$MUX" "$WAKE_TARGET" "export $MANAGER_MARKER AUTOCODER_UNATTENDED=1" || return 1
   send_shell_line "$MUX" "$WAKE_TARGET" "$launch_line" || return 1
-  if [ "$MANAGER_COMMAND_MODE" != "argv" ] && [ -n "$MANAGER_LAUNCH_CMD" ] && [ -n "$MANAGER_CMD" ]; then
+  if [ "$MANAGER_COMMAND_MODE" != "argv" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
     sleep 5
+    # #27: send the BUILT WAKE PROMPT — resume --non-interactive, then the
+    # monitor loop, plus the wake reason — never bare $MANAGER_CMD, which
+    # would start the loop cold with no MANAGER-STATE.md context and no
+    # reason. This is exactly what the dry-run branch above prints.
     case "$MUX" in
-      tmux)  send_tmux_text_enter "$WAKE_TARGET" "$MANAGER_CMD" ;;
-      cmux)  send_cmux_command "$WAKE_TARGET" "$MANAGER_CMD" ;;
-      herdr) prompt_herdr_agent "$WAKE_TARGET" "$MANAGER_CMD" || send_herdr_command "$WAKE_TARGET" "$MANAGER_CMD" ;;
+      tmux)  send_tmux_text_enter "$WAKE_TARGET" "$prompt" ;;
+      cmux)  send_cmux_command "$WAKE_TARGET" "$prompt" ;;
+      herdr) prompt_herdr_agent "$WAKE_TARGET" "$prompt" || send_herdr_command "$WAKE_TARGET" "$prompt" ;;
     esac
   fi
   return 0
@@ -1207,18 +1403,32 @@ dispatch_manager() {
 
 do_wake() {
   local reason="$1" detail="$2"
-  local wake_started="$SECONDS"
+  # Whole-wake deadline (#16/#17): WAKE_TIMEOUT_S bounds the ENTIRE wake —
+  # target preparation, dispatch, and verification — not just the gap
+  # between the two dispatch attempts.
+  WAKE_DEADLINE=$(( SECONDS + WAKE_TIMEOUT_S ))
   SPAWNED_PID=""
   SPAWNED_PID_START=""
+  WAKE_TARGET_CREATED=false
+
+  # #28: persistent spawn failures back off instead of retrying (and
+  # notifying, and leaking a pane) every tick.
+  if [ "$DRY_RUN" != true ] && wake_failure_backoff_active; then
+    log_event "WAKE suppressed (wake-failure backoff active) reason=$reason"
+    TICK_RESULT="backoff:wake-failed"
+    return 1
+  fi
 
   MUX=$(detect_mux) || {
     notify "idle-sentinel: wake ($reason) failed — no multiplexer available"
     TICK_RESULT="wake-failed:$reason"
+    record_wake_failure "$reason"
     return 1
   }
   resolve_manager_launch || {
     notify "idle-sentinel: wake ($reason) failed — cannot resolve $AGENT_NAME launch command"
     TICK_RESULT="wake-failed:$reason"
+    record_wake_failure "$reason"
     return 1
   }
   local prompt
@@ -1238,7 +1448,9 @@ do_wake() {
 
   prepare_manager_target || {
     notify "idle-sentinel: wake ($reason) failed — could not create/locate manager pane on $MUX"
+    cleanup_created_target
     TICK_RESULT="wake-failed:$reason"
+    record_wake_failure "$reason"
     return 1
   }
   ensure_manifest_exists \
@@ -1253,16 +1465,21 @@ do_wake() {
   log_event "WAKE dispatching manager (reason=$reason mux=$MUX target=$WAKE_TARGET)"
   local attempt rc=1
   for attempt in 1 2; do
-    if [ $((SECONDS - wake_started)) -ge "$WAKE_TIMEOUT_S" ]; then
+    if [ "$SECONDS" -ge "$WAKE_DEADLINE" ]; then
       log_event "WAKE ceiling (${WAKE_TIMEOUT_S}s) reached before attempt $attempt"
       break
     fi
     dispatch_manager "$prompt" || { log_event "WAKE dispatch attempt $attempt failed to send"; continue; }
+    if [ "$SECONDS" -ge "$WAKE_DEADLINE" ]; then
+      log_event "WAKE ceiling (${WAKE_TIMEOUT_S}s) reached after dispatch attempt $attempt"
+      break
+    fi
     verify_manager_started "$WAKE_TARGET"
     rc=$?
     if [ "$rc" -eq 0 ]; then
       record_spawn_in_manifest "$SPAWNED_PID" "$SPAWNED_PID_START"
       record_wake "$reason" "$WAKE_HASH"
+      clear_wake_failures
       log_event "WAKE manager started (pid=$SPAWNED_PID reason=$reason attempt=$attempt)"
       # Consume the operator wake file only once the wake actually succeeded.
       [ "$reason" = "wake-file" ] && rm -f "$WAKE_FILE"
@@ -1287,17 +1504,20 @@ do_wake() {
     log_event "WAKE attempt $attempt: no manager activity within ${ACTIVITY_TIMEOUT_S}s"
   done
 
-  # Failed for good: kill only what WE spawned (marker+pid verified), clear
-  # the manifest entry, notify, keep polling (CDR #1). A failed wake must
-  # never leave a zombie pane that blocks all future wakes.
+  # Failed for good: kill only what WE spawned (marker+pid verified), remove
+  # the pane/window/workspace WE created this tick (#28), clear the manifest
+  # entry, notify, keep polling (CDR #1). A failed wake must never leave a
+  # zombie pane that blocks all future wakes — or a leaked one per tick.
   local pid
   if pid=$(manager_pid_by_marker "$SESSION_NAME") && pid_cwd_in_root "$pid"; then
     kill_pid_verified "$pid" "$(process_start_time "$pid" 2>/dev/null)"
     log_event "WAKE killed own failed spawn pid=$pid"
   fi
+  cleanup_created_target
   clear_manifest_manager "failed wake cleanup"
   notify "idle-sentinel: wake ($reason) FAILED after retry — killed own spawn, resuming polling"
   TICK_RESULT="wake-failed:$reason"
+  record_wake_failure "$reason"
   return 1
 }
 
@@ -1331,8 +1551,11 @@ observe_health() {
 }
 
 manager_pane_static() {
-  # Two captures across a settle window; identical output = static. When no
-  # pane target is known, fall back to CPU-time delta on the pid.
+  # Two captures across a settle window; identical output = static. Returning
+  # 0 here is KILL EVIDENCE, so when no pane target is available we return 1
+  # and log the limitation (#20): a CPU-time delta is NOT a safe proxy — an
+  # I/O-blocked manager (slow git fetch, network timeout) burns zero CPU while
+  # legitimately working, and killing it starts a kill/respawn loop.
   local target
   target=$(manifest_target_for_mux "$MUX_OBS" 2>/dev/null)
   if validate_target "$MUX_OBS" "$target" 2>/dev/null; then
@@ -1343,17 +1566,8 @@ manager_pane_static() {
     [ "$c1" = "$c2" ]
     return $?
   fi
-  local t1 t2
-  if [ -r "/proc/$MANAGER_PID/stat" ]; then
-    t1=$(awk '{ sub(/.*\) /, ""); print $12 + $13 }' "/proc/$MANAGER_PID/stat" 2>/dev/null)
-    sleep 8
-    t2=$(awk '{ sub(/.*\) /, ""); print $12 + $13 }' "/proc/$MANAGER_PID/stat" 2>/dev/null)
-  else
-    t1=$(ps -o time= -p "$MANAGER_PID" 2>/dev/null)
-    sleep 8
-    t2=$(ps -o time= -p "$MANAGER_PID" 2>/dev/null)
-  fi
-  [ -n "$t1" ] && [ "$t1" = "$t2" ]
+  log_event "HEARTBEAT stale but no readable pane target (mux=${MUX_OBS:-none}) — cannot verify the manager is wedged; skipping the kill"
+  return 1
 }
 
 sweep_git_locks() {
@@ -1377,6 +1591,17 @@ sweep_git_locks() {
 observe_tick() {
   TICK_RESULT="observe"
   observe_health
+
+  # #29: the heartbeat contract belongs to INTERACTIVE managers only —
+  # monitor-workers (the LLM loop) writes .autocoder/manager-heartbeat each
+  # iteration. Shell-loop managers (pi/droid/codex fallback: launchMode
+  # "shell") never write heartbeats, so the spawned_at fallback below would
+  # trip ~3x INTERVAL after launch and wedge-kill a healthy loop on a cycle.
+  local launch_mode
+  launch_mode=$(manifest_manager_field "$MANIFEST_PATH" launchMode)
+  if [ -n "$launch_mode" ] && [ "$launch_mode" != "interactive" ]; then
+    return 0
+  fi
 
   # Heartbeat monitor. Baseline: heartbeat file mtime, else the manifest's
   # spawned_at (a just-woken manager has not written one yet).
@@ -1407,17 +1632,21 @@ observe_tick() {
   fi
 
   if [ "$DRY_RUN" = true ]; then
-    echo "DRY-RUN would kill wedged manager pid=$MANAGER_PID and respawn"
+    echo "DRY-RUN would kill wedged manager pid=$MANAGER_PID (next tick's predicate decides any respawn)"
     return 0
   fi
-  notify "idle-sentinel: manager heartbeat ${age}s stale, no in-flight work, pane static — killing pid $MANAGER_PID and respawning"
+  notify "idle-sentinel: manager heartbeat ${age}s stale, no in-flight work, pane static — killing pid $MANAGER_PID; next tick's predicate decides any respawn"
   kill_pid_verified "$MANAGER_PID" "$MANAGER_PID_START"
   clear_manifest_manager "wedged manager killed"
   sweep_git_locks
   MANAGER_PID=""
   MANAGER_PID_START=""
-  WAKE_HASH=$(sha256_of "heartbeat-respawn:")
-  do_wake "heartbeat-respawn" "previous manager wedged (heartbeat ${age}s stale)"
+  # #21: do NOT respawn unconditionally. A manager that wedged (or lingered)
+  # during total quiescence has nothing to do; an unconditional respawn is a
+  # full LLM cold start producing zero decisions, repeating on every wedge.
+  # The next tick runs in wake-spawning mode and its predicate decides — at
+  # most one interval of latency, and a spawn only when there is work.
+  TICK_RESULT="wedge-killed"
 }
 
 # ── the tick ────────────────────────────────────────────────────────────────
@@ -1438,7 +1667,7 @@ run_tick() {
   local skips=0 consec
   if [ -f "$SKIP_FILE" ] && [ "$DRY_RUN" != true ]; then
     skips=$(wc -l < "$SKIP_FILE" 2>/dev/null || echo 0)
-    rm -f "$SKIP_FILE"
+    rm -f "$SKIP_FILE" "$SKIP_NOTIFIED_FILE"
   fi
   consec=$(state_get consecutive_errors)
   consec=$(( ${consec:-0} + skips ))
@@ -1448,12 +1677,35 @@ run_tick() {
   pin_gh_token || tick_errors=$((tick_errors + 1))
 
   if manager_alive; then
-    orphan_sweep
-    observe_tick
-    # A verified live manager means the system is not blind: error streak ends.
-    state_merge "{\"consecutive_errors\": 0, \"last_tick_at\": \"$(now_iso)\", \"last_tick_result\": \"$TICK_RESULT\"}"
-    log_event "TICK result=$TICK_RESULT mode=observe manager_pid=${MANAGER_PID:-?}"
-    return 0
+    if [ -f "$STEPDOWN_FILE" ]; then
+      # #15: the manager announced step-down but its TUI process lingers
+      # (an argv-spawned agent has no reliable self-exit). Treat the marker
+      # as retirement: kill the recorded identity, clear the manifest, and
+      # fall through to predicate mode THIS tick — no 45-minute wedge wait,
+      # no unconditional respawn.
+      if [ "$DRY_RUN" = true ]; then
+        echo "DRY-RUN would retire stepped-down manager pid=$MANAGER_PID"
+      else
+        log_event "STEPDOWN marker present — retiring lingering manager pid=$MANAGER_PID"
+        kill_pid_verified "$MANAGER_PID" "$MANAGER_PID_START"
+        clear_manifest_manager "stepped-down manager retired"
+        rm -f "$STEPDOWN_FILE"
+      fi
+      MANAGER_PID=""
+      MANAGER_PID_START=""
+    else
+      orphan_sweep
+      observe_tick
+      # A verified live manager means the system is not blind: error streak ends.
+      state_merge "{\"consecutive_errors\": 0, \"last_tick_at\": \"$(now_iso)\", \"last_tick_result\": \"$TICK_RESULT\"}"
+      log_event "TICK result=$TICK_RESULT mode=observe manager_pid=${MANAGER_PID:-?}"
+      return 0
+    fi
+  elif [ -f "$STEPDOWN_FILE" ]; then
+    # Manager already gone (manifest cleared by manager_alive): the marker
+    # is spent — consume it so a LATER manager generation is never retired
+    # by a stale file.
+    [ "$DRY_RUN" = true ] || rm -f "$STEPDOWN_FILE"
   fi
   orphan_sweep
 
@@ -1473,6 +1725,15 @@ run_tick() {
     else
       TICK_RESULT="backoff:$WAKE_REASON"
       log_event "BACKOFF suppressed wake reason=$WAKE_REASON $SUPPRESS_KIND"
+      # #9: the operator escape hatch must survive a backed-off higher
+      # reason. Predicates are first-wins, so while e.g. "claimable" is in
+      # backoff it claims — and previously consumed — the tick, leaving
+      # `touch .autocoder/wake` inert exactly when a human reaches for it.
+      if [ -e "$WAKE_FILE" ] && [ "$WAKE_REASON" != "wake-file" ]; then
+        log_event "WAKE-FILE fall-through past suppressed reason=$WAKE_REASON"
+        WAKE_HASH=$(sha256_of "wake-file:")
+        do_wake "wake-file" ".autocoder/wake present (higher reason $WAKE_REASON in backoff)"
+      fi
     fi
     # Work (or an attempt at it) was found: the error streak is over.
     consec=0
@@ -1494,6 +1755,12 @@ run_tick() {
     fi
   else
     TICK_RESULT="quiescent"
+    # #30: report accumulated skip/error debt BEFORE zeroing it — a sentinel
+    # resuming after a lock-held freeze must surface the freeze, not just
+    # flip back to green as if nothing happened.
+    if [ "$consec" -ge "$ERROR_TOLERANCE" ] && [ "$consec" -gt 0 ]; then
+      notify "idle-sentinel: recovered after $consec skipped/errored ticks (tick lock held or probes failing) — now quiescent"
+    fi
     consec=0
   fi
 
@@ -1542,6 +1809,18 @@ run_locked_tick() {
   if [ "$locked" != true ]; then
     printf '%s TICK result=skip (tick lock contended)\n' "$(now_iso)" >> "$LOG_FILE"
     echo 1 >> "$SKIP_FILE"
+    # #17/#30: the skip path must self-escalate — while a hung wake holds the
+    # lock no tick COMPLETES, so the in-tick escalation can never run and the
+    # state file would keep reporting its last (green) result indefinitely.
+    # A small state write from here is safe: the holder is by definition not
+    # writing. One-shot marker so a long freeze pages once, not every tick.
+    local skips
+    skips=$(wc -l < "$SKIP_FILE" 2>/dev/null || echo 0)
+    if [ "${skips:-0}" -ge "$ERROR_TOLERANCE" ] && [ ! -f "$SKIP_NOTIFIED_FILE" ]; then
+      : > "$SKIP_NOTIFIED_FILE"
+      state_merge "{\"last_tick_result\": \"stalled:lock-held\"}"
+      notify "idle-sentinel: $skips consecutive ticks skipped — tick lock held (hung wake?); sentinel is NOT green"
+    fi
     return 0
   fi
   run_tick
@@ -1553,14 +1832,37 @@ CRON_MARK="# autocoder-idle-sentinel:$PROJECT_ROOT"
 
 detect_scheduler() {
   # Prints cron|systemd|loop|none. Never installs anything.
-  if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -Fq "$CRON_MARK"; then
+  # Every check is anchored to THIS exact project (#18): on a shared host,
+  # sibling checkouts with a common prefix (…/agents vs …/agents-tui) are the
+  # norm, and a substring false-positive here means --ensure reports
+  # "already scheduled", the manager exits trusting it, and nobody watches.
+  if command -v crontab >/dev/null 2>&1 &&
+     crontab -l 2>/dev/null | awk -v mark="$CRON_MARK" '
+       length($0) >= length(mark) &&
+       substr($0, length($0) - length(mark) + 1) == mark { found = 1 }
+       END { exit found ? 0 : 1 }'; then
+    # The mark TERMINATES its cron line (cmd_ensure appends it last), so an
+    # end-of-line match cannot hit another project's longer path.
     echo cron
     return 0
   fi
-  if command -v systemctl >/dev/null 2>&1 &&
-     systemctl --user list-timers --all 2>/dev/null | grep -Eq 'autocoder-(idle-)?sentinel'; then
-    echo systemd
-    return 0
+  if command -v systemctl >/dev/null 2>&1; then
+    # Project-scoped unit names only. Convention (documented here, checked
+    # here): an operator-installed timer must be named
+    #   autocoder-idle-sentinel-<project-basename>.timer   or
+    #   autocoder-idle-sentinel-<root-hash>.timer  (first 12 hex of
+    #   sha256 of the absolute project root — this script prints it as
+    #   part of --ensure output when relevant).
+    # The .timer suffix anchors the name so …-agents.timer never matches
+    # …-agents-tui.timer.
+    local unit_tag esc_name
+    unit_tag=$(sha256_of "$PROJECT_ROOT" | cut -c1-12)
+    esc_name=$(printf '%s' "$PROJECT_NAME" | sed 's/[][\\.*^$()+?{}|]/\\&/g')
+    if systemctl --user list-timers --all 2>/dev/null |
+       grep -Eq "autocoder-(idle-)?sentinel-($esc_name|$unit_tag)\.timer"; then
+      echo systemd
+      return 0
+    fi
   fi
   local pid cmdline
   for pid in $(pgrep -f 'idle-sentine[l]' 2>/dev/null); do
@@ -1572,7 +1874,10 @@ detect_scheduler() {
     fi
     case "$cmdline" in
       *--loop*)
-        if pid_cwd_in_root "$pid" || [[ "$cmdline" == *"$PROJECT_ROOT"* ]]; then
+        # cwd inside THIS root (slash-anchored), or an EXACT --project token
+        # match — never a raw substring, which the sibling-prefix checkout
+        # would satisfy.
+        if pid_cwd_in_root "$pid" || [[ " $cmdline " == *" --project $PROJECT_ROOT "* ]]; then
           echo loop
           return 0
         fi

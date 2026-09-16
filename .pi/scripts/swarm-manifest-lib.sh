@@ -51,14 +51,22 @@ process_start_time() {
 #   Linux:  scan /proc/<pid>/environ (null-delimited — probed with tr '\0').
 #   darwin: snapshot `ps -axwwE` FIRST and filter the captured text second,
 #           so the filter process can never self-match through ps.
-# Best-effort: prints the first matching PID, exits 1 when none. Callers must
-# corroborate with process_start_time — a leftover process from an earlier
-# swarm of the same session name also carries this marker.
+# Best-effort: prints one PID, exits 1 when none. Callers must corroborate
+# with process_start_time — a leftover process from an earlier swarm of the
+# same session name also carries this marker.
+#
+# Tree-root preference (idle-sentinel #3): the manager pane exports the
+# marker BEFORE the agent launches, so every subprocess the manager spawns
+# inherits it. The MANAGER is the topmost marker holder — on Linux, prefer a
+# candidate whose PARENT does not carry the marker, oldest start time as the
+# tiebreak, so a scan mid-build never records a transient child pid as the
+# manager identity. (darwin keeps first-match: ps -E only shows our own
+# processes and the ordering caveat is documented best-effort there.)
 manager_pid_by_marker() {
   local session="$1"
   local marker="AUTOCODER_MANAGER=$session"
   if [ -d /proc/self ]; then
-    local dir pid
+    local dir pid candidates=""
     for dir in /proc/[0-9]*; do
       pid="${dir#/proc/}"
       [ "$pid" = "$$" ] && continue
@@ -67,11 +75,29 @@ manager_pid_by_marker() {
       # redirection so a process vanishing mid-scan stays silent.
       [ -r "$dir/environ" ] || continue
       if tr '\0' '\n' 2>/dev/null < "$dir/environ" | grep -Fxq "$marker"; then
-        printf '%s\n' "$pid"
-        return 0
+        candidates="$candidates $pid"
       fi
     done
-    return 1
+    candidates="${candidates# }"
+    [ -n "$candidates" ] || return 1
+    local best="" best_start="" ppid start
+    for pid in $candidates; do
+      ppid=$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)
+      if [ -n "$ppid" ] && [ -r "/proc/$ppid/environ" ] &&
+         tr '\0' '\n' 2>/dev/null < "/proc/$ppid/environ" | grep -Fxq "$marker"; then
+        continue  # parent carries the marker too: a child, never the manager
+      fi
+      start=$(process_start_time "$pid") || continue
+      if [ -z "$best" ] || [ "$start" -lt "$best_start" ] 2>/dev/null; then
+        best="$pid"
+        best_start="$start"
+      fi
+    done
+    # Every candidate had a marker-bearing parent (root unreadable or gone
+    # mid-scan): degrade to the first candidate rather than reporting none.
+    [ -n "$best" ] || best="${candidates%% *}"
+    printf '%s\n' "$best"
+    return 0
   fi
   local snapshot pid
   snapshot=$(ps -axwwE -o pid= -o command= 2>/dev/null) || return 1
