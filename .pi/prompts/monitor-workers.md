@@ -54,6 +54,31 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 7. **Scale the fleet dynamically** — Create workers+worktrees (`add-worker`) when the claimable queue outgrows the fleet, and retire idle workers (`remove-worker --remove-worktree`) once their work is banked, so capacity tracks the queue in both directions
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
+10. **Step down when quiescent** — After two consecutive iterations with nothing to do, hand off to the zero-cost idle sentinel and exit (Step 6b)
+
+## Unattended Mode (`AUTOCODER_UNATTENDED=1`)
+
+A sentinel-woken manager has no human present: the idle sentinel exports
+`AUTOCODER_UNATTENDED=1` into every manager it spawns (R2-F5,
+`docs/specs/2026-09-16-idle-sentinel-design.md`). When that variable is set, EVERY
+AskUserQuestion in this command converts to its autonomous default **plus a durable
+record** — an issue comment, and where genuinely human-gated, a standing condition
+declared at the next handoff and a notify-hook call (`sentinel_notify` in
+`.autocoder/sentinel-hooks.sh`, if defined) — never a blocking question nobody will
+answer. The specific conversions:
+
+- **Step 4 (stale `working` labels):** do not ask — post an explanatory comment on the
+  issue, then `issue_release <number>`, exactly as the Step 4 approved path does.
+- **Step 4b (unhealthy-worker restarts):** do not ask — restart flagged `UNHEALTHY`
+  workers automatically, the same behavior `--watch` mode already prescribes.
+- **Anything genuinely requiring a human** (exceeding the worker ceiling, teardown
+  safety checks that keep failing, a consent/permission dialog): do NOT act on it.
+  Record it as a standing condition at the next handoff, fire the notify hook, and
+  continue with what can be done autonomously.
+
+When `AUTOCODER_UNATTENDED` is unset, this section does not apply — the interactive
+ask-the-human behavior written into each step below is unchanged. This section
+overrides those asks only under the environment variable; it does not replace them.
 
 ## Instructions
 
@@ -85,7 +110,29 @@ context" / "context limit" message):
    ```
 2. After handoff completes, stop — do not proceed with the rest of monitor-workers. The user will run `/autocoder:manager-resume` in the fresh session.
 
-**If no context pressure**: continue to Step 1.
+**If no context pressure**: continue to Step 0b.
+
+### Step 0b: Read the Sentinel Health Alert (if present)
+
+The idle sentinel keeps running the project's mechanical health probe even while a
+manager is alive. On a red result it does NOT spawn a second manager — it writes the
+probe output to `.autocoder/health-alert` for THIS command to handle (R2-F10,
+`docs/specs/2026-09-16-idle-sentinel-design.md`).
+
+```bash
+cat .autocoder/health-alert 2>/dev/null
+```
+
+If the file exists:
+
+1. **Read it** — it records the timestamp and the failing health probe's output.
+2. **Act on it now**, before normal monitoring: diagnose the failure it describes,
+   take the recovery the project's runbooks prescribe, and file or update an issue if
+   the failure needs work a worker should pick up.
+3. **Delete it**: `rm -f .autocoder/health-alert`. This step is the alert's only
+   reader — a stale alert file must never survive into a later manager's context.
+
+If the file is absent, continue to Step 1.
 
 ### Step 1: Discover Workers
 
@@ -251,6 +298,14 @@ If approved:
 issue_release <number>
 ```
 
+**Unattended mode:** skip the question — comment then release automatically (see
+"Unattended Mode" above):
+
+```bash
+issue_comment <number> --body "Releasing stale 'working' label: no commits, no active screen, no issue update in >60 minutes (auto-released — unattended manager)."
+issue_release <number>
+```
+
 ### Step 4b: Restart Unhealthy Workers (High Memory + Stalled)
 
 A long-running worker can wedge — most commonly it exhausts its context window
@@ -318,6 +373,8 @@ herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"   # or /autocoder:f
 workers automatically (they are both wedged and bloated, so there is no progress
 to lose). For one-shot runs, prefer confirming with the human first via
 AskUserQuestion unless they have asked you to keep the fleet healthy unattended.
+Under `AUTOCODER_UNATTENDED=1` there is no one to confirm with — restart
+automatically, exactly as in `--watch` (see "Unattended Mode" above).
 
 ### Step 4c: Hand off workers approaching the context limit (≥95%)
 
@@ -627,6 +684,75 @@ If ready, deploy:
 ./deploy.sh ey-staging
 ```
 
+### Step 6b: Quiescence Step-Down (retire into the idle sentinel)
+
+An idle swarm should not keep an LLM manager ticking — each "nothing to do" iteration
+replays a full context for zero decisions. When the swarm stays quiescent, the manager
+steps down and the zero-cost idle sentinel takes over polling (§3 of
+`docs/specs/2026-09-16-idle-sentinel-design.md`). Evaluate this on EVERY iteration,
+after Step 6.
+
+**An iteration is quiescent only when ALL of these hold:**
+
+1. Zero claimable issues — `issue_list --state open` returns `[]`
+2. Zero `working` labels — `issue_list --state working` returns `[]`
+3. Zero non-standing `awaiting-integration` issues — subtract issues declared as
+   standing conditions in the ```` ```sentinel-standing ```` block of
+   `MANAGER-STATE.md` (written by `/autocoder:manager-handoff`)
+4. Zero live workers — the fleet has scaled to zero (Step 5b)
+5. No merge gate or deploy in flight from this checkout — bracketed, cwd-scoped
+   process check only (unscoped `-f` patterns self-match and hit other tenants on a
+   shared host):
+
+```bash
+INFLIGHT=no
+for pat in 'merge-to-integratio[n].sh' 'upgrade-deplo[y]'; do
+  for pid in $(pgrep -f "$pat" 2>/dev/null); do
+    case "$(readlink /proc/$pid/cwd 2>/dev/null)" in
+      "$(pwd)"|"$(pwd)"/*) INFLIGHT=yes ;;
+    esac
+  done
+done
+echo "inflight=$INFLIGHT"
+```
+
+**Track the streak in a file-persisted counter** — each iteration is a separate
+invocation, so no in-session state survives between them:
+
+```bash
+# Quiescent iteration → increment
+count=$(( $(cat .autocoder/quiescent-iterations 2>/dev/null || echo 0) + 1 ))
+echo "$count" > .autocoder/quiescent-iterations
+
+# NON-quiescent iteration → reset by deleting
+rm -f .autocoder/quiescent-iterations
+```
+
+**At counter ≥ 2** (mirrors the two-idle-cycles worker-retirement rule in Step 5b),
+step down — in this exact order:
+
+1. **Handoff**: invoke `autocoder:manager-handoff` via the Skill tool. Record the
+   step-down reason ("quiescence — N consecutive quiescent iterations") and declare
+   any standing conditions (its standing-conditions step), so the sentinel does not
+   immediately re-wake a manager over work nobody can action.
+2. **Ensure the sentinel is scheduled**: run `idle-sentinel.sh --ensure` (from the
+   same resolved `SCRIPT_DIR` as Step 2). It is idempotent — it inspects
+   crontab/systemd/running loops and never double-installs.
+3. **Delete the counter**: `rm -f .autocoder/quiescent-iterations` (R2-F8 — a
+   surviving counter would let the NEXT woken manager step down after a single
+   iteration).
+4. **Delete the monitor loop job**: use CronDelete to remove the scheduled
+   `/autocoder:monitor-workers` job created by `/autocoder:monitor-loop`, or kill the
+   manual sleep loop if that fallback mode is in use.
+5. **Do NOT clear the swarm manifest's manager entry** (R2-F6): exit verification
+   cannot be performed by the exiting process itself. The sentinel's next tick
+   observes the recorded pid dead, clears the entry under the manifest lock, and
+   enters wake-spawning mode. Only the sentinel clears manager entries.
+6. **Exit the session**. This iteration writes no heartbeat and no report — the
+   step-down IS the outcome, and the sentinel detects the exit by the dead pid.
+
+If the counter is below 2, or the iteration was not quiescent, continue to Step 7.
+
 ### Step 7: Write Structured Status (for agents-tui)
 
 If `/tmp/agents-ui/` exists (indicating agents-tui is running), write a JSON summary file so the TUI can update its display without polling GitHub:
@@ -693,6 +819,28 @@ Actions taken:
 Deploy status: 21 commits since last deploy, waiting for workers to complete
 ```
 
+### Step 9: Write the Manager Heartbeat (LAST action, every iteration)
+
+As the very last action of every monitor-workers run — after the Step 8 report — write
+`.autocoder/manager-heartbeat` with an ISO timestamp and a one-line outcome summary:
+
+```bash
+printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<one-line outcome summary>" > .autocoder/manager-heartbeat
+```
+
+The summary is this iteration's outcome, e.g. `dispatched #123 to wt-2, released 1
+stale label` or `quiescent (1/2)`. The idle sentinel monitors this file in observe
+mode: a heartbeat older than 3× the monitor interval — with no gate/deploy in flight
+and a static pane — marks this manager as wedged, to be killed and respawned (R2-F3).
+
+**Write it at the END of the iteration, not the start.** A touch-first heartbeat is
+satisfied by exactly the alive-but-unproductive loop it exists to catch; only a
+completed iteration proves the manager is still doing useful work.
+
+Exception: an iteration that steps down in Step 6b exits the session instead of
+writing a heartbeat — the sentinel detects that exit by the dead pid, not by
+heartbeat age.
+
 ## Continuous Monitoring Mode (`--watch`)
 
 When `--watch` is passed, poll every 3 minutes until all work is done:
@@ -713,6 +861,8 @@ for i in $(seq 1 60); do
   # UNHEALTHY worker (stalled AND high memory) via:
   #   worker-health
   #   restart-worker --worktree <path>   # for each flagged worktree
+  # Each iteration also evaluates the Step 6b quiescence counter and ends by
+  # writing the Step 9 heartbeat.
 
   # All done? Deploy.
   if [ "$WORKING" -eq 0 ] && [ "$UNBLOCKED" -eq 0 ]; then
@@ -725,10 +875,12 @@ done
 ## Key Principles
 
 - **Use the multiplexer to dispatch** — Send commands directly to idle workers via tmux/cmux/herdr, don't just report
-- **Detect stale locks** — Ask before removing "working" labels that appear abandoned
+- **Detect stale locks** — Ask before removing "working" labels that appear abandoned (unattended mode auto-releases with an explanatory comment instead)
 - **Restart wedged workers in place** — A worker that is stalled AND holding high memory has run out of headroom; kill and relaunch it on the same worktree/issue rather than letting it hang
 - **Priority order** — Assign highest priority issues first (P0 > P1 > P2 > P3)
 - **Don't double-assign** — Check "working" label before dispatching
 - **Scale capacity to the queue** — add workers when claimable issues outnumber the fleet; retire idle workers (worktree included) once their work is banked; zero workers between waves is fine
 - **Deploy only when ready** — All workers idle + no unblocked issues + new commits
 - **Deploy to staging only** — Never deploy to production without explicit user request
+- **Step down when quiescent** — Two consecutive empty iterations hand the watch to the idle sentinel (Step 6b); only the sentinel clears the manifest manager entry
+- **Heartbeat last** — End every iteration by writing `.autocoder/manager-heartbeat` (Step 9); a start-of-iteration heartbeat defeats the wedge detection it feeds

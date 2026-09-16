@@ -1,0 +1,251 @@
+# Manager Handoff — Save State & Prepare for Context Reset
+
+Snapshot manager session state to `MANAGER-STATE.md` in the project root, then guide the manager through a clean context reset. Run `/manager-resume` in the fresh session to reload.
+
+**Run this when the manager session is approaching context limits or needs a clean restart.**
+
+## Usage
+
+```bash
+/manager-handoff
+```
+
+## What This Does
+
+1. Captures GitHub state (working issues, open PRs, blocked issues)
+2. Captures worker topology (tmux/cmux panes → worktrees → branches)
+3. Prompts for any session notes not yet filed as issues
+4. Records the step-down reason and declares standing conditions for the idle sentinel
+5. Writes `MANAGER-STATE.md` to the project root
+6. Commits the state file
+7. Prints the resume command and context-reset instructions
+
+## Instructions
+
+### Step 1: Collect live state
+
+Run all of these in parallel:
+
+```bash
+# Git state
+git rev-parse --short HEAD
+git rev-parse --short origin/main 2>/dev/null || echo "(no remote)"
+git branch --show-current
+
+# GitHub: working issues
+gh issue list --state open --label "working" --json number,title \
+  --jq '.[] | "#\(.number): \(.title)"'
+
+# GitHub: open unblocked issues (no blocking labels, no working)
+gh issue list --state open --json number,title,labels \
+  --jq '[.[] | select(.labels | map(.name) | (
+      contains(["needs-design"]) or contains(["needs-clarification"]) or
+      contains(["future"]) or contains(["proposal"]) or
+      contains(["needs-approval"]) or contains(["too-complex"]) or
+      contains(["working"])) | not)]
+    | sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9")
+    | .[] | "#\(.number) [\(.labels | map(.name) | join(","))]: \(.title)"'
+
+# GitHub: open PRs
+gh pr list --state open --json number,title,mergeable,headRefName \
+  --jq '.[] | "#\(.number) [\(.mergeable)]: \(.title) (\(.headRefName))"'
+
+# GitHub: blocked issues (summary)
+gh issue list --state open --json number,title,labels \
+  --jq '[.[] | select(.labels | map(.name) | (
+      contains(["needs-design"]) or contains(["needs-clarification"]) or
+      contains(["future"]) or contains(["proposal"]) or
+      contains(["needs-approval"]) or contains(["too-complex"])))]
+    | .[] | "#\(.number) [\(.labels | map(.name) | join(","))]: \(.title)"'
+
+# Worker topology (tmux)
+tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_path}' 2>/dev/null
+
+# Worktree state
+git worktree list --porcelain | grep -E "^worktree |^branch " | paste - -
+```
+
+For each worktree (excluding the main one), also collect:
+
+```bash
+for wt_dir in $(git worktree list --porcelain | grep "^worktree " | sed 's/^worktree //' | grep -v "$(pwd)$"); do
+  name=$(basename "$wt_dir")
+  branch=$(git -C "$wt_dir" branch --show-current 2>/dev/null)
+  last_epoch=$(git -C "$wt_dir" log -1 --format=%ct 2>/dev/null)
+  age_min=$(( ($(date +%s) - ${last_epoch:-0}) / 60 ))
+  dirty=$(git -C "$wt_dir" status -s 2>/dev/null | wc -l | tr -d ' ')
+  last_msg=$(git -C "$wt_dir" log --oneline -1 2>/dev/null)
+  echo "$name | branch=$branch | dirty=$dirty | age=${age_min}min | $last_msg"
+done
+```
+
+Determine idle vs. active for each worker:
+
+```bash
+worker-idle --all
+```
+
+Do not judge this from a pane capture by eye. A bare `❯` prompt is **not** an
+idle signal — the TUI renders an empty input box while a turn is running, so
+reading it as idle records a busy worker as free in the handoff and the next
+manager dispatches over live work. `worker-idle` samples twice and calls any
+change BUSY; it also marks this session's own pane `SELF` so the manager does
+not record itself as a worker.
+
+### Step 2: Prompt for session notes
+
+Ask the manager (using AskUserQuestion or plain text prompt):
+
+> "Any pending decisions, design notes, or context from this session that isn't captured in GitHub issues? (These will be saved to MANAGER-STATE.md for the next session.)"
+
+Accept free-form text. If the manager says "none" or similar, use empty string.
+
+**Unattended sessions** (`AUTOCODER_UNATTENDED=1`, e.g. a quiescence step-down from
+monitor-workers Step 6b): skip the prompt — there is no one to answer. Use your own
+session summary as the notes: what happened this wave, why you are stepping down, and
+anything not yet filed as an issue.
+
+### Step 3: Write MANAGER-STATE.md
+
+Write to `MANAGER-STATE.md` in the project root. Use this template — fill every section from the data collected above:
+
+```markdown
+# Manager State
+_Saved: <ISO timestamp>_
+
+## Session Notes
+<manager's notes, or "(none)">
+
+## Git State
+- Working directory: <pwd>
+- Branch: <current branch>
+- HEAD: <short sha>
+- origin/main: <short sha> (<"in sync" | "N commits ahead" | "N commits behind">)
+
+## Worker Topology
+| Worker | Path | Pane | Branch | Status | Issue |
+|--------|------|------|--------|--------|-------|
+| wt-1   | ~/src/<project>-wt-1 | <session>:0.0 | <branch> | idle/active | #N or — |
+| wt-2   | ...  | ...  | ...    | ...    | ...   |
+| wt-3   | ...  | ...  | ...    | ...    | ...   |
+
+## Active Work (working label)
+<list of #N: title, or "(none)">
+
+## Open PRs
+<list of #N [MERGEABLE/CONFLICTING]: title, or "(none)">
+
+## Unblocked Issues (ready to assign)
+<list or "(none)">
+
+## Blocked Issues (needs-design / proposal / future / etc.)
+<list — these need human decision before workers can pick them up>
+
+## Known Holds / Flags
+<anything the manager noted manually — e.g. "PR #980 held: wrong impl, wt-2 revising">
+
+## Step-down Reason
+<why this handoff: "context pressure (ctx NN%)", "quiescence — N consecutive quiescent iterations (monitor-workers Step 6b)", "manual restart", …>
+
+## Standing Conditions (sentinel)
+<the sentinel-standing fenced block built in Step 3b, or "(none)">
+
+## Resume Command
+Run `/manager-resume` at the start of the next session.
+```
+
+### Step 3b: Declare standing conditions (input to the idle sentinel)
+
+If this handoff precedes a quiescence step-down (monitor-workers Step 6b) — or you
+know of open work no manager can currently action — declare each such condition so
+the idle sentinel subtracts it from its wake predicates instead of waking a fresh
+manager over it every poll (R2-F9, `docs/specs/2026-09-16-idle-sentinel-design.md`).
+Typical example: an `awaiting-integration` issue gated on a human-reviewed cross-repo
+PR.
+
+For EACH condition, capture the issue's `updatedAt` **now, at declaration time**:
+
+```bash
+gh issue view <number> --json updatedAt --jq .updatedAt
+```
+
+Then fill the "Standing Conditions (sentinel)" section of `MANAGER-STATE.md` with ONE
+fenced block, one line per condition:
+
+````
+```sentinel-standing
+SENTINEL-STANDING: <issue-number> <updatedAt-iso> <free-text reason>
+SENTINEL-STANDING: 2020 2026-09-14T21:33:12Z cross-repo PR 65, human-gated
+```
+````
+
+Format rules — the sentinel parses this mechanically (`idle-sentinel.sh` is the
+source of truth for the format):
+
+- The fence language must be exactly `sentinel-standing`; every line inside starts
+  with `SENTINEL-STANDING: `.
+- `<updatedAt-iso>` is the value captured above, verbatim. The sentinel drops a
+  condition the moment the issue's live `updatedAt` differs (someone touched it — it
+  may be actionable again), and expires ALL conditions at each duty wake; a later
+  handoff must re-declare the ones that still hold.
+- Declare only genuinely unactionable-but-open conditions. A standing condition
+  masks that issue from the sentinel's `awaiting-integration` and stale-claim wake
+  predicates — declaring actionable work here strands it until the next duty wake.
+
+If there are no standing conditions, write "(none)" in the section and omit the
+fenced block. Either way, record the step-down reason in the template's "Step-down
+Reason" section — the next manager (and any human reading the file) needs to know
+whether this was context pressure, quiescence, or a manual restart.
+
+### Step 4: Commit the state file
+
+```bash
+git add MANAGER-STATE.md
+git commit -m "chore: save manager handoff state"
+```
+
+If the commit fails (nothing to stage, etc.), that's fine — continue.
+
+### Step 4b: Run the session-handoff skill (if installed)
+
+If a session-handoff skill is in your available-skills list, invoke it now —
+`compound-engineering:ce-handoff` if installed, else `peters-toolkit:create-handoff`
+(the same substitution the optional-skills mapping makes for the "session handoff"
+role). It captures conversational context the fixed `MANAGER-STATE.md` template
+can't: in-flight reasoning, half-formed plans, why-not decisions. `MANAGER-STATE.md`
+remains the authoritative swarm-topology record either way; the skill handoff
+supplements it, never replaces it. If neither skill is installed, skip this step —
+Steps 1–4 are the complete handoff.
+
+### Step 5: Print resume instructions
+
+Output exactly:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Manager state saved → MANAGER-STATE.md
+
+To reset context:
+  1. Type /clear  (clears conversation history, keeps this session)
+     OR exit and relaunch the agent in this directory — often faster at
+     very high context, and picks up plugin updates installed since launch
+
+To restore after reset:
+  2. Run: /manager-resume
+  3. If a skill handoff was written (ce-handoff / create-handoff), resume it
+     with the matching skill (ce-handoff resumes its own; resume-handoff
+     pairs with create-handoff)
+
+Workers continue running in their multiplexer panes — no action needed.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Stop here. Do not run `/clear` — the manager does that manually.
+
+## Key Notes
+
+- **Workers are unaffected** — they run in separate tmux panes and keep working through any manager restart
+- **GitHub is the source of truth** — `working` labels, PRs, and issue state are always re-checked on resume
+- **MANAGER-STATE.md is ephemeral context glue** — it captures what GitHub can't: worker-to-pane mapping, in-session decisions, known holds that aren't filed as issues
+- **Standing conditions are sentinel input** — the `sentinel-standing` block is machine-parsed by `idle-sentinel.sh`; keep its format exact, and never declare actionable work there
+- **Commit is optional** — if the project has no open commit, the file is still written and readable; the commit just makes it visible in git log
