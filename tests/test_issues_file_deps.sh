@@ -274,6 +274,48 @@ OUT=$(run_ifns "issue_deps 13")
 assert_json "dispatcher issue_unblock removed the edge" "$OUT" \
   'd["blockedBy"] == []'
 
+# ═══ U4: corrupt (non-UTF-8) issue files are backend failures (exit 3) ═════
+# Unlike the chmod-000 scenario above, these run fine as root: the failure is
+# a UnicodeDecodeError on read, not a permission error.
+# First clear the claimable queue so any-claimable's outcome is determined
+# solely by the corrupt fixture (glob order over open/ is unspecified).
+# open/ entering this section: {009, 010 (mutual cycle — never claimable),
+# 011, 012, 013 (all claimable)}.
+run_backend claim 11 2>/dev/null
+run_backend claim 12 2>/dev/null
+run_backend claim 13 2>/dev/null
+
+# Hand-written fixture 14: seed .seq past it so a later create cannot collide.
+echo 14 > "$ISSUES_DIR/.seq"
+printf '\xff\xfe garbage' > "$ISSUES_DIR/open/014.md"
+
+# ── U4 Scenario 1: corrupt candidate poisons claim/any-claimable as exit 3 ─
+run_backend any-claimable 2>/dev/null
+assert_eq "non-UTF-8 candidate makes any-claimable exit 3" "3" "$?"
+run_backend claim 14 2>/dev/null
+assert_eq "claim of non-UTF-8 issue exits 3" "3" "$?"
+if [ -f "$ISSUES_DIR/open/014.md" ]; then
+  pass "failed claim left the corrupt file in open/"
+else
+  fail "failed claim left the corrupt file in open/ — 014.md moved"
+fi
+
+# ── U4 Scenario 2: deps on a corrupt subject exits 3 ───────────────────────
+run_backend deps 14 2>/dev/null
+assert_eq "deps on non-UTF-8 issue exits 3" "3" "$?"
+
+# ── U4 Scenario 3: block whose subject is corrupt exits 3 ──────────────────
+run_backend block 14 --on 9 2>/dev/null
+assert_eq "block with non-UTF-8 subject exits 3" "3" "$?"
+
+# ── U4 Scenario 4: blocks-scan resilience — one corrupt file in a bucket
+# must not poison deps for a healthy issue (best-effort snapshot).
+run_backend deps 9 >/dev/null 2>&1
+assert_eq "deps on healthy issue with corrupt bucket-mate exits 0" "0" "$?"
+OUT=$(run_backend deps 9 2>/dev/null)
+assert_json "corrupt file skipped: blocks scan still correct" "$OUT" \
+  'd["blocks"] == [10]'
+
 # ── Guard: no invocation ever shelled out to gh ────────────────────────────
 if [ -f "$GH_TRIPWIRE" ]; then
   fail "test shelled out to real gh — $(wc -l < "$GH_TRIPWIRE") call(s)"

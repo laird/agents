@@ -481,7 +481,7 @@ def cmd_claim(args):
         data = parse_issue_file(src)
     except FileNotFoundError:
         sys.exit(1)
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         print(f"Error: could not read issue #{args.number}: {e}",
               file=sys.stderr)
         sys.exit(3)
@@ -577,7 +577,7 @@ def cmd_any_claimable(args):
         except FileNotFoundError:
             # Concurrent claim renamed it out from under us; keep looking.
             continue
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             # A deps read failing must never make an issue look unclaimable
             # (KTD5): backend error, not a clean "nothing claimable".
             print(f"Error: could not read {p}: {e}", file=sys.stderr)
@@ -605,7 +605,16 @@ def cmd_deps(args):
         bucket, p = resolve_path(issues_dir, args.number)
     except FileNotFoundError:
         sys.exit(1)
-    data = parse_issue_file(p)
+    try:
+        data = parse_issue_file(p)
+    except FileNotFoundError:
+        # Vanished between resolve and parse; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not read issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
     blocked_by = [{"number": m, "state": state} for m, state in
                   _resolve_blockers(issues_dir, data.get("blockedBy"))]
     blocks = []
@@ -618,8 +627,10 @@ def cmd_deps(args):
                 continue
             try:
                 other = parse_issue_file(q)
-            except FileNotFoundError:
-                # Concurrent rename moved the file out from under us; skip.
+            except (OSError, UnicodeDecodeError):
+                # Concurrent rename moved the file out from under us, or the
+                # file is unreadable/corrupt. The blocks scan is a best-effort
+                # snapshot — one bad file must not poison it; skip.
                 continue
             if args.number in (other.get("blockedBy") or []):
                 n = other.get("number")
@@ -638,11 +649,27 @@ def cmd_block(args):
     # The blocker must exist — both to keep new edges non-dangling and to
     # read its own blockedBy for the reverse-edge (two-node cycle) check.
     # Longer cycles are deliberately NOT detected.
-    try:
-        _, blocker_path = resolve_path(issues_dir, args.on)
-    except FileNotFoundError:
+    blocker = None
+    for _ in range(3):
+        try:
+            _, blocker_path = resolve_path(issues_dir, args.on)
+        except FileNotFoundError:
+            sys.exit(1)
+        try:
+            blocker = parse_issue_file(blocker_path)
+            break
+        except FileNotFoundError:
+            # Concurrent claim renamed the blocker between resolve and parse
+            # (children are claimable the instant they are created);
+            # re-resolve and re-parse, mirroring resolve_path's bounded
+            # retry discipline.
+            continue
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"Error: could not read issue #{args.on}: {e}",
+                  file=sys.stderr)
+            sys.exit(3)
+    if blocker is None:
         sys.exit(1)
-    blocker = parse_issue_file(blocker_path)
     if args.number in (blocker.get("blockedBy") or []):
         print(f"Error: cycle — issue #{args.on} is already blocked by "
               f"#{args.number}", file=sys.stderr)
@@ -651,18 +678,27 @@ def cmd_block(args):
         bucket, path = resolve_path(issues_dir, args.number)
     except FileNotFoundError:
         sys.exit(1)
-    with open(path, "r+") as f:
-        lock_ex(f.fileno())
-        try:
-            data = parse_issue_file_fd(f)
-            edges = list(data.get("blockedBy") or [])
-            if args.on not in edges:
-                edges.append(args.on)
-                data["blockedBy"] = edges
-                write_issue_file_fd(f, data)
-            # Re-add of an existing edge is idempotent: exit 0, no write.
-        finally:
-            unlock(f.fileno())
+    try:
+        with open(path, "r+") as f:
+            lock_ex(f.fileno())
+            try:
+                data = parse_issue_file_fd(f)
+                edges = list(data.get("blockedBy") or [])
+                if args.on not in edges:
+                    edges.append(args.on)
+                    data["blockedBy"] = edges
+                    write_issue_file_fd(f, data)
+                # Re-add of an existing edge is idempotent: exit 0, no write.
+            finally:
+                unlock(f.fileno())
+    except FileNotFoundError:
+        # Vanished between resolve and open; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not update issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
 
 
 def cmd_unblock(args):
@@ -672,17 +708,26 @@ def cmd_unblock(args):
     except FileNotFoundError:
         sys.exit(1)
     removed = False
-    with open(path, "r+") as f:
-        lock_ex(f.fileno())
-        try:
-            data = parse_issue_file_fd(f)
-            edges = list(data.get("blockedBy") or [])
-            if args.on in edges:
-                data["blockedBy"] = [m for m in edges if m != args.on]
-                write_issue_file_fd(f, data)
-                removed = True
-        finally:
-            unlock(f.fileno())
+    try:
+        with open(path, "r+") as f:
+            lock_ex(f.fileno())
+            try:
+                data = parse_issue_file_fd(f)
+                edges = list(data.get("blockedBy") or [])
+                if args.on in edges:
+                    data["blockedBy"] = [m for m in edges if m != args.on]
+                    write_issue_file_fd(f, data)
+                    removed = True
+            finally:
+                unlock(f.fileno())
+    except FileNotFoundError:
+        # Vanished between resolve and open; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not update issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
     if not removed:
         sys.exit(1)
 

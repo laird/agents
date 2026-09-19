@@ -4,6 +4,11 @@
 # Exposes: issue_list, issue_get, issue_update, issue_comment, issue_close,
 #          issue_create, issue_claim, issue_release, issue_any_claimable,
 #          issue_deps, issue_block, issue_unblock.
+# Defines 12 functions. Convention: any consumer that needs the dependency
+# verbs guards against sourcing a stale copy of this file (a vendored
+# .agent/scripts tree may predate them) via the compact stale-dispatcher
+# guard block — see brainstorm-issue/list-issues/show-issue for the canonical
+# block to copy when another command adopts the dep verbs.
 #
 # Each function shells out to the configured backend script with the verb
 # name and the caller's arguments. No backend logic lives here — backends

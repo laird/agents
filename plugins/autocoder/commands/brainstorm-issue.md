@@ -92,23 +92,14 @@ if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
 fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 
-# Capability guard: a stale project-local tree (typically a vendored
-# .agent/scripts) can carry an issue-fns.sh that predates the dependency
-# verbs. If the sourced dispatcher lacks issue_deps, re-resolve SCRIPT_DIR
-# skipping the .agent/scripts candidate and source the newer tree instead.
+# Stale-dispatcher guard: .agent/scripts may predate the dependency verbs.
 if ! type issue_deps >/dev/null 2>&1; then
-  SCRIPT_DIR=$(
-    for d in "$(pwd)/plugins/autocoder/scripts" \
-             "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
-      if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
-    done
-    find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
-  )
-  if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
-    echo "autocoder: cannot locate a dependency-aware issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
-    exit 1
-  fi
-  source "${SCRIPT_DIR}/issue-fns.sh"
+  SCRIPT_DIR=""
+  for d in "$(pwd)/plugins/autocoder/scripts" "$(pwd)/.claude-plugin/plugins/autocoder/scripts" $(find "$HOME/.claude/plugins/cache" -maxdepth 4 -type d -name scripts -path "*autocoder*" 2>/dev/null | head -1); do
+    [ -f "$d/issue-fns.sh" ] && SCRIPT_DIR="$d" && break
+  done
+  [ -n "$SCRIPT_DIR" ] && source "${SCRIPT_DIR}/issue-fns.sh"
+  type issue_deps >/dev/null 2>&1 || { echo "❌ issue-fns.sh predates the dependency verbs (stale .agent/scripts?); cannot continue" >&2; exit 1; }
 fi
 
 ISSUE_NUM="${1:-}"
@@ -267,24 +258,46 @@ If brainstorming concludes the issue is an epic that should be split into
 independently implementable children, create the children and wire dependency
 edges so the parent becomes claimable exactly when all children close.
 
-**Order matters — this exact sequence closes a race.** Claim the parent
-*before* creating any child; otherwise a worker can claim the parent edge-less
-mid-decomposition and start implementing an epic that is about to be split.
+**Order matters — this exact sequence closes a race.** For an *open* parent,
+claim it *before* creating any child; otherwise a worker can claim the parent
+edge-less mid-decomposition and start implementing an epic that is about to be
+split. A *blocked* parent (e.g. one carrying `needs-design`, which is where
+this command usually finds them) is not claimable by workers, so no race
+window exists — and `issue_claim` only moves issues out of `open/`, so
+claiming it would abort the sequence: skip the claim/release bracket entirely.
 
 ```bash
-# 1. Claim the parent FIRST — takes it out of the claimable pool while the
-#    dependency edges are still being written.
-issue_claim "$ISSUE_NUM" || { echo "❌ Could not claim #$ISSUE_NUM (already claimed?)"; exit 1; }
+# 0. Capability probe — some backends grow the dependency verbs in a later
+#    increment. rc 2 means "verbs unsupported": do NOT claim/create/release;
+#    stop the decomposition step and leave the parent exactly as it is.
+issue_deps "$ISSUE_NUM" >/dev/null 2>&1; RC=$?
+if [ "$RC" -eq 2 ]; then
+  echo "backend does not support dependency verbs yet (lands in increment 2); skipping decomposition edges"
+  exit 0
+fi
+
+# 1. Branch on the parent's state, then (open parents only) claim it FIRST —
+#    that takes it out of the claimable pool while the edges are written.
+PARENT_BLOCKED=$(issue_get "$ISSUE_NUM" | jq -r '.labels | map(.name) | any(. == "needs-design")')
+PARENT_CLAIMED=0
+if [ "$PARENT_BLOCKED" != "true" ]; then
+  issue_claim "$ISSUE_NUM" || { echo "❌ Could not claim #$ISSUE_NUM (already claimed?)"; exit 1; }
+  PARENT_CLAIMED=1
+fi
 
 # 2. For EACH child in the decomposition: create it, then immediately block
-#    the parent on it.
+#    the parent on it. Every issue_block is CHECKED — releasing a parent
+#    with missing edges would hand workers an un-decomposed epic.
 CHILD_NUM=$(issue_create --title "$CHILD_TITLE" --body "$CHILD_BODY" | jq -r '.number')
-issue_block "$ISSUE_NUM" --on "$CHILD_NUM"
+if ! issue_block "$ISSUE_NUM" --on "$CHILD_NUM"; then
+  echo "❌ issue_block $ISSUE_NUM --on $CHILD_NUM failed — NOT releasing parent #$ISSUE_NUM; resolve the failed edge manually before releasing" >&2
+  exit 1
+fi
 
-# 3. After ALL children are created and blocked: release the parent. It
-#    returns to open with the edges already in place, so blocker-aware
-#    claim/any-claimable refuse it until every child is closed.
-issue_release "$ISSUE_NUM"
+# 3. After ALL children are created and blocked: release the parent (only if
+#    step 1 claimed it). It returns to open with the edges already in place,
+#    so blocker-aware claim/any-claimable refuse it until every child closes.
+[ "$PARENT_CLAIMED" -eq 1 ] && issue_release "$ISSUE_NUM"
 ```
 
 Then post a comment on the parent (via `issue_comment`) listing the child

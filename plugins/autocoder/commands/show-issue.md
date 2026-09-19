@@ -26,23 +26,14 @@ if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
 fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 
-# Capability guard: a stale project-local tree (typically a vendored
-# .agent/scripts) can carry an issue-fns.sh that predates the dependency
-# verbs. If the sourced dispatcher lacks issue_deps, re-resolve SCRIPT_DIR
-# skipping the .agent/scripts candidate and source the newer tree instead.
+# Stale-dispatcher guard: .agent/scripts may predate the dependency verbs.
 if ! type issue_deps >/dev/null 2>&1; then
-  SCRIPT_DIR=$(
-    for d in "$(pwd)/plugins/autocoder/scripts" \
-             "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
-      if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
-    done
-    find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
-  )
-  if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
-    echo "autocoder: cannot locate a dependency-aware issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
-    exit 1
-  fi
-  source "${SCRIPT_DIR}/issue-fns.sh"
+  SCRIPT_DIR=""
+  for d in "$(pwd)/plugins/autocoder/scripts" "$(pwd)/.claude-plugin/plugins/autocoder/scripts" $(find "$HOME/.claude/plugins/cache" -maxdepth 4 -type d -name scripts -path "*autocoder*" 2>/dev/null | head -1); do
+    [ -f "$d/issue-fns.sh" ] && SCRIPT_DIR="$d" && break
+  done
+  [ -n "$SCRIPT_DIR" ] && source "${SCRIPT_DIR}/issue-fns.sh"
+  type issue_deps >/dev/null 2>&1 || { echo "❌ issue-fns.sh predates the dependency verbs (stale .agent/scripts?); cannot continue" >&2; exit 1; }
 fi
 ```
 

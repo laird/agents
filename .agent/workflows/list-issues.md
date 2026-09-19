@@ -24,23 +24,14 @@ if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
 fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 
-# Capability guard: a stale project-local tree (typically a vendored
-# .agent/scripts) can carry an issue-fns.sh that predates the dependency
-# verbs. If the sourced dispatcher lacks issue_deps, re-resolve SCRIPT_DIR
-# skipping the .agent/scripts candidate and source the newer tree instead.
+# Stale-dispatcher guard: .agent/scripts may predate the dependency verbs.
 if ! type issue_deps >/dev/null 2>&1; then
-  SCRIPT_DIR=$(
-    for d in "$(pwd)/plugins/autocoder/scripts" \
-             "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
-      if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
-    done
-    find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
-  )
-  if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
-    echo "autocoder: cannot locate a dependency-aware issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
-    exit 1
-  fi
-  source "${SCRIPT_DIR}/issue-fns.sh"
+  SCRIPT_DIR=""
+  for d in "$(pwd)/plugins/autocoder/scripts" "$(pwd)/.claude-plugin/plugins/autocoder/scripts" $(find "$HOME/.agent/plugins/cache" -maxdepth 4 -type d -name scripts -path "*autocoder*" 2>/dev/null | head -1); do
+    [ -f "$d/issue-fns.sh" ] && SCRIPT_DIR="$d" && break
+  done
+  [ -n "$SCRIPT_DIR" ] && source "${SCRIPT_DIR}/issue-fns.sh"
+  type issue_deps >/dev/null 2>&1 || { echo "❌ issue-fns.sh predates the dependency verbs (stale .agent/scripts?); cannot continue" >&2; exit 1; }
 fi
 ```
 
@@ -70,7 +61,12 @@ STUCK_FOUND=0
 ISSUES=$(issue_list --state open --limit "${LIMIT:-200}")
 while IFS=$'\t' read -r NUM TITLE; do
   [ -z "$NUM" ] && continue
-  DEPS=$(issue_deps "$NUM") || continue    # skip on lookup failure
+  DEPS=$(issue_deps "$NUM"); RC=$?
+  if [ "$RC" -ge 2 ]; then
+    echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend's dependency verbs land in increment 2" >&2
+    exit 1
+  fi
+  [ "$RC" -eq 1 ] && continue              # issue vanished mid-report — skip it
   if [ "$(echo "$DEPS" | jq '(.blockedBy | length) + (.blocks | length)')" -eq 0 ]; then
     continue                               # no edges recorded — never stuck
   fi
@@ -89,7 +85,12 @@ while IFS=$'\t' read -r NUM TITLE; do
   OPEN_BLOCKERS=$(echo "$DEPS" | jq -r '[.blockedBy[] | select(.state == "open").number] | join(" ")')
   ALL_BLOCKED=1
   for B in $OPEN_BLOCKERS; do              # second hop — depth capped at 2, no deeper recursion
-    BDEPS=$(issue_deps "$B") || { ALL_BLOCKED=0; break; }
+    BDEPS=$(issue_deps "$B"); RC=$?
+    if [ "$RC" -ge 2 ]; then
+      echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend's dependency verbs land in increment 2" >&2
+      exit 1
+    fi
+    [ "$RC" -eq 1 ] && continue            # blocker vanished mid-report — never counts as claimable
     if [ "$(echo "$BDEPS" | jq '[.blockedBy[] | select(.state == "open")] | length')" -eq 0 ]; then
       ALL_BLOCKED=0; break                 # this blocker is claimable — not stuck
     fi
