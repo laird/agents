@@ -1,5 +1,6 @@
 #!/bin/bash
-# issues-jira.sh — Jira backend implementing the uniform 9-verb CLI.
+# issues-jira.sh — Jira backend implementing the uniform 12-verb CLI
+# (the dependency verbs deps/block/unblock land here in increment 2).
 #
 # Counterpart to issues-gh.sh and issues-file.py. All three backends honor the
 # same contract:
@@ -23,7 +24,7 @@
 # shape (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]).
 #
 # Identifier mapping:
-#   Jira issues are keyed PROJ-123. The 9-verb contract, and the swarm manifest
+#   Jira issues are keyed PROJ-123. The 12-verb contract, and the swarm manifest
 #   (swarm-manifest-lib.sh does int(number)), treat the identifier as an
 #   integer. So the backend exposes the numeric suffix as `number` and
 #   reconstructs the full key from JIRA_PROJECT. Callers may pass either the

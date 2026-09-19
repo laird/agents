@@ -2,7 +2,8 @@
 # issue-fns.sh — thin dispatcher to issues-<backend>.{sh,py}.
 # Source this file; do not execute it directly.
 # Exposes: issue_list, issue_get, issue_update, issue_comment, issue_close,
-#          issue_create, issue_claim, issue_release, issue_any_claimable.
+#          issue_create, issue_claim, issue_release, issue_any_claimable,
+#          issue_deps, issue_block, issue_unblock.
 #
 # Each function shells out to the configured backend script with the verb
 # name and the caller's arguments. No backend logic lives here — backends
@@ -36,3 +37,6 @@ issue_create()        { "$_ifns_BACKEND_BIN" create        "$@"; }
 issue_claim()         { "$_ifns_BACKEND_BIN" claim         "$@"; }
 issue_release()       { "$_ifns_BACKEND_BIN" release       "$@"; }
 issue_any_claimable() { "$_ifns_BACKEND_BIN" any-claimable; }
+issue_deps()          { "$_ifns_BACKEND_BIN" deps          "$@"; }
+issue_block()         { "$_ifns_BACKEND_BIN" block         "$@"; }
+issue_unblock()       { "$_ifns_BACKEND_BIN" unblock       "$@"; }
