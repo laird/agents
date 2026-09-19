@@ -141,6 +141,118 @@ assert_eq "block 999 --on 1 exits 1" "1" "$?"
 run_backend block 3 --on 999 2>/dev/null
 assert_eq "block 3 --on 999 (missing blocker) exits 1" "1" "$?"
 
+# ═══ U2: claimability honors blockers ══════════════════════════════════════
+# State entering this section: open/ = {002 (label foo, no edges), 003
+# (blockedBy [4], dangling — 004 was deleted above)}, closed/ = {001}.
+
+# ── U2 Scenario 1: claim refused while blocker is open ─────────────────────
+run_backend create --title "Blocker five" --body "b5" > /dev/null   # -> 5
+run_backend create --title "Blocked six" --body "b6" > /dev/null    # -> 6
+run_backend block 6 --on 5 2>/dev/null
+ERR=$(run_backend claim 6 2>&1 >/dev/null)
+assert_eq "claim of issue with open blocker exits 1" "1" "$?"
+if [ -f "$ISSUES_DIR/open/006.md" ]; then
+  pass "refused claim left the file in open/"
+else
+  fail "refused claim left the file in open/ — 006.md moved"
+fi
+assert_contains "refusal names the open blocker" "#5" "$ERR"
+
+# ── U2 Scenario 2: closing the blocker makes the claim succeed ─────────────
+run_backend close 5 2>/dev/null
+run_backend claim 6 2>/dev/null
+assert_eq "claim succeeds after blocker closed" "0" "$?"
+if [ -f "$ISSUES_DIR/working/006.md" ]; then
+  pass "successful claim moved the file to working/"
+else
+  fail "successful claim moved the file to working/ — 006.md not there"
+fi
+
+# ── U2 Scenario 3: blocker in working/ (claimed elsewhere) still blocks ────
+run_backend create --title "Blocker seven" --body "b7" > /dev/null  # -> 7
+run_backend create --title "Blocked eight" --body "b8" > /dev/null  # -> 8
+run_backend block 8 --on 7 2>/dev/null
+run_backend claim 7 2>/dev/null   # 7 -> working/
+run_backend claim 8 2>/dev/null
+assert_eq "blocker in working/ still blocks the claim" "1" "$?"
+
+# ── U2 Scenario 4: dangling blocker does not block (R4) ────────────────────
+# Issue 3 is blockedBy [4] and 004.md was deleted earlier.
+run_backend claim 3 2>/dev/null
+assert_eq "dangling blocker does not block the claim" "0" "$?"
+
+# ── U2 Scenario 5: any-claimable skips issues with open blockers ───────────
+# open/ = {002 (claimable), 008 (blocked by 7 in working/)}.
+run_backend any-claimable 2>/dev/null
+assert_eq "any-claimable exits 0 while an unblocked issue remains" "0" "$?"
+run_backend claim 2 2>/dev/null  # clear the queue; only blocked 008 left
+run_backend any-claimable 2>/dev/null
+assert_eq "any-claimable exits 1 when the only open issue is blocked" "1" "$?"
+run_backend close 7 2>/dev/null
+run_backend any-claimable 2>/dev/null
+assert_eq "any-claimable exits 0 once the blocker closes" "0" "$?"
+
+# ── U2 Scenario 6: mutual cycle containment ────────────────────────────────
+run_backend claim 8 2>/dev/null  # 8 is unblocked now; empty the open queue
+run_backend create --title "Cycle nine" --body "c9" > /dev/null     # -> 9
+run_backend create --title "Cycle ten" --body "c10" > /dev/null     # -> 10
+# The block verb rejects two-node cycles, so seed the mutual edge directly —
+# simulating a hand-edited or legacy tracker state.
+cat > "$ISSUES_DIR/open/009.md" <<'EOF'
+---
+number: 9
+title: Cycle nine
+labels: []
+status: open
+blockedBy: [10]
+---
+c9
+EOF
+cat > "$ISSUES_DIR/open/010.md" <<'EOF'
+---
+number: 10
+title: Cycle ten
+labels: []
+status: open
+blockedBy: [9]
+---
+c10
+EOF
+run_backend any-claimable 2>/dev/null
+assert_eq "mutual cycle: any-claimable exits 1" "1" "$?"
+run_backend claim 9 2>/dev/null
+assert_eq "mutual cycle: claim of either side exits 1" "1" "$?"
+
+# ── U2 Scenario 7: requiredLabel gate regression ───────────────────────────
+# The blocker gate must not bypass the approval gate: issue 11 has NO
+# blockers (all satisfied) yet must still be refused without the label.
+run_backend create --title "Unlabeled eleven" --body "b11" > /dev/null  # -> 11
+(cd "$TMP" && PATH="$TMP/bin:$PATH" ISSUE_DIR_PATH="$ISSUES_DIR" \
+   AUTOCODER_REQUIRED_LABEL=approved \
+   python3 "$SCRIPT_DIR/issues-file.py" claim 11) 2>/dev/null
+assert_eq "requiredLabel still refuses an unlabeled claim (no blockers)" "1" "$?"
+if [ -f "$ISSUES_DIR/open/011.md" ]; then
+  pass "label-refused claim left the file in open/"
+else
+  fail "label-refused claim left the file in open/ — 011.md moved"
+fi
+(cd "$TMP" && PATH="$TMP/bin:$PATH" ISSUE_DIR_PATH="$ISSUES_DIR" \
+   AUTOCODER_REQUIRED_LABEL=approved \
+   python3 "$SCRIPT_DIR/issues-file.py" any-claimable) 2>/dev/null
+assert_eq "any-claimable honors requiredLabel alongside edges" "1" "$?"
+
+# ── U2 Scenario 8: unreadable issue file is a backend failure (exit 3) ─────
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$ISSUES_DIR/open/011.md"
+  run_backend claim 11 2>/dev/null
+  assert_eq "unreadable issue file during claim exits 3" "3" "$?"
+  run_backend any-claimable 2>/dev/null
+  assert_eq "unreadable candidate makes any-claimable exit 3" "3" "$?"
+  chmod 644 "$ISSUES_DIR/open/011.md"
+else
+  echo "SKIP: exit-3 unreadable-file tests (running as root, chmod 000 ineffective)"
+fi
+
 # ── Guard: no invocation ever shelled out to gh ────────────────────────────
 if [ -f "$GH_TRIPWIRE" ]; then
   fail "test shelled out to real gh — $(wc -l < "$GH_TRIPWIRE") call(s)"
