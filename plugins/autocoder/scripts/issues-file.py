@@ -23,6 +23,9 @@ Usage:
   issues-file.py claim <number>
   issues-file.py release <number>
   issues-file.py any-claimable
+  issues-file.py deps <number>
+  issues-file.py block <number> --on <number>
+  issues-file.py unblock <number> --on <number>
   issues-file.py migrate-layout
   issues-file.py find-main-worktree
   issues-file.py import-from-gh
@@ -32,6 +35,9 @@ Exit codes:
   0 — success. For `any-claimable`: at least one claimable issue exists.
   1 — clean negative. For `any-claimable`: no claimable issues. For `claim`: race
       lost or not in open/. For get/update/comment/close/release: issue not found.
+      For `block`: self-edge, two-node cycle, or issue/blocker not found. For
+      `unblock`: edge absent or issue not found. `block` re-add of an existing
+      edge is idempotent and exits 0.
   2 — usage error.
   3 — backend error (e.g., open/ missing for any-claimable).
 """
@@ -151,7 +157,12 @@ def _parse_frontmatter(text: str) -> dict:
         val = val.strip()
         if val.startswith("[") and val.endswith("]"):
             inner = val[1:-1].strip()
-            data[key] = [v.strip() for v in inner.split(",")] if inner else []
+            items = [v.strip() for v in inner.split(",")] if inner else []
+            if key == "blockedBy":
+                # Edge values are issue numbers; normalize to ints so
+                # membership checks never miss on str/int type mismatch.
+                items = [int(v) for v in items if re.fullmatch(r"\d+", v)]
+            data[key] = items
         elif re.fullmatch(r"\d+", val):
             data[key] = int(val)
         else:
@@ -162,12 +173,16 @@ def _parse_frontmatter(text: str) -> dict:
 def _format_issue(data: dict) -> str:
     body = data.get("body", "")
     lines = []
-    for key in ("number", "title", "priority", "labels", "status", "assignee"):
+    # Fixed serialization whitelist: any key absent from this tuple is
+    # silently dropped on every rewrite (update/comment/close/claim/release
+    # all round-trip through here).
+    for key in ("number", "title", "priority", "labels", "status", "assignee",
+                "blockedBy"):
         if key not in data:
             continue
         val = data[key]
         if isinstance(val, list):
-            lines.append(f"{key}: [{', '.join(val)}]")
+            lines.append(f"{key}: [{', '.join(str(v) for v in val)}]")
         else:
             lines.append(f"{key}: {val}")
     front = "\n".join(lines)
@@ -522,6 +537,108 @@ def cmd_any_claimable(args):
     sys.exit(1)
 
 
+def cmd_deps(args):
+    """Print the issue's dependency edges as JSON.
+
+    blockedBy is read from the issue's own frontmatter; each blocker's state
+    derives from the bucket its file lives in (closed/ → "closed", any other
+    bucket → "open", not found anywhere → "missing"). blocks is the reverse
+    direction, computed by scanning all four buckets — same cost class as
+    cmd_list, and a snapshot view for the same reason.
+    """
+    issues_dir = get_issues_dir()
+    try:
+        bucket, p = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    data = parse_issue_file(p)
+    blocked_by = []
+    for m in data.get("blockedBy") or []:
+        try:
+            blocker_bucket, _ = resolve_path(issues_dir, m)
+            state = "closed" if blocker_bucket == "closed" else "open"
+        except FileNotFoundError:
+            state = "missing"
+        blocked_by.append({"number": m, "state": state})
+    blocks = []
+    for b in BUCKETS:
+        d = issues_dir / b
+        if not d.is_dir():
+            continue
+        for q in sorted(d.glob("*.md")):
+            if q.name.startswith("."):
+                continue
+            try:
+                other = parse_issue_file(q)
+            except FileNotFoundError:
+                # Concurrent rename moved the file out from under us; skip.
+                continue
+            if args.number in (other.get("blockedBy") or []):
+                n = other.get("number")
+                if isinstance(n, int):
+                    blocks.append(n)
+    print(json.dumps({"blockedBy": blocked_by, "blocks": sorted(set(blocks))},
+                     indent=2))
+
+
+def cmd_block(args):
+    issues_dir = get_issues_dir()
+    if args.on == args.number:
+        print(f"Error: issue #{args.number} cannot block itself",
+              file=sys.stderr)
+        sys.exit(1)
+    # The blocker must exist — both to keep new edges non-dangling and to
+    # read its own blockedBy for the reverse-edge (two-node cycle) check.
+    # Longer cycles are deliberately NOT detected.
+    try:
+        _, blocker_path = resolve_path(issues_dir, args.on)
+    except FileNotFoundError:
+        sys.exit(1)
+    blocker = parse_issue_file(blocker_path)
+    if args.number in (blocker.get("blockedBy") or []):
+        print(f"Error: cycle — issue #{args.on} is already blocked by "
+              f"#{args.number}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        bucket, path = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    with open(path, "r+") as f:
+        lock_ex(f.fileno())
+        try:
+            data = parse_issue_file_fd(f)
+            edges = list(data.get("blockedBy") or [])
+            if args.on not in edges:
+                edges.append(args.on)
+                data["blockedBy"] = edges
+                write_issue_file_fd(f, data)
+            # Re-add of an existing edge is idempotent: exit 0, no write.
+        finally:
+            unlock(f.fileno())
+
+
+def cmd_unblock(args):
+    issues_dir = get_issues_dir()
+    try:
+        bucket, path = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    removed = False
+    with open(path, "r+") as f:
+        lock_ex(f.fileno())
+        try:
+            data = parse_issue_file_fd(f)
+            edges = list(data.get("blockedBy") or [])
+            if args.on in edges:
+                data["blockedBy"] = [m for m in edges if m != args.on]
+                write_issue_file_fd(f, data)
+                removed = True
+        finally:
+            unlock(f.fileno())
+    if not removed:
+        sys.exit(1)
+
+
 def cmd_migrate_layout(args):
     issues_dir = get_issues_dir()
     if not issues_dir.is_dir():
@@ -687,6 +804,18 @@ def main():
     p_release.add_argument("number", type=int)
 
     sub.add_parser("any-claimable")
+
+    p_deps = sub.add_parser("deps")
+    p_deps.add_argument("number", type=int)
+
+    p_block = sub.add_parser("block")
+    p_block.add_argument("number", type=int)
+    p_block.add_argument("--on", dest="on", type=int, required=True)
+
+    p_unblock = sub.add_parser("unblock")
+    p_unblock.add_argument("number", type=int)
+    p_unblock.add_argument("--on", dest="on", type=int, required=True)
+
     sub.add_parser("migrate-layout")
     sub.add_parser("find-main-worktree")
     sub.add_parser("import-from-gh")
@@ -704,6 +833,9 @@ def main():
         "claim": cmd_claim,
         "release": cmd_release,
         "any-claimable": cmd_any_claimable,
+        "deps": cmd_deps,
+        "block": cmd_block,
+        "unblock": cmd_unblock,
         "migrate-layout": cmd_migrate_layout,
         "find-main-worktree": lambda _: cmd_find_main_worktree(),
         "import-from-gh": lambda _: cmd_import_from_gh(),
