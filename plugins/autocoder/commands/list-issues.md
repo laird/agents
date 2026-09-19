@@ -63,7 +63,7 @@ while IFS=$'\t' read -r NUM TITLE; do
   [ -z "$NUM" ] && continue
   DEPS=$(issue_deps "$NUM"); RC=$?
   if [ "$RC" -ge 2 ]; then
-    echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend's dependency verbs land in increment 2" >&2
+    echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend predates the dependency verbs (autocoder < 4.30.0)" >&2
     exit 1
   fi
   [ "$RC" -eq 1 ] && continue              # issue vanished mid-report — skip it
@@ -87,7 +87,7 @@ while IFS=$'\t' read -r NUM TITLE; do
   for B in $OPEN_BLOCKERS; do              # second hop — depth capped at 2, no deeper recursion
     BDEPS=$(issue_deps "$B"); RC=$?
     if [ "$RC" -ge 2 ]; then
-      echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend's dependency verbs land in increment 2" >&2
+      echo "❌ dependency lookup failed (rc=$RC) — backend error, or this backend predates the dependency verbs (autocoder < 4.30.0)" >&2
       exit 1
     fi
     [ "$RC" -eq 1 ] && continue            # blocker vanished mid-report — never counts as claimable

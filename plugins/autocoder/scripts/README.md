@@ -47,7 +47,7 @@ implements these subcommands:
 
 The dependency verbs (`deps`/`block`/`unblock`) are implemented today by the
 file backend (the reference implementation, edges in `blockedBy:` frontmatter);
-the github/jira/ado implementations land in increment 2. Full semantics —
+all four backends implement them as of autocoder 4.30.0. Full semantics —
 claimability gating, idempotent `block`, dangling-blocker handling, cycle
 rejection — are in `docs/issue-backends.md`.
 
