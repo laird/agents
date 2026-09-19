@@ -83,6 +83,16 @@ case "$url" in
     emit '' 204 ;;
   */rest/api/2/issue/ENG-7*)
     emit '{"key":"ENG-7","fields":{"summary":"first","description":"the body","labels":["P1","working"],"status":{"statusCategory":{"key":"indeterminate"}},"comment":{"comments":[{"body":"a comment"}]}}}' 200 ;;
+  */rest/api/2/issue/ENG-9*)
+    emit '{"key":"ENG-9","fields":{"summary":"free blocker","issuelinks":[]}}' 200 ;;
+  */rest/api/2/issue/ENG-13*)
+    # ENG-13 is blocked by ENG-9 (link id 777); the linked stub embeds status,
+    # matching real Jira Cloud payloads.
+    emit '{"key":"ENG-13","fields":{"summary":"blocked one","issuelinks":[{"id":"777","type":{"name":"Blocks","inward":"is blocked by","outward":"blocks"},"inwardIssue":{"key":"ENG-9","fields":{"status":{"statusCategory":{"key":"indeterminate"}}}}}]}}' 200 ;;
+  */rest/api/2/issueLink/*)
+    emit '' 204 ;;                        # DELETE a link
+  */rest/api/2/issueLink)
+    emit '' 201 ;;                        # POST a new link
   */rest/api/2/issue)
     emit '{"key":"ENG-42"}' 201 ;;      # create (POST to the collection)
   */rest/api/2/issue/*)
@@ -192,6 +202,50 @@ assert_contains "close transitions to the Done-category transition id 31" '"id":
 # ── comment posts the body ──────────────────────────────────────────────────
 run comment 7 --body "hello there"
 assert_contains "comment sends body" 'hello there' "$(last_data)"
+
+# ── dependency verbs: request shapes ────────────────────────────────────────
+run get 7
+GET_URL=$(head -1 "$CURL_CAPTURE" | cut -f2)
+assert_contains "get requests issuelinks in its field list" 'issuelinks' "$GET_URL"
+
+run block 13 --on 9
+assert_eq "block on an existing edge is idempotent (exit 0)" "0" "$RC"
+LINK_POSTS=$(awk -F'\t' '$1=="POST" && $2 ~ /issueLink$/' "$CURL_CAPTURE" | wc -l)
+assert_eq "idempotent block issues no issueLink POST" "0" "$LINK_POSTS"
+
+run block 9 --on 13
+assert_eq "reverse edge (two-node cycle) exits 1" "1" "$RC"
+
+run block 7 --on 7
+assert_eq "self-edge exits 1" "1" "$RC"
+
+run block 7 --on 9
+assert_eq "block on a fresh pair exits 0" "0" "$RC"
+LINK_PAYLOAD=$(awk -F'\t' '$1=="POST" && $2 ~ /issueLink$/ {print $3}' "$CURL_CAPTURE" | tail -1)
+assert_contains "block posts a Blocks-type link" '"name": "Blocks"' "$LINK_PAYLOAD"
+assert_contains "block puts the blocker on the outward side" '"outwardIssue": {"key": "ENG-9"}' "$LINK_PAYLOAD"
+assert_contains "block puts the blocked issue on the inward side" '"inwardIssue": {"key": "ENG-7"}' "$LINK_PAYLOAD"
+
+run unblock 13 --on 9
+assert_eq "unblock exits 0" "0" "$RC"
+DEL_URL=$(awk -F'\t' '$1=="DELETE" {print $2}' "$CURL_CAPTURE" | tail -1)
+assert_contains "unblock deletes the matching link id" '/rest/api/2/issueLink/777' "$DEL_URL"
+
+run unblock 7 --on 9
+assert_eq "unblock of an absent edge exits 1" "1" "$RC"
+
+run deps 13
+BB=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["blockedBy"][0]["number"], d["blockedBy"][0]["state"])')
+assert_eq "deps maps the inward Blocks link to blockedBy with state" "9 open" "$BB"
+
+run deps 404
+assert_eq "deps on a missing issue exits 1" "1" "$RC"
+
+run claim 13
+assert_eq "claim of an issue with an open blocker exits 1" "1" "$RC"
+
+run any-claimable
+assert_contains "any-claimable requests issuelinks with its candidates" '"issuelinks"' "$(awk -F'\t' '$2 ~ /search\/jql$/ {print $3}' "$CURL_CAPTURE" | tail -1)"
 
 # ── usage + config errors ───────────────────────────────────────────────────
 OUT=$(PATH="$TMP/bin:$PATH" "$BACKEND" bogus-verb 2>/dev/null); RC=$?

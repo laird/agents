@@ -1,8 +1,7 @@
 #!/bin/bash
-# issues-jira.sh — Jira backend implementing the uniform 12-verb CLI
-# (the dependency verbs deps/block/unblock land here in increment 2).
+# issues-jira.sh — Jira backend implementing the uniform 12-verb CLI.
 #
-# Counterpart to issues-gh.sh and issues-file.py. All three backends honor the
+# Counterpart to issues-gh.sh and issues-file.py. All backends honor the
 # same contract:
 #   <backend> list [--state open|working|blocked|closed|all] [--label L] [--limit N]
 #   <backend> get <number>
@@ -13,6 +12,9 @@
 #   <backend> claim <number>
 #   <backend> release <number>
 #   <backend> any-claimable
+#   <backend> deps <number>
+#   <backend> block <number> --on <m>
+#   <backend> unblock <number> --on <m>
 #
 # Exit codes:
 #   0 — success / work exists
@@ -337,7 +339,7 @@ cmd_get() {
   local key
   key=$(_jira_key "$1")
   # 404 on a get is "not found" → exit 1, distinct from a real backend error.
-  if ! _jira_request GET "/rest/api/2/issue/${key}?fields=summary,description,labels,status,comment"; then
+  if ! _jira_request GET "/rest/api/2/issue/${key}?fields=summary,description,labels,status,comment,issuelinks"; then
     echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2
     exit 3
   fi
@@ -548,6 +550,30 @@ cmd_claim() {
       exit 1
     fi
   fi
+  # Blocker gate (R3): claimable only when every blockedBy issue is closed.
+  # Resolved at claim time from the issue's own links; dangling blockers are
+  # satisfied (R4); a resolution failure exits 3, never a silent refusal.
+  if ! _jira_fetch_links "$key"; then
+    echo "issues-jira.sh: issue $key not found" >&2
+    exit 1
+  fi
+  local dep_lines dep_rc open_blockers="" tag bn bstate blid
+  dep_lines=$(_jira_parse_links); dep_rc=$?
+  [ $dep_rc -ne 0 ] && exit 3
+  while read -r tag bn bstate blid; do
+    [ "$tag" = "B" ] || continue
+    if [ "$bstate" = "?" ]; then
+      bstate=$(_jira_blocker_state "$bn"); dep_rc=$?
+      [ $dep_rc -ne 0 ] && exit 3
+    fi
+    [ "$bstate" = "open" ] && open_blockers="$open_blockers #$bn"
+  done <<EOF
+$dep_lines
+EOF
+  if [ -n "$open_blockers" ]; then
+    echo "Issue #${key##*-} is blocked by open issue(s):${open_blockers}. Close them first, or remove the edge with \`unblock ${key##*-} --on N\`." >&2
+    exit 1
+  fi
   _jira_edit_labels "$key" "add:working"
   # Best-effort: Jira has no atomic single-writer label edit. See header note.
 }
@@ -559,28 +585,286 @@ cmd_release() {
   _jira_edit_labels "$key" "remove:working"
 }
 
+# ── dependency edges (issue links, type "Blocks") ────────────────────────────
+# Storage: Jira issue links of type "Blocks" (Jira Cloud REST v2, POST
+# /rest/api/2/issueLink). Direction convention per the Atlassian REST spec:
+# the OUTWARD issue performs the outward verb — outwardIssue "blocks"
+# inwardIssue — so creating "A blocks B" posts
+#   {"type":{"name":"Blocks"},"outwardIssue":{"key":A},"inwardIssue":{"key":B}}.
+# On a GET, an issue's issuelinks entry is read from that issue's own side:
+# an entry carrying `inwardIssue: Y` reads with the INWARD description
+# ("is blocked by Y" — Y is a blocker of this issue); an entry carrying
+# `outwardIssue: Z` means this issue blocks Z.
+#
+# Blocker state: the linked-issue stub usually embeds fields.status, but the
+# spec does not promise it on every instance, so resolution is dual-path —
+# use the stub's status when present, else fall back to a per-blocker
+# GET ?fields=status. Closed-ness is statusCategory.key == "done" (status
+# NAMES are site-configurable; statusCategory keys are fixed to
+# new/indeterminate/done per the spec — never compare status names).
+
+_jira_fetch_links() {
+  # GET the issue's issuelinks. rc 0 = body in _JIRA_BODY; rc 1 = issue not
+  # found (caller owns the message); any other failure exits 3 directly.
+  local key="$1"
+  if ! _jira_request GET "/rest/api/2/issue/${key}?fields=issuelinks"; then
+    echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2
+    exit 3
+  fi
+  [ "$_JIRA_CODE" = "404" ] && return 1
+  if [ "$_JIRA_CODE" -ge 400 ] 2>/dev/null; then
+    echo "issues-jira.sh: Jira returned HTTP $_JIRA_CODE reading links for $key" >&2
+    exit 3
+  fi
+  return 0
+}
+
+_jira_parse_links() {
+  # Emit one line per Blocks-type link on the fetched issue (_JIRA_BODY):
+  #   "B <blocker-num> <open|closed|?> <link-id>"   this issue is blocked by
+  #   "K <blocked-num>"                             this issue blocks
+  # `?` = the linked stub carried no status; callers fall back to
+  # _jira_blocker_state. rc 3 on parse failure (checked by every caller).
+  RESP="$_JIRA_BODY" python3 - <<'PY'
+import json, os, sys
+try:
+    it = json.loads(os.environ["RESP"])
+except Exception:
+    print("issues-jira.sh: could not parse issue links response", file=sys.stderr)
+    raise SystemExit(3)
+links = ((it.get("fields") or {}).get("issuelinks")) or []
+for l in links:
+    if ((l.get("type") or {}).get("name") or "") != "Blocks":
+        continue
+    lid = str(l.get("id") or "-")
+    if "inwardIssue" in l:
+        stub = l["inwardIssue"] or {}
+        num = (stub.get("key") or "").rsplit("-", 1)[-1]
+        cat = ((((stub.get("fields") or {}).get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
+        state = ("closed" if cat == "done" else "open") if cat else "?"
+        print(f"B {num} {state} {lid}")
+    elif "outwardIssue" in l:
+        num = ((l["outwardIssue"] or {}).get("key") or "").rsplit("-", 1)[-1]
+        print(f"K {num}")
+PY
+}
+
+_jira_blocker_state() {
+  # Dual-path fallback: resolve one blocker's state when its linked stub
+  # omitted fields.status. Prints open|closed|missing; rc 3 on backend error
+  # (callers re-exit 3 — a resolution failure must never read as a state).
+  local bkey
+  bkey=$(_jira_key "$1")
+  if ! _jira_request GET "/rest/api/2/issue/${bkey}?fields=status"; then
+    echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2
+    return 3
+  fi
+  if [ "$_JIRA_CODE" = "404" ]; then
+    printf 'missing\n'   # dangling blocker counts as satisfied (R4)
+    return 0
+  fi
+  if [ "$_JIRA_CODE" -ge 400 ] 2>/dev/null; then
+    echo "issues-jira.sh: Jira returned HTTP $_JIRA_CODE resolving blocker $bkey" >&2
+    return 3
+  fi
+  RESP="$_JIRA_BODY" python3 - <<'PY' || return 3
+import json, os
+it = json.loads(os.environ["RESP"])
+cat = ((((it.get("fields") or {}).get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
+print("closed" if cat == "done" else "open")
+PY
+}
+
+cmd_deps() {
+  local key
+  key=$(_jira_key "$1")
+  if ! _jira_fetch_links "$key"; then
+    echo "issues-jira.sh: issue $key not found" >&2
+    exit 1
+  fi
+  local lines rc entries="" blocks="" tag n state lid
+  lines=$(_jira_parse_links); rc=$?
+  [ $rc -ne 0 ] && exit 3
+  while read -r tag n state lid; do
+    case "$tag" in
+      B)
+        if [ "$state" = "?" ]; then
+          state=$(_jira_blocker_state "$n"); rc=$?
+          [ $rc -ne 0 ] && exit 3
+        fi
+        entries="$entries $n:$state"
+        ;;
+      K) blocks="$blocks $n" ;;
+    esac
+  done <<EOF
+$lines
+EOF
+  ENTRIES="$entries" BLOCKS="$blocks" python3 - <<'PY'
+import json, os
+bb = []
+for e in os.environ["ENTRIES"].split():
+    n, _, s = e.partition(":")
+    bb.append({"number": int(n), "state": s})
+print(json.dumps({"blockedBy": bb, "blocks": [int(x) for x in os.environ["BLOCKS"].split()]}))
+PY
+}
+
+cmd_block() {
+  local num="$1"; shift
+  local on=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --on) on="$2"; shift 2 ;; *) shift ;; esac
+  done
+  if [ -z "$on" ]; then
+    echo "Usage: issues-jira.sh block <number> --on <m>" >&2
+    exit 2
+  fi
+  local key okey nnum onum
+  key=$(_jira_key "$num"); okey=$(_jira_key "$on")
+  nnum="${key##*-}"; onum="${okey##*-}"
+  if [ "$key" = "$okey" ]; then
+    echo "Error: issue $key cannot block itself" >&2
+    exit 1
+  fi
+  # R2, enforced script-side (never rely on vendor duplicate handling):
+  # idempotent re-add exits 0 with no write; a reverse edge on the blocker is
+  # a direct two-node cycle and exits 1.
+  if ! _jira_fetch_links "$key"; then
+    echo "issues-jira.sh: issue $key not found" >&2
+    exit 1
+  fi
+  local lines rc
+  lines=$(_jira_parse_links); rc=$?
+  [ $rc -ne 0 ] && exit 3
+  if printf '%s\n' "$lines" | grep -q "^B $onum "; then
+    exit 0
+  fi
+  if ! _jira_fetch_links "$okey"; then
+    echo "issues-jira.sh: issue $okey not found" >&2
+    exit 1
+  fi
+  lines=$(_jira_parse_links); rc=$?
+  [ $rc -ne 0 ] && exit 3
+  if printf '%s\n' "$lines" | grep -q "^B $nnum "; then
+    echo "Error: cycle — issue $okey is already blocked by $key" >&2
+    exit 1
+  fi
+  local payload
+  payload=$(BLOCKED="$key" BLOCKER="$okey" python3 -c 'import json,os; print(json.dumps({"type": {"name": "Blocks"}, "inwardIssue": {"key": os.environ["BLOCKED"]}, "outwardIssue": {"key": os.environ["BLOCKER"]}}))')
+  _jira_request_ok POST "/rest/api/2/issueLink" "$payload" >/dev/null
+}
+
+cmd_unblock() {
+  local num="$1"; shift
+  local on=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --on) on="$2"; shift 2 ;; *) shift ;; esac
+  done
+  if [ -z "$on" ]; then
+    echo "Usage: issues-jira.sh unblock <number> --on <m>" >&2
+    exit 2
+  fi
+  local key okey onum
+  key=$(_jira_key "$num"); okey=$(_jira_key "$on")
+  onum="${okey##*-}"
+  if ! _jira_fetch_links "$key"; then
+    echo "issues-jira.sh: issue $key not found" >&2
+    exit 1
+  fi
+  local lines rc lid
+  lines=$(_jira_parse_links); rc=$?
+  [ $rc -ne 0 ] && exit 3
+  lid=$(printf '%s\n' "$lines" | awk -v n="$onum" '$1=="B" && $2==n {print $4; exit}')
+  if [ -z "$lid" ] || [ "$lid" = "-" ]; then
+    echo "Error: issue $key is not blocked by $okey" >&2
+    exit 1
+  fi
+  if ! _jira_request DELETE "/rest/api/2/issueLink/${lid}"; then
+    echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2
+    exit 3
+  fi
+  [ "$_JIRA_CODE" = "404" ] && exit 1
+  if [ "$_JIRA_CODE" -ge 400 ] 2>/dev/null; then
+    echo "issues-jira.sh: Jira returned HTTP $_JIRA_CODE deleting link $lid" >&2
+    exit 3
+  fi
+  return 0
+}
+
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
-  # The v3 search/jql response has no `total` (removed with the old API), and
-  # this verb never needed a count — only existence. Ask for a single result
-  # with the cheapest field set and test whether the first page is non-empty.
+  # Bounded, fail-loud blocker resolution: one v3 search returns up to 50
+  # claimable candidates WITH their issuelinks (the v3 response has no
+  # `total`, and this verb only needs existence). Blockers whose linked stub
+  # embeds status resolve for free; the rest fall back to per-blocker GETs.
+  # Exit 0 on the first unblocked candidate, 1 when none within the bound,
+  # 3 on ANY resolution failure — a deps failure must never read as "no work".
   local payload
   payload=$(JQL="$(_jira_open_jql)" python3 - <<'PY'
 import json, os
-print(json.dumps({"jql": os.environ["JQL"], "maxResults": 1, "fields": ["id"]}))
+print(json.dumps({"jql": os.environ["JQL"], "maxResults": 50, "fields": ["issuelinks"]}))
 PY
 )
   _jira_request_ok POST "/rest/api/3/search/jql" "$payload"
-  local count
-  count=$(printf '%s' "$_JIRA_BODY" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("issues") or []))' 2>/dev/null) || exit 3
-  [ "${count:-0}" -gt 0 ] 2>/dev/null
+  local verdicts rc
+  verdicts=$(RESP="$_JIRA_BODY" python3 - <<'PY'
+import json, os, sys
+try:
+    data = json.loads(os.environ["RESP"])
+except Exception:
+    print("issues-jira.sh: could not parse Jira search response", file=sys.stderr)
+    raise SystemExit(3)
+for it in data.get("issues", []) or []:
+    num = (it.get("key") or "").rsplit("-", 1)[-1]
+    links = ((it.get("fields") or {}).get("issuelinks")) or []
+    unknown, blocked = [], False
+    for l in links:
+        if ((l.get("type") or {}).get("name") or "") != "Blocks" or "inwardIssue" not in l:
+            continue
+        stub = l["inwardIssue"] or {}
+        bnum = (stub.get("key") or "").rsplit("-", 1)[-1]
+        cat = ((((stub.get("fields") or {}).get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
+        if not cat:
+            unknown.append(bnum)
+        elif cat != "done":
+            blocked = True
+            break
+    if blocked:
+        print(f"{num} BLOCKED")
+    elif unknown:
+        print(f"{num} CHECK {' '.join(unknown)}")
+    else:
+        print(f"{num} CLEAR")
+PY
+); rc=$?
+  [ $rc -ne 0 ] && exit 3
+  local num verdict rest m st all_ok
+  while read -r num verdict rest; do
+    [ -n "$num" ] || continue
+    case "$verdict" in
+      CLEAR) exit 0 ;;
+      BLOCKED) continue ;;
+      CHECK)
+        all_ok=1
+        for m in $rest; do
+          st=$(_jira_blocker_state "$m"); rc=$?
+          [ $rc -ne 0 ] && exit 3
+          if [ "$st" = "open" ]; then all_ok=0; break; fi
+        done
+        [ "$all_ok" = "1" ] && exit 0
+        ;;
+    esac
+  done <<EOF
+$verdicts
+EOF
+  exit 1
 }
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-jira.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|any-claimable|deps|block|unblock) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -596,4 +880,7 @@ case "$verb" in
   claim)         shift; cmd_claim "$@" ;;
   release)       shift; cmd_release "$@" ;;
   any-claimable) cmd_any_claimable ;;
+  deps)          shift; cmd_deps "$@" ;;
+  block)         shift; cmd_block "$@" ;;
+  unblock)       shift; cmd_unblock "$@" ;;
 esac
