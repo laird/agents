@@ -93,7 +93,7 @@ single-writer label operation, so two racers can both think they won); the
 `[autocoder-claim]` marker protocol — post a marker, wait briefly, back off on
 a competing marker — lives in `fix.md`, not in `issues-gh.sh`. Dependencies
 use GitHub's native dependency endpoints, with a `blocked-by-<m>` label
-fallback on GHES (the dependency verbs for this backend land in increment 2).
+fallback on GHES (validated live against api.github.com).
 Requires `gh auth login`. Backend: `issues-gh.sh`.
 
 ### Jira (`jira`)
@@ -103,7 +103,7 @@ numeric suffix as `number`; **labels ↔ Jira labels**; state via `statusCategor
 (and transitions for close/reopen). The claimable JQL ORs in `labels is EMPTY`
 so **unlabeled issues are not silently dropped** (the Jira analogue of #57).
 Dependencies map to Jira issue links of type Blocks (the dependency verbs for
-this backend land in increment 2).
+this backend are spec-based; no live instance was available for validation).
 Non-secret `baseUrl`/`project` live in the `jira` object of `.autocoder.json`;
 credentials are env-only (`JIRA_EMAIL` + `JIRA_API_TOKEN`, or `JIRA_AUTH_HEADER`
 for a Server/DC PAT). Backend: `issues-jira.sh`. Full guide:
@@ -119,7 +119,7 @@ Agile/Basic/Scrum/CMMI processes). Uses WIQL for `list`/`any-claimable`,
 `[System.Tags] NOT CONTAINS 'x'` already matches tag-less items, so untagged
 work stays claimable with no special clause. Dependencies map to
 `System.LinkTypes.Dependency` relations, read back with `$expand=relations`
-(the dependency verbs for this backend land in increment 2).
+(the dependency verbs for this backend are spec-based; no live instance was available for validation).
 Non-secret `orgUrl`/`project` live
 in the `ado` object; the PAT is env-only (`ADO_PAT`). Backend: `issues-ado.sh`.
 Full guide: [`docs/ado-setup.md`](ado-setup.md).

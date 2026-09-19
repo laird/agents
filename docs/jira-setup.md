@@ -116,7 +116,7 @@ unblock <number> --on <m>
 ```
 
 The dependency verbs (`deps`/`block`/`unblock`) map to Jira issue links of
-type Blocks; their Jira implementation lands in increment 2. See
+type Blocks, implemented as of autocoder 4.30.0. See
 [`docs/issue-backends.md`](issue-backends.md) for the full contract semantics.
 
 State mapping: `open` = not-Done and not carrying a blocking label (claimable);

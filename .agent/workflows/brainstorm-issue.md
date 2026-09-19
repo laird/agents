@@ -272,7 +272,7 @@ claiming it would abort the sequence: skip the claim/release bracket entirely.
 #    stop the decomposition step and leave the parent exactly as it is.
 issue_deps "$ISSUE_NUM" >/dev/null 2>&1; RC=$?
 if [ "$RC" -eq 2 ]; then
-  echo "backend does not support dependency verbs yet (lands in increment 2); skipping decomposition edges"
+  echo "backend does not support dependency verbs (predates autocoder 4.30.0?); skipping decomposition edges"
   exit 0
 fi
 
