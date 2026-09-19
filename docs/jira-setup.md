@@ -95,7 +95,7 @@ Two hermetic tests run in CI on every push — neither needs a real Jira:
 The live `jira-smoke-test.sh` is deliberately **not** in `tests/`, so CI never
 needs egress.
 
-## The 9-verb contract
+## The 12-verb contract
 
 `issues-jira.sh` implements the same uniform backend contract as `issues-gh.sh`
 and `issues-file.py`:
@@ -110,7 +110,14 @@ create --title "..." --body "..." [--label L ...]
 claim <number>
 release <number>
 any-claimable
+deps <number>
+block <number> --on <m>
+unblock <number> --on <m>
 ```
+
+The dependency verbs (`deps`/`block`/`unblock`) map to Jira issue links of
+type Blocks; their Jira implementation lands in increment 2. See
+[`docs/issue-backends.md`](issue-backends.md) for the full contract semantics.
 
 State mapping: `open` = not-Done and not carrying a blocking label (claimable);
 `working` = has the `working` label; `blocked` = carries a human-decision label

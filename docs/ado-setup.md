@@ -92,7 +92,7 @@ Two hermetic tests run in CI on every push — neither needs a real Azure DevOps
 | `tests/test_issues_ado.sh` | stubs `curl`; asserts WIQL + JSON-patch shape, output schema, exit codes |
 | `tests/test_issues_ado_integration.sh` | drives real HTTP against an in-process stateful fake (`tests/fixtures/fake_ado.py`) through the full create → get → claim/release → comment → update → close lifecycle |
 
-## The 9-verb contract
+## The 12-verb contract
 
 `issues-ado.sh` implements the same uniform backend contract as `issues-gh.sh`,
 `issues-file.py`, and `issues-jira.sh`:
@@ -107,4 +107,12 @@ create --title "..." --body "..." [--label L ...]
 claim <number>
 release <number>
 any-claimable
+deps <number>
+block <number> --on <m>
+unblock <number> --on <m>
 ```
+
+The dependency verbs (`deps`/`block`/`unblock`) map to
+`System.LinkTypes.Dependency` relations (read back with `$expand=relations`);
+their Azure DevOps implementation lands in increment 2. See
+[`docs/issue-backends.md`](issue-backends.md) for the full contract semantics.

@@ -253,6 +253,27 @@ else
   echo "SKIP: exit-3 unreadable-file tests (running as root, chmod 000 ineffective)"
 fi
 
+# ═══ U3: issue-fns.sh dispatches the dependency verbs ══════════════════════
+# Source the dispatcher with cwd inside the temp repo so issue-config.sh
+# resolves the temp .autocoder.json (mirrors tests/test_issue_fns.sh).
+run_ifns() {
+  (cd "$TMP" && PATH="$TMP/bin:$PATH" \
+     bash -c "source '$SCRIPT_DIR/issue-fns.sh'; $1") 2>/dev/null
+}
+
+run_backend create --title "Dispatch blocker" --body "d12" > /dev/null   # -> 12
+run_backend create --title "Dispatch blocked" --body "d13" > /dev/null   # -> 13
+run_ifns "issue_block 13 --on 12"
+assert_eq "dispatcher issue_block exits 0" "0" "$?"
+OUT=$(run_ifns "issue_deps 13")
+assert_json "dispatcher issue_deps sees the edge" "$OUT" \
+  'd["blockedBy"] == [{"number": 12, "state": "open"}]'
+run_ifns "issue_unblock 13 --on 12"
+assert_eq "dispatcher issue_unblock exits 0" "0" "$?"
+OUT=$(run_ifns "issue_deps 13")
+assert_json "dispatcher issue_unblock removed the edge" "$OUT" \
+  'd["blockedBy"] == []'
+
 # ── Guard: no invocation ever shelled out to gh ────────────────────────────
 if [ -f "$GH_TRIPWIRE" ]; then
   fail "test shelled out to real gh — $(wc -l < "$GH_TRIPWIRE") call(s)"

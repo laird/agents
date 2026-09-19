@@ -15,7 +15,7 @@ same contract can be added as a custom backend.
 Switch backends with `/set-issue-source` (it writes `.autocoder.json` and, for
 Jira/ADO, prompts for the non-secret connection settings).
 
-## The 9-verb contract
+## The 12-verb contract
 
 Every backend is a self-contained script exposing the same verbs. The thin
 dispatcher `issue-fns.sh` routes `issue_*` calls to the configured backend;
@@ -31,6 +31,9 @@ create --title "..." --body "..." [--label L ...]
 claim <number>
 release <number>
 any-claimable
+deps <number>
+block <number> --on <m>
+unblock <number> --on <m>
 ```
 
 **Uniform output.** `list` and `get` emit the same JSON shape as
@@ -38,15 +41,34 @@ any-claimable
 `comments`). Every backend maps its native model onto this shape, so the rest
 of the workflow never branches on which tracker is in use.
 
-**Uniform exit codes.** `0` success / work exists · `1` clean negative (no
-claimable work, race lost, not found) · `2` usage error · `3` backend error
-(network/auth/parse/config).
+**Uniform exit codes.** `0` success / work exists · `1` clean negative ·
+`2` usage error · `3` backend error. The `1`-vs-`3` line matters per verb:
+
+- Exit `1` is a **clean negative** — the backend worked and the answer is
+  "no": no claimable work, a claim race lost, issue or blocker not found,
+  `unblock` of an edge that isn't there, `block` refused for a self-edge or a
+  direct two-node cycle, `claim` refused because a blocker is still open.
+- Exit `3` is a **backend error** — network, auth, parse, or config failure,
+  **including any failure while resolving blockers during `claim` or
+  `any-claimable`**. A deps fetch that fails must surface as exit `3`, never
+  exit `1`: a broken backend must not read as "no work".
 
 **States.** `open` = actionable and unclaimed (not done, carrying no blocking
 label); `working` = claimed (`working` label/tag); `blocked` = gated on a human
 decision (`needs-design`, `needs-approval`, …); `closed` = done. `claim` /
 `release` toggle the `working` marker; `any-claimable` is the cheap "is there
 anything to do?" probe the loop polls.
+
+**Dependencies.** `block <n> --on <m>` records that issue `n` is blocked by
+issue `m`; `unblock <n> --on <m>` removes that edge; `deps <n>` reports both
+directions (`blockedBy`, with each blocker's state, and `blocks`). An issue is
+claimable only when **every** issue in its `blockedBy` list is closed — the
+rule `claim` and `any-claimable` enforce. A dangling blocker (an edge pointing
+at an issue that no longer exists) counts as satisfied, and `deps` reports it
+with `"state": "missing"`. `block` is idempotent: re-adding an existing edge
+succeeds without duplicating it. Only self-edges and direct two-node cycles
+are rejected at write time (exit `1`); longer cycles can still be written and
+surface via `/list-issues --stuck`.
 
 ## Backends
 
@@ -55,8 +77,10 @@ anything to do?" probe the loop polls.
 Issues are Markdown files bucketed by state under `.issues/`
 (`open/`, `working/`, `blocked/`, `closed/`). `claim` is an **atomic
 `os.rename`**, so exactly one worker can win a race — the strongest locking of
-any backend. Zero external dependencies; ideal for offline or single-repo use.
-Backend: `issues-file.py`.
+any backend. Dependency edges are stored as a `blockedBy:` list in each
+issue's frontmatter; this backend is the reference implementation of the
+dependency verbs and the blocker-aware `claim`/`any-claimable`. Zero external
+dependencies; ideal for offline or single-repo use. Backend: `issues-file.py`.
 
 ### GitHub (`github`)
 
@@ -64,9 +88,13 @@ Wraps the `gh` CLI. Labels are GitHub labels; `open`/`working`/`blocked` are
 derived by label search (GitHub has no bucket partitioning), and the claimable
 query excludes each blocking label with `-label:"X"` — **not** the valueless
 `no:label`, which matches only unlabeled issues and would hide everything
-(bug #57). `claim` is best-effort (no atomic single-writer label edit): it adds
-`working`, posts an `[autocoder-claim]` marker, waits briefly, and backs off if
-it sees a competing marker. Requires `gh auth login`. Backend: `issues-gh.sh`.
+(bug #57). `claim` is a best-effort label edit (GitHub has no atomic
+single-writer label operation, so two racers can both think they won); the
+`[autocoder-claim]` marker protocol — post a marker, wait briefly, back off on
+a competing marker — lives in `fix.md`, not in `issues-gh.sh`. Dependencies
+use GitHub's native dependency endpoints, with a `blocked-by-<m>` label
+fallback on GHES (the dependency verbs for this backend land in increment 2).
+Requires `gh auth login`. Backend: `issues-gh.sh`.
 
 ### Jira (`jira`)
 
@@ -74,6 +102,8 @@ Talks to the Jira Cloud/Server REST API v2. Issue keys `PROJ-N` map to the
 numeric suffix as `number`; **labels ↔ Jira labels**; state via `statusCategory`
 (and transitions for close/reopen). The claimable JQL ORs in `labels is EMPTY`
 so **unlabeled issues are not silently dropped** (the Jira analogue of #57).
+Dependencies map to Jira issue links of type Blocks (the dependency verbs for
+this backend land in increment 2).
 Non-secret `baseUrl`/`project` live in the `jira` object of `.autocoder.json`;
 credentials are env-only (`JIRA_EMAIL` + `JIRA_API_TOKEN`, or `JIRA_AUTH_HEADER`
 for a Server/DC PAT). Backend: `issues-jira.sh`. Full guide:
@@ -87,7 +117,10 @@ integers**, so `number` is the id directly; **labels ↔ work-item Tags**
 Agile/Basic/Scrum/CMMI processes). Uses WIQL for `list`/`any-claimable`,
 `workitemsbatch` for details, and JSON-patch for create/update. WIQL's
 `[System.Tags] NOT CONTAINS 'x'` already matches tag-less items, so untagged
-work stays claimable with no special clause. Non-secret `orgUrl`/`project` live
+work stays claimable with no special clause. Dependencies map to
+`System.LinkTypes.Dependency` relations, read back with `$expand=relations`
+(the dependency verbs for this backend land in increment 2).
+Non-secret `orgUrl`/`project` live
 in the `ado` object; the PAT is env-only (`ADO_PAT`). Backend: `issues-ado.sh`.
 Full guide: [`docs/ado-setup.md`](ado-setup.md).
 
@@ -178,7 +211,7 @@ It is deliberately not part of the CI suite.
 
 ## Adding a custom backend
 
-Any executable implementing the 9 verbs above can be a backend. Point
+Any executable implementing the 12 verbs above can be a backend. Point
 `.autocoder.json` at it:
 
 ```json

@@ -1,7 +1,7 @@
 # Autocoder Issue Backend Scripts
 
 This directory holds the pluggable issue-tracker backend for autocoder. Each
-backend is a self-contained script implementing the same 9-verb CLI. Slash
+backend is a self-contained script implementing the same 12-verb CLI. Slash
 commands and other consumers call the `issue_*` shell functions (defined in
 `issue-fns.sh`) and never the backend scripts directly — that's the
 abstraction that makes Jira / Linear / other backends a drop-in.
@@ -16,7 +16,8 @@ for the full design.
   exports it (plus backend-specific env like `ISSUE_DIR_PATH` for file).
 - **`issue-fns.sh`** — thin dispatcher. Exposes `issue_list`, `issue_get`,
   `issue_update`, `issue_comment`, `issue_close`, `issue_create`,
-  `issue_claim`, `issue_release`, `issue_any_claimable`. Each function
+  `issue_claim`, `issue_release`, `issue_any_claimable`, `issue_deps`,
+  `issue_block`, `issue_unblock`. Each function
   shells out to the configured backend script with the verb name and the
   caller's arguments. No backend logic lives here.
 - **`issues-<backend>` scripts** — self-contained implementations. One
@@ -39,7 +40,16 @@ implements these subcommands:
 <backend> claim         <number>
 <backend> release       <number>
 <backend> any-claimable
+<backend> deps          <number>
+<backend> block         <number> --on <m>
+<backend> unblock       <number> --on <m>
 ```
+
+The dependency verbs (`deps`/`block`/`unblock`) are implemented today by the
+file backend (the reference implementation, edges in `blockedBy:` frontmatter);
+the github/jira/ado implementations land in increment 2. Full semantics —
+claimability gating, idempotent `block`, dangling-blocker handling, cycle
+rejection — are in `docs/issue-backends.md`.
 
 ### Output schema
 
