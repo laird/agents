@@ -11,7 +11,7 @@
 #
 # Usage:
 #   bash jira-smoke-test.sh            # creates a throwaway issue, exercises the
-#                                      # full 9-verb lifecycle, then closes it.
+#                                      # full core-verb lifecycle, then closes it.
 #
 # It talks ONLY to your project and cleans up the issue it creates.
 

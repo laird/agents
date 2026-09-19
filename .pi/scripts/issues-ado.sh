@@ -1,5 +1,6 @@
 #!/bin/bash
-# issues-ado.sh — Azure DevOps backend implementing the uniform 9-verb CLI.
+# issues-ado.sh — Azure DevOps backend implementing the uniform 12-verb CLI
+# (the dependency verbs deps/block/unblock land here in increment 2).
 #
 # Counterpart to issues-gh.sh, issues-file.py, and issues-jira.sh. All backends
 # honor the same contract:

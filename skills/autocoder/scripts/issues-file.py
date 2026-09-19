@@ -23,6 +23,9 @@ Usage:
   issues-file.py claim <number>
   issues-file.py release <number>
   issues-file.py any-claimable
+  issues-file.py deps <number>
+  issues-file.py block <number> --on <number>
+  issues-file.py unblock <number> --on <number>
   issues-file.py migrate-layout
   issues-file.py find-main-worktree
   issues-file.py import-from-gh
@@ -30,10 +33,17 @@ Usage:
 
 Exit codes:
   0 — success. For `any-claimable`: at least one claimable issue exists.
-  1 — clean negative. For `any-claimable`: no claimable issues. For `claim`: race
-      lost or not in open/. For get/update/comment/close/release: issue not found.
+  1 — clean negative. For `any-claimable`: no claimable issues (an issue with
+      an open blocker is not claimable). For `claim`: race lost, not in open/,
+      approval label missing, or a blockedBy issue is not closed (a dangling
+      blocker counts as satisfied). For get/update/comment/close/release:
+      issue not found. For `block`: self-edge, two-node cycle, or
+      issue/blocker not found. For `unblock`: edge absent or issue not found.
+      `block` re-add of an existing edge is idempotent and exits 0.
   2 — usage error.
-  3 — backend error (e.g., open/ missing for any-claimable).
+  3 — backend error (e.g., open/ missing for any-claimable, or an unreadable
+      issue file while resolving claimability — an issue must never look
+      unclaimable because a deps read failed).
 """
 
 import argparse
@@ -151,7 +161,12 @@ def _parse_frontmatter(text: str) -> dict:
         val = val.strip()
         if val.startswith("[") and val.endswith("]"):
             inner = val[1:-1].strip()
-            data[key] = [v.strip() for v in inner.split(",")] if inner else []
+            items = [v.strip() for v in inner.split(",")] if inner else []
+            if key == "blockedBy":
+                # Edge values are issue numbers; normalize to ints so
+                # membership checks never miss on str/int type mismatch.
+                items = [int(v) for v in items if re.fullmatch(r"\d+", v)]
+            data[key] = items
         elif re.fullmatch(r"\d+", val):
             data[key] = int(val)
         else:
@@ -162,12 +177,16 @@ def _parse_frontmatter(text: str) -> dict:
 def _format_issue(data: dict) -> str:
     body = data.get("body", "")
     lines = []
-    for key in ("number", "title", "priority", "labels", "status", "assignee"):
+    # Fixed serialization whitelist: any key absent from this tuple is
+    # silently dropped on every rewrite (update/comment/close/claim/release
+    # all round-trip through here).
+    for key in ("number", "title", "priority", "labels", "status", "assignee",
+                "blockedBy"):
         if key not in data:
             continue
         val = data[key]
         if isinstance(val, list):
-            lines.append(f"{key}: [{', '.join(val)}]")
+            lines.append(f"{key}: [{', '.join(str(v) for v in val)}]")
         else:
             lines.append(f"{key}: {val}")
     front = "\n".join(lines)
@@ -429,6 +448,25 @@ def cmd_create(args):
     print(json.dumps({"number": number}))
 
 
+def _resolve_blockers(issues_dir: Path, numbers) -> list:
+    """Resolve blockedBy edges to [(number, state)] with state in
+    open/closed/missing. State derives from the bucket the blocker's file
+    lives in (closed/ → "closed", any other bucket → "open"); a dangling
+    blocker (file in no bucket) is "missing" and counts as SATISFIED for
+    claimability (R4). The blocker file itself is never parsed — only
+    located — so an unreadable blocker cannot fail resolution here.
+    """
+    resolved = []
+    for m in numbers or []:
+        try:
+            bucket, _ = resolve_path(issues_dir, m)
+            state = "closed" if bucket == "closed" else "open"
+        except FileNotFoundError:
+            state = "missing"
+        resolved.append((m, state))
+    return resolved
+
+
 def cmd_claim(args):
     issues_dir = get_issues_dir()
     src = issue_path(issues_dir, "open", args.number)
@@ -436,24 +474,45 @@ def cmd_claim(args):
     # number from several paths -- a manager dispatch, /fix N, a resumed loop
     # -- and a filtered queue constrains none of them. Exit 1 is the clean
     # negative callers already handle for a lost claim race.
+    # The candidate is always parsed now: dependency edges live in its
+    # frontmatter. A read failure is a backend error (exit 3) — an issue
+    # must never look unclaimable because a deps read failed (KTD5).
+    try:
+        data = parse_issue_file(src)
+    except FileNotFoundError:
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not read issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
     required = required_label()
-    if required:
-        try:
-            data = parse_issue_file(src)
-        except FileNotFoundError:
-            sys.exit(1)
-        if not labels_approved(data.get("labels"), required):
-            print(
-                f"Issue #{args.number} is not approved for autonomous work: "
-                f"it does not carry the '{required}' label.",
-                file=sys.stderr,
-            )
-            print(
-                "Add the label to approve it, or unset requiredLabel in "
-                ".autocoder.json to disable the gate.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    if required and not labels_approved(data.get("labels"), required):
+        print(
+            f"Issue #{args.number} is not approved for autonomous work: "
+            f"it does not carry the '{required}' label.",
+            file=sys.stderr,
+        )
+        print(
+            "Add the label to approve it, or unset requiredLabel in "
+            ".autocoder.json to disable the gate.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # Blocker gate (KTD2): sits after the approval gate and before the
+    # os.rename race arbiter. Claim-time-only resolution — a blocker that
+    # reopens after the claim is an accepted race.
+    open_blockers = [m for m, state in
+                     _resolve_blockers(issues_dir, data.get("blockedBy"))
+                     if state == "open"]
+    if open_blockers:
+        names = ", ".join(f"#{m}" for m in open_blockers)
+        print(
+            f"Issue #{args.number} is blocked by open issue(s) {names}. "
+            f"Close them first, or remove the edge with "
+            f"`unblock {args.number} --on N`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     _ensure_bucket(issues_dir, "working")
     dst = issue_path(issues_dir, "working", args.number)
     try:
@@ -510,16 +569,167 @@ def cmd_any_claimable(args):
     for p in open_dir.glob("*.md"):
         if p.name.startswith("."):
             continue
-        if not required:
-            sys.exit(0)
+        # Every candidate must be parsed now (even with no requiredLabel):
+        # dependency edges live in the frontmatter, so the old parse-free
+        # short-circuit would count blocked issues as claimable.
         try:
             data = parse_issue_file(p)
         except FileNotFoundError:
             # Concurrent claim renamed it out from under us; keep looking.
             continue
-        if labels_approved(data.get("labels"), required):
-            sys.exit(0)
+        except (OSError, UnicodeDecodeError) as e:
+            # A deps read failing must never make an issue look unclaimable
+            # (KTD5): backend error, not a clean "nothing claimable".
+            print(f"Error: could not read {p}: {e}", file=sys.stderr)
+            sys.exit(3)
+        if not labels_approved(data.get("labels"), required):
+            continue
+        if any(state == "open" for _, state in
+               _resolve_blockers(issues_dir, data.get("blockedBy"))):
+            continue
+        sys.exit(0)
     sys.exit(1)
+
+
+def cmd_deps(args):
+    """Print the issue's dependency edges as JSON.
+
+    blockedBy is read from the issue's own frontmatter; each blocker's state
+    derives from the bucket its file lives in (closed/ → "closed", any other
+    bucket → "open", not found anywhere → "missing"). blocks is the reverse
+    direction, computed by scanning all four buckets — same cost class as
+    cmd_list, and a snapshot view for the same reason.
+    """
+    issues_dir = get_issues_dir()
+    try:
+        bucket, p = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    try:
+        data = parse_issue_file(p)
+    except FileNotFoundError:
+        # Vanished between resolve and parse; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not read issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
+    blocked_by = [{"number": m, "state": state} for m, state in
+                  _resolve_blockers(issues_dir, data.get("blockedBy"))]
+    blocks = []
+    for b in BUCKETS:
+        d = issues_dir / b
+        if not d.is_dir():
+            continue
+        for q in sorted(d.glob("*.md")):
+            if q.name.startswith("."):
+                continue
+            try:
+                other = parse_issue_file(q)
+            except (OSError, UnicodeDecodeError):
+                # Concurrent rename moved the file out from under us, or the
+                # file is unreadable/corrupt. The blocks scan is a best-effort
+                # snapshot — one bad file must not poison it; skip.
+                continue
+            if args.number in (other.get("blockedBy") or []):
+                n = other.get("number")
+                if isinstance(n, int):
+                    blocks.append(n)
+    print(json.dumps({"blockedBy": blocked_by, "blocks": sorted(set(blocks))},
+                     indent=2))
+
+
+def cmd_block(args):
+    issues_dir = get_issues_dir()
+    if args.on == args.number:
+        print(f"Error: issue #{args.number} cannot block itself",
+              file=sys.stderr)
+        sys.exit(1)
+    # The blocker must exist — both to keep new edges non-dangling and to
+    # read its own blockedBy for the reverse-edge (two-node cycle) check.
+    # Longer cycles are deliberately NOT detected.
+    blocker = None
+    for _ in range(3):
+        try:
+            _, blocker_path = resolve_path(issues_dir, args.on)
+        except FileNotFoundError:
+            sys.exit(1)
+        try:
+            blocker = parse_issue_file(blocker_path)
+            break
+        except FileNotFoundError:
+            # Concurrent claim renamed the blocker between resolve and parse
+            # (children are claimable the instant they are created);
+            # re-resolve and re-parse, mirroring resolve_path's bounded
+            # retry discipline.
+            continue
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"Error: could not read issue #{args.on}: {e}",
+                  file=sys.stderr)
+            sys.exit(3)
+    if blocker is None:
+        sys.exit(1)
+    if args.number in (blocker.get("blockedBy") or []):
+        print(f"Error: cycle — issue #{args.on} is already blocked by "
+              f"#{args.number}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        bucket, path = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    try:
+        with open(path, "r+") as f:
+            lock_ex(f.fileno())
+            try:
+                data = parse_issue_file_fd(f)
+                edges = list(data.get("blockedBy") or [])
+                if args.on not in edges:
+                    edges.append(args.on)
+                    data["blockedBy"] = edges
+                    write_issue_file_fd(f, data)
+                # Re-add of an existing edge is idempotent: exit 0, no write.
+            finally:
+                unlock(f.fileno())
+    except FileNotFoundError:
+        # Vanished between resolve and open; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not update issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
+
+
+def cmd_unblock(args):
+    issues_dir = get_issues_dir()
+    try:
+        bucket, path = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    removed = False
+    try:
+        with open(path, "r+") as f:
+            lock_ex(f.fileno())
+            try:
+                data = parse_issue_file_fd(f)
+                edges = list(data.get("blockedBy") or [])
+                if args.on in edges:
+                    data["blockedBy"] = [m for m in edges if m != args.on]
+                    write_issue_file_fd(f, data)
+                    removed = True
+            finally:
+                unlock(f.fileno())
+    except FileNotFoundError:
+        # Vanished between resolve and open; same clean negative as never
+        # having been found.
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Error: could not update issue #{args.number}: {e}",
+              file=sys.stderr)
+        sys.exit(3)
+    if not removed:
+        sys.exit(1)
 
 
 def cmd_migrate_layout(args):
@@ -687,6 +897,18 @@ def main():
     p_release.add_argument("number", type=int)
 
     sub.add_parser("any-claimable")
+
+    p_deps = sub.add_parser("deps")
+    p_deps.add_argument("number", type=int)
+
+    p_block = sub.add_parser("block")
+    p_block.add_argument("number", type=int)
+    p_block.add_argument("--on", dest="on", type=int, required=True)
+
+    p_unblock = sub.add_parser("unblock")
+    p_unblock.add_argument("number", type=int)
+    p_unblock.add_argument("--on", dest="on", type=int, required=True)
+
     sub.add_parser("migrate-layout")
     sub.add_parser("find-main-worktree")
     sub.add_parser("import-from-gh")
@@ -704,6 +926,9 @@ def main():
         "claim": cmd_claim,
         "release": cmd_release,
         "any-claimable": cmd_any_claimable,
+        "deps": cmd_deps,
+        "block": cmd_block,
+        "unblock": cmd_unblock,
         "migrate-layout": cmd_migrate_layout,
         "find-main-worktree": lambda _: cmd_find_main_worktree(),
         "import-from-gh": lambda _: cmd_import_from_gh(),

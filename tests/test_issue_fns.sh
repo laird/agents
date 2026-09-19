@@ -165,6 +165,18 @@ else
   echo "FAIL: issue_create did not write into $ISSUES_DIR/open/"; FAIL=$((FAIL + 1))
 fi
 
+# ── Test: dispatcher exposes issue_deps and routes a block/deps round-trip ─
+# Guards the consumer commands' capability check (`type issue_deps`): the
+# dispatcher must define the dependency verbs and route them to the backend.
+# Create a fresh issue, block it on closed issue 2, and read the edge back —
+# the deps JSON must report the blocker with "state": "closed". Bump the
+# backend's .seq counter past the hand-written issue numbers first, so the
+# new issue's number cannot collide with them (a collision with #2 would turn
+# the block below into a rejected self-edge).
+echo 10 > "$ISSUES_DIR/.seq"
+OUT=$(run_ifns 'type issue_deps >/dev/null && NEW=$(issue_create --title "Dep child" --body "x" | tr -cd "0-9") && issue_block "$NEW" --on 2 >/dev/null && issue_deps "$NEW"')
+assert_contains "dispatcher exposes issue_deps (block/deps round-trip)" '"state": "closed"' "$OUT"
+
 # ── Test: no invocation ever shelled out to gh ────────────────────────────
 # This is the guard against the regression that filed 18 junk issues (#47).
 if [ -f "$GH_TRIPWIRE" ]; then

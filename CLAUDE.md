@@ -16,7 +16,7 @@ This is the **Modernize** Claude Code plugin - a production-validated framework 
 
 This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), via a Jira project (jira backend), or via Azure DevOps work items (ado backend) — whichever is configured in `.autocoder.json`.
 
-Each backend is a self-contained script implementing the same 9-verb contract (list, get, update, comment, close, create, claim, release, any-claimable): `issues-file.py`, `issues-gh.sh`, `issues-jira.sh`, and `issues-ado.sh`. Non-secret connection settings live in `.autocoder.json` and credentials come from the environment — secrets are never committed:
+Each backend is a self-contained script implementing the same 12-verb contract (list, get, update, comment, close, create, claim, release, any-claimable, deps, block, unblock): `issues-file.py`, `issues-gh.sh`, `issues-jira.sh`, and `issues-ado.sh`. Non-secret connection settings live in `.autocoder.json` and credentials come from the environment — secrets are never committed:
 - **Jira** reads `baseUrl`/`project` from the `jira` object; credentials via `JIRA_EMAIL` + `JIRA_API_TOKEN` (or `JIRA_AUTH_HEADER` for a Server/DC PAT). See `docs/jira-setup.md`.
 - **Azure DevOps** reads `orgUrl`/`project` from the `ado` object; credentials via `ADO_PAT`. Labels map to work-item Tags. See `docs/ado-setup.md`.
 

@@ -1,5 +1,6 @@
 #!/bin/bash
-# issues-gh.sh — GitHub backend implementing the uniform 9-verb CLI.
+# issues-gh.sh — GitHub backend implementing the uniform 12-verb CLI
+# (the dependency verbs deps/block/unblock land here in increment 2).
 #
 # Counterpart to issues-file.py. Both backends honor the same contract:
 #   <backend> list [--state open|working|blocked|closed|all] [--label L] [--limit N]
