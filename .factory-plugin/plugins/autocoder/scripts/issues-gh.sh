@@ -271,6 +271,16 @@ cmd_any_claimable() {
 # the blocked issue, and the reverse (blocks) direction is a label search.
 # The determination is cached for the rest of the invocation
 # (_igh_deps_mode), so native and label writes can never interleave.
+#
+# Mixed stores (post-GHES-upgrade migration): edges written as
+# `blocked-by-<m>` labels during a label-mode period — a GHES later upgraded
+# to native dependency support, or one worker whose credential transiently
+# saw a 404 — stay in force once native mode is in effect: native-mode reads
+# UNION the labels into the blocker set (with a one-line stderr warning), so
+# a label-blocked issue is never silently claimable and deps never
+# under-reports. Migrate by re-recording each labeled edge with `block` and
+# then removing the label; `unblock` removes a label-only edge even in
+# native mode.
 
 _IGH_ERRF="$(mktemp)"
 trap 'rm -f "$_IGH_ERRF"' EXIT
@@ -309,11 +319,13 @@ _igh_dep_get() {
 # _igh_blockers_of <n> <labels-json> — resolve <n>'s blockedBy edges into
 # _IGH_BLOCKERS (numbers, one per line; _IGH_BB_PAIRS carries the native
 # "number issue_id" pairs). <labels-json> is <n>'s own `--json labels`
-# payload, consulted only on the label fallback. The caller MUST have
-# confirmed <n> exists: that is what lets a dependencies 404 be read as
-# feature-unavailable (GHES) instead of issue-not-found. Returns 3 on
-# backend failure. Call directly, never in $(...) — it caches
-# _igh_deps_mode for the rest of the invocation.
+# payload: the sole source on the label fallback, and in native mode any
+# `blocked-by-<m>` labels are UNIONed into the native set (mixed stores —
+# see the header note above) with a stderr warning when they add edges.
+# The caller MUST have confirmed <n> exists: that is what lets a
+# dependencies 404 be read as feature-unavailable (GHES) instead of
+# issue-not-found. Returns 3 on backend failure. Call directly, never in
+# $(...) — it caches _igh_deps_mode for the rest of the invocation.
 _igh_blockers_of() {
   local n="$1" labels_json="$2" rc=0
   _IGH_BLOCKERS=""; _IGH_BB_PAIRS=""
@@ -323,6 +335,24 @@ _igh_blockers_of() {
       0) _igh_deps_mode="native"
          _IGH_BB_PAIRS="$_IGH_DEP_OUT"
          _IGH_BLOCKERS=$(printf '%s\n' "$_IGH_BB_PAIRS" | cut -d' ' -f1)
+         # Mixed stores: union label-store edges into the native set, so
+         # edges written as labels during a label-mode period stay visible.
+         local label_blockers lb mixed=""
+         label_blockers=$(printf '%s' "$labels_json" \
+           | grep -oE '"name":[[:space:]]*"blocked-by-[0-9]+"' \
+           | grep -oE '[0-9]+' || true)
+         for lb in $label_blockers; do
+           if ! printf '%s\n' "$_IGH_BLOCKERS" | grep -qxF -- "$lb"; then
+             _IGH_BLOCKERS="${_IGH_BLOCKERS}${_IGH_BLOCKERS:+
+}$lb"
+             mixed=1
+           fi
+         done
+         if [ -n "$mixed" ]; then
+           echo "warning: issue #$n carries label-store dependency edges" \
+             "alongside native ones — mixed stores; consider migrating" \
+             "blocked-by-* labels to native edges." >&2
+         fi
          return 0 ;;
       4) # The issue exists yet the endpoint is gone: GHES without the
          # dependencies API. Lock in the label fallback for this invocation.
@@ -468,7 +498,17 @@ cmd_unblock() {
     local issue_id
     issue_id=$(printf '%s\n' "$_IGH_BB_PAIRS" \
       | awk -v m="$m" '$1 == m { print $2; exit }')
-    [ -n "$issue_id" ] || exit 3   # pairs/numbers disagree: parse error
+    if [ -z "$issue_id" ]; then
+      # The edge is in the blocker set but not the native pairs: it exists
+      # only as a blocked-by-<m> label (mixed stores). Remove the label —
+      # this is the migration path the header note points at. Anything else
+      # is a pairs/numbers disagreement: parse error.
+      if printf '%s' "$_IGH_VIEW_JSON" | grep -qF "\"blocked-by-$m\""; then
+        gh issue edit "$n" --remove-label "blocked-by-$m" >/dev/null || exit 3
+        exit 0
+      fi
+      exit 3
+    fi
     gh api -X DELETE \
       "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by/$issue_id" \
       >/dev/null || exit 3

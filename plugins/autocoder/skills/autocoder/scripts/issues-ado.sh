@@ -18,9 +18,13 @@
 #
 # Exit codes:
 #   0 — success / work exists
-#   1 — clean negative (no claimable, race lost, work item not found)
+#   1 — clean negative (no claimable, race lost, work item not found, unblock
+#       of an absent edge, block refused for a self-edge or two-node cycle,
+#       claim refused on an open blocker)
 #   2 — usage error
-#   3 — backend error (curl failure, auth failure, parse error, config missing)
+#   3 — backend error (curl failure, auth failure, parse error, config missing
+#       — including any failure while resolving blockers during
+#       claim/any-claimable: a broken backend must never read as "no work")
 #
 # Output schema for list/get matches the other backends' gh-compatible shape
 # (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]).
@@ -77,6 +81,9 @@ ADO_DONE_STATES="Closed Done Resolved Removed Completed"
 # org, so the mapping is encoded from the documented predecessor/successor
 # semantics only. If a real org ever shows the opposite orientation, flip
 # these two constants — in this ONE place.
+# Cross-project relation URLs are unverified live: a foreign-project
+# predecessor resolved via the project-scoped GET may 404 -> 'missing' ->
+# satisfied; verify alongside the direction when a live org is available.
 REL_BLOCKED_BY="System.LinkTypes.Dependency-Reverse"   # Predecessor = blocker
 REL_BLOCKS="System.LinkTypes.Dependency-Forward"       # Successor  = blocked
 
@@ -551,7 +558,8 @@ PY
 }
 
 cmd_deps() {
-  local id="$1"
+  local id="${1:-}"
+  [ -n "$id" ] || { echo "Usage: issues-ado.sh deps <number>" >&2; exit 2; }
   if ! _ado_fetch_relations "$id"; then
     echo "issues-ado.sh: work item $id not found" >&2
     exit 1
@@ -629,7 +637,29 @@ cmd_block() {
   local patch
   patch=$(REL="$REL_BLOCKED_BY" URL="$target_url" python3 -c \
     'import json,os; print(json.dumps([{"op":"add","path":"/relations/-","value":{"rel":os.environ["REL"],"url":os.environ["URL"]}}]))')
-  _ado_request_ok PATCH "/_apis/wit/workitems/${num}?api-version=${API_VERSION}" "$patch" "application/json-patch+json" >/dev/null
+  if ! _ado_request PATCH "/_apis/wit/workitems/${num}?api-version=${API_VERSION}" "$patch" "application/json-patch+json"; then
+    echo "issues-ado.sh: request to Azure DevOps failed (network/curl error)" >&2
+    exit 3
+  fi
+  if [ "$_ADO_CODE" -ge 400 ] 2>/dev/null; then
+    # Benign-race handling: a concurrent writer may add the same edge between
+    # our pre-read and this PATCH; Azure DevOps rejects the duplicate with
+    # HTTP 400 (409 is possible on other write conflicts). Re-fetch once — if
+    # the blocked-by edge is now present the intent is satisfied, so the
+    # idempotent-re-add contract (exit 0) is preserved under the race.
+    local patch_code="$_ADO_CODE" patch_body="$_ADO_BODY"
+    if [ "$patch_code" = "400" ] || [ "$patch_code" = "409" ]; then
+      if _ado_fetch_relations "$num"; then
+        lines=$(_ado_parse_relations); rc=$?
+        if [ $rc -eq 0 ] && printf '%s\n' "$lines" | grep -q "^B $on "; then
+          exit 0
+        fi
+      fi
+    fi
+    echo "issues-ado.sh: Azure DevOps returned HTTP $patch_code adding the relation on $num" >&2
+    [ -n "$patch_body" ] && echo "  $patch_body" >&2
+    exit 3
+  fi
 }
 
 cmd_unblock() {
@@ -660,13 +690,50 @@ cmd_unblock() {
   # concurrent relation change on this item would shift indexes and the
   # remove could delete the WRONG edge. The JSON-patch `test` op on /rev
   # (taken from the same GET) makes the server fail the whole patch instead
-  # (HTTP 400/409 → exit 3 via _ado_request_ok), which is the safe outcome —
-  # the caller just retries against fresh state.
-  local patch
+  # (HTTP 409, or 400 for the test op), which is the safe outcome.
+  #
+  # Benign-race handling: such a guard trip usually just means another writer
+  # revised the item between our GET and the PATCH, so do ONE bounded retry:
+  # re-GET, re-locate the edge (absent now → exit 1 clean, someone else
+  # removed it), rebuild the patch with the fresh rev+index, re-PATCH. A
+  # second conflict stays exit 3 — the caller retries against fresh state.
+  local patch attempt
   patch=$(REV="$rev" IDX="$idx" python3 -c \
     'import json,os; print(json.dumps([{"op":"test","path":"/rev","value":int(os.environ["REV"])},{"op":"remove","path":"/relations/"+os.environ["IDX"]}]))') || exit 3
   [ -n "$patch" ] || exit 3
-  _ado_request_ok PATCH "/_apis/wit/workitems/${num}?api-version=${API_VERSION}" "$patch" "application/json-patch+json" >/dev/null
+  for attempt in 1 2; do
+    if ! _ado_request PATCH "/_apis/wit/workitems/${num}?api-version=${API_VERSION}" "$patch" "application/json-patch+json"; then
+      echo "issues-ado.sh: request to Azure DevOps failed (network/curl error)" >&2
+      exit 3
+    fi
+    if [ "$_ADO_CODE" -lt 400 ] 2>/dev/null; then
+      return 0
+    fi
+    if [ "$attempt" = "1" ] && { [ "$_ADO_CODE" = "409" ] || [ "$_ADO_CODE" = "400" ]; }; then
+      if ! _ado_fetch_relations "$num"; then
+        echo "issues-ado.sh: work item $num not found" >&2
+        exit 1
+      fi
+      lines=$(_ado_parse_relations); rc=$?
+      [ $rc -ne 0 ] && exit 3
+      idx=$(printf '%s\n' "$lines" | awk -v n="$on" '$1=="B" && $2==n {print $3; exit}')
+      if [ -z "$idx" ]; then
+        # The concurrent writer already removed this edge: the desired end
+        # state holds, but keep the absent-edge contract — exit 1 clean.
+        echo "Error: work item $num is not blocked by $on" >&2
+        exit 1
+      fi
+      rev=$(_ado_rev_of)
+      [ -n "$rev" ] || { echo "issues-ado.sh: work item $num response carried no rev" >&2; exit 3; }
+      patch=$(REV="$rev" IDX="$idx" python3 -c \
+        'import json,os; print(json.dumps([{"op":"test","path":"/rev","value":int(os.environ["REV"])},{"op":"remove","path":"/relations/"+os.environ["IDX"]}]))') || exit 3
+      [ -n "$patch" ] || exit 3
+      continue
+    fi
+    echo "issues-ado.sh: Azure DevOps returned HTTP $_ADO_CODE removing the relation on $num" >&2
+    [ -n "$_ADO_BODY" ] && echo "  $_ADO_BODY" >&2
+    exit 3
+  done
 }
 
 # ── any-claimable ────────────────────────────────────────────────────────────

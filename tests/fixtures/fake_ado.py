@@ -25,6 +25,16 @@ Failure/behavior toggles (read at request time, set at launch by tests):
   FAKE_ADO_404_ON_ITEM=<n>     GET /_apis/wit/workitems/<n> returns 404
                                (simulates a dangling blocker: relations on
                                other items still render, the direct read is gone)
+  FAKE_ADO_INJECT_DUP_ON_PATCH=1   the FIRST /relations/- add PATCH applies
+                               the edge server-side, then returns 400
+                               "relation already exists" — the losing side of
+                               a duplicate-add race against a concurrent writer
+  FAKE_ADO_BUMP_REV_ON_FIRST_PATCH=1   the FIRST PATCH carrying a /rev test op
+                               bumps the item's rev, then returns 409 — a
+                               concurrent revision landing between the
+                               client's GET and its guarded PATCH
+  FAKE_ADO_BUMP_REV_ON_EVERY_PATCH=1   same, but on EVERY such PATCH (drives
+                               the bounded-retry second-conflict → exit 3 path)
 
 Auth is accepted but ignored. State lives in memory for the process lifetime.
 The chosen port is printed as "LISTENING <port>" on the first stdout line.
@@ -39,12 +49,23 @@ DONE = {"Closed", "Done", "Resolved", "Removed", "Completed"}
 ITEMS = {}   # id -> {"fields": {...}, "comments": [text, ...], "rev": int}
 NEXT = [1]
 
+# One-shot race-injection state (benign-write-race tests): each FIRST-only
+# toggle fires on its first qualifying PATCH, then behaves normally.
+RACE_STATE = {"dup_injected": False, "rev_bumped": False}
+
 # Dependency links, stored as shared edges exactly like real ADO work-item
 # links: ONE link renders on both ends — Dependency-Reverse (Predecessor =
 # blocker) on the blocked item, Dependency-Forward (Successor = blocked) on
 # the blocker — and removing it from either end removes it everywhere.
 LINKS = {}       # link id -> {"blocker": n, "blocked": n}
 NEXT_LINK = [1]
+# Direction per Microsoft's Azure DevOps link-type reference
+# (learn.microsoft.com/en-us/azure/devops/boards/queries/link-type-reference):
+# System.LinkTypes.Dependency-Reverse = Predecessor (must complete first =
+# the BLOCKER), Dependency-Forward = Successor (the blocked item) — verified
+# against that reference during review 20260919-165737-281a02d1; independent
+# of plugins/autocoder/scripts/issues-ado.sh so a joint direction flip cannot
+# pass silently.
 REL_BLOCKED_BY = "System.LinkTypes.Dependency-Reverse"
 REL_BLOCKS = "System.LinkTypes.Dependency-Forward"
 
@@ -152,11 +173,15 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
 
     def _view(self, n, fields=None, expand_relations=False):
+        # Like real ADO, a requested-fields list (workitemsbatch "fields")
+        # narrows the returned fields dict; the full dict is returned only
+        # when no fields list was requested.
         f = ITEMS[n]["fields"]
         if fields:
             f = {k: f.get(k) for k in fields if k in f or k == "System.Id"}
-        view = {"id": n, "rev": ITEMS[n]["rev"], "url": item_url(n),
-                "fields": {k: v for k, v in ITEMS[n]["fields"].items()}}
+        else:
+            f = dict(f)
+        view = {"id": n, "rev": ITEMS[n]["rev"], "url": item_url(n), "fields": f}
         if expand_relations:
             # Only on request — the real API's $expand default (None) omits
             # the relations array entirely.
@@ -233,6 +258,16 @@ class H(BaseHTTPRequestHandler):
         for op in ops:
             o, path_ = op.get("op"), op.get("path", "")
             if o == "test" and path_ == "/rev":
+                # Injected rev race: a concurrent revision lands between the
+                # client's GET and this guarded PATCH — bump the rev (the
+                # state the conflicting writer left behind) and fail the
+                # test. The retrying client's fresh GET sees the new rev.
+                if (os.environ.get("FAKE_ADO_BUMP_REV_ON_EVERY_PATCH") == "1"
+                        or (os.environ.get("FAKE_ADO_BUMP_REV_ON_FIRST_PATCH") == "1"
+                            and not RACE_STATE["rev_bumped"])):
+                    RACE_STATE["rev_bumped"] = True
+                    ITEMS[n]["rev"] += 1
+                    return self._send(409, {"message": "test operation for /rev failed (injected conflict)"})
                 # JSON-patch rev guard: a stale rev fails the WHOLE patch
                 # (backend maps any >=400 to exit 3).
                 if op.get("value") != ITEMS[n]["rev"]:
@@ -252,6 +287,21 @@ class H(BaseHTTPRequestHandler):
                     blocker, blocked = n, t
                 else:
                     return self._send(400, {"message": "unknown relation type"})
+                if (os.environ.get("FAKE_ADO_INJECT_DUP_ON_PATCH") == "1"
+                        and not RACE_STATE["dup_injected"]):
+                    # Injected duplicate-add race: a concurrent writer created
+                    # the same edge between the client's pre-read and this
+                    # PATCH. Apply the edge server-side (revising both ends,
+                    # as the winning write did), then answer 400 exactly as
+                    # real ADO does for the losing duplicate.
+                    RACE_STATE["dup_injected"] = True
+                    if not any(l["blocker"] == blocker and l["blocked"] == blocked
+                               for l in LINKS.values()):
+                        add_link(blocker, blocked)
+                        for e in {blocker, blocked}:
+                            if e in ITEMS:
+                                ITEMS[e]["rev"] += 1
+                    return self._send(400, {"message": "relation already exists"})
                 if any(l["blocker"] == blocker and l["blocked"] == blocked
                        for l in LINKS.values()):
                     # Real ADO rejects a duplicate relation with HTTP 400 —

@@ -371,6 +371,75 @@ assert_json "dangling blocker reports state missing" "$OUT" \
 run claim 2
 assert_eq "dangling blocker does not block the claim" "0" "$RC"
 
+# ── 7b. mixed stores: native mode UNIONs blocked-by-<m> labels (finding #5) ─
+# Edges written as labels during a label-mode period (GHES upgraded to native
+# support, or a transient per-credential 404) must stay visible to
+# native-mode deps/claim/any-claimable.
+
+# native edge + label edge on the same issue → deps merges and dedupes
+reset_world
+W_EDGES="2:1"
+W_LABELS="2:blocked-by-9,blocked-by-1,P1"   # blocked-by-1 duplicates the native edge
+run deps 2
+assert_eq "mixed-store deps exits 0" "0" "$RC"
+assert_json "mixed-store deps reports the native blocker" "$OUT" \
+  '{"number": 1, "state": "open"} in d["blockedBy"]'
+assert_json "mixed-store deps reports the label-store blocker" "$OUT" \
+  '{"number": 9, "state": "open"} in d["blockedBy"]'
+assert_json "mixed-store deps dedupes the overlapping edge" "$OUT" \
+  'len(d["blockedBy"]) == 2'
+assert_contains "mixed-store deps warns on stderr" "mixed stores" "$ERR"
+
+# label-only edge, native read returns [] → claim still refused
+reset_world
+W_LABELS="8:blocked-by-9"
+run claim 8
+assert_eq "claim refused on a label-only edge in native mode" "1" "$RC"
+assert_contains "refusal names the label-store blocker" "#9" "$ERR"
+assert_not_contains "label-blocked claim never adds the working label" \
+  "--add-label working" "$CAPTURED"
+
+W_CLOSED="3 9"
+run claim 8
+assert_eq "claim succeeds once the label-store blocker closes" "0" "$RC"
+
+# label-only edge hides the candidate from any-claimable too
+reset_world
+W_CANDIDATES="8"
+W_LABELS="8:blocked-by-9"
+run any-claimable
+assert_eq "any-claimable exits 1 when the only candidate is label-blocked" "1" "$RC"
+
+# native-mode unblock removes a label-only edge (migration path)
+reset_world
+W_LABELS="2:blocked-by-9"
+run unblock 2 --on 9
+assert_eq "native-mode unblock of a label-only edge exits 0" "0" "$RC"
+assert_contains "label-only unblock removes the label" \
+  "issue edit 2 --remove-label blocked-by-9" "$CAPTURED"
+assert_not_contains "label-only unblock issues no native DELETE" \
+  "-X DELETE" "$CAPTURED"
+
+# regression: pure-native and pure-label modes never warn
+reset_world
+W_EDGES="2:1"
+run deps 2
+assert_eq "pure-native deps still exits 0" "0" "$RC"
+assert_json "pure-native blockedBy unchanged" "$OUT" \
+  'd["blockedBy"] == [{"number": 1, "state": "open"}]'
+assert_not_contains "pure-native deps emits no mixed-store warning" \
+  "mixed stores" "$ERR"
+
+reset_world
+W_NO_NATIVE=1
+W_LABELS="2:blocked-by-7"
+run deps 2
+assert_eq "pure-label deps still exits 0" "0" "$RC"
+assert_json "pure-label blockedBy unchanged" "$OUT" \
+  'd["blockedBy"] == [{"number": 7, "state": "open"}]'
+assert_not_contains "pure-label deps emits no mixed-store warning" \
+  "mixed stores" "$ERR"
+
 # ── 8. any-claimable: first candidate blocked, second claimable (KTD8) ──────
 reset_world
 W_CANDIDATES="8 9"

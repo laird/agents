@@ -241,6 +241,14 @@ assert_eq "deps maps the inward Blocks link to blockedBy with state" "9 open" "$
 run deps 404
 assert_eq "deps on a missing issue exits 1" "1" "$RC"
 
+# Missing-argument guards: usage error (2), not a phantom lookup of "PROJ-".
+run deps
+assert_eq "deps with no argument exits 2 (usage)" "2" "$RC"
+run block
+assert_eq "block with no argument exits 2 (usage)" "2" "$RC"
+run unblock
+assert_eq "unblock with no argument exits 2 (usage)" "2" "$RC"
+
 run claim 13
 assert_eq "claim of an issue with an open blocker exits 1" "1" "$RC"
 

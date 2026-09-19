@@ -165,6 +165,9 @@ assert_eq "deps maps Dependency-Forward (Successor) to blocks" "[2]" "$BLOCKS"
 run deps 404
 assert_eq "deps on a missing work item exits 1" "1" "$RC"
 
+run deps
+assert_eq "deps without a number is a usage error (exit 2)" "2" "$RC"
+
 run block 13 --on 9
 assert_eq "block on an existing edge is idempotent (exit 0)" "0" "$RC"
 NPATCH=$(awk -F'\t' '$1=="PATCH"' "$CURL_CAPTURE" | wc -l)

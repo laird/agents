@@ -172,6 +172,45 @@ start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_OMIT_LINK_STATUS=1 FAKE_JIRA_500_O
 "$BACKEND" claim 2 >/dev/null 2>&1;        eq "blocker-resolution HTTP 500 makes claim exit 3" "3" "$?"
 "$BACKEND" any-claimable >/dev/null 2>&1;  eq "blocker-resolution HTTP 500 makes any-claimable exit 3" "3" "$?"
 
+# ── cross-project blockers keep their full keys (no suffix collapse) ─────────
+# FAKE_JIRA_FOREIGN_BLOCKER seeds OPS-2 — an OPEN issue in a SECOND project
+# whose numeric suffix deliberately collides with local ENG-2 — blocking both
+# ENG-2 and ENG-3 (on top of the usual ENG-1 → ENG-2 edge). A backend that
+# collapses link keys to bare suffixes confuses OPS-2 with ENG-2.
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_FOREIGN_BLOCKER=1
+
+DEPS3=$("$BACKEND" deps 3)
+eq "deps reports the foreign blocker by numeric suffix with its real state" \
+  '{"blockedBy": [{"number": 2, "state": "open"}], "blocks": []}' "$DEPS3"
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "open foreign blocker refuses the claim" "1" "$?"
+
+"$BACKEND" block 3 --on 2 >/dev/null 2>&1
+eq "local edge is not suppressed by a same-suffix foreign link (exit 0)" "0" "$?"
+NBB=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "block 3 --on 2 created the LOCAL ENG-2 edge alongside foreign OPS-2" "2" "$NBB"
+
+"$BACKEND" unblock 3 --on 2 >/dev/null 2>&1
+eq "unblock 3 --on 2 targets the local edge (exit 0)" "0" "$?"
+NBB=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "the same-suffix foreign OPS-2 edge survives the local unblock" "1" "$NBB"
+
+"$BACKEND" close 1 >/dev/null 2>&1
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim 2 still refused while foreign OPS-2 is open" "1" "$?"
+"$BACKEND" close 2 >/dev/null 2>&1
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "closing local ENG-2 does not satisfy what OPS-2 blocks" "1" "$?"
+
+# ── foreign blocker via the status-fallback GET resolves the RIGHT issue ─────
+# With link stubs stripped of status, the backend must GET each blocker by the
+# link's own full key. Close local ENG-2 first: a suffix-collapsing backend
+# would re-prefix JIRA_PROJECT, GET ENG-2 (closed), and wrongly clear ENG-3 —
+# but its actual blocker OPS-2 is still open.
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_FOREIGN_BLOCKER=1 FAKE_JIRA_OMIT_LINK_STATUS=1
+"$BACKEND" close 2 >/dev/null 2>&1
+STATE=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(json.load(sys.stdin)["blockedBy"][0]["state"])')
+eq "status fallback GETs the foreign key OPS-2, not local ENG-2" "open" "$STATE"
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "fallback-resolved foreign blocker refuses the claim" "1" "$?"
+"$BACKEND" any-claimable >/dev/null 2>&1; eq "any-claimable resolves foreign blockers by full key (no work, exit 1)" "1" "$?"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

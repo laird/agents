@@ -18,9 +18,13 @@
 #
 # Exit codes:
 #   0 — success / work exists
-#   1 — clean negative (no claimable, race lost, issue not found)
+#   1 — clean negative (no claimable, race lost, issue not found, unblock of
+#       an absent edge, block refused for a self-edge or two-node cycle,
+#       claim refused on an open blocker)
 #   2 — usage error
-#   3 — backend error (curl failure, auth failure, parse error, config missing)
+#   3 — backend error (curl failure, auth failure, parse error, config
+#       missing — including any failure while resolving blockers during
+#       claim/any-claimable: a broken backend must never read as "no work")
 #
 # Output schema for list/get matches issues-gh.sh / issues-file.py's to_gh_json
 # shape (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]).
@@ -165,12 +169,15 @@ _jira_request_ok() {
 }
 
 # ── key/number helpers ──────────────────────────────────────────────────────
-# Accept "123" or "PROJ-123"; emit the full "PROJ-123" key.
+# Accept "123" or "PROJ-123" (any case); emit the full UPPERCASED key.
+# A full key passes through verbatim apart from case — cross-project keys
+# (e.g. OTHER-5) are preserved, never re-prefixed with JIRA_PROJECT. All key
+# comparisons in this backend are made on these normalized full keys.
 _jira_key() {
   local id="$1"
   case "$id" in
-    *-*) printf '%s' "$id" ;;
-    *)   printf '%s-%s' "$JIRA_PROJECT" "$id" ;;
+    *-*) printf '%s' "${id^^}" ;;
+    *)   printf '%s-%s' "${JIRA_PROJECT^^}" "$id" ;;
   esac
 }
 
@@ -557,16 +564,25 @@ cmd_claim() {
     echo "issues-jira.sh: issue $key not found" >&2
     exit 1
   fi
-  local dep_lines dep_rc open_blockers="" tag bn bstate blid
+  local dep_lines dep_rc open_blockers="" tag bkey bstate blid
   dep_lines=$(_jira_parse_links); dep_rc=$?
   [ $dep_rc -ne 0 ] && exit 3
-  while read -r tag bn bstate blid; do
+  while read -r tag bkey bstate blid; do
     [ "$tag" = "B" ] || continue
     if [ "$bstate" = "?" ]; then
-      bstate=$(_jira_blocker_state "$bn"); dep_rc=$?
+      # Resolve via the link's own FULL key — correct even when the blocker
+      # lives in another project (re-prefixing JIRA_PROJECT onto a bare
+      # suffix would read the wrong issue).
+      bstate=$(_jira_blocker_state "$bkey"); dep_rc=$?
       [ $dep_rc -ne 0 ] && exit 3
     fi
-    [ "$bstate" = "open" ] && open_blockers="$open_blockers #$bn"
+    if [ "$bstate" = "open" ]; then
+      if [ "${bkey%-*}" = "${JIRA_PROJECT^^}" ]; then
+        open_blockers="$open_blockers #${bkey##*-}"
+      else
+        open_blockers="$open_blockers $bkey"   # foreign project: full key
+      fi
+    fi
   done <<EOF
 $dep_lines
 EOF
@@ -621,10 +637,16 @@ _jira_fetch_links() {
 
 _jira_parse_links() {
   # Emit one line per Blocks-type link on the fetched issue (_JIRA_BODY):
-  #   "B <blocker-num> <open|closed|?> <link-id>"   this issue is blocked by
-  #   "K <blocked-num>"                             this issue blocks
-  # `?` = the linked stub carried no status; callers fall back to
-  # _jira_blocker_state. rc 3 on parse failure (checked by every caller).
+  #   "B <FULL-KEY> <open|closed|?> <link-id>"   this issue is blocked by
+  #   "K <FULL-KEY>"                             this issue blocks
+  # Keys are FULL uppercased issue keys (ENG-7, OPS-2): issue links may cross
+  # projects, and collapsing to the numeric suffix would fold a foreign
+  # OTHER-2 onto the local PROJ-2 — suppressing legitimate local edges,
+  # faking cycles, and resolving blocker state against the wrong issue.
+  # Callers derive the numeric suffix with ${key##*-} where the 12-verb
+  # contract needs an integer. `?` = the linked stub carried no status;
+  # callers fall back to _jira_blocker_state with the full key. rc 3 on
+  # parse failure (checked by every caller).
   RESP="$_JIRA_BODY" python3 - <<'PY'
 import json, os, sys
 try:
@@ -639,13 +661,16 @@ for l in links:
     lid = str(l.get("id") or "-")
     if "inwardIssue" in l:
         stub = l["inwardIssue"] or {}
-        num = (stub.get("key") or "").rsplit("-", 1)[-1]
+        key = (stub.get("key") or "").upper()
+        if not key:
+            continue
         cat = ((((stub.get("fields") or {}).get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
         state = ("closed" if cat == "done" else "open") if cat else "?"
-        print(f"B {num} {state} {lid}")
+        print(f"B {key} {state} {lid}")
     elif "outwardIssue" in l:
-        num = ((l["outwardIssue"] or {}).get("key") or "").rsplit("-", 1)[-1]
-        print(f"K {num}")
+        key = ((l["outwardIssue"] or {}).get("key") or "").upper()
+        if key:
+            print(f"K {key}")
 PY
 }
 
@@ -676,25 +701,30 @@ PY
 }
 
 cmd_deps() {
+  [ -n "${1:-}" ] || { echo "Usage: issues-jira.sh deps <number>" >&2; exit 2; }
   local key
   key=$(_jira_key "$1")
   if ! _jira_fetch_links "$key"; then
     echo "issues-jira.sh: issue $key not found" >&2
     exit 1
   fi
-  local lines rc entries="" blocks="" tag n state lid
+  local lines rc entries="" blocks="" tag bkey state lid
   lines=$(_jira_parse_links); rc=$?
   [ $rc -ne 0 ] && exit 3
-  while read -r tag n state lid; do
+  while read -r tag bkey state lid; do
     case "$tag" in
       B)
         if [ "$state" = "?" ]; then
-          state=$(_jira_blocker_state "$n"); rc=$?
+          state=$(_jira_blocker_state "$bkey"); rc=$?
           [ $rc -ne 0 ] && exit 3
         fi
-        entries="$entries $n:$state"
+        # The JSON contract keeps integer `number`s, so a FOREIGN-project
+        # blocker (OPS-2) is reported by its numeric suffix too — ambiguous
+        # for display, but its state was resolved via the full key above,
+        # so claimability gating stays correct cross-project.
+        entries="$entries ${bkey##*-}:$state"
         ;;
-      K) blocks="$blocks $n" ;;
+      K) blocks="$blocks ${bkey##*-}" ;;
     esac
   done <<EOF
 $lines
@@ -710,6 +740,7 @@ PY
 }
 
 cmd_block() {
+  [ -n "${1:-}" ] || { echo "Usage: issues-jira.sh block <number> --on <m>" >&2; exit 2; }
   local num="$1"; shift
   local on=""
   while [[ $# -gt 0 ]]; do
@@ -719,16 +750,17 @@ cmd_block() {
     echo "Usage: issues-jira.sh block <number> --on <m>" >&2
     exit 2
   fi
-  local key okey nnum onum
+  local key okey
   key=$(_jira_key "$num"); okey=$(_jira_key "$on")
-  nnum="${key##*-}"; onum="${okey##*-}"
   if [ "$key" = "$okey" ]; then
     echo "Error: issue $key cannot block itself" >&2
     exit 1
   fi
   # R2, enforced script-side (never rely on vendor duplicate handling):
   # idempotent re-add exits 0 with no write; a reverse edge on the blocker is
-  # a direct two-node cycle and exits 1.
+  # a direct two-node cycle and exits 1. Both checks compare FULL keys, so a
+  # foreign-project link that merely shares the numeric suffix (OPS-2 vs
+  # ENG-2) neither suppresses a legitimate local edge nor fakes a cycle.
   if ! _jira_fetch_links "$key"; then
     echo "issues-jira.sh: issue $key not found" >&2
     exit 1
@@ -736,7 +768,7 @@ cmd_block() {
   local lines rc
   lines=$(_jira_parse_links); rc=$?
   [ $rc -ne 0 ] && exit 3
-  if printf '%s\n' "$lines" | grep -q "^B $onum "; then
+  if printf '%s\n' "$lines" | grep -q "^B $okey "; then
     exit 0
   fi
   if ! _jira_fetch_links "$okey"; then
@@ -745,7 +777,7 @@ cmd_block() {
   fi
   lines=$(_jira_parse_links); rc=$?
   [ $rc -ne 0 ] && exit 3
-  if printf '%s\n' "$lines" | grep -q "^B $nnum "; then
+  if printf '%s\n' "$lines" | grep -q "^B $key "; then
     echo "Error: cycle — issue $okey is already blocked by $key" >&2
     exit 1
   fi
@@ -755,6 +787,7 @@ cmd_block() {
 }
 
 cmd_unblock() {
+  [ -n "${1:-}" ] || { echo "Usage: issues-jira.sh unblock <number> --on <m>" >&2; exit 2; }
   local num="$1"; shift
   local on=""
   while [[ $# -gt 0 ]]; do
@@ -764,9 +797,8 @@ cmd_unblock() {
     echo "Usage: issues-jira.sh unblock <number> --on <m>" >&2
     exit 2
   fi
-  local key okey onum
+  local key okey
   key=$(_jira_key "$num"); okey=$(_jira_key "$on")
-  onum="${okey##*-}"
   if ! _jira_fetch_links "$key"; then
     echo "issues-jira.sh: issue $key not found" >&2
     exit 1
@@ -774,7 +806,9 @@ cmd_unblock() {
   local lines rc lid
   lines=$(_jira_parse_links); rc=$?
   [ $rc -ne 0 ] && exit 3
-  lid=$(printf '%s\n' "$lines" | awk -v n="$onum" '$1=="B" && $2==n {print $4; exit}')
+  # Match on the FULL key: `unblock N --on M` targets the local PROJ-M edge
+  # and never deletes a same-suffix foreign link (pass OTHER-M to target one).
+  lid=$(printf '%s\n' "$lines" | awk -v k="$okey" '$1=="B" && $2==k {print $4; exit}')
   if [ -z "$lid" ] || [ "$lid" = "-" ]; then
     echo "Error: issue $key is not blocked by $okey" >&2
     exit 1
@@ -822,10 +856,15 @@ for it in data.get("issues", []) or []:
         if ((l.get("type") or {}).get("name") or "") != "Blocks" or "inwardIssue" not in l:
             continue
         stub = l["inwardIssue"] or {}
-        bnum = (stub.get("key") or "").rsplit("-", 1)[-1]
+        # Emit the blocker's FULL uppercased key: the fallback GET must hit
+        # the link's own issue even when it lives in another project (a bare
+        # suffix would be re-prefixed with JIRA_PROJECT and read the wrong
+        # issue).
+        bkey = (stub.get("key") or "").upper()
         cat = ((((stub.get("fields") or {}).get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
         if not cat:
-            unknown.append(bnum)
+            if bkey:
+                unknown.append(bkey)
         elif cat != "done":
             blocked = True
             break

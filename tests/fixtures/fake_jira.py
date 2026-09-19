@@ -30,11 +30,17 @@ PROJECT = "ENG"
 # statusCategory keys: "new" (To Do), "indeterminate" (In Progress), "done".
 ISSUES = {}   # number -> dict(summary, description, labels[list], cat, comments[list])
 NEXT = [1]
-LINKS = {}    # link id (int) -> {"blocker": n, "blocked": n}  (blocker blocks blocked)
+# Link endpoints are ints (local ENG issues) or full-key strings (FOREIGN).
+LINKS = {}    # link id (int) -> {"blocker": ref, "blocked": ref}  (blocker blocks blocked)
 NEXT_LINK = [1]
+FOREIGN = {}  # full key (e.g. "OPS-2") -> issue dict, for cross-project links
 
 # Failure/behavior toggles (read at request time so a test sets them at launch):
 #   FAKE_JIRA_SEED_MODE=deps        seed a dependency scenario instead of the default set
+#   FAKE_JIRA_FOREIGN_BLOCKER=1     (deps seed only) additionally seed OPS-2 — an OPEN
+#                                   issue in a SECOND project whose numeric suffix
+#                                   deliberately collides with local ENG-2 — blocking
+#                                   both ENG-2 and ENG-3
 #   FAKE_JIRA_OMIT_LINK_STATUS=1    linked-issue stubs omit fields.status (forces the
 #                                   backend's per-blocker fallback GET)
 #   FAKE_JIRA_500_ON_ISSUE=<n>      GET /rest/api/2/issue/ENG-<n> returns 500
@@ -62,6 +68,15 @@ if os.environ.get("FAKE_JIRA_SEED_MODE") == "deps":
     seed("Blocked child", [], "new")                     # ENG-2, blocked by 1
     seed("Free ready", [], "new")                        # ENG-3
     add_link(1, 2)
+    if os.environ.get("FAKE_JIRA_FOREIGN_BLOCKER"):
+        # Cross-project scenario: OPS-2 lives in ANOTHER project and its
+        # numeric suffix collides with local ENG-2 on purpose — a backend
+        # that collapses keys to suffixes will confuse the two. OPS-2 is
+        # open and blocks both ENG-2 and ENG-3.
+        FOREIGN["OPS-2"] = {"summary": "Foreign blocker", "description": "seed foreign",
+                            "labels": [], "cat": "new", "comments": []}
+        add_link("OPS-2", 2)
+        add_link("OPS-2", 3)
 else:
     # A representative starting set — note the label-less one and the blocked one.
     seed("Unlabeled ready", [], "indeterminate")          # ENG-1: claimable ONLY via the empty-labels guard
@@ -83,44 +98,63 @@ def status_obj(cat):
     name = {"new": "To Do", "indeterminate": "In Progress", "done": "Done"}[cat]
     return {"name": name, "statusCategory": {"key": cat}}
 
+# Spec anchor: direction per the Atlassian Jira Cloud REST v2 issueLink POST
+# doc (developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-links/
+# #api-rest-api-2-issuelink-post): outwardIssue performs the outward verb
+# ("blocks"); on a GET, an entry carrying inwardIssue reads with the inward
+# description ("is blocked by"). This convention is fixed by that spec,
+# independent of plugins/autocoder/scripts/issues-jira.sh — so a backend
+# direction bug cannot be masked by editing this fake to match.
 BLOCKS_TYPE = {"id": "10000", "name": "Blocks",
                "inward": "is blocked by", "outward": "blocks"}
 
-def link_stub(n):
+def key_of(ref):
+    # Link endpoints are ints (local project) or full-key strings (FOREIGN).
+    return ref if isinstance(ref, str) else f"{PROJECT}-{ref}"
+
+def issue_rec(ref):
+    return FOREIGN.get(ref) if isinstance(ref, str) else ISSUES.get(ref)
+
+def link_stub(ref):
     # The linked-issue stub as real Jira renders it inside issuelinks. Real
     # instances usually embed fields.status; FAKE_JIRA_OMIT_LINK_STATUS
     # drops it so the backend's per-blocker fallback path can be exercised.
-    stub = {"id": str(1000 + n), "key": f"{PROJECT}-{n}",
-            "fields": {"summary": ISSUES.get(n, {}).get("summary", "")}}
-    if not os.environ.get("FAKE_JIRA_OMIT_LINK_STATUS") and n in ISSUES:
-        stub["fields"]["status"] = status_obj(ISSUES[n]["cat"])
+    key = key_of(ref)
+    it = issue_rec(ref)
+    base = 1000 if isinstance(ref, int) else 2000
+    stub = {"id": str(base + int(key.rsplit("-", 1)[-1])), "key": key,
+            "fields": {"summary": (it or {}).get("summary", "")}}
+    if not os.environ.get("FAKE_JIRA_OMIT_LINK_STATUS") and it:
+        stub["fields"]["status"] = status_obj(it["cat"])
     return stub
 
-def links_of(n):
+def links_of(ref):
     # Direction convention (matches real Jira GETs): on the BLOCKED issue the
     # entry carries inwardIssue (read: "is blocked by <blocker>"); on the
-    # BLOCKER it carries outwardIssue (read: "blocks <blocked>").
+    # BLOCKER it carries outwardIssue (read: "blocks <blocked>"). See the
+    # spec anchor above BLOCKS_TYPE.
     out = []
     for lid, l in sorted(LINKS.items()):
-        if l["blocked"] == n:
+        if l["blocked"] == ref:
             out.append({"id": str(lid), "type": BLOCKS_TYPE,
                         "inwardIssue": link_stub(l["blocker"])})
-        if l["blocker"] == n:
+        if l["blocker"] == ref:
             out.append({"id": str(lid), "type": BLOCKS_TYPE,
                         "outwardIssue": link_stub(l["blocked"])})
     return out
 
-def to_view(n):
-    it = ISSUES[n]
+def to_view(ref):
+    # ref: int (local ENG issue) or full-key string (FOREIGN, e.g. "OPS-2").
+    it = issue_rec(ref)
     return {
-        "key": f"{PROJECT}-{n}",
+        "key": key_of(ref),
         "fields": {
             "summary": it["summary"],
             "description": it["description"],
             "labels": it["labels"],
             "status": status_obj(it["cat"]),
             "comment": {"comments": [{"body": b} for b in it["comments"]]},
-            "issuelinks": links_of(n),
+            "issuelinks": links_of(ref),
         },
     }
 
@@ -189,13 +223,16 @@ class H(BaseHTTPRequestHandler):
             ]})
         m = re.match(r'/rest/api/2/issue/([^/]+)$', path)
         if m:
-            n = self._key_num(m.group(1))
+            key = m.group(1)
+            n = self._key_num(key)
             if str(n) == os.environ.get("FAKE_JIRA_500_ON_ISSUE"):
                 return self._send(500, {"errorMessages": ["injected failure"]})
             if str(n) == os.environ.get("FAKE_JIRA_404_ON_ISSUE"):
                 return self._send(404, {"errorMessages": ["Issue does not exist"]})
             if n in ISSUES:
                 return self._send(200, to_view(n))
+            if key in FOREIGN:   # cross-project issue, addressed by full key
+                return self._send(200, to_view(key))
             return self._send(404, {"errorMessages": ["Issue does not exist"]})
         return self._send(404, {"errorMessages": ["not found"]})
 

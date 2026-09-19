@@ -162,6 +162,26 @@ start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_500_ON_ITEM=1
 "$BACKEND" claim 2 >/dev/null 2>&1;        eq "blocker-resolution HTTP 500 makes claim exit 3" "3" "$?"
 "$BACKEND" any-claimable >/dev/null 2>&1;  eq "blocker-resolution HTTP 500 makes any-claimable exit 3" "3" "$?"
 
+# ── benign write races don't surface as exit 3 ──────────────────────────────
+# Duplicate-add race: a concurrent writer adds the same edge between block's
+# pre-read and its PATCH; ADO answers 400 "relation already exists". The
+# backend must re-check once and exit 0 — the wanted edge exists.
+start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_INJECT_DUP_ON_PATCH=1
+"$BACKEND" block 3 --on 1 >/dev/null 2>&1; eq "block losing a duplicate-add race exits 0" "0" "$?"
+NEDGES=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "the raced edge exists exactly once" "1" "$NEDGES"
+
+# Rev race: a concurrent revision lands between unblock's GET and its
+# rev-guarded PATCH (409). One bounded retry against fresh state succeeds.
+start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_BUMP_REV_ON_FIRST_PATCH=1
+"$BACKEND" unblock 2 --on 1 >/dev/null 2>&1; eq "unblock retries once after a rev conflict and exits 0" "0" "$?"
+NEDGES=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "the retried unblock removed the edge" "0" "$NEDGES"
+
+# Bounded means bounded: a conflict on the retry too stays a backend error.
+start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_BUMP_REV_ON_EVERY_PATCH=1
+"$BACKEND" unblock 2 --on 1 >/dev/null 2>&1; eq "a second consecutive rev conflict surfaces as exit 3" "3" "$?"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
