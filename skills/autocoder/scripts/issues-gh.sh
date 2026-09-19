@@ -204,8 +204,7 @@ cmd_claim() {
     if [ "$state" = "open" ]; then open_blockers="$open_blockers #$m"; fi
   done
   if [ -n "$open_blockers" ]; then
-    echo "Issue #$n is blocked by open issue(s)${open_blockers}." \
-         "Close them first, or remove the edge with \`unblock $n --on N\`." >&2
+    echo "Issue #$n is blocked by open issue(s):${open_blockers}. Close them first, or remove the edge with \`unblock $n --on N\`." >&2
     exit 1
   fi
   gh issue edit "$n" --add-label working >/dev/null || exit 3
