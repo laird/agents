@@ -35,18 +35,29 @@ TMP=$(mktemp -d); LOG="$TMP/server.log"; SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 
-python3 "$FAKE" 0 >"$LOG" 2>&1 &
-SERVER_PID=$!
-PORT=""
-for _ in $(seq 1 50); do
-  PORT=$(sed -n 's/^LISTENING \([0-9]*\)$/\1/p' "$LOG" 2>/dev/null | head -1)
-  [ -n "$PORT" ] && break
-  kill -0 "$SERVER_PID" 2>/dev/null || break
-  sleep 0.1
-done
-[ -n "$PORT" ] || { echo "FAIL: fake server did not report a port"; cat "$LOG"; exit 1; }
+# ── server lifecycle helper ─────────────────────────────────────────────────
+# start_fake [VAR=val ...] — (re)start the fake with the given environment on
+# a fresh ephemeral port and point ADO_ORG_URL at it. Later sections restart
+# with dependency seeds and failure toggles.
+start_fake() {
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null
+  : > "$LOG"
+  env "$@" python3 "$FAKE" 0 >"$LOG" 2>&1 &
+  SERVER_PID=$!
+  PORT=""
+  for _ in $(seq 1 50); do
+    PORT=$(sed -n 's/^LISTENING \([0-9]*\)$/\1/p' "$LOG" 2>/dev/null | head -1)
+    [ -n "$PORT" ] && break
+    kill -0 "$SERVER_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ -z "$PORT" ]; then
+    echo "FAIL: fake server did not report a port"; cat "$LOG"; exit 1
+  fi
+  export ADO_ORG_URL="http://127.0.0.1:${PORT}"
+}
 
-export ADO_ORG_URL="http://127.0.0.1:${PORT}"
+start_fake
 export ADO_PROJECT="Web"
 export ADO_PAT="ignored"
 
@@ -94,6 +105,62 @@ eq "update --add-label adds P3" "True" "$HASP"
 eq "close moves the item to a done state (CLOSED)" "CLOSED" "$("$BACKEND" get "$NUM" | field '["state"]')"
 
 "$BACKEND" get 999 >/dev/null 2>&1; eq "get on a missing work item exits 1" "1" "$?"
+
+# ── dependency edges: full lifecycle on the deps seed ────────────────────────
+# Seeds: 1 = busy blocker (working tag, OPEN), 2 = blocked by 1, 3 = free.
+start_fake FAKE_ADO_SEED_MODE=deps
+
+DEPS2=$("$BACKEND" deps 2)
+eq "deps: blocked item reports its blocker with state" \
+  '{"blockedBy": [{"number": 1, "state": "open"}], "blocks": []}' "$DEPS2"
+DEPS1=$("$BACKEND" deps 1)
+eq "deps: blocker reports the blocks direction" \
+  '{"blockedBy": [], "blocks": [2]}' "$DEPS1"
+
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim of a blocked item is refused (exit 1)" "1" "$?"
+"$BACKEND" any-claimable;           eq "any-claimable skips the blocked first candidate, finds the free one" "0" "$?"
+
+"$BACKEND" block 2 --on 1 >/dev/null 2>&1; eq "idempotent re-add exits 0 (no 400 from ADO's duplicate check)" "0" "$?"
+NEDGES=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "idempotent re-add stored no second edge" "1" "$NEDGES"
+"$BACKEND" block 2 --on 2 >/dev/null 2>&1; eq "self-edge exits 1" "1" "$?"
+"$BACKEND" block 1 --on 2 >/dev/null 2>&1; eq "direct two-node cycle exits 1" "1" "$?"
+
+"$BACKEND" block 3 --on 1 >/dev/null 2>&1;   eq "block on a fresh pair exits 0" "0" "$?"
+"$BACKEND" unblock 3 --on 1 >/dev/null 2>&1; eq "unblock removes the edge (exit 0)" "0" "$?"
+"$BACKEND" unblock 3 --on 1 >/dev/null 2>&1; eq "unblock of an absent edge exits 1" "1" "$?"
+
+"$BACKEND" close 1 >/dev/null 2>&1
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim succeeds once the blocker is closed" "0" "$?"
+
+# ── unblock removes the CORRECT relation when several exist ─────────────────
+# 2 is blocked by both 1 (seeded) and 3 (added); removing the 1-edge must
+# leave the 3-edge intact — a wrong /relations/<idx> would delete the other.
+start_fake FAKE_ADO_SEED_MODE=deps
+"$BACKEND" block 2 --on 3 >/dev/null 2>&1
+"$BACKEND" unblock 2 --on 1 >/dev/null 2>&1; eq "unblock one of two edges exits 0" "0" "$?"
+LEFT=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(",".join(str(b["number"]) for b in json.load(sys.stdin)["blockedBy"]))')
+eq "the untouched edge survives (still blocked by 3, not 1)" "3" "$LEFT"
+BLOCKS3=$("$BACKEND" deps 3 | field '["blocks"]')
+eq "the surviving edge still renders from the blocker side" "[2]" "$BLOCKS3"
+
+# ── tag edits and relation edits don't clobber each other ───────────────────
+"$BACKEND" update 2 --add-label P9 >/dev/null 2>&1
+LEFT=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(",".join(str(b["number"]) for b in json.load(sys.stdin)["blockedBy"]))')
+eq "a tag edit after a relation edit leaves the relation intact" "3" "$LEFT"
+HASP9=$("$BACKEND" get 2 | python3 -c 'import json,sys; print("P9" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
+eq "and the tag itself sticks" "True" "$HASP9"
+
+# ── dangling blocker counts as satisfied (R4) ────────────────────────────────
+start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_404_ON_ITEM=1
+STATE=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(json.load(sys.stdin)["blockedBy"][0]["state"])')
+eq "vanished blocker reports state missing" "missing" "$STATE"
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "dangling blocker does not block the claim" "0" "$?"
+
+# ── resolution failure is exit 3, never a clean negative ────────────────────
+start_fake FAKE_ADO_SEED_MODE=deps FAKE_ADO_500_ON_ITEM=1
+"$BACKEND" claim 2 >/dev/null 2>&1;        eq "blocker-resolution HTTP 500 makes claim exit 3" "3" "$?"
+"$BACKEND" any-claimable >/dev/null 2>&1;  eq "blocker-resolution HTTP 500 makes any-claimable exit 3" "3" "$?"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

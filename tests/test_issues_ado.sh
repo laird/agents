@@ -51,6 +51,17 @@ case "$url" in
   */_apis/wit/workItems/404/comments*) emit '{"comments":[]}' 200 ;;
   */_apis/wit/workItems/*/comments*)   emit '{"comments":[{"text":"a comment"}]}' 200 ;;
   */_apis/wit/workitems/404*)          emit '{"message":"does not exist"}' 404 ;;
+  # ── dependency topology for the deps/block/unblock/claim-gate assertions ──
+  # 13 is blocked by 9: Dependency-Reverse (Predecessor) at relations index 1,
+  # after a Forward link to 2, at rev 5. 9 and 7 carry no relations.
+  */_apis/wit/workitems/13*expand=relations*)
+    emit '{"id":13,"rev":5,"url":"https://dev.azure.com/acme/_apis/wit/workItems/13","fields":{"System.Title":"blocked one","System.State":"Active"},"relations":[{"rel":"System.LinkTypes.Dependency-Forward","url":"https://dev.azure.com/acme/_apis/wit/workItems/2"},{"rel":"System.LinkTypes.Dependency-Reverse","url":"https://dev.azure.com/acme/_apis/wit/workItems/9"}]}' 200 ;;
+  */_apis/wit/workitems/9*expand=relations*)
+    emit '{"id":9,"rev":2,"url":"https://dev.azure.com/acme/_apis/wit/workItems/9","fields":{"System.State":"Active"},"relations":[]}' 200 ;;
+  */_apis/wit/workitems/9*fields=System.State*)
+    emit '{"id":9,"fields":{"System.State":"Active"}}' 200 ;;
+  */_apis/wit/workitems/*expand=relations*)
+    emit '{"id":7,"rev":3,"url":"https://dev.azure.com/acme/_apis/wit/workItems/7","fields":{"System.State":"Active"},"relations":[]}' 200 ;;
   */_apis/wit/workitems/%24*)          emit '{"id":42}' 200 ;;   # create ($Task url-escaped)
   */_apis/wit/workitems/*)             # GET single / PATCH
     if [ "$method" = "GET" ]; then
@@ -137,6 +148,64 @@ run close 7 --comment "done here"
 PATCH=$(data_for_method PATCH)
 assert_contains "close PATCHes System.State" '"path": "/fields/System.State"' "$PATCH"
 assert_contains "close writes the Closed state" '"value": "Closed"' "$PATCH"
+
+# ── dependency verbs: request shapes ────────────────────────────────────────
+# Stub topology: 13 is blocked by 9 (Dependency-Reverse at relations index 1,
+# rev 5); 9 and 7 carry no relations. Every deps/claim read must pass
+# $expand=relations — the API default ($expand=None) omits relations entirely.
+
+run deps 13
+DEPS_URL=$(head -1 "$CURL_CAPTURE" | cut -f2)
+assert_contains "deps GET passes \$expand=relations (API default omits relations)" '$expand=relations' "$DEPS_URL"
+BB=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["blockedBy"][0]["number"], d["blockedBy"][0]["state"])')
+assert_eq "deps maps Dependency-Reverse (Predecessor) to blockedBy with state" "9 open" "$BB"
+BLOCKS=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["blocks"])')
+assert_eq "deps maps Dependency-Forward (Successor) to blocks" "[2]" "$BLOCKS"
+
+run deps 404
+assert_eq "deps on a missing work item exits 1" "1" "$RC"
+
+run block 13 --on 9
+assert_eq "block on an existing edge is idempotent (exit 0)" "0" "$RC"
+NPATCH=$(awk -F'\t' '$1=="PATCH"' "$CURL_CAPTURE" | wc -l)
+assert_eq "idempotent block issues no PATCH (ADO 400s duplicate relations)" "0" "$NPATCH"
+
+run block 9 --on 13
+assert_eq "reverse edge (two-node cycle) exits 1" "1" "$RC"
+
+run block 7 --on 7
+assert_eq "self-edge exits 1" "1" "$RC"
+
+run block 7 --on 9
+assert_eq "block on a fresh pair exits 0" "0" "$RC"
+PATCH=$(data_for_method PATCH)
+assert_contains "block appends via the /relations/- json-patch path" '"path": "/relations/-"' "$PATCH"
+assert_contains "block writes a Dependency-Reverse (Predecessor) relation" '"rel": "System.LinkTypes.Dependency-Reverse"' "$PATCH"
+assert_contains "block targets the blocker work item's own url" '"url": "https://dev.azure.com/acme/_apis/wit/workItems/9"' "$PATCH"
+
+run unblock 13 --on 9
+assert_eq "unblock exits 0" "0" "$RC"
+FIRST_METHOD=$(head -1 "$CURL_CAPTURE" | cut -f1)
+assert_eq "unblock is read-then-patch (GET first)" "GET" "$FIRST_METHOD"
+PATCH=$(data_for_method PATCH)
+assert_contains "unblock guards with a rev test op"          '"op": "test"' "$PATCH"
+assert_contains "unblock tests /rev from the same GET"       '"path": "/rev", "value": 5' "$PATCH"
+assert_contains "unblock removes by relations index"         '"op": "remove", "path": "/relations/1"' "$PATCH"
+
+run unblock 7 --on 9
+assert_eq "unblock of an absent edge exits 1" "1" "$RC"
+
+run claim 13
+assert_eq "claim of a work item with an open blocker exits 1" "1" "$RC"
+
+run claim 7
+CLAIM_GET=$(awk -F'\t' '$1=="GET" {print $2}' "$CURL_CAPTURE" | head -1)
+assert_contains "claim's blocker read passes \$expand=relations" '$expand=relations' "$CLAIM_GET"
+
+run any-claimable
+assert_eq "any-claimable with an unblocked candidate exits 0" "0" "$RC"
+CAND_GET=$(awk -F'\t' '$1=="GET" {print $2}' "$CURL_CAPTURE" | head -1)
+assert_contains "any-claimable candidate reads pass \$expand=relations" '$expand=relations' "$CAND_GET"
 
 # ── usage + config errors ───────────────────────────────────────────────────
 OUT=$(PATH="$TMP/bin:$PATH" "$BACKEND" bogus 2>/dev/null); RC=$?
