@@ -92,6 +92,25 @@ if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
 fi
 source "${SCRIPT_DIR}/issue-fns.sh"
 
+# Capability guard: a stale project-local tree (typically a vendored
+# .agent/scripts) can carry an issue-fns.sh that predates the dependency
+# verbs. If the sourced dispatcher lacks issue_deps, re-resolve SCRIPT_DIR
+# skipping the .agent/scripts candidate and source the newer tree instead.
+if ! type issue_deps >/dev/null 2>&1; then
+  SCRIPT_DIR=$(
+    for d in "$(pwd)/plugins/autocoder/scripts" \
+             "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+      if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
+    done
+    find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  )
+  if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
+    echo "autocoder: cannot locate a dependency-aware issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
+    exit 1
+  fi
+  source "${SCRIPT_DIR}/issue-fns.sh"
+fi
+
 ISSUE_NUM="${1:-}"
 
 if [ -z "$ISSUE_NUM" ]; then
@@ -242,7 +261,36 @@ BRAINSTORM_BODY
 echo "✅ Brainstorming results posted to issue #$ISSUE_NUM"
 ```
 
-### Step 4: Update Labels (Optional)
+### Step 4: Decompose Into Child Issues (Optional)
+
+If brainstorming concludes the issue is an epic that should be split into
+independently implementable children, create the children and wire dependency
+edges so the parent becomes claimable exactly when all children close.
+
+**Order matters — this exact sequence closes a race.** Claim the parent
+*before* creating any child; otherwise a worker can claim the parent edge-less
+mid-decomposition and start implementing an epic that is about to be split.
+
+```bash
+# 1. Claim the parent FIRST — takes it out of the claimable pool while the
+#    dependency edges are still being written.
+issue_claim "$ISSUE_NUM" || { echo "❌ Could not claim #$ISSUE_NUM (already claimed?)"; exit 1; }
+
+# 2. For EACH child in the decomposition: create it, then immediately block
+#    the parent on it.
+CHILD_NUM=$(issue_create --title "$CHILD_TITLE" --body "$CHILD_BODY" | jq -r '.number')
+issue_block "$ISSUE_NUM" --on "$CHILD_NUM"
+
+# 3. After ALL children are created and blocked: release the parent. It
+#    returns to open with the edges already in place, so blocker-aware
+#    claim/any-claimable refuse it until every child is closed.
+issue_release "$ISSUE_NUM"
+```
+
+Then post a comment on the parent (via `issue_comment`) listing the child
+issue numbers so the decomposition is visible in the issue history.
+
+### Step 5: Update Labels (Optional)
 
 If the design is complete and no open questions remain:
 
