@@ -139,33 +139,64 @@ OUT=$(cd "$REPO" && ISSUE_DIR_PATH="$REPO/.issues" AUTOCODER_REQUIRED_LABEL="oth
   python3 "$FILE_BACKEND" list --state open 2>&1)
 assert_not_contains "a different env label gates on that label instead" '"number": 2' "$OUT"
 
-# ── 6. GitHub backend: the claimable search carries the label ───────────────
+# ── 6. GitHub backend: the claimable listing carries the label requirement ──
+# #2783: issues-gh.sh's open/working/blocked reads no longer build a
+# `--search` string (that hit GitHub's index-backed /search/issues endpoint
+# and lagged real-time label writes) -- they fetch `gh issue list --state
+# open --json ...` directly and filter labels client-side with jq. So this
+# gate check now stubs the direct listing and asserts on the FILTERED
+# output/exit-code, not a captured query string.
 mkdir -p "$TMP/bin"
-cat > "$TMP/bin/gh" <<'STUB'
-#!/bin/bash
-prev=""
-for a in "$@"; do
-  [ "$prev" = "--search" ] && printf '%s' "$a" > "$GH_SEARCH_CAPTURE"
-  prev="$a"
-done
-if printf '%s\n' "$@" | grep -q -- '--jq'; then echo 0; else echo '[]'; fi
-STUB
-chmod +x "$TMP/bin/gh"
+cat > "$TMP/gh_issues_mixed.json" <<'EOF'
+[
+  {"number": 10, "title": "not approved", "body": "", "labels": [], "state": "OPEN"},
+  {"number": 11, "title": "approved",     "body": "", "labels": [{"name":"swarm"}], "state": "OPEN"}
+]
+EOF
+cat > "$TMP/gh_issues_unapproved_only.json" <<'EOF'
+[
+  {"number": 10, "title": "not approved", "body": "", "labels": [], "state": "OPEN"}
+]
+EOF
 
-gh_search() {  # gh_search <label-or-empty> <verb...>
-  local label="$1"; shift
-  export GH_SEARCH_CAPTURE="$TMP/gh_search.txt"
-  : > "$GH_SEARCH_CAPTURE"
-  (cd "$REPO" && PATH="$TMP/bin:$PATH" AUTOCODER_REQUIRED_LABEL="$label" \
-    bash "$ROOT/$SCRIPTS/issues-gh.sh" "$@" >/dev/null 2>&1)
-  cat "$GH_SEARCH_CAPTURE"
+gh_run() {  # gh_run <fixture-json> <label-or-empty> <verb...>  -> sets OUT / RC
+  local fixture="$1" label="$2"; shift 2
+  cat > "$TMP/bin/gh" <<STUB
+#!/bin/bash
+if [ "\$1" = "issue" ] && [ "\$2" = "list" ]; then
+  cat "$fixture"
+  exit 0
+fi
+echo "MOCK: unhandled gh call: \$*" >&2
+exit 1
+STUB
+  chmod +x "$TMP/bin/gh"
+  OUT=$(cd "$REPO" && PATH="$TMP/bin:$PATH" AUTOCODER_REQUIRED_LABEL="$label" \
+    bash "$ROOT/$SCRIPTS/issues-gh.sh" "$@" 2>&1)
+  RC=$?
 }
-assert_contains "gh list --state open requires the label" 'label:"swarm"' "$(gh_search swarm list --state open)"
-assert_contains "gh any-claimable requires the label"     'label:"swarm"' "$(gh_search swarm any-claimable)"
-assert_not_contains "ungated gh search carries no label requirement" 'label:"swarm"' "$(gh_search "" list --state open)"
+
+gh_run "$TMP/gh_issues_mixed.json" swarm list --state open
+assert_contains "gh list --state open requires the label" '"number": 11' "$OUT"
+assert_not_contains "gh list --state open drops the unapproved issue" '"number": 10' "$OUT"
+
+gh_run "$TMP/gh_issues_unapproved_only.json" swarm any-claimable
+assert_eq "gh any-claimable requires the label (no approved issue -> false)" "1" "$RC"
+gh_run "$TMP/gh_issues_mixed.json" swarm any-claimable
+assert_eq "gh any-claimable sees the approved issue" "0" "$RC"
+
+gh_run "$TMP/gh_issues_mixed.json" "" list --state open
+assert_contains "ungated gh listing carries no label requirement" '"number": 10' "$OUT"
+
 # `working` is not gated: an issue claimed before the gate was configured must
 # stay visible rather than look like a worker that vanished.
-assert_not_contains "gh list --state working is not gated" 'label:"swarm"' "$(gh_search swarm list --state working)"
+cat > "$TMP/gh_issues_working.json" <<'EOF'
+[
+  {"number": 12, "title": "already working", "body": "", "labels": [{"name":"working"}], "state": "OPEN"}
+]
+EOF
+gh_run "$TMP/gh_issues_working.json" swarm list --state working
+assert_contains "gh list --state working is not gated" '"number": 12' "$OUT"
 
 # ── 7. Jira backend: the claimable JQL carries the label ────────────────────
 cat > "$TMP/bin/curl" <<'STUB'
