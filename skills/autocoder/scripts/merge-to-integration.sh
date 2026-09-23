@@ -101,7 +101,25 @@ fi
 # Isolated throwaway worktree (#1821) — keyed by issue number, matching the existing
 # /tmp/autocoder-merge-<issue>.* convention (only one worker holds an issue's `working`
 # lock at a time, so this is unique per in-flight merge). Never persists past this run.
-WORKTREE_DIR="/tmp/autocoder-merge-worktree-${ISSUE_NUM}"
+#
+# athena2#2980: the root MUST be on the same filesystem as $CALLER_DIR. The
+# node_modules hardlink below (_hardlink_or_copy) is what makes a gate cheap, and
+# `cp -al` cannot cross a filesystem boundary — on a box where the repo is ext4 and
+# /tmp is tmpfs, every gate silently fell back to a real ~2.5 GB copy of node_modules
+# into RAM. With no swap those pages are pinned, so N concurrent gates pinned N x 2.5 GB
+# and the tmpfs hit ENOSPC at unpredictable points (npm extract, vitest temp write,
+# tsc .d.ts emit). Defaulting to /var/tmp keeps the worktree on disk beside the repo on
+# a normal Linux box; override for a layout where the repo lives elsewhere.
+WORKTREE_ROOT="${AUTOCODER_WORKTREE_ROOT:-/var/tmp}"
+mkdir -p "$WORKTREE_ROOT" 2>/dev/null || true
+WORKTREE_DIR="${WORKTREE_ROOT}/autocoder-merge-worktree-${ISSUE_NUM}"
+# athena2#2980: keep the repo-side gate helpers in lockstep with the root chosen here.
+# scripts/repair-merge-worktree-software-factory.sh decides whether it is running inside
+# a throwaway gate worktree by testing `$REPO_ROOT/` against `$ATHENA_GATE_TMP_ROOT/*`
+# (default /tmp). Moving the worktree without telling it makes that test fail, so it
+# exits 0 as "not a throwaway worktree", never repoints @software-factory/*, and the
+# build dies with ERR_MODULE_NOT_FOUND — a silent no-op that would break every gate.
+export ATHENA_GATE_TMP_ROOT="$WORKTREE_ROOT"
 git -C "$CALLER_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || true
 rm -rf "$WORKTREE_DIR" 2>/dev/null || true
 git -C "$CALLER_DIR" worktree prune 2>/dev/null || true
