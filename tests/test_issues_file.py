@@ -78,6 +78,18 @@ class TestList:
         assert "Blocked" not in titles
         assert "Closed" not in titles
 
+    def test_state_open_excludes_ready_for_review_and_awaiting_integration(self, idir):
+        # #3030: both labels stay in open/ (never moved to blocked/, per the
+        # NON_BLOCKING_CLAIM_EXCLUSIONS doctrine that neither is a
+        # human-decision gate), but must not be offered as claimable work.
+        write_issue(idir, 1, "Claimable")
+        write_issue(idir, 2, "Banked", labels=["ready-for-review"])
+        write_issue(idir, 3, "Merging", labels=["awaiting-integration"])
+        out, _, rc = run(["list", "--state", "open"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        titles = [i["title"] for i in json.loads(out)]
+        assert titles == ["Claimable"]
+
     def test_state_working_returns_only_working(self, idir):
         write_issue(idir, 1, "Open")
         write_issue(idir, 2, "Working", bucket="working")
@@ -301,6 +313,18 @@ class TestAnyClaimable:
         d.mkdir()
         _, _, rc = run(["any-claimable"], {"ISSUE_DIR_PATH": str(d)})
         assert rc == 3
+
+    def test_exit_1_when_only_open_issue_is_ready_for_review(self, idir):
+        # #3030: a finished-and-waiting-to-merge issue sits in open/ (not
+        # blocked/) but must not read as claimable work.
+        write_issue(idir, 1, "Banked", labels=["ready-for-review"])
+        _, _, rc = run(["any-claimable"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 1
+
+    def test_exit_1_when_only_open_issue_is_awaiting_integration(self, idir):
+        write_issue(idir, 1, "Banked", labels=["awaiting-integration"])
+        _, _, rc = run(["any-claimable"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 1
 
 
 class TestFindMainWorktree:

@@ -78,6 +78,30 @@ else
   echo "FAIL: gate didn't write work-plan JSON"; FAIL=$((FAIL + 1))
 fi
 
+# ── Test 4 (#3030): a ready-for-review issue must not be re-claimed ──────
+# Regression for the gate re-selecting a banked-but-not-yet-merged issue: with
+# no OTHER claimable work in open/, the gate must see this as idle rather than
+# claiming (and reworking) it.
+cat > "$MAIN/.issues/open/002.md" <<EOF
+---
+number: 2
+title: Already banked
+priority: P2
+labels: [bug, P2, ready-for-review]
+status: open
+---
+Body.
+EOF
+rm -f "$WORK_JSON"
+AUTOCODER_WORK_JSON="$WORK_JSON" bash "$SCRIPT_DIR/fix-loop-gate.sh" 2>/dev/null
+GATE_RC=$?
+assert_eq "fix-loop-gate exit code when only ready-for-review work exists" "1" "$GATE_RC"
+if [ -f "$MAIN/.issues/working/002.md" ]; then
+  echo "FAIL: gate re-claimed a ready-for-review issue"; FAIL=$((FAIL + 1))
+else
+  echo "PASS: gate did not re-claim the ready-for-review issue"; PASS=$((PASS + 1))
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
