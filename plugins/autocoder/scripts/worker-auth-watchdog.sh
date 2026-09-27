@@ -23,9 +23,13 @@
 #   - agent_status is idle or done (a working pane is already recovering;
 #     a blocked pane is waiting on a human dialog and is left alone), AND
 #   - the pane's MOST RECENT TURN — the text after the last `❯ <prompt>` line —
-#     contains an auth-error signature (AUTH_WATCHDOG_ERROR_RE). Looking only
-#     at the latest turn means an error that a later successful turn has
-#     already scrolled past never re-triggers.
+#     ENDS in an error block: its final `●`/`⎿` message opens with an error
+#     (ERROR_START_RE: "API Error", a failed compaction, "Invalid API key", ...)
+#     and contains an auth-error signature (AUTH_WATCHDOG_ERROR_RE). Looking
+#     only at the latest turn means an error that a later successful turn has
+#     already scrolled past never re-triggers; requiring the final block to
+#     OPEN with the error means an answer that merely quotes the signatures
+#     (e.g. an agent discussing an outage) is not mistaken for one.
 #
 # RECOVERY:
 #   1. Probe the credentials (AUTH_WATCHDOG_PROBE_CMD; default: mint an ADC
@@ -73,6 +77,7 @@ STATE_DIR="${AUTH_WATCHDOG_STATE_DIR:-$HOME/.local/state/autocoder/auth-watchdog
 COOLDOWN="${AUTH_WATCHDOG_COOLDOWN:-600}"
 ERROR_RE="${AUTH_WATCHDOG_ERROR_RE:-Could not load Google Cloud credentials|invalid_rapt|reauth related error|OAuth token has expired|Please run /login|authentication_error|Invalid API key}"
 COMPACT_RE='Prompt is too long|automatic compaction failed'
+ERROR_START_RE='^(API Error|Prompt is too long|Invalid API key|OAuth token has expired|Please run /login)'
 RESUME_PROMPT="${AUTH_WATCHDOG_RESUME_PROMPT:-Your last turn failed with an API credential error. Credentials have been refreshed — resume exactly where you left off.}"
 CRON_MARK="# autocoder-worker-auth-watchdog"
 INTERVAL=120
@@ -115,20 +120,31 @@ credentials_valid() {
 # ── Stall classification ─────────────────────────────────────────────────────
 # Reads pane text on stdin; prints "compact", "resume" or "none".
 classify_pane_text() {
-  ERROR_RE="$ERROR_RE" COMPACT_RE="$COMPACT_RE" python3 -c '
+  ERROR_RE="$ERROR_RE" COMPACT_RE="$COMPACT_RE" ERROR_START_RE="$ERROR_START_RE" python3 -c '
 import os, re, sys
-lines = sys.stdin.read().splitlines()
+lines = [l.replace("\u00a0", " ") for l in sys.stdin.read().splitlines()]
 # A turn starts at a submitted prompt: "❯ <text>". The bare input box ("❯" or
 # "❯" + nbsp) at the bottom of the screen is not a turn boundary.
 start = 0
 for i, line in enumerate(lines):
-    s = line.replace("\u00a0", " ").strip()
+    s = line.strip()
     if s.startswith("❯ ") and s[2:].strip():
         start = i + 1
-turn = "\n".join(lines[start:])
-if not re.search(os.environ["ERROR_RE"], turn):
+# The final message block: from the last line opening with a message marker.
+# The "✻ Worked for …" footer and the input-box chrome below it open with
+# neither marker, so they never become the block start.
+block_start = None
+for i in range(start, len(lines)):
+    s = lines[i].strip()
+    if s[:1] in ("●", "⎿"):
+        block_start = i
+if block_start is None:
+    print("none"); sys.exit()
+first = lines[block_start].strip()[1:].strip()
+block = "\n".join(lines[block_start:])
+if not (re.search(os.environ["ERROR_START_RE"], first) and re.search(os.environ["ERROR_RE"], block)):
     print("none")
-elif re.search(os.environ["COMPACT_RE"], turn):
+elif re.search(os.environ["COMPACT_RE"], block):
     print("compact")
 else:
     print("resume")

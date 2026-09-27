@@ -88,6 +88,31 @@ cat > "$T/panes/w13_p1" <<EOF
 $CHROME
 EOF
 
+# Assistant PROSE that quotes the signatures (the manager's own summary of this
+# watchdog, which the first release nudged as if it had failed) → left alone.
+cat > "$T/panes/wM_p1" <<EOF
+❯ great can you automate detecting and recovering that error?
+● Done. How it works:
+  - Detection: flags a pane whose latest turn ended in a credential error
+    (invalid_rapt, "Could not load Google Cloud credentials", and similar).
+  - Even a quoted line like API Error: Could not load Google Cloud credentials
+    mid-answer is not a failure, because the turn kept going after it.
+  - Validation: 32 tests, full suite green.
+  - Log: ~/.local/state/autocoder/auth-watchdog/watchdog.log
+✻ Worked for 12m 3s · done 10:45 PM
+$CHROME
+EOF
+
+# A final answer whose FIRST line names the error (wT's real triage summary).
+cat > "$T/panes/wP_p1" <<EOF
+❯ /autocoder:gate
+  Ran 2 shell commands
+● Triaged #3184 (P1, root-cause Vertex invalid_rapt credential-rebuild failure) and
+  #3183 (P2, the downstream circuit-breaker cascade after "Could not load Google Cloud credentials").
+✻ Brewed for 1m 5s · done 8:14 PM
+$CHROME
+EOF
+
 cp "$T/panes/wT_p1" "$T/panes/wZ_p1"    # same error, but still working
 cp "$T/panes/wT_p1" "$T/panes/wW_p1"    # the pane running the watchdog
 
@@ -99,7 +124,7 @@ agents_json() { # agents_json "<pane>:<status>" ...
   done
   echo "$out],\"type\":\"agent_list\"}}"
 }
-agents_json wT:p1:done w12:p1:idle w11:p1:idle w13:p1:done wZ:p1:working wW:p1:done > "$T/agents.json"
+agents_json wT:p1:done w12:p1:idle w11:p1:idle w13:p1:done wZ:p1:working wW:p1:done wM:p1:done wP:p1:done > "$T/agents.json"
 
 run() { # run <probe-exit-code> <mode...>
   local probe="$1"; shift
@@ -129,6 +154,8 @@ assert_contains "failed compaction gets /compact" "pane send-text w12:p1 /compac
 assert_contains "each send is submitted with a separate enter" "pane send-keys wT:p1 enter" "$(cat "$T/argv")"
 assert_not_contains "error in an older turn is ignored" "w11:p1" "$S"
 assert_not_contains "healthy worker is ignored" "w13:p1" "$S"
+assert_not_contains "prose quoting the error is not a failure" "wM:p1" "$S"
+assert_not_contains "an answer that names the error is not a failure" "wP:p1" "$S"
 assert_not_contains "working pane is ignored" "wZ:p1" "$S"
 assert_not_contains "the watchdog never nudges its own pane" "wW:p1" "$S"
 [ ! -f "$T/state/outage" ] && pass "recovery clears the outage flag" || fail "recovery clears the outage flag"

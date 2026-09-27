@@ -738,3 +738,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Credential outages now cost one human reauth: the watchdog alerts in herdr and resumes every stalled worker within a cron tick of the credentials becoming valid.
 
+
+---
+
+## 2026-09-27 22:53:37 - Fix worker-auth-watchdog prose false positive (autocoder 4.29.1)
+
+**What Changed**: worker-auth-watchdog.sh now requires the latest turn's FINAL message block to open with an error (API Error, failed compaction, Invalid API key, OAuth token expired) and contain a credential signature, instead of matching a signature anywhere in the turn. Added two regression fixtures (an answer quoting the signatures; an answer whose first line names invalid_rapt). Bumped autocoder to 4.29.1, marketplaces 3.50.1.
+
+**Why Changed**: Within minutes of install the watchdog nudged the manager pane with a resume prompt because the manager's summary of the watchdog quoted the error strings; any agent discussing an outage would be nudged the same way.
+
+**Impact**: Only genuinely failed turns are nudged.
+
