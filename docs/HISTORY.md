@@ -727,3 +727,14 @@ This file tracks all significant changes, migrations, and decisions.
 **Why Changed**: An idle swarm kept an LLM manager looping through "nothing to do" iterations, replaying a full context on every tick for zero decisions; between work waves monitoring should cost nothing and a manager should exist only while there is work to manage.
 
 **Impact**: Quiescent swarms now step down into a cron/loop-scheduled shell sentinel that polls at zero token cost and respawns an unattended manager only when its wake predicates fire (claimable work, stale claims, dead/wedged manager, health alerts), with manifest-verified manager identity preventing double-manager spawns.
+
+---
+
+## 2026-09-27 22:36:35 - Add worker-auth-watchdog and bump autocoder to 4.29.0
+
+**What Changed**: Added plugins/autocoder/scripts/worker-auth-watchdog.sh: a zero-token herdr watchdog (--once/--loop/--dry-run/--ensure) that finds agent panes whose latest turn ended in an API credential error, notifies once per outage while credentials stay invalid, and once a credential probe (gcloud ADC token by default) passes, sends /compact to compaction-wedged panes and a resume prompt to the rest, with a per-pane cooldown. Documented as monitor-workers Step 4d, added tests/test_worker_auth_watchdog.sh (32 assertions, fixtures from a real outage), propagated to .pi via package-plugin-scripts.py, and bumped autocoder to 4.29.0 with marketplaces at 3.50.0.
+
+**Why Changed**: When a Vertex fleet's shared gcloud ADC expired (invalid_rapt), every worker stalled; after the human reauth each one still had to be nudged by hand, and workers whose auto-compaction failed stayed wedged at full context until someone typed /compact.
+
+**Impact**: Credential outages now cost one human reauth: the watchdog alerts in herdr and resumes every stalled worker within a cron tick of the credentials becoming valid.
+

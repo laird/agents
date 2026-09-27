@@ -522,6 +522,23 @@ a monitor tick.
 **Do NOT `/clear` a mid-task worker WITHOUT a handoff first** — that loses the task context.
 (Only a worker that has *completed* its task may take a bare `/clear` + `/autocoder:fix-loop`.)
 
+### Step 4d: Credential-Error Stalls (herdr)
+
+When the host's API credentials expire (Vertex fleets: gcloud ADC reauth,
+`invalid_rapt`), every worker's next call fails and it goes idle; some also wedge
+on "Prompt is too long · automatic compaction failed". Reauth is a human step
+(`gcloud auth application-default login`), but the recovery after it is
+mechanical — do not hand-nudge each worker. `worker-auth-watchdog.sh` finds panes
+whose latest turn ended in a credential error, raises one herdr notification per
+outage while credentials are still invalid, and once they are valid sends
+`/compact` to compaction-wedged panes and a resume prompt to the rest (each pane
+at most once per 10 minutes). It costs zero tokens; install it once per host:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --ensure    # cron, every 2 min
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --dry-run   # what a tick would do
+```
+
 ### Step 5: Dispatch Work to Idle Workers
 
 Find unblocked claimable issues sorted by priority (the `--state open`
