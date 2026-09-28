@@ -68,6 +68,23 @@ class TestClaim:
         _, _, rc = run(["claim", "1"], {"ISSUE_DIR_PATH": str(idir)})
         assert rc == 1
 
+    def test_claim_refuses_ready_for_review(self, idir):
+        # #3030: a banked-but-not-yet-merged issue sits in open/ (see
+        # NON_BLOCKING_CLAIM_EXCLUSIONS) but must not be claimable directly
+        # by number, mirroring the other backends' claim-time re-check.
+        seed_open(idir, 1, labels=["ready-for-review"])
+        _, stderr, rc = run(["claim", "1"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 1
+        assert "ready-for-review" in stderr
+        assert (idir / "open" / "001.md").exists()
+        assert not (idir / "working" / "001.md").exists()
+
+    def test_claim_refuses_awaiting_integration(self, idir):
+        seed_open(idir, 1, labels=["awaiting-integration"])
+        _, _, rc = run(["claim", "1"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 1
+        assert (idir / "open" / "001.md").exists()
+
     def test_parallel_claim_exactly_one_winner(self, idir):
         """Spec §Testing-plan: N processes attempt to claim the same issue;
         assert exactly one exits 0, the rest exit 1."""

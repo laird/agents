@@ -61,6 +61,20 @@ BLOCKING_LABELS = frozenset({
     "proposal",
 })
 
+# #3030: labels that mark an issue as finished-and-waiting-to-merge rather
+# than blocked on a human decision. The other backends (gh/jira/ado) already
+# excluded `awaiting-integration` from their claimable-queue filtering, but
+# this backend's directory-bucket model has no such filter at all today for
+# either label -- an issue in either state still sits in the flat `open/`
+# bucket (never moved to `blocked/`, matching the other backends' doctrine
+# that neither is a human-decision gate), so cmd_list/cmd_any_claimable/
+# cmd_claim must each check this set explicitly rather than relying on the
+# bucket the file happens to live in.
+NON_BLOCKING_CLAIM_EXCLUSIONS = frozenset({
+    "awaiting-integration",
+    "ready-for-review",
+})
+
 
 # ---------------------------------------------------------------------------
 # Approved-work gate
@@ -286,10 +300,14 @@ def cmd_list(args):
             # Only the claimable queue is gated. `working` and `blocked` are
             # deliberately not: an issue claimed before the gate was configured
             # must stay visible rather than look like a vanished worker.
-            if bucket == "open" and not labels_approved(
-                data.get("labels"), required_label()
-            ):
-                continue
+            if bucket == "open":
+                if not labels_approved(data.get("labels"), required_label()):
+                    continue
+                # #3030: finished-and-waiting-to-merge issues stay in `open/`
+                # (see NON_BLOCKING_CLAIM_EXCLUSIONS) but must not be offered
+                # as claimable work.
+                if any(l in NON_BLOCKING_CLAIM_EXCLUSIONS for l in (data.get("labels") or [])):
+                    continue
             results.append(to_gh_json(data))
     if args.limit:
         results = results[:args.limit]
@@ -437,11 +455,22 @@ def cmd_claim(args):
     # -- and a filtered queue constrains none of them. Exit 1 is the clean
     # negative callers already handle for a lost claim race.
     required = required_label()
-    if required:
+    if required or NON_BLOCKING_CLAIM_EXCLUSIONS:
         try:
             data = parse_issue_file(src)
         except FileNotFoundError:
             sys.exit(1)
+        # #3030: refuse a finished-and-waiting-to-merge issue reached directly
+        # by number, same as the queue filter above already refuses it.
+        excluded = [l for l in (data.get("labels") or []) if l in NON_BLOCKING_CLAIM_EXCLUSIONS]
+        if excluded:
+            print(
+                f"Refusing to claim #{args.number}: carries blocking label "
+                f"'{excluded[0]}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if required:
         if not labels_approved(data.get("labels"), required):
             print(
                 f"Issue #{args.number} is not approved for autonomous work: "
@@ -510,13 +539,17 @@ def cmd_any_claimable(args):
     for p in open_dir.glob("*.md"):
         if p.name.startswith("."):
             continue
-        if not required:
-            sys.exit(0)
         try:
             data = parse_issue_file(p)
         except FileNotFoundError:
             # Concurrent claim renamed it out from under us; keep looking.
             continue
+        # #3030: a finished-and-waiting-to-merge issue must not make this
+        # report claimable, whether or not a required-label gate is set.
+        if any(l in NON_BLOCKING_CLAIM_EXCLUSIONS for l in (data.get("labels") or [])):
+            continue
+        if not required:
+            sys.exit(0)
         if labels_approved(data.get("labels"), required):
             sys.exit(0)
     sys.exit(1)

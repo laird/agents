@@ -83,6 +83,9 @@ case "$url" in
     emit '' 204 ;;
   */rest/api/2/issue/ENG-7*)
     emit '{"key":"ENG-7","fields":{"summary":"first","description":"the body","labels":["P1","working"],"status":{"statusCategory":{"key":"indeterminate"}},"comment":{"comments":[{"body":"a comment"}]}}}' 200 ;;
+  */rest/api/2/issue/ENG-9*)
+    # #3030: a banked-but-not-yet-merged issue -- claim must refuse it.
+    emit '{"key":"ENG-9","fields":{"labels":["ready-for-review"]}}' 200 ;;
   */rest/api/2/issue)
     emit '{"key":"ENG-42"}' 201 ;;      # create (POST to the collection)
   */rest/api/2/issue/*)
@@ -181,6 +184,13 @@ assert_contains "create sends label" '"P2"' "$CREATE_PAYLOAD"
 # ── claim / release toggle the working label ────────────────────────────────
 run claim 7
 assert_contains "claim adds working label" '"add": "working"' "$(last_data)"
+
+# #3030: claim must refuse an issue reached directly by number that carries a
+# blocking label, not only one filtered out of the open JQL queue.
+run claim 9
+assert_eq "claim refuses an issue carrying ready-for-review" "1" "$RC"
+PUT_TO_9=$(awk -F'\t' '$1 == "PUT" && $2 ~ /ENG-9/' "$CURL_CAPTURE")
+assert_eq "claim refusing ready-for-review never PUTs the label edit" "" "$PUT_TO_9"
 run release 7
 assert_contains "release removes working label" '"remove": "working"' "$(last_data)"
 

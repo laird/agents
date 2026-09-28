@@ -68,11 +68,11 @@
 
 # ── blocking labels ─────────────────────────────────────────────────────────
 # Same set as issues-gh.sh. `working` = claimed; the rest gate on a human
-# decision. `awaiting-integration` = finished, waiting to merge — excluded from
-# the claimable queue but NOT surfaced by `list --state blocked` (it is not a
-# human-decision gate). Jira labels cannot contain spaces, which every label
-# here already satisfies.
-JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration'
+# decision. `awaiting-integration` and `ready-for-review` (#3030) = finished,
+# waiting to merge — excluded from the claimable queue but NOT surfaced by
+# `list --state blocked` (neither is a human-decision gate). Jira labels
+# cannot contain spaces, which every label here already satisfies.
+JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration ready-for-review'
 JIRA_BLOCKED_LABELS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -537,16 +537,30 @@ cmd_claim() {
   # Gate the claim itself, not just the queue: issues reach a worker by number
   # from paths the queue never filters (manager dispatch, /fix N, a resumed
   # loop). Exit 1 is the clean negative callers already handle.
-  if [ -n "$REQUIRED_LABEL" ]; then
+  local labels=""
+  if [ -n "$REQUIRED_LABEL" ] || [ -n "$JIRA_BLOCKING_LABELS" ]; then
     _jira_request_ok GET "/rest/api/2/issue/${key}?fields=labels"
-    local labels
     labels=$(printf '%s' "$_JIRA_BODY" | python3 -c \
       'import json,sys; print(" ".join(json.load(sys.stdin).get("fields",{}).get("labels") or []))' 2>/dev/null) || exit 3
+  fi
+  if [ -n "$REQUIRED_LABEL" ]; then
     if ! issue_labels_approved "$labels"; then
       issue_approval_refusal "$1" "$REQUIRED_LABEL"
       exit 1
     fi
   fi
+  # #3030: re-check the same labels JIRA_BLOCKING_LABELS excludes from the
+  # claimable queue -- an issue reached by number bypasses that queue
+  # entirely. `working` is deliberately skipped here (a pre-existing,
+  # tolerated claim race, not what this re-check is for).
+  local blocking_label
+  for blocking_label in $JIRA_BLOCKING_LABELS; do
+    [ "$blocking_label" = "working" ] && continue
+    if grep -qFx "$blocking_label" <<<"$(tr ' ' '\n' <<<"$labels")"; then
+      echo "Refusing to claim $key: carries blocking label '$blocking_label'" >&2
+      exit 1
+    fi
+  done
   _jira_edit_labels "$key" "add:working"
   # Best-effort: Jira has no atomic single-writer label edit. See header note.
 }
