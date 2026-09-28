@@ -41,19 +41,21 @@
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
-#   1  bad arguments
+#   1  bad arguments, or (#2997/#2998) the repo's scripts/check-gate-command.sh
+#      rejected the --test-cmd or could not produce one, or the resolved
+#      --integration branch does not exist on the remote — nothing was launched
 set -uo pipefail
 
 FEATURE=""
 ISSUE_NUM=""
-INTEGRATION_BRANCH="main"
+INTEGRATION_BRANCH=""
 TEST_CMD=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --feature)     FEATURE="$2"; shift 2 ;;
     --issue)       ISSUE_NUM="$2"; shift 2 ;;
-    --integration) INTEGRATION_BRANCH="${2:-main}"; shift 2 ;;
+    --integration) INTEGRATION_BRANCH="$2"; shift 2 ;;
     --test-cmd)    TEST_CMD="$2"; shift 2 ;;
     *) echo "merge-launch.sh: unknown arg '$1'" >&2; exit 1 ;;
   esac
@@ -63,7 +65,65 @@ if [ -z "$FEATURE" ] || [ -z "$ISSUE_NUM" ]; then
   echo "merge-launch.sh: --feature and --issue are required" >&2
   exit 1
 fi
-: "${INTEGRATION_BRANCH:=main}"
+
+# Integration-branch resolution (#2998, second case: the same "silent default
+# that diverges from the repo's own declared configuration" shape as the
+# --test-cmd hole above). A hardcoded "main" default fails only after a full
+# worktree checkout when the real integration branch is something else (e.g.
+# master) -- CLAUDE.md's own AUTOCODER SWARM CONFIG note names exactly this
+# fallback as a known trap ("a renamed heading silently falls back to a
+# default ... rather than erroring"). An explicit --integration always wins;
+# derive from CLAUDE.md's "### Integration Branch" fenced block only when
+# none was supplied, and fall back to "main" -- loudly, on stderr -- only
+# when that block genuinely cannot be read.
+if [ -z "$INTEGRATION_BRANCH" ]; then
+  CLAUDE_MD_FOR_INTEGRATION="$(pwd)/CLAUDE.md"
+  RESOLVED_INTEGRATION=""
+  if [ -f "$CLAUDE_MD_FOR_INTEGRATION" ]; then
+    RESOLVED_INTEGRATION="$(awk '/^### Integration Branch$/{f=1;next} f&&/^```$/{g=1;next} g&&/^```$/{exit} g{print}' "$CLAUDE_MD_FOR_INTEGRATION" | grep -v '^[[:space:]]*$' | head -1)"
+  fi
+  if [ -n "$RESOLVED_INTEGRATION" ]; then
+    INTEGRATION_BRANCH="$RESOLVED_INTEGRATION"
+    echo "merge-launch.sh: no --integration supplied — resolved to '${INTEGRATION_BRANCH}' from ${CLAUDE_MD_FOR_INTEGRATION}'s '### Integration Branch' block."
+  else
+    INTEGRATION_BRANCH="main"
+    echo "merge-launch.sh: no --integration supplied and ${CLAUDE_MD_FOR_INTEGRATION}'s '### Integration Branch' block could not be read — falling back to 'main'. Verify this is actually the repo's integration branch, or pass --integration explicitly." >&2
+  fi
+fi
+
+# merge-to-integration.sh's `git fetch origin "$INTEGRATION_BRANCH"` only runs
+# AFTER a full `git worktree add` checkout of $FEATURE — a nonexistent
+# integration branch (wrong default, typo, or stale CLAUDE.md) wastes that
+# entire checkout before failing (#2998). Check here, synchronously, before
+# anything is launched, so a bad branch never even reaches the worktree step.
+if ! git ls-remote --exit-code --heads origin "$INTEGRATION_BRANCH" >/dev/null 2>&1; then
+  echo "merge-launch.sh: integration branch 'origin/${INTEGRATION_BRANCH}' does not exist on the remote — refusing to launch (this would otherwise fail only after a full worktree checkout, #2998)." >&2
+  exit 1
+fi
+
+# Gate-command extraction/validation (#2814/#2997/#2998). A hand-retyped or
+# re-quoted --test-cmd is exactly what #2814 hit: a misplaced closing quote
+# silently moved stages outside their isolated-database wrapper with no error
+# at launch time. Repos that maintain a canonical gate command can expose it
+# via an executable scripts/check-gate-command.sh (contract: `--extract`
+# prints the canonical command and exits 0; a candidate string as $1 exits 0
+# if it matches, non-zero with a diagnostic on stderr otherwise). This is a
+# no-op for any repo without that script — other projects using this plugin
+# have no such convention and are unaffected.
+GATE_CMD_SCRIPT="$(pwd)/scripts/check-gate-command.sh"
+if [ -x "$GATE_CMD_SCRIPT" ]; then
+  if [ -z "$TEST_CMD" ]; then
+    if TEST_CMD="$("$GATE_CMD_SCRIPT" --extract)" && [ -n "$TEST_CMD" ]; then
+      echo "merge-launch.sh: no --test-cmd supplied — defaulted to the canonical gate command via ${GATE_CMD_SCRIPT} --extract."
+    else
+      echo "merge-launch.sh: no --test-cmd supplied and ${GATE_CMD_SCRIPT} --extract produced none — refusing to launch a gate with no regression suite (#2992)." >&2
+      exit 1
+    fi
+  elif ! "$GATE_CMD_SCRIPT" "$TEST_CMD"; then
+    echo "merge-launch.sh: supplied --test-cmd failed validation against ${GATE_CMD_SCRIPT} — refusing to launch (see diagnostic above)." >&2
+    exit 1
+  fi
+fi
 
 # Resolve the feature branch to a fixed commit NOW, synchronously, before the
 # caller can move on. merge-to-integration.sh used to `git checkout "$FEATURE"`
