@@ -134,8 +134,16 @@ def push(branch, base, repo, message, target=None):
     ref = f"refs/heads/{target}"
     try:
         gh_api(f"repos/{repo}/git/refs/heads/{target}")
-        gh_api(f"repos/{repo}/git/refs/heads/{target}", "PATCH", {"sha": commit, "force": True})
+        exists = True
     except RuntimeError:
+        exists = False
+    if exists:
+        # Fast-forward only. The commit's parent is the base as last fetched; if a
+        # sibling landed since, a forced update would silently drop its commits
+        # from the target (and verify() would still pass, since it compares trees).
+        # GitHub rejects the non-fast-forward with 422 and the caller reports it.
+        gh_api(f"repos/{repo}/git/refs/heads/{target}", "PATCH", {"sha": commit, "force": False})
+    else:
         gh_api(f"repos/{repo}/git/refs", "POST", {"ref": ref, "sha": commit})
 
     ok, local, remote = verify(repo, branch, target)

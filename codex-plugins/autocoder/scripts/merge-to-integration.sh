@@ -13,7 +13,8 @@
 #   This helper instead lands the work on origin/<integration-branch> WITHOUT checking out
 #   that branch locally (so it never contends with other worktrees), re-runs the test suite
 #   on the combined tree, and pushes with a fetch+merge+retry loop to survive sibling workers
-#   racing to push. Conflicts escalate to a human label instead of stranding work.
+#   racing to push, re-running the tests after every re-sync so no untested tree is
+#   pushed. Conflicts escalate to a human label instead of stranding work.
 #
 #   #1821: this used to do all of that IN the caller's own worktree — `git checkout
 #   "$FEATURE"` right here, then fetch/merge/test/push in place. merge-launch.sh runs this
@@ -201,6 +202,20 @@ for attempt in 1 2 3 4 5; do
   if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
          -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
     _escalate_conflict
+  fi
+  # The re-sync produced a combined tree that step 2 never tested: this fix plus
+  # whatever the sibling just landed. A clean textual merge is not evidence that
+  # tree passes. Two branches that each lowered the same baseline counter by one
+  # merge cleanly into a counter lowered once, and pushing that turned master red
+  # for every subsequent gate (athena2 #3389/#3391). Re-run the gate on exactly
+  # the tree about to be pushed.
+  if [ -n "$TEST_CMD" ]; then
+    echo "🧪 Re-running tests on the re-synced tree (push retry ${attempt}): $TEST_CMD"
+    if ! bash -c "$TEST_CMD"; then
+      echo "❌ Tests fail after re-syncing '${INTEGRATION_BRANCH}' (push retry ${attempt}). NOT pushing."
+      echo "   The fix remains on '${FEATURE}'; investigate the interaction with the work that landed during the gate."
+      exit 2
+    fi
   fi
 done
 
