@@ -31,6 +31,10 @@
 #   merge-to-integration.sh --feature <branch> --issue <num> \
 #     [--feature-sha <sha>] [--integration <branch>] [--test-cmd "<cmd>"]
 #
+#   --test-cmd is the gate. When omitted it is resolved from the repo's AGENTS.md (falling
+#   back to CLAUDE.md), '### Regression Test Suite' fenced block. If that yields nothing the
+#   merge is refused before any fetch/merge/push, unless the change is documents-only.
+#
 #   --feature-sha pins the exact commit to test/push, resolved by the caller before anything
 #   could move the branch out from under it (merge-launch.sh does this). When omitted, this
 #   script resolves $FEATURE itself in the directory it was started from — sufficient for
@@ -39,7 +43,8 @@
 #
 # Returns:
 #   0  merged + pushed to <integration>
-#   1  conflict, push failure, or setup failure (issue is labelled needs-clarification on conflict)
+#   1  conflict, push failure, setup failure, or no test command (issue is labelled
+#      needs-clarification on conflict)
 #   2  tests failed on the integrated tree
 
 set -uo pipefail
@@ -77,6 +82,8 @@ CALLER_DIR="$(pwd)"
 _MTI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=issue-fns.sh
 source "${_MTI_DIR}/issue-fns.sh"
+# shellcheck source=test-cmd-fns.sh
+source "${_MTI_DIR}/test-cmd-fns.sh"
 
 _escalate_conflict() {
   echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
@@ -96,6 +103,25 @@ fi
 if [ -z "$FEATURE_SHA" ]; then
   echo "❌ Could not resolve '${FEATURE}' to a commit (no --feature-sha given and the branch is not in ${CALLER_DIR})." >&2
   exit 1
+fi
+
+# Resolve the gate BEFORE touching anything: an ungated push to the integration branch is
+# never acceptable, so a missing command must stop us while the branch is still unmoved.
+if [ -z "$TEST_CMD" ]; then
+  _REPO_TOP=$(git -C "$CALLER_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$CALLER_DIR")
+  TEST_CMD=$(resolve_test_cmd "$_REPO_TOP")
+  [ -n "$TEST_CMD" ] && echo "ℹ️  No --test-cmd given; using the Regression Test Suite command from the repo doctrine: $TEST_CMD"
+fi
+DOCS_ONLY=0
+if [ -z "$TEST_CMD" ]; then
+  if is_docs_only_diff "$CALLER_DIR" "$FEATURE_SHA" "$INTEGRATION_BRANCH"; then
+    DOCS_ONLY=1
+    echo "ℹ️  No test command, but ${FEATURE} changes documentation only; merging without a test run."
+  else
+    echo "❌ No test command: pass --test-cmd or add a '### Regression Test Suite' fenced block to AGENTS.md or CLAUDE.md." >&2
+    echo "   Refusing to merge '${FEATURE}' into '${INTEGRATION_BRANCH}' untested. Nothing was fetched, merged, or pushed." >&2
+    exit 1
+  fi
 fi
 
 # Isolated throwaway worktree (#1821) — keyed by issue number, matching the existing
@@ -177,19 +203,23 @@ fi
 
 # 2. Re-run the test suite on the COMBINED tree (this fix + everyone else's merged work).
 #    This is the step that catches cross-fix breakage before it lands on the integration branch.
-if [ -n "$TEST_CMD" ]; then
+TESTED_TREE=""
+_run_gate() {
+  [ "$DOCS_ONLY" -eq 1 ] && return 0
   echo "🧪 Re-running tests on the integrated tree: $TEST_CMD"
   if ! bash -c "$TEST_CMD"; then
     echo "❌ Tests fail after integrating '${INTEGRATION_BRANCH}'. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
     exit 2
   fi
-else
-  echo "⚠️  No --test-cmd provided; skipping post-integration re-test (not recommended)."
-fi
+  TESTED_TREE=$(git rev-parse "HEAD^{tree}")
+}
+_run_gate
 
 # 3. Push the feature tip to the integration branch. If a sibling worker pushed in the
-#    meantime the push is rejected; re-sync and retry.
+#    meantime the push is rejected; re-sync and retry. A re-sync that brings in new work
+#    produces a tree nobody has tested, so it goes back through the gate before the next
+#    push (and before the API fallback below, which publishes whatever HEAD is).
 PUSHED=0
 for attempt in 1 2 3 4 5; do
   if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
@@ -198,10 +228,12 @@ for attempt in 1 2 3 4 5; do
   fi
   echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
   git fetch origin "$INTEGRATION_BRANCH" || break
+  BEFORE_RESYNC=$(git rev-parse HEAD)
   if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
          -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
     _escalate_conflict
   fi
+  [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ] && _run_gate
 done
 
 # 3b. If the git transport itself is blocked (e.g. a proxy rejecting
@@ -240,7 +272,14 @@ if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
   exit 1
 fi
 
-echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and verified (tree ${LOCAL_TREE:0:8})."
+if [ "$DOCS_ONLY" -eq 1 ]; then
+  echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (documentation-only change; no tests run; tree ${LOCAL_TREE:0:8})."
+elif [ -n "$TESTED_TREE" ] && [ "$TESTED_TREE" = "$LOCAL_TREE" ]; then
+  echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and verified: tests passed on the published tree ${LOCAL_TREE:0:8}."
+else
+  echo "❌ Internal error: published tree ${LOCAL_TREE:0:8} is not the tree the tests passed on (${TESTED_TREE:0:8})." >&2
+  exit 1
+fi
 
 # 4. Clean up the feature branch now that its work is on the integration branch.
 git push origin --delete "$FEATURE" 2>/dev/null || true

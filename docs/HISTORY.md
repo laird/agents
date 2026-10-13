@@ -749,3 +749,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Only genuinely failed turns are nudged.
 
+
+---
+
+## 2026-10-13 19:37:47 - Require a test command for every integration merge (autocoder 4.29.2)
+
+**What Changed**: merge-to-integration.sh no longer pushes untested work when --test-cmd is omitted: it resolves the command from AGENTS.md (falling back to CLAUDE.md, '### Regression Test Suite' fenced block) and refuses before any fetch/merge/push when none resolves; documents-only diffs are the only exemption. A rejected push whose re-sync brings in new work re-runs the tests before pushing again (including before the API fallback), and the success message says 'verified' only when the tests passed on the published tree. merge-launch.sh refuses to launch without a resolvable command. Shared logic lives in test-cmd-fns.sh; added tests/test_merge_requires_test_cmd.sh. Bumped autocoder to 4.29.2, marketplaces 3.50.2.
+
+**Why Changed**: A merge launched without --test-cmd printed a warning, pushed the untested combined tree to the integration branch, and reported it 'merged and verified'; the push-retry path also published re-merged trees nobody had tested.
+
+**Impact**: The integration branch only moves on a tree that passed the gate.
+

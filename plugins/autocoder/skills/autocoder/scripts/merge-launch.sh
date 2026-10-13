@@ -32,6 +32,11 @@
 #   merge-launch.sh --feature <branch> --issue <num> \
 #     [--integration <branch>] [--test-cmd "<cmd>"]
 #
+#   Without --test-cmd the command is resolved from AGENTS.md / CLAUDE.md
+#   ('### Regression Test Suite'), exactly as merge-to-integration.sh does, and
+#   the launch is refused if none resolves (documents-only changes excepted) —
+#   the caller sees the refusal now instead of in a detached log.
+#
 # State files (keyed by issue number, since only one worker holds an issue's
 # `working` lock at a time so this is unique per in-flight merge):
 #   /tmp/autocoder-merge-<issue>.pid   — PID of the detached run
@@ -41,7 +46,7 @@
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
-#   1  bad arguments
+#   1  bad arguments, or no test command resolvable
 set -uo pipefail
 
 FEATURE=""
@@ -79,6 +84,16 @@ fi
 FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
 
 _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=test-cmd-fns.sh
+source "${_MLI_DIR}/test-cmd-fns.sh"
+
+if [ -z "$TEST_CMD" ]; then
+  TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+  if [ -z "$TEST_CMD" ] && ! is_docs_only_diff "$(pwd)" "${FEATURE_SHA:-$FEATURE}" "$INTEGRATION_BRANCH"; then
+    echo "merge-launch.sh: no test command — pass --test-cmd or add a '### Regression Test Suite' fenced block to AGENTS.md or CLAUDE.md. Not launching an untested merge." >&2
+    exit 1
+  fi
+fi
 LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
 PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
 EXITFILE="/tmp/autocoder-merge-${ISSUE_NUM}.exit"

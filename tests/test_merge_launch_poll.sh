@@ -35,6 +35,7 @@ trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-19001.* /tmp/autocoder-merge-190
 mkdir -p "$TMP/fakebin"
 cp "$SCRIPT_DIR/merge-launch.sh" "$TMP/fakebin/"
 cp "$SCRIPT_DIR/merge-poll.sh" "$TMP/fakebin/"
+cp "$SCRIPT_DIR/test-cmd-fns.sh" "$TMP/fakebin/"
 
 # ── Fixture 1: a slow, successful fake merge (issue #19001) ─────────────────
 cat > "$TMP/fakebin/merge-to-integration.sh" <<'FAKE'
