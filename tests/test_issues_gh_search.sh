@@ -56,7 +56,8 @@ capture_search() {
 }
 
 BLOCKING_LABELS=(working needs-design needs-clarification needs-feedback \
-                 needs-approval too-complex future proposal awaiting-integration)
+                 needs-approval too-complex future proposal awaiting-integration \
+                 ready-for-review)
 
 # ── list --state open must exclude each blocking label ─────────────────────
 SEARCH=$(capture_search list --state open --limit 10)
@@ -79,6 +80,45 @@ assert_not_contains "list --state blocked does not negate needs-design" '-label:
 # human decision". It must suppress the issue from the claimable queue without
 # showing up in /review-blocked.
 assert_not_contains "blocked search excludes awaiting-integration" 'awaiting-integration' "$SEARCH"
+# #3030: ready-for-review is the same shape — done, waiting to merge, not a
+# human-decision gate.
+assert_not_contains "blocked search excludes ready-for-review" 'ready-for-review' "$SEARCH"
+
+# ── #3030: cmd_claim must refuse an issue reached directly by number too,
+# not just via the filtered `list`/`any-claimable` queue ───────────────────
+claim_with_labels() {
+  # Stubs `gh issue view --json labels` with the given labels (one per line)
+  # and `gh issue edit --add-label working` to record whether it ran.
+  local labels="$1"
+  local claim_tmp
+  claim_tmp=$(mktemp -d)
+  trap 'rm -rf "$claim_tmp"' RETURN
+  mkdir -p "$claim_tmp/bin"
+  cat > "$claim_tmp/bin/gh" <<STUB
+#!/bin/bash
+if [ "\$1" = "issue" ] && [ "\$2" = "view" ]; then
+  printf '%s\n' "$labels"
+  exit 0
+fi
+if [ "\$1" = "issue" ] && [ "\$2" = "edit" ]; then
+  echo "EDIT_RAN" >> "$claim_tmp/edit.log"
+  exit 0
+fi
+exit 0
+STUB
+  chmod +x "$claim_tmp/bin/gh"
+  BASH_ENV="" PATH="$claim_tmp/bin:$PATH" "$BACKEND" claim 999 >/dev/null 2>&1
+  local rc=$?
+  local edited="no"
+  [ -f "$claim_tmp/edit.log" ] && edited="yes"
+  echo "$rc:$edited"
+}
+
+result=$(claim_with_labels "ready-for-review")
+assert_contains "claim refuses an issue carrying ready-for-review" "1:no" "$result"
+
+result=$(claim_with_labels "P2")
+assert_contains "claim still succeeds for an unblocked issue" "0:yes" "$result"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

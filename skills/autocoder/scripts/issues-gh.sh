@@ -47,10 +47,11 @@ _igh_required_search() {
 # is a valueless qualifier meaning "issue has no labels at all", so that form
 # matches only unlabeled issues and silently hides every real issue, leaving the
 # autocoder loop permanently idle. See tests/test_issues_gh_search.sh.
-# `awaiting-integration` is excluded from the claimable queue but deliberately
-# absent from BLOCKED_LABEL_SEARCH below: the work is finished and waiting to be
-# merged, not blocked on a human decision, so /review-blocked must not surface it.
-BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration"'
+# `awaiting-integration` and `ready-for-review` (#3030) are excluded from the
+# claimable queue but deliberately absent from BLOCKED_LABEL_SEARCH below: in
+# both cases the work is finished and waiting to be merged, not blocked on a
+# human decision, so /review-blocked must not surface it.
+BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration" -label:"ready-for-review"'
 BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal"'
 
 # ── list ───────────────────────────────────────────────────────────────────
@@ -163,6 +164,16 @@ cmd_create() {
 }
 
 # ── claim (best-effort) ────────────────────────────────────────────────────
+# #3030: the same labels BLOCKING_SEARCH excludes from the claimable queue,
+# re-checked at claim time below. A literal duplicate of that list rather than
+# a derived one -- BLOCKING_SEARCH is a `gh search` qualifier string, not a
+# label set this shell can iterate directly, and this codebase's convention
+# (see fix.md's label-provisioning array) is a plain literal list over a
+# shared-parsing abstraction for a handful of static strings. `working` is
+# deliberately absent: re-claiming an already-working issue is a pre-existing,
+# tolerated race (see the comment below), not what this re-check is for.
+CLAIM_BLOCKING_LABELS=(needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration ready-for-review)
+
 cmd_claim() {
   local n="$1"
   # Gate the claim itself, not just the queue. Issues reach a worker by number
@@ -170,14 +181,26 @@ cmd_claim() {
   # filtered queue does not constrain any of them. Refusing here is what makes
   # the approval actually authoritative. Exit 1: a clean negative, the same
   # code a lost claim race returns, so callers already handle it.
-  if [ -n "$REQUIRED_LABEL" ]; then
-    local labels
+  local labels=""
+  if [ -n "$REQUIRED_LABEL" ] || [ "${#CLAIM_BLOCKING_LABELS[@]}" -gt 0 ]; then
     labels=$(gh issue view "$n" --json labels --jq '.labels[].name' 2>/dev/null) || exit 3
+  fi
+  if [ -n "$REQUIRED_LABEL" ]; then
     if ! issue_labels_approved "$labels"; then
       issue_approval_refusal "$n" "$REQUIRED_LABEL"
       exit 1
     fi
   fi
+  # #3030: an issue reached by number bypasses the filtered queue entirely, so
+  # a banked-but-not-yet-merged (`ready-for-review`) or otherwise-blocked
+  # issue must be refused here too, not only hidden from `list`/`any-claimable`.
+  local blocking_label
+  for blocking_label in "${CLAIM_BLOCKING_LABELS[@]}"; do
+    if grep -qFx "$blocking_label" <<<"$labels"; then
+      echo "Refusing to claim #$n: carries blocking label '$blocking_label'" >&2
+      exit 1
+    fi
+  done
   gh issue edit "$n" --add-label working >/dev/null || exit 3
   # Best-effort: gh has no atomic single-writer label edit. See spec §4.
 }

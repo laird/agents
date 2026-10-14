@@ -65,6 +65,12 @@ PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
     "needs-approval", "needs-design", "needs-clarification",
     "too-complex", "future", "decomposed", "blocked", "awaiting-integration",
+    # #3030: a banked-but-not-yet-merged issue must not be re-claimed and
+    # reworked by the next gate tick. Workers set this (and drop `working`)
+    # at bank time per docs/ISSUE-WORKFLOW.md; without it here, the very
+    # next classify() pass saw neither `working` nor a blocking label and
+    # immediately re-selected the issue for rework.
+    "ready-for-review",
 }
 WORKING = "working"
 PROPOSAL = "proposal"

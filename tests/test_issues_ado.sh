@@ -52,6 +52,9 @@ case "$url" in
   */_apis/wit/workItems/*/comments*)   emit '{"comments":[{"text":"a comment"}]}' 200 ;;
   */_apis/wit/workitems/404*)          emit '{"message":"does not exist"}' 404 ;;
   */_apis/wit/workitems/%24*)          emit '{"id":42}' 200 ;;   # create ($Task url-escaped)
+  */_apis/wit/workitems/9\?*)
+    # #3030: a banked-but-not-yet-merged work item -- claim must refuse it.
+    emit '{"id":9,"fields":{"System.Tags":"ready-for-review"}}' 200 ;;
   */_apis/wit/workitems/*)             # GET single / PATCH
     if [ "$method" = "GET" ]; then
       emit '{"id":7,"fields":{"System.Title":"first","System.Description":"the body","System.Tags":"P1; working","System.State":"Active"}}' 200
@@ -131,6 +134,13 @@ run claim 7
 PATCH=$(data_for_method PATCH)
 assert_contains "claim PATCHes System.Tags" '"path": "/fields/System.Tags"' "$PATCH"
 assert_contains "claim adds working to the tag string" "working" "$PATCH"
+
+# #3030: claim must refuse a work item reached directly by id that carries a
+# blocking tag, not only one filtered out of the open WIQL queue.
+run claim 9
+assert_eq "claim refuses a work item carrying ready-for-review" "1" "$RC"
+PATCH_TO_9=$(awk -F'\t' '$1 == "PATCH" && $2 ~ /workitems\/9\?/' "$CURL_CAPTURE")
+assert_eq "claim refusing ready-for-review never PATCHes the tag edit" "" "$PATCH_TO_9"
 
 # ── close sets System.State to a done state ─────────────────────────────────
 run close 7 --comment "done here"

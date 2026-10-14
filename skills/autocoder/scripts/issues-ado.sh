@@ -54,8 +54,10 @@
 API_VERSION="7.0"
 COMMENTS_API_VERSION="7.0-preview.3"
 
-# Tags that gate claimability; same taxonomy as the other backends.
-ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration'
+# Tags that gate claimability; same taxonomy as the other backends. #3030:
+# ready-for-review joins awaiting-integration -- both finished-and-waiting-to-
+# merge states, excluded from claimability but not a human-decision "blocked".
+ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration ready-for-review'
 ADO_BLOCKED_TAGS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 # States treated as "done" across the default processes.
 ADO_DONE_STATES="Closed Done Resolved Removed Completed"
@@ -403,16 +405,30 @@ PY
 # from paths the queue never filters (manager dispatch, /fix N, a resumed
 # loop). Exit 1 is the clean negative callers already handle.
 cmd_claim() {
-  if [ -n "$REQUIRED_LABEL" ]; then
+  local tags=""
+  if [ -n "$REQUIRED_LABEL" ] || [ -n "$ADO_BLOCKING_TAGS" ]; then
     _ado_request_ok GET "/_apis/wit/workitems/${1}?fields=System.Tags&api-version=${API_VERSION}"
-    local tags
     tags=$(printf '%s' "$_ADO_BODY" | python3 -c \
       'import json,sys; print(" ".join(t.strip() for t in ((json.load(sys.stdin).get("fields",{}) or {}).get("System.Tags") or "").split(";") if t.strip()))' 2>/dev/null) || exit 3
+  fi
+  if [ -n "$REQUIRED_LABEL" ]; then
     if ! issue_labels_approved "$tags"; then
       issue_approval_refusal "$1" "$REQUIRED_LABEL"
       exit 1
     fi
   fi
+  # #3030: re-check the same tags ADO_BLOCKING_TAGS excludes from the
+  # claimable queue -- a work item reached by id bypasses that queue
+  # entirely. `working` is deliberately skipped here (a pre-existing,
+  # tolerated claim race, not what this re-check is for).
+  local blocking_tag
+  for blocking_tag in $ADO_BLOCKING_TAGS; do
+    [ "$blocking_tag" = "working" ] && continue
+    if grep -qFx "$blocking_tag" <<<"$(tr ' ' '\n' <<<"$tags")"; then
+      echo "Refusing to claim #$1: carries blocking tag '$blocking_tag'" >&2
+      exit 1
+    fi
+  done
   _ado_edit_tags "$1" "add:working"
 }
 cmd_release() { _ado_edit_tags "$1" "remove:working"; }
