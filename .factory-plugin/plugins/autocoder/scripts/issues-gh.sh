@@ -37,21 +37,36 @@ _igh_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${_igh_DIR}/issue-approval-lib.sh"
 REQUIRED_LABEL="$(required_issue_label)"
 
-# Render the gate as a search qualifier, empty when the gate is off.
-_igh_required_search() {
-  [ -n "$REQUIRED_LABEL" ] || return 0
-  printf ' label:"%s"' "$REQUIRED_LABEL"
+# Blocking/blocked label sets, as JSON arrays for jq (see cmd_list below).
+# `awaiting-integration` is excluded from the claimable queue but deliberately
+# absent from BLOCKED_LABELS_JSON: the work is finished and waiting to be
+# merged, not blocked on a human decision, so /review-blocked must not surface it.
+BLOCKING_LABELS_JSON='["working","needs-design","needs-clarification","needs-feedback","needs-approval","too-complex","future","proposal","awaiting-integration"]'
+BLOCKED_LABELS_JSON='["needs-design","needs-clarification","needs-feedback","needs-approval","too-complex","future","proposal"]'
+
+# #2783: `open`/`working`/`blocked` used to be `gh issue list --search '...'`,
+# which hits GitHub's index-backed /search/issues endpoint. That index lags
+# real-time label writes (commonly seconds, more under this repo's concurrent-
+# swarm label churn), so the gate repeatedly handed out issues that a fresh
+# direct read showed already `working`. The predicate here is pure label
+# boolean logic, which the primary REST list endpoint expresses exactly with
+# no index in between -- fetch open issues directly and filter labels
+# client-side with jq instead. (`closed`/`all` below were already direct and
+# are unchanged.) Reserve `--search` for text queries the REST list endpoint
+# genuinely cannot express.
+IGH_LIST_FETCH_LIMIT="${IGH_LIST_FETCH_LIMIT:-1000}"
+
+_igh_fetch_open_raw() {
+  gh issue list --state open --json number,title,body,labels,state --limit "$IGH_LIST_FETCH_LIMIT"
 }
 
-# Exclude each blocking label with `-label:"X"`. NOT `no:label "X"` — `no:label`
-# is a valueless qualifier meaning "issue has no labels at all", so that form
-# matches only unlabeled issues and silently hides every real issue, leaving the
-# autocoder loop permanently idle. See tests/test_issues_gh_search.sh.
-# `awaiting-integration` is excluded from the claimable queue but deliberately
-# absent from BLOCKED_LABEL_SEARCH below: the work is finished and waiting to be
-# merged, not blocked on a human decision, so /review-blocked must not surface it.
-BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration"'
-BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal"'
+# $1: raw JSON array from _igh_fetch_open_raw. $2: jq boolean expression over
+# one issue `.`, with $blocking/$blocked/$req bound.
+_igh_filter_open_raw() {
+  local raw="$1" select_expr="$2"
+  printf '%s' "$raw" | jq --argjson blocking "$BLOCKING_LABELS_JSON" --argjson blocked "$BLOCKED_LABELS_JSON" \
+    --arg req "$REQUIRED_LABEL" "[.[] | select($select_expr)]"
+}
 
 # ── list ───────────────────────────────────────────────────────────────────
 cmd_list() {
@@ -64,21 +79,38 @@ cmd_list() {
       *)       shift ;;
     esac
   done
-  local search=""
   case "$state" in
     # Only the claimable queue is gated. `working` and `blocked` deliberately
     # are not: an issue claimed before the gate was configured must stay
     # visible to the manager, and hiding in-flight work would read as the
     # worker having vanished.
-    open)    search="$BLOCKING_SEARCH$(_igh_required_search)" ;;
-    working) search='label:"working"' ;;
-    blocked) search="$BLOCKED_LABEL_SEARCH" ;;
+    open|working|blocked)
+      local raw filtered select_expr
+      raw=$(_igh_fetch_open_raw) || exit 3
+      case "$state" in
+        open)
+          # No overlap with $blocking, and (when the approval gate is on) $req present.
+          select_expr='(([.labels[].name] // []) as $names | ($blocking - $names) == $blocking)'
+          [ -n "$REQUIRED_LABEL" ] && select_expr="($select_expr) and ((.labels | map(.name) | index(\$req)) != null)"
+          ;;
+        working)
+          select_expr='((.labels | map(.name) | index("working")) != null)'
+          ;;
+        blocked)
+          # At least one label from $blocked present.
+          select_expr='(([.labels[].name] // []) as $names | ($blocked - $names) != $blocked)'
+          ;;
+      esac
+      filtered=$(_igh_filter_open_raw "$raw" "$select_expr") || exit 3
+      [ -n "$label" ] && filtered=$(printf '%s' "$filtered" | jq --arg lbl "$label" '[.[] | select(.labels | map(.name) | index($lbl))]')
+      [ -n "$limit" ] && filtered=$(printf '%s' "$filtered" | jq --argjson n "$limit" '.[0:$n]')
+      printf '%s\n' "$filtered"
+      return
+      ;;
     closed)  args+=(--state closed) ;;
     all)     args+=(--state all) ;;
     *)       echo "Unknown state: $state" >&2; exit 2 ;;
   esac
-  [ "$state" = "open" ] || [ "$state" = "working" ] || [ "$state" = "blocked" ] && args+=(--state open)
-  [ -n "$search" ] && args+=(--search "$search")
   [ -n "$label" ] && args+=(--label "$label")
   [ -n "$limit" ] && args+=(--limit "$limit")
   gh issue list "${args[@]}" --json number,title,body,labels,state || exit 3
@@ -191,9 +223,7 @@ cmd_release() {
 # ── any-claimable ──────────────────────────────────────────────────────────
 cmd_any_claimable() {
   local count
-  count=$(gh issue list --state open \
-    --search "$BLOCKING_SEARCH$(_igh_required_search)" \
-    -L 1 --json number --jq 'length') || exit 3
+  count=$(cmd_list --state open | jq 'length') || exit 3
   [ "$count" -gt 0 ]
 }
 
