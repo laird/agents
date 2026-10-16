@@ -24,7 +24,8 @@
 #     last_green=<sha>    tip that last passed; origin/<green-ref> overrides it when present
 #     red_issue=<num>     open P0 tracking the current red streak, empty when green
 #   origin/<green-ref> is the source of truth another tool (a deploy) can read; the file is
-#   a cache of it plus the two fields git has no home for.
+#   a cache of it plus the two fields git has no home for. After every green tick,
+#   promote.sh --auto moves each auto:true environment of .autocoder.json to it.
 #
 # SCRATCH: ${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id> is a persistent worktree
 #   (created once, re-pointed every tick). The same directory is scanned for
@@ -325,6 +326,15 @@ reconcile_handoffs() {
   done
 }
 
+# Environments with auto:true (promote.sh, .autocoder.json "environments") follow every
+# green tick. Their outcome never changes the tick's exit code: a refused promotion is the
+# release gate doing its job, not a sentinel failure.
+auto_promote() {
+  [ -f "${_MS_DIR}/promote.sh" ] || return 0
+  bash "${_MS_DIR}/promote.sh" --auto --repo "$REPO" --green-ref "$GREEN" --test-cmd "$TEST_CMD" 2>&1 | sed 's/^/   /'
+  return 0
+}
+
 tick() {
   local tip green
   state_load
@@ -345,6 +355,7 @@ tick() {
     last_green="$tip"; last_tested="$tip"; red_issue=""
     state_save
     echo "✅ ${INTEGRATION} green at ${tip:0:7}"
+    auto_promote
     return 0
   fi
   cp -f "$GATE_LOG" "$RED_LOG" 2>/dev/null
@@ -352,6 +363,7 @@ tick() {
   if repair "$tip"; then
     file_red "$tip"
     echo "🔁 reverted ${CULPRIT:0:7} as ${REVERT:0:7}; filed #${NEW_ISSUE}"
+    auto_promote
     return 0
   fi
   if [ -n "$red_issue" ] && issue_is_open "$red_issue"; then
