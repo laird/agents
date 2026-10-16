@@ -28,9 +28,11 @@
 #   promote.sh --to <env> [--commit <sha|ref>] [--allow-rollback] [--dry-run]
 #   promote.sh --list
 #   promote.sh --auto                 every auto:true environment, in pipeline order
-#   common: [--repo DIR] [--green-ref main-green] [--test-cmd "<cmd>"]
+#   common: [--repo DIR] [--integration main] [--green-ref <integration>-green] [--test-cmd "<cmd>"]
 #   --commit defaults to the newest proven commit: origin/<green-ref> for requires=green,
 #     otherwise the required environment's tip.
+#   --green-ref defaults to AUTOCODER_GREEN_REF, then <integration>-green, the same rule
+#     main-sentinel.sh applies, so both name one ref without configuration.
 #   --test-cmd is the full regression command whose gate-cache records count as proof. It
 #     defaults to the '### Regression Test Suite' block of AGENTS.md / CLAUDE.md, as in the
 #     sentinel, and must match what the sentinel ran. Without one, only an exact tip counts.
@@ -45,14 +47,15 @@ source "${_PR_DIR}/gate-cache-fns.sh"
 # shellcheck source=test-cmd-fns.sh
 source "${_PR_DIR}/test-cmd-fns.sh"
 
-REPO="" GREEN="main-green" TEST_CMD="" TO="" COMMIT="" MODE="promote" ROLLBACK=0 DRY=0
+REPO="" INTEGRATION="main" GREEN="${AUTOCODER_GREEN_REF:-}" TEST_CMD="" TO="" COMMIT="" MODE="promote" ROLLBACK=0 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo|--green-ref|--test-cmd|--to|--commit)
+    --repo|--integration|--green-ref|--test-cmd|--to|--commit)
       [ $# -ge 2 ] || { echo "promote.sh: $1 needs a value" >&2; exit 1; } ;;
   esac
   case "$1" in
     --repo)           REPO="$2"; shift 2 ;;
+    --integration)    INTEGRATION="$2"; shift 2 ;;
     --green-ref)      GREEN="$2"; shift 2 ;;
     --test-cmd)       TEST_CMD="$2"; shift 2 ;;
     --to)             TO="$2"; shift 2 ;;
@@ -64,6 +67,7 @@ while [ $# -gt 0 ]; do
     *) echo "promote.sh: unknown arg '$1'" >&2; exit 1 ;;
   esac
 done
+[ -n "$GREEN" ] || GREEN="${INTEGRATION}-green"
 if [ "$MODE" = promote ] && [ -z "$TO" ]; then
   echo "promote.sh: --to <env> is required (or --list / --auto)" >&2
   exit 1

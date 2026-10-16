@@ -117,7 +117,7 @@ check "prod refused: exit 2" '[ "$RC" -eq 2 ]'
 check "env/prod absent" '[ -z "$(origin_sha env/prod)" ]'
 check "the e2e test ran once" '[ "$(e2e_runs)" -eq 1 ]'
 check "reason names the failing test" 'grep -q "E2E_BROKEN.*failed on ${X:0:7}" <<< "$OUT"'
-check "no throwaway worktree left behind" '[ "$(git -C "$REPO" worktree list | wc -l)" -eq 2 ]'
+check "no throwaway worktree left behind" '[ "$(git -C "$REPO" worktree list | wc -l)" -eq 1 ]'
 git -C "$REPO" rm -q E2E_BROKEN
 commit_on_main f4 "fix e2e"
 Y=$(origin_sha main)
@@ -182,6 +182,14 @@ RED=$(origin_sha main)
 OUT=$(sentinel); RC=$?
 check "repaired tick exits 0" '[ "$RC" -eq 0 ]'
 check "env/staging followed the revert, not the red tip" '[ "$(origin_sha env/staging)" = "$(origin_sha main-green)" ] && [ "$(origin_sha env/staging)" != "$RED" ]'
+
+echo "── 10. the green ref follows the integration branch ──"
+OUT=$(promote --to staging --integration master); RC=$?
+check "--integration master looks for origin/master-green" '[ "$RC" -eq 2 ] && grep -q "master-green does not exist" <<< "$OUT"'
+OUT=$(AUTOCODER_GREEN_REF=proof promote --to staging); RC=$?
+check "AUTOCODER_GREEN_REF overrides the default" '[ "$RC" -eq 2 ] && grep -q "origin/proof does not exist" <<< "$OUT"'
+OUT=$(AUTOCODER_GREEN_REF=proof promote --to staging --green-ref main-green); RC=$?
+check "--green-ref overrides both" '[ "$RC" -eq 0 ] && grep -q "already at" <<< "$OUT"'
 
 echo "── 9. config errors ──"
 OUT=$(promote --to qa 2>&1); RC=$?
