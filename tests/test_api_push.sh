@@ -132,4 +132,70 @@ if 'exit 1' not in src[i:i+900] and '_fail 1 ' not in src[i:i+900]:
     sys.exit(1)
 PYVER
 
+# -- 10. Behavior against a fake Git Data API backed by a bare repo ------------
+# tests/fixtures/fake_gh_git_data.py answers `gh api` with real git plumbing on
+# the bare origin, so what api-push publishes is what a fetch then sees.
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/bin"
+printf '#!/bin/bash\nexec python3 -I %q "$@"\n' "$ROOT/tests/fixtures/fake_gh_git_data.py" > "$T/bin/gh"
+chmod +x "$T/bin/gh"
+git init -q --bare "$T/origin.git"
+git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
+cd "$T/repo" || fail "cannot enter fixture"
+git config user.email t@example.com; git config user.name T
+git checkout -q -b main
+printf 'keep\n' > keep.txt; printf 'old\n' > gone.txt; printf 'v1\n' > edit.txt
+git add -A; git commit -qm base; git push -q -u origin main 2>/dev/null
+BASE=$(git rev-parse HEAD)
+git checkout -q -b feature
+git rm -q gone.txt; printf 'v2\n' > edit.txt; printf '#!/bin/sh\n' > run.sh; chmod +x run.sh
+printf '\x00\x01\xff' > blob.bin; ln -s keep.txt link
+git add -A; git commit -qm "feature work"
+FEATURE_TREE=$(git rev-parse 'HEAD^{tree}')
+export PATH="$T/bin:$PATH" FAKE_GH_REPO="$T/origin.git" FAKE_GH_LOG="$T/calls.log"
+api() { python3 "$SCRIPT" "$@"; }
+
+api feature --target main --repo o/r --message "land feature" >"$T/out" 2>&1 || { cat "$T/out"; fail "plain publish exited non-zero"; }
+[ "$(git -C "$T/origin.git" rev-parse 'main^{tree}')" = "$FEATURE_TREE" ] || fail "published tree != feature tree"
+[ "$(git -C "$T/origin.git" rev-parse 'main^')" = "$BASE" ] || fail "published commit's parent is not the remote tip"
+[ "$(git -C "$T/origin.git" ls-tree main run.sh | cut -c1-6)" = "100755" ] || fail "exec bit lost"
+[ "$(git -C "$T/origin.git" ls-tree main link | cut -c1-6)" = "120000" ] || fail "symlink lost"
+grep -q '"force": true' "$FAKE_GH_LOG" && fail "api-push still sends force: true"
+grep -q 'PATCH .*"force": false' "$FAKE_GH_LOG" || fail "ref update is not a force=false compare-and-swap"
+PUBLISHED=$(git -C "$T/origin.git" rev-parse main)
+
+api feature --target main --repo o/r >"$T/out" 2>&1 || fail "republishing an already-published tree should exit 0"
+grep -q "already carries" "$T/out" || fail "republish did not short-circuit"
+[ "$(git -C "$T/origin.git" rev-parse main)" = "$PUBLISHED" ] || fail "republish moved the ref"
+
+# A sibling lands on main a commit the feature lacks: refuse, never overwrite.
+git checkout -q --detach "$BASE"; printf 'sibling\n' > sibling.txt; git add sibling.txt; git commit -qm "sibling lands"
+SIBLING=$(git rev-parse HEAD)
+git push -qf origin "$SIBLING:refs/heads/main" 2>/dev/null
+git checkout -q feature
+printf 'v3\n' > edit.txt; git commit -qam "more feature work"
+api feature --target main --repo o/r >"$T/out" 2>&1 && fail "published over a remote tip the branch does not contain"
+grep -q "does not contain" "$T/out" || { cat "$T/out"; fail "refusal does not say the branch lacks the remote tip"; }
+[ "$(git -C "$T/origin.git" rev-parse main)" = "$SIBLING" ] || fail "the sibling's commit was overwritten"
+
+# Race: the first PATCH is rejected with 422, the re-read tip is still contained, the retry lands.
+git merge -q --no-edit "$SIBLING"
+: > "$FAKE_GH_LOG"; : > "$T/patch-count"
+FAKE_GH_FAIL_PATCHES=1 FAKE_GH_FAIL_PATCHES_STATE="$T/patch-count" api feature --target main --repo o/r >"$T/out" 2>&1 || { cat "$T/out"; fail "a single 422 should be retried, not fatal"; }
+[ "$(grep -c '^PATCH ' "$FAKE_GH_LOG")" -eq 2 ] || fail "expected one rejected PATCH and one retry, got $(grep -c '^PATCH ' "$FAKE_GH_LOG")"
+[ "$(git -C "$T/origin.git" rev-parse 'main^{tree}')" = "$(git rev-parse 'HEAD^{tree}')" ] || fail "retry did not publish the merged tree"
+
+# --tree pins the gated tree: a branch that moved on is refused, the pinned tree is what is verified.
+GATED=$(git rev-parse 'HEAD^{tree}')
+printf 'v4\n' > edit.txt; git commit -qam "moved on after the gate"
+api feature --target main --repo o/r --tree "$GATED" >"$T/out" 2>&1 && fail "--tree accepted a branch whose tree is not the gated one"
+grep -q "not the gated tree" "$T/out" || fail "--tree refusal does not explain itself"
+api feature --target main --repo o/r --tree "$(git rev-parse 'HEAD^{tree}')" >"$T/out" 2>&1 || { cat "$T/out"; fail "--tree with the matching tree should publish"; }
+[ "$(git -C "$T/origin.git" rev-parse 'main^{tree}')" = "$(git rev-parse 'HEAD^{tree}')" ] || fail "pinned publish did not land"
+
+# A target branch that does not exist yet is created on --base.
+api feature --target brand-new --base "$BASE" --repo o/r >"$T/out" 2>&1 || { cat "$T/out"; fail "creating a new branch failed"; }
+[ "$(git -C "$T/origin.git" rev-parse 'brand-new^{tree}')" = "$(git rev-parse 'HEAD^{tree}')" ] || fail "new branch has the wrong tree"
+grep -q 'POST repos/o/r/git/refs ' "$FAKE_GH_LOG" || fail "new branch was not created through POST /git/refs"
+
 echo "ok api-push"
