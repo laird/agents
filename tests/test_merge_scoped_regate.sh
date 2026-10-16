@@ -60,6 +60,13 @@ racing_gate() {
     'fi'
 }
 
+# ── (a0) AUTOCODER_SCOPED_REGATE=0: a disjoint re-sync is re-gated anyway ───
+setup
+OUT=$(AUTOCODER_SCOPED_REGATE=0 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "(a0) strict mode merges" || bad "(a0) rc=$RC: $OUT"
+[ "$(gate_runs)" -eq 2 ] && ok "(a0) strict mode re-gated the disjoint re-sync" || bad "(a0) gate ran $(gate_runs) time(s); want 2"
+echo "$OUT" | grep -q "verified: tests passed on the published tree" && ok "(a0) strict mode publishes a verified tree" || bad "(a0) success line wrong: $OUT"
+
 # ── (a) disjoint re-sync: one gate run, pushed, not called verified ─────────
 setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt')" 2>&1); RC=$?

@@ -41,6 +41,8 @@
 #         incoming path and its basename. Default:
 #         package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile*
 #         tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md
+#       AUTOCODER_SCOPED_REGATE  default 1; 0 re-gates every re-sync that brought in work,
+#         for a repo that wants the integration branch itself kept strictly green.
 #   - When the gate fails on the integrated tree, origin/<integration> is gated ALONE in a
 #     second throwaway worktree. If the base passes, this change broke it: exit 2. If the
 #     base fails too, the integration branch is red independent of this change, so the work
@@ -471,7 +473,10 @@ for attempt in 1 2 3 4 5; do
     _escalate_conflict
   fi
   if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
-    if OVERLAP=$(_resync_overlap "$INT_SEEN_SHA" "$INT_NEW_SHA"); then
+    if [ "${AUTOCODER_SCOPED_REGATE:-1}" != "1" ]; then
+      echo "ℹ️  Re-sync brought in new work and AUTOCODER_SCOPED_REGATE=0; re-gating the merged tree"
+      _gate_integrated_tree
+    elif OVERLAP=$(_resync_overlap "$INT_SEEN_SHA" "$INT_NEW_SHA"); then
       echo "ℹ️  Re-sync brings in ${OVERLAP}; re-gating the merged tree"
       _gate_integrated_tree
     else
