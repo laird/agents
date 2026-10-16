@@ -310,7 +310,12 @@ reconcile_handoffs() {
     [[ "$num" =~ ^[0-9]+$ ]] || continue
     pid=$(cat "$pf" 2>/dev/null)
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
-    [ -f "${pf%.pid}.exit" ] && continue
+    # A finished job (--own-issue) has nobody reading its exit file any more; keep it a day
+    # for humans and monitor-workers, then reap the trio so /tmp does not fill up.
+    if [ -f "${pf%.pid}.exit" ]; then
+      [ -n "$(find "${pf%.pid}.exit" -mmin +1440 2>/dev/null)" ] && rm -f "$pf" "${pf%.pid}.exit" "${pf%.pid}.run.sh"
+      continue
+    fi
     if issue_get "$num" 2>/dev/null | grep -q '"name": *"awaiting-integration"'; then
       issue_update "$num" --remove-label awaiting-integration >/dev/null 2>&1
       issue_comment "$num" --body "⚠️ The detached merge job for this issue (pid ${pid:-?}) died before it reported a result. Removed \`awaiting-integration\`; the issue is re-queued for a worker to re-land." >/dev/null 2>&1

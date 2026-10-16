@@ -200,7 +200,10 @@ echo "$DEAD" > "$AUTOCODER_TMP/autocoder-merge-7.pid"
 echo "$DEAD" > "$AUTOCODER_TMP/autocoder-merge-8.pid"
 echo "$$"   > "$AUTOCODER_TMP/autocoder-merge-9.pid"
 echo "$DEAD" > "$AUTOCODER_TMP/autocoder-merge-10.pid"; echo 0 > "$AUTOCODER_TMP/autocoder-merge-10.exit"
+echo "$DEAD" > "$AUTOCODER_TMP/autocoder-merge-11.pid"; echo 0 > "$AUTOCODER_TMP/autocoder-merge-11.exit"; : > "$AUTOCODER_TMP/autocoder-merge-11.run.sh"
+touch -d '2 days ago' "$AUTOCODER_TMP/autocoder-merge-11.exit"
 sentinel >/dev/null; RC=$?
+check "#11 (finished a day ago): pid, exit and run.sh reaped" '[ ! -e "$AUTOCODER_TMP/autocoder-merge-11.pid" ] && [ ! -e "$AUTOCODER_TMP/autocoder-merge-11.exit" ] && [ ! -e "$AUTOCODER_TMP/autocoder-merge-11.run.sh" ]'
 check "tick still green" '[ "$RC" -eq 0 ]'
 check "#7 (dead job, labelled): label removed" '! grep -q "^labels:.*awaiting-integration" "$ISSUES/open/007.md"'
 check "#7: comment added" 'grep -q "merge job" "$ISSUES/open/007.md"'
