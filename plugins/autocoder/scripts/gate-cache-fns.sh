@@ -13,6 +13,7 @@
 #   gate_cache_get <tree-sha> "<test-cmd>"        -> prints pass|fail, rc 0 if recorded, 1 if not
 #   gate_cache_put <tree-sha> "<test-cmd>" pass|fail
 #   gate_cache_run <dir> "<test-cmd>"             -> rc 0 pass / 1 fail; runs only on a miss
+#   gate_cache_prune [days]                       -> deletes records older than N days (default 30)
 #
 # gate_cache_run reuses a recorded pass unconditionally and a recorded fail only when
 # GATE_CACHE_REUSE_FAIL=1 (a bisect wants that; a merge retry does not, since the fail
@@ -64,4 +65,11 @@ gate_cache_run() {
   fi
   gate_cache_put "$tree" "$cmd" fail
   return 1
+}
+
+gate_cache_prune() {
+  local dir
+  dir="$(gate_cache_dir)"
+  [ -d "$dir" ] || return 0
+  find "$dir" -maxdepth 1 -type f -mtime "+${1:-30}" -delete 2>/dev/null || true
 }
