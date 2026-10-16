@@ -34,13 +34,18 @@
 #   - Every gate run goes through gate-cache-fns.sh, keyed by <tree, command>. A tree this
 #     host already recorded as passing (this worker earlier, or a sibling) is not run again.
 #   - A rejected push re-gates only when the incoming commits overlap this change: a file
-#     this fix touched, or a global path (lockfiles, manifests, build config, CI). A disjoint
-#     re-sync is pushed as-is; the success line then names the gated tree and the published
-#     tree separately instead of claiming the published tree was verified.
+#     this fix touched, a global path (lockfiles, manifests, build config, CI), or a path
+#     the gate command itself runs. A disjoint re-sync is pushed as-is; the success line
+#     then names the gated tree and the published tree separately instead of claiming the
+#     published tree was verified, and under --own-issue the issue is parked, not closed.
 #       AUTOCODER_GATE_GLOBAL_PATHS  space-separated bash globs, matched against each
-#         incoming path and its basename. Default:
-#         package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile*
-#         tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md
+#         incoming path and its basename. The default is GATE_GLOBAL_PATHS_DEFAULT below,
+#         the one place the list lives: JS/TS, .NET, Go, Rust, Python and Ruby manifests
+#         and lockfiles, Makefile, Dockerfile*, CI, the agent doctrine files, conftest.py.
+#       Gate-command paths: every whitespace token of the gate command that names a file
+#         or directory in the tree (e.g. tests/run-shell-suite.sh, scripts/) is global too,
+#         a directory covering everything under it. The gate's own code changing is a
+#         reason to re-run it, whatever this change touched.
 #       AUTOCODER_SCOPED_REGATE  default 1; 0 re-gates every re-sync that brought in work,
 #         for a repo that wants the integration branch itself kept strictly green.
 #   - When the gate fails on the integrated tree, origin/<integration> is gated ALONE in a
@@ -48,6 +53,14 @@
 #     base fails too, the integration branch is red independent of this change, so the work
 #     is pushed anyway and the issue is told so (the post-merge sentinel owns red main).
 #       AUTOCODER_MERGE_ON_RED_BASE  default 1; 0 restores exit 2 on a red base.
+#   - Both relaxations exist because a sentinel re-gates the integration tip after the
+#     fact. Until one has proven a green tip at least once, there is nobody to catch what
+#     a skipped re-gate or a red-base landing lets through, so both are OFF: every re-sync
+#     re-gates and a red base refuses the merge. The proof is the green ref:
+#       AUTOCODER_GREEN_REF  default <integration>-green; the relaxations apply only when
+#         refs/heads/<green-ref> exists on origin. The mode is logged once per run.
+#   - Overlap is measured with `git diff --name-only --no-renames`, so a sibling renaming a
+#     file this change edits shows up as that file, not as an unrelated new path.
 #
 # USAGE:
 #   merge-to-integration.sh --feature <branch> --issue <num> \
@@ -145,9 +158,13 @@ source "${_MTI_DIR}/test-cmd-fns.sh"
 # shellcheck source=gate-cache-fns.sh
 source "${_MTI_DIR}/gate-cache-fns.sh"
 
+# Paths whose change can break any test regardless of what this change touched. One list,
+# matched as bash globs against each incoming path and its basename.
+GATE_GLOBAL_PATHS_DEFAULT='package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile* tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md *.csproj *.sln Directory.*.props Directory.*.targets global.json NuGet.config packages.config go.mod go.sum Cargo.toml Cargo.lock pyproject.toml requirements*.txt poetry.lock Pipfile* Gemfile* conftest.py'
 # `read -a` splits without pathname expansion, so `Dockerfile*` stays a pattern instead of
 # becoming whatever Dockerfiles happen to exist in the current directory.
-IFS=' ' read -r -a GATE_GLOBAL_PATHS <<< "${AUTOCODER_GATE_GLOBAL_PATHS:-package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile* tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md}"
+IFS=' ' read -r -a GATE_GLOBAL_PATHS <<< "${AUTOCODER_GATE_GLOBAL_PATHS:-$GATE_GLOBAL_PATHS_DEFAULT}"
+GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMPDIR:-/tmp}/autocoder-merge-${ISSUE_NUM}.gate.XXXXXX")
@@ -390,6 +407,20 @@ _seed_worktree_deps "$WORKTREE_DIR"
 git fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"; }
 INT_SEEN_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 
+# The relaxations (scoped re-gate, merge on a red base) are safe only once a sentinel
+# re-gates the integration tip; its green ref is the proof that one exists.
+if git ls-remote --exit-code origin "refs/heads/${GREEN_REF}" >/dev/null 2>&1; then
+  SCOPED_REGATE="${AUTOCODER_SCOPED_REGATE:-1}"
+  MERGE_ON_RED_BASE="${AUTOCODER_MERGE_ON_RED_BASE:-1}"
+  RED_BASE_REFUSAL="AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base"
+  echo "ℹ️  origin/${GREEN_REF} exists (a sentinel has proven a green tip): scoped re-gate ${SCOPED_REGATE}, merge on a red base ${MERGE_ON_RED_BASE}."
+else
+  SCOPED_REGATE=0
+  MERGE_ON_RED_BASE=0
+  RED_BASE_REFUSAL="no sentinel has proven a green ${INTEGRATION_BRANCH} yet (origin/${GREEN_REF} missing), so landing on a red base is not allowed"
+  echo "ℹ️  No origin/${GREEN_REF} yet (no sentinel has proven a green tip): strict mode, every re-sync re-gates and a red base refuses the merge."
+fi
+
 # A previous run (or a human) may already have landed this exact commit; merging, gating
 # and pushing it again would only add an empty merge commit. Go straight to the outcome.
 if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
@@ -415,8 +446,18 @@ declare -A FEATURE_FILE_SET=()
 if [ -n "$FEATURE_BASE" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] && FEATURE_FILE_SET["$f"]=1
-  done < <(git diff --name-only "$FEATURE_BASE" "$FEATURE_SHA")
+  done < <(git diff --name-only --no-renames "$FEATURE_BASE" "$FEATURE_SHA")
 fi
+
+# Paths the gate command itself runs: each whitespace token that names something in the
+# tree. A directory token covers its whole subtree.
+declare -A TEST_CMD_PATHS=()
+for _tok in $(printf '%s' "$TEST_CMD" | tr ';&|()<>`"'"'"'=' ' '); do
+  _tok="${_tok#./}"; _tok="${_tok%/}"
+  case "$_tok" in ""|-*|/*|'$'*) continue ;; esac
+  [ -e "$WORKTREE_DIR/$_tok" ] && TEST_CMD_PATHS["$_tok"]=1
+done
+unset _tok
 
 if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
        -m "Merge origin/${INTEGRATION_BRANCH} into ${FEATURE} (pre-integration sync)"; then
@@ -473,9 +514,9 @@ _gate_integrated_tree() {
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
   fi
   _remove_worktree "$BASE_WORKTREE_DIR"
-  if [ "${AUTOCODER_MERGE_ON_RED_BASE:-1}" != "1" ]; then
-    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}), and AUTOCODER_MERGE_ON_RED_BASE=0. NOT pushing."
-    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}); AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base"
+  if [ "$MERGE_ON_RED_BASE" != "1" ]; then
+    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}), and ${RED_BASE_REFUSAL}. NOT pushing."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}); ${RED_BASE_REFUSAL}"
   fi
   echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}): the integration branch is red independent of this change."
   echo "   Pushing anyway; the post-merge sentinel owns red ${INTEGRATION_BRANCH}."
@@ -485,11 +526,19 @@ _gate_integrated_tree() {
 }
 _gate_integrated_tree
 
+# Prints why $1 obliges a re-gate whatever this change touched (rc 0), or nothing (rc 1).
 _path_is_global() {
-  local path="$1" glob
+  local path="$1" glob k
   for glob in "${GATE_GLOBAL_PATHS[@]}"; do
     # shellcheck disable=SC2053
     if [[ "$path" == $glob || "${path##*/}" == $glob ]]; then
+      echo "a global path"
+      return 0
+    fi
+  done
+  for k in "${!TEST_CMD_PATHS[@]}"; do
+    if [[ "$path" == "$k" || "$path" == "$k"/* ]]; then
+      echo "a path the gate command runs"
       return 0
     fi
   done
@@ -499,7 +548,7 @@ _path_is_global() {
 # Prints the first incoming path that obliges a re-gate (rc 0), or nothing (rc 1) when the
 # incoming files are disjoint from this change and from every global path.
 _resync_overlap() {
-  local old="$1" new="$2" f
+  local old="$1" new="$2" f why
   if [ -z "$FEATURE_BASE" ]; then
     echo "every incoming file (no merge base with origin/${INTEGRATION_BRANCH})"
     return 0
@@ -510,11 +559,11 @@ _resync_overlap() {
       echo "$f (a file this change touched)"
       return 0
     fi
-    if _path_is_global "$f"; then
-      echo "$f (a global path)"
+    if why=$(_path_is_global "$f"); then
+      echo "$f ($why)"
       return 0
     fi
-  done < <(git diff --name-only "$old" "$new")
+  done < <(git diff --name-only --no-renames "$old" "$new")
   return 1
 }
 
@@ -538,14 +587,14 @@ for attempt in 1 2 3 4 5; do
     _escalate_conflict
   fi
   if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
-    if [ "${AUTOCODER_SCOPED_REGATE:-1}" != "1" ]; then
-      echo "ℹ️  Re-sync brought in new work and AUTOCODER_SCOPED_REGATE=0; re-gating the merged tree"
+    if [ "$SCOPED_REGATE" != "1" ]; then
+      echo "ℹ️  Re-sync brought in new work and the scoped re-gate is off; re-gating the merged tree"
       _gate_integrated_tree
     elif OVERLAP=$(_resync_overlap "$INT_SEEN_SHA" "$INT_NEW_SHA"); then
       echo "ℹ️  Re-sync brings in ${OVERLAP}; re-gating the merged tree"
       _gate_integrated_tree
     else
-      INCOMING_COUNT=$(git diff --name-only "$INT_SEEN_SHA" "$INT_NEW_SHA" | wc -l | tr -d ' ')
+      INCOMING_COUNT=$(git diff --name-only --no-renames "$INT_SEEN_SHA" "$INT_NEW_SHA" | wc -l | tr -d ' ')
       echo "ℹ️  Disjoint re-sync (${INCOMING_COUNT} incoming files, none overlap this change); pushing the already-gated work"
       case "$PUBLISH_BASIS" in
         tested)   PUBLISH_BASIS=disjoint ;;

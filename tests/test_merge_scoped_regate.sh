@@ -7,7 +7,13 @@
 #   - a tree already recorded as passing in the gate cache is not run again;
 #   - when the integrated tree fails and origin/<integration> alone passes, exit 2 and
 #     nothing is pushed; when the base fails too the work lands, the issue is told, and
-#     AUTOCODER_MERGE_ON_RED_BASE=0 restores exit 2.
+#     AUTOCODER_MERGE_ON_RED_BASE=0 restores exit 2;
+#   - both relaxations apply only once origin/<integration>-green exists (a sentinel has
+#     proven a green tip); without it every re-sync re-gates and a red base refuses;
+#   - overlap ignores renames (a sibling renaming a file this change edits re-gates), a
+#     wider manifest list counts as global, and so does any path the gate command runs;
+#   - a red-base landing followed by a disjoint re-sync says the published tree is
+#     neither gated tree.
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,10 +29,11 @@ trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocode
 export ISSUE_SOURCE=file
 export ISSUE_DIR_PATH="$TMP/issues"
 export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
-unset AUTOCODER_MERGE_ON_RED_BASE AUTOCODER_GATE_GLOBAL_PATHS
+unset AUTOCODER_MERGE_ON_RED_BASE AUTOCODER_GATE_GLOBAL_PATHS AUTOCODER_SCOPED_REGATE AUTOCODER_GREEN_REF
 
 # Fresh bare origin, worker checkout on feature/code (src/app.sh added, README line 1
-# edited), sibling clone on master, empty gate-run log, and one open issue.
+# edited), sibling clone on master, empty gate-run log, and one open issue. origin gets a
+# master-green ref (the sentinel's proof) unless $1 is "nogreen".
 setup() {
   rm -rf "$TMP/origin.git" "$TMP/worker" "$TMP/sibling" "$TMP/gate-cache" "$TMP/gate-runs" "$TMP/raced" "$TMP/issues"
   mkdir -p "$TMP/issues/open" "$TMP/issues/working" "$TMP/issues/blocked" "$TMP/issues/closed"
@@ -37,7 +44,9 @@ setup() {
   git config user.email t@example.com; git config user.name T
   git remote add origin "$TMP/origin.git"
   seq -f 'line %g' 1 10 > README.md
+  mkdir -p scripts; echo true > scripts/helper.sh; echo 'module x' > go.mod
   git add -A; git commit -q -m init; git branch -M master; git push -q origin master
+  [ "${1:-}" = nogreen ] || git push -q origin master:master-green
   git fetch -q origin
   git checkout -q -b feature/code master
   mkdir -p src; echo change > src/app.sh
@@ -53,11 +62,14 @@ issue_body()    { cat "$TMP"/issues/*/"${ISSUE}.md"; }
 
 # The gate records the tree it ran on. On its first run it also lets the sibling land
 # $1 on master, so the worker's first push is rejected and it must re-sync.
+# $2 (default true) is the gate's verdict. The sibling's action runs from a file outside
+# the tree so that no path it edits appears in the gate command's own text.
 racing_gate() {
+  printf '%s\n' "$1" > "$TMP/sib-action.sh"
   printf '%s\n' 'echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs' \
     'if [ ! -f '"$TMP"'/raced ]; then touch '"$TMP"'/raced' \
-    "  (cd $TMP/sibling && $1 && git add -A && git commit -q -m sib && git push -q origin master)" \
-    'fi'
+    "  (cd $TMP/sibling && bash $TMP/sib-action.sh && git add -A && git commit -q -m sib && git push -q origin master)" \
+    'fi' "${2:-true}"
 }
 
 # ── (a0) AUTOCODER_SCOPED_REGATE=0: a disjoint re-sync is re-gated anyway ───
@@ -67,10 +79,23 @@ OUT=$(AUTOCODER_SCOPED_REGATE=0 bash "$MTI" --feature feature/code --issue $ISSU
 [ "$(gate_runs)" -eq 2 ] && ok "(a0) strict mode re-gated the disjoint re-sync" || bad "(a0) gate ran $(gate_runs) time(s); want 2"
 echo "$OUT" | grep -q "verified: tests passed on the published tree" && ok "(a0) strict mode publishes a verified tree" || bad "(a0) success line wrong: $OUT"
 
+# ── (a0') no green ref yet: strict whatever the env says ────────────────────
+setup nogreen
+OUT=$(AUTOCODER_SCOPED_REGATE=1 AUTOCODER_MERGE_ON_RED_BASE=1 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "(a0') merges without a green ref" || bad "(a0') rc=$RC: $OUT"
+[ "$(gate_runs)" -eq 2 ] && ok "(a0') without a green ref a disjoint re-sync is re-gated" || bad "(a0') gate ran $(gate_runs) time(s); want 2"
+echo "$OUT" | grep -q "No origin/master-green yet" && echo "$OUT" | grep -q "strict mode" && ok "(a0') log names the strict mode once" || bad "(a0') mode not logged: $OUT"
+echo "$OUT" | grep -q "verified: tests passed on the published tree" && ok "(a0') strict mode publishes a verified tree" || bad "(a0') success line wrong: $OUT"
+
+setup
+OUT=$(AUTOCODER_GREEN_REF=proof bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "No origin/proof yet" && ok "(a0') AUTOCODER_GREEN_REF names the ref that must exist" || bad "(a0') green-ref override ignored ($(gate_runs) runs): $OUT"
+
 # ── (a) disjoint re-sync: one gate run, pushed, not called verified ─────────
 setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt')" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "(a) disjoint re-sync merges" || bad "(a) rc=$RC: $OUT"
+echo "$OUT" | grep -q "origin/master-green exists" && ok "(a) log names the relaxed mode" || bad "(a) mode not logged: $OUT"
 [ "$(gate_runs)" -eq 1 ] && ok "(a) gate ran exactly once" || bad "(a) gate ran $(gate_runs) time(s); want 1"
 echo "$OUT" | grep -q "Disjoint re-sync (1 incoming files, none overlap this change)" && ok "(a) log explains the skipped re-gate" || bad "(a) no disjoint log line: $OUT"
 echo "$OUT" | grep -q "disjoint re-sync; gated tree" && ok "(a) success line names gated and published trees" || bad "(a) success line wrong: $OUT"
@@ -101,6 +126,30 @@ OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --t
 setup
 OUT=$(AUTOCODER_GATE_GLOBAL_PATHS="Makefile" bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "{}" > package.json')" 2>&1); RC=$?
 [ "$(gate_runs)" -eq 1 ] && ok "(c) AUTOCODER_GATE_GLOBAL_PATHS replaces the default list" || bad "(c) override ignored ($(gate_runs) runs): $OUT"
+
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "require y" >> go.mod')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "go.mod (a global path)" && ok "(c) go.mod is global by default" || bad "(c) go.mod did not re-gate ($(gate_runs) runs): $OUT"
+
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'mkdir -p proj && echo "<Project/>" > proj/App.csproj')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "proj/App.csproj (a global path)" && ok "(c) a nested *.csproj is global by default" || bad "(c) *.csproj did not re-gate ($(gate_runs) runs): $OUT"
+
+# ── (c') a path the gate command runs is global even when nobody listed it ──
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && bash scripts/helper.sh" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ "$(gate_runs)" -eq 2 ] && ok "(c') a sibling editing a file the gate runs re-gates" || bad "(c') rc=$RC runs=$(gate_runs): $OUT"
+echo "$OUT" | grep -q "scripts/helper.sh (a path the gate command runs)" && ok "(c') log names the gate-command path" || bad "(c') reason not logged: $OUT"
+
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && true" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 1 ] && ok "(c') the same edit is disjoint when the gate does not run that file" || bad "(c') re-gated without reason ($(gate_runs) runs): $OUT"
+
+# ── (c'') a sibling renaming a file this change edits is an overlap, not a new path ──
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'git mv README.md README.rst')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "(c'') rename re-sync merges" || bad "(c'') rc=$RC: $OUT"
+[ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "README.md (a file this change touched)" && ok "(c'') the renamed source file re-gates (--no-renames)" || bad "(c'') rename read as disjoint ($(gate_runs) runs): $OUT"
 
 # ── (d) a tree already recorded as passing is not re-run ────────────────────
 setup
@@ -138,6 +187,15 @@ BASE_TREE=$(git rev-parse 'origin/master~1^{tree}' 2>/dev/null || git rev-parse 
 issue_body | grep -q "$BASE_TREE" && ok "(f) issue comment carries the base tree id" || bad "(f) base tree id missing from comment"
 [ -d "/tmp/autocoder-merge-worktree-${ISSUE}-base" ] && bad "(f) base worktree left behind" || ok "(f) base worktree cleaned up"
 
+# ── (f') red base, then a disjoint re-sync: the published tree is neither gated tree ──
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' false)" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "(f') exit 0 on a red base followed by a disjoint re-sync" || bad "(f') rc=$RC: $OUT"
+[ "$(gate_runs)" -eq 2 ] && ok "(f') gate ran on the integrated tree and the base only" || bad "(f') gate ran $(gate_runs) time(s); want 2"
+echo "$OUT" | grep -q "on a red base followed by a disjoint re-sync" && echo "$OUT" | grep -q "is neither gated tree" && ok "(f') success line says the published tree is neither gated tree" || bad "(f') success line wrong: $OUT"
+issue_body | grep -q "then re-synced" && issue_body | grep -q "neither tree the gate ran on" && ok "(f') issue comment says so too" || bad "(f') issue comment: $(issue_body)"
+git --git-dir="$TMP/origin.git" cat-file -e master:sibling.txt 2>/dev/null && git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "(f') master has both the fix and the sibling's work" || bad "(f') master is missing work"
+
 # ── (g) AUTOCODER_MERGE_ON_RED_BASE=0 restores exit 2 ──────────────────────
 setup
 BEFORE=$(origin_master)
@@ -145,6 +203,14 @@ OUT=$(AUTOCODER_MERGE_ON_RED_BASE=0 bash "$MTI" --feature feature/code --issue $
 [ "$RC" -eq 2 ] && ok "(g) exit 2 with merge-on-red-base off" || bad "(g) rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "(g) nothing pushed" || bad "(g) master moved"
 echo "$OUT" | grep -q "AUTOCODER_MERGE_ON_RED_BASE=0" && ok "(g) refusal names the switch" || bad "(g) refusal wrong: $OUT"
+
+# ── (g') no green ref: a red base refuses even with the switch on ───────────
+setup nogreen
+BEFORE=$(origin_master)
+OUT=$(AUTOCODER_MERGE_ON_RED_BASE=1 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$GATE" 2>&1); RC=$?
+[ "$RC" -eq 2 ] && ok "(g') exit 2 on a red base without a green ref" || bad "(g') rc=$RC: $OUT"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(g') nothing pushed" || bad "(g') master moved"
+echo "$OUT" | grep -q "no sentinel has proven a green master yet" && ok "(g') refusal says why" || bad "(g') refusal wrong: $OUT"
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
