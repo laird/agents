@@ -211,8 +211,8 @@ Also check the integration-branch sentinel, if one runs beside the swarm
   prints `last_tested`, `last_green`, `red_issue`. `last_tested` behind
   `origin/main` means the sentinel has not ticked since the last merge; a
   non-empty `red_issue` is the open P0 for a red integration branch that it
-  could not auto-revert, and `git rev-parse origin/main-green` is the last tip
-  that passed the gate.
+  could not auto-revert, and `git rev-parse origin/<integration>-green` (for
+  example `origin/master-green`) is the last tip that passed the gate.
 
 ### Step 3: Decide Which Workers Are Idle
 
