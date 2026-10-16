@@ -61,6 +61,19 @@
 #         refs/heads/<green-ref> exists on origin. The mode is logged once per run.
 #   - Overlap is measured with `git diff --name-only --no-renames`, so a sibling renaming a
 #     file this change edits shows up as that file, not as an unrelated new path.
+#   - Gates on one host share a cap: each gate_cache_run takes one of AUTOCODER_MAX_GATES
+#     slots (default max(1, nproc/4)), flock-held files
+#     ${AUTOCODER_TMP:-/tmp}/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
+#     on the last. A job that has to wait says so in its log.
+#
+# SCRATCH:
+#   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
+#   keyed by <repo-id>-<issue>, where repo-id is repo-id-fns.sh's autocoder_repo_id (the
+#   main checkout's basename plus a hash of its git common dir), so two repos on one host
+#   never share a worktree, log or state file for the same issue number:
+#     autocoder-merge-<repo-id>-<issue>.gate.XXXXXX   gate output, for the failure comment
+#     autocoder-merge-worktree-<repo-id>-<issue>[-base]  the throwaway worktrees
+#   merge-launch.sh keys its .pid/.log/.exit/.run.sh files the same way.
 #
 # USAGE:
 #   merge-to-integration.sh --feature <branch> --issue <num> \
@@ -157,6 +170,11 @@ source "${_MTI_DIR}/issue-fns.sh"
 source "${_MTI_DIR}/test-cmd-fns.sh"
 # shellcheck source=gate-cache-fns.sh
 source "${_MTI_DIR}/gate-cache-fns.sh"
+# shellcheck source=repo-id-fns.sh
+source "${_MTI_DIR}/repo-id-fns.sh"
+
+TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
+REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
 
 # Paths whose change can break any test regardless of what this change touched. One list,
 # matched as bash globs against each incoming path and its basename.
@@ -167,8 +185,37 @@ IFS=' ' read -r -a GATE_GLOBAL_PATHS <<< "${AUTOCODER_GATE_GLOBAL_PATHS:-$GATE_G
 GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 
 # Gate output is kept so a failure comment can quote it.
-GATE_LOG=$(mktemp "${TMPDIR:-/tmp}/autocoder-merge-${ISSUE_NUM}.gate.XXXXXX")
+GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
 trap 'rm -f "$GATE_LOG"' EXIT
+
+# Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
+# long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
+MAX_GATES="${AUTOCODER_MAX_GATES:-}"
+if ! [ "$MAX_GATES" -ge 1 ] 2>/dev/null; then
+  MAX_GATES=$(( $(nproc 2>/dev/null || echo 4) / 4 ))
+  [ "$MAX_GATES" -ge 1 ] || MAX_GATES=1
+fi
+_gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is the gate's
+  local dir="$1" cmd="$2" k lock rc
+  for k in $(seq 1 "$MAX_GATES"); do
+    lock="${TMP_ROOT}/autocoder-gate-slot-${k}.lock"
+    if [ "$k" -lt "$MAX_GATES" ]; then
+      ( flock -n 9 || exit 75; gate_cache_run "$dir" "$cmd" ) 9>>"$lock"
+      rc=$?
+      [ "$rc" -eq 75 ] && continue
+      return "$rc"
+    fi
+    (
+      if ! flock -n 9; then
+        echo "⏳ All ${MAX_GATES} gate slot(s) on this host are busy; waiting for slot ${k} ($(date +%H:%M:%S))"
+        flock 9
+        echo "▶️  Gate slot ${k} acquired ($(date +%H:%M:%S))"
+      fi
+      gate_cache_run "$dir" "$cmd"
+    ) 9>>"$lock"
+    return $?
+  done
+}
 
 _issue_is_closed() {
   issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq '"state": *"CLOSED"'
@@ -325,11 +372,11 @@ if [ -z "$TEST_CMD" ]; then
   fi
 fi
 
-# Isolated throwaway worktrees (#1821) — keyed by issue number, matching the existing
-# /tmp/autocoder-merge-<issue>.* convention (only one worker holds an issue's `working`
-# lock at a time, so this is unique per in-flight merge). Never persist past this run.
-# The -base worktree exists only while the integration tip is gated alone.
-WORKTREE_DIR="/tmp/autocoder-merge-worktree-${ISSUE_NUM}"
+# Isolated throwaway worktrees (#1821) — keyed by <repo-id>-<issue> like merge-launch.sh's
+# state files (only one worker holds an issue's lock at a time, so this is unique per
+# in-flight merge). Never persist past this run. The -base worktree exists only while
+# the integration tip is gated alone.
+WORKTREE_DIR="${TMP_ROOT}/autocoder-merge-worktree-${REPO_ID}-${ISSUE_NUM}"
 BASE_WORKTREE_DIR="${WORKTREE_DIR}-base"
 
 _remove_worktree() {
@@ -492,7 +539,7 @@ _gate_integrated_tree() {
   local tree base_sha base_tree
   tree=$(git rev-parse "HEAD^{tree}")
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
-  if gate_cache_run "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
     TESTED_TREE="$tree"
     PUBLISH_BASIS=tested
     return 0
@@ -508,7 +555,7 @@ _gate_integrated_tree() {
     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
   fi
   _seed_worktree_deps "$BASE_WORKTREE_DIR"
-  if gate_cache_run "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"

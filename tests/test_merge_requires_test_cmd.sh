@@ -19,8 +19,13 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocoder-merge-worktree-${ISSUE}*' EXIT
+trap 'rm -rf "$TMP"' EXIT
 export ISSUE_SOURCE=file
+# Merge state and throwaway worktrees live under AUTOCODER_TMP, keyed by the repo id.
+export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
+state() { echo "$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP/worker")"; }
 # Gate verdicts are cached per <tree, command>; keep this run's records out of the
 # real cache so a previous run cannot satisfy a gate this test expects to execute.
 export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
@@ -70,7 +75,7 @@ OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master 2>&
 [ "$(origin_master)" = "$BEFORE" ] && ok "integration branch unmoved after refusal" || bad "integration branch moved despite refusal"
 echo "$OUT" | grep -q "Nothing was fetched" && ok "refusal names the missing command" || bad "refusal message missing: $OUT"
 echo "$OUT" | grep -q "verified" && bad "refusal path printed 'verified'" || ok "refusal path never claims 'verified'"
-[ -d "/tmp/autocoder-merge-worktree-${ISSUE}" ] && bad "refusal created the merge worktree" || ok "refusal happened before the merge worktree was created"
+[ -d "$AUTOCODER_TMP/autocoder-merge-worktree-$(autocoder_repo_id "$TMP/worker")-${ISSUE}" ] && bad "refusal created the merge worktree" || ok "refusal happened before the merge worktree was created"
 
 # ── 2. No --test-cmd, no doctrine, docs-only diff → allowed ─────────────────
 setup ""
@@ -131,7 +136,7 @@ setup ""
 branch_with feature/code src/app.sh
 OUT=$(bash "$SCRIPT_DIR/merge-launch.sh" --feature feature/code --issue $ISSUE --integration master 2>&1); RC=$?
 [ "$RC" -ne 0 ] && ok "merge-launch.sh refuses with no test command" || bad "merge-launch.sh launched with no test command: $OUT"
-[ -f "/tmp/autocoder-merge-${ISSUE}.pid" ] || [ -f "/tmp/autocoder-merge-${ISSUE}.run.sh" ] \
+[ -f "$(state)-${ISSUE}.pid" ] || [ -f "$(state)-${ISSUE}.run.sh" ] \
   && bad "merge-launch.sh left launch state behind" || ok "merge-launch.sh started nothing"
 
 TOTAL=$((PASS + FAIL))

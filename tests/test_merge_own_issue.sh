@@ -28,8 +28,12 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocoder-merge-worktree-${ISSUE}*' EXIT
+trap 'rm -rf "$TMP"' EXIT
 export ISSUE_SOURCE=file
+# Merge state and throwaway worktrees live under AUTOCODER_TMP, keyed by the repo id.
+export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
 export ISSUE_DIR_PATH="$TMP/issues"
 export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 export CLAUDE_CODE_SHIP_BRANCH=master
@@ -191,22 +195,21 @@ setup
 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd true >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 1 ] && [ "$(issue_bucket)" = working ] && [ "$(issue_labels)" = "bug working" ] && ok "plain conflict leaves the issue to the caller" || bad "plain conflict: rc=$RC $(issue_bucket) $(issue_labels)"
 
-# ── 10. merge-launch.sh passes the new options through ──────────────────────
+# ── 10. merge-launch.sh passes the new options through, state keyed by repo id ──
 mkdir -p "$TMP/fakebin"
-cp "$SCRIPT_DIR/merge-launch.sh" "$SCRIPT_DIR/test-cmd-fns.sh" "$TMP/fakebin/"
-[ -f "$SCRIPT_DIR/repo-id-fns.sh" ] && cp "$SCRIPT_DIR/repo-id-fns.sh" "$TMP/fakebin/"
+cp "$SCRIPT_DIR/merge-launch.sh" "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" "$TMP/fakebin/"
 printf '#!/bin/bash\nexit 0\n' > "$TMP/fakebin/merge-to-integration.sh"; chmod +x "$TMP/fakebin/merge-to-integration.sh"
+STATE="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP/worker")-${ISSUE}"
+RUN="${STATE}.run.sh"
 bash "$TMP/fakebin/merge-launch.sh" --feature feature/code --issue $ISSUE --integration master --test-cmd true --summary-file "$TMP/my summary.md" --own-issue >/dev/null 2>&1
-RUN=$(ls /tmp/autocoder-merge-*${ISSUE}.run.sh 2>/dev/null | head -1)
+[ -f "$RUN" ] && ok "launch state is keyed by repo id under AUTOCODER_TMP" || bad "no run.sh at $RUN: $(ls "$AUTOCODER_TMP")"
 grep -q -- "--summary-file $TMP/my\\\\ summary.md" "$RUN" && ok "run.sh carries --summary-file, quoted" || bad "run.sh lacks --summary-file: $(cat "$RUN" 2>/dev/null)"
 grep -q -- "--own-issue" "$RUN" && ok "run.sh carries --own-issue" || bad "run.sh lacks --own-issue: $(cat "$RUN" 2>/dev/null)"
-for _ in 1 2 3 4 5 6 7 8 9 10; do ls /tmp/autocoder-merge-*${ISSUE}.exit >/dev/null 2>&1 && break; sleep 0.3; done
-rm -f /tmp/autocoder-merge-*${ISSUE}.*
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "${STATE}.exit" ] && break; sleep 0.3; done
+rm -f "${STATE}".*
 bash "$TMP/fakebin/merge-launch.sh" --feature feature/code --issue $ISSUE --integration master --test-cmd true >/dev/null 2>&1
-RUN=$(ls /tmp/autocoder-merge-*${ISSUE}.run.sh 2>/dev/null | head -1)
 grep -q -- "--own-issue\|--summary-file" "$RUN" && bad "run.sh carries options the caller did not pass" || ok "run.sh omits the options when not passed"
-for _ in 1 2 3 4 5 6 7 8 9 10; do ls /tmp/autocoder-merge-*${ISSUE}.exit >/dev/null 2>&1 && break; sleep 0.3; done
-rm -f /tmp/autocoder-merge-*${ISSUE}.*
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "${STATE}.exit" ] && break; sleep 0.3; done
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"

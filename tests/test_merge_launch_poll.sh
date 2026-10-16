@@ -31,12 +31,18 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-19001.* /tmp/autocoder-merge-19002.* /tmp/autocoder-merge-19003.*' EXIT
+trap 'rm -rf "$TMP"' EXIT
+# Merge state and throwaway worktrees live under AUTOCODER_TMP, keyed by the repo id.
+export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
+cd "$TMP" || exit 1
+STATE="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP")"
 
 mkdir -p "$TMP/fakebin"
 cp "$SCRIPT_DIR/merge-launch.sh" "$TMP/fakebin/"
 cp "$SCRIPT_DIR/merge-poll.sh" "$TMP/fakebin/"
-cp "$SCRIPT_DIR/test-cmd-fns.sh" "$TMP/fakebin/"
+cp "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" "$TMP/fakebin/"
 
 # ── Fixture 1: a slow, successful fake merge (issue #19001) ─────────────────
 cat > "$TMP/fakebin/merge-to-integration.sh" <<'FAKE'
@@ -58,7 +64,7 @@ ELAPSED=$((END - START))
 [ "$ELAPSED" -le 3 ] && ok "merge-launch.sh returns fast, not waiting for the 4s merge (${ELAPSED}s)" \
   || bad "merge-launch.sh blocked for ${ELAPSED}s — defeats the whole point of #1693"
 
-[ -f /tmp/autocoder-merge-19001.pid ] && ok "pidfile written" || bad "pidfile missing"
+[ -f ${STATE}-19001.pid ] && ok "pidfile written" || bad "pidfile missing"
 
 DUP_OUT=$(bash "$TMP/fakebin/merge-launch.sh" --feature feature/issue-19001 --issue 19001 --integration master --test-cmd "true" 2>&1)
 echo "$DUP_OUT" | grep -qi "already running" && ok "duplicate launch refused while job is in flight" \
@@ -67,14 +73,14 @@ echo "$DUP_OUT" | grep -qi "already running" && ok "duplicate launch refused whi
 POLL1_OUT=$(bash "$TMP/fakebin/merge-poll.sh" --issue 19001 --wait 1 2>&1); POLL1_RC=$?
 [ "$POLL1_RC" -eq 75 ] && ok "merge-poll.sh reports 75 (still running) mid-flight" \
   || bad "merge-poll.sh exit code while running (got $POLL1_RC)"
-[ -f /tmp/autocoder-merge-19001.pid ] && ok "poll while running does not reap state" || bad "poll while running reaped state early"
+[ -f ${STATE}-19001.pid ] && ok "poll while running does not reap state" || bad "poll while running reaped state early"
 
 POLL2_OUT=$(bash "$TMP/fakebin/merge-poll.sh" --issue 19001 --wait 5 2>&1); POLL2_RC=$?
 [ "$POLL2_RC" -eq 0 ] && ok "merge-poll.sh passes through exit 0 on success" \
   || bad "merge-poll.sh exit code on success (got $POLL2_RC)"
 echo "$POLL2_OUT" | grep -q "fake merge succeeded" && ok "merge-poll.sh surfaces the merge's own log output" \
   || bad "merge-poll.sh did not surface log tail"
-[ -f /tmp/autocoder-merge-19001.pid ] && bad "poll after completion left state behind (should reap)" \
+[ -f ${STATE}-19001.pid ] && bad "poll after completion left state behind (should reap)" \
   || ok "poll after completion reaps pid/exit/log state"
 
 POLL3_RC=0
@@ -105,7 +111,7 @@ exit 0
 FAKE
 chmod +x "$TMP/fakebin/merge-to-integration.sh"
 bash "$TMP/fakebin/merge-launch.sh" --feature feature/issue-19003 --issue 19003 --integration master --test-cmd "true" >/dev/null 2>&1
-MPID=$(cat /tmp/autocoder-merge-19003.pid 2>/dev/null)
+MPID=$(cat ${STATE}-19003.pid 2>/dev/null)
 
 ( bash "$TMP/fakebin/merge-poll.sh" --issue 19003 --wait 20 >/dev/null 2>&1 & POLLER=$!; sleep 1; kill -9 -- -"$POLLER" 2>/dev/null; kill -9 "$POLLER" 2>/dev/null )
 sleep 0.5
@@ -117,7 +123,7 @@ fi
 # Let it finish naturally so it doesn't leak past the test.
 for _ in 1 2 3 4 5 6 7 8; do kill -0 "$MPID" 2>/dev/null || break; sleep 1; done
 kill -0 "$MPID" 2>/dev/null && kill -9 "$MPID" 2>/dev/null || ok "detached merge for #19003 ran to completion on its own"
-rm -f /tmp/autocoder-merge-19003.*
+rm -f ${STATE}-19003.*
 
 # ── Docs: fix.md must launch at every merge site, never call
 #          merge-to-integration.sh directly, and never poll ──────────────────

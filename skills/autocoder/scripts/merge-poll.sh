@@ -16,6 +16,9 @@
 # USAGE:
 #   merge-poll.sh --issue <num> [--wait <seconds, default 60>]
 #
+#   Run it from the checkout the merge was launched in: the state files are keyed
+#   by that repo's id (repo-id-fns.sh) under ${AUTOCODER_TMP:-/tmp}.
+#
 # Exit codes:
 #   0    merge finished successfully — same meaning as merge-to-integration.sh's own 0
 #   1    merge finished with a conflict/push failure (or died with no exit code recorded)
@@ -39,13 +42,16 @@ if [ -z "$ISSUE_NUM" ]; then
   exit 1
 fi
 
-LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
-PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
-EXITFILE="/tmp/autocoder-merge-${ISSUE_NUM}.exit"
-RUNSCRIPT="/tmp/autocoder-merge-${ISSUE_NUM}.run.sh"
+# shellcheck source=repo-id-fns.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repo-id-fns.sh"
+STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+LOG="${STATE}.log"
+PIDFILE="${STATE}.pid"
+EXITFILE="${STATE}.exit"
+RUNSCRIPT="${STATE}.run.sh"
 
 if [ ! -f "$PIDFILE" ]; then
-  echo "❌ No merge job recorded for issue #${ISSUE_NUM} (${PIDFILE} missing)." >&2
+  echo "❌ No merge job recorded for issue #${ISSUE_NUM} (${PIDFILE} missing; run this from the checkout the merge was launched in)." >&2
   exit 64
 fi
 

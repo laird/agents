@@ -25,8 +25,13 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocoder-merge-worktree-${ISSUE}*' EXIT
+trap 'rm -rf "$TMP"' EXIT
 export ISSUE_SOURCE=file
+# Merge state and throwaway worktrees live under AUTOCODER_TMP, keyed by the repo id.
+export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
+base_worktree() { echo "$AUTOCODER_TMP/autocoder-merge-worktree-$(autocoder_repo_id "$TMP/worker")-${ISSUE}-base"; }
 export ISSUE_DIR_PATH="$TMP/issues"
 export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 unset AUTOCODER_MERGE_ON_RED_BASE AUTOCODER_GATE_GLOBAL_PATHS AUTOCODER_SCOPED_REGATE AUTOCODER_GREEN_REF
@@ -172,7 +177,7 @@ OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --t
 [ "$(gate_runs)" -eq 2 ] && ok "(e) gate ran on the integrated tree and on the base" || bad "(e) gate ran $(gate_runs) time(s); want 2"
 [ "$(tail -1 "$TMP/gate-runs")" = "$(git rev-parse 'origin/master^{tree}')" ] && ok "(e) second run gated origin/master alone" || bad "(e) second run was not the base tree"
 echo "$OUT" | grep -q "passes alone, so this change broke it" && ok "(e) verdict blames this change" || bad "(e) verdict wrong: $OUT"
-[ -d "/tmp/autocoder-merge-worktree-${ISSUE}-base" ] && bad "(e) base worktree left behind" || ok "(e) base worktree cleaned up"
+[ -d "$(base_worktree)" ] && bad "(e) base worktree left behind" || ok "(e) base worktree cleaned up"
 
 # ── (f) integrated tree fails, base fails: red main, push anyway ────────────
 setup
@@ -185,7 +190,7 @@ echo "$OUT" | grep -q "verified" && bad "(f) red-base push was called verified" 
 issue_body | grep -q "Merged onto a red" && ok "(f) issue comment says the base was red" || bad "(f) no issue comment: $(issue_body)"
 BASE_TREE=$(git rev-parse 'origin/master~1^{tree}' 2>/dev/null || git rev-parse "$BEFORE^{tree}")
 issue_body | grep -q "$BASE_TREE" && ok "(f) issue comment carries the base tree id" || bad "(f) base tree id missing from comment"
-[ -d "/tmp/autocoder-merge-worktree-${ISSUE}-base" ] && bad "(f) base worktree left behind" || ok "(f) base worktree cleaned up"
+[ -d "$(base_worktree)" ] && bad "(f) base worktree left behind" || ok "(f) base worktree cleaned up"
 
 # ── (f') red base, then a disjoint re-sync: the published tree is neither gated tree ──
 setup

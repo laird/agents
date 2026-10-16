@@ -45,12 +45,15 @@
 #   moves on. Nobody has to poll; merge-poll.sh remains for humans and
 #   monitors who want to watch.
 #
-# State files (keyed by issue number, since only one worker holds an issue's
-# `working` lock at a time so this is unique per in-flight merge):
-#   /tmp/autocoder-merge-<issue>.pid   — PID of the detached run
-#   /tmp/autocoder-merge-<issue>.log   — merge-to-integration.sh output
-#   /tmp/autocoder-merge-<issue>.exit  — its exit code, written on completion
-#   /tmp/autocoder-merge-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
+# State files, under ${AUTOCODER_TMP:-/tmp}, keyed by <repo-id>-<issue>: only one
+# worker holds an issue's lock at a time, and repo-id (repo-id-fns.sh: the main
+# checkout's basename plus a hash of its git common dir) keeps two repos on one
+# host from sharing state for the same issue number. The id is computed from
+# the directory this is run in, so poll from the same checkout.
+#   autocoder-merge-<repo-id>-<issue>.pid    — PID of the detached run
+#   autocoder-merge-<repo-id>-<issue>.log    — merge-to-integration.sh output
+#   autocoder-merge-<repo-id>-<issue>.exit   — its exit code, written on completion
+#   autocoder-merge-<repo-id>-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
@@ -98,6 +101,8 @@ FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
 _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
+# shellcheck source=repo-id-fns.sh
+source "${_MLI_DIR}/repo-id-fns.sh"
 
 if [ -z "$TEST_CMD" ]; then
   TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
@@ -106,10 +111,11 @@ if [ -z "$TEST_CMD" ]; then
     exit 1
   fi
 fi
-LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
-PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
-EXITFILE="/tmp/autocoder-merge-${ISSUE_NUM}.exit"
-RUNSCRIPT="/tmp/autocoder-merge-${ISSUE_NUM}.run.sh"
+STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+LOG="${STATE}.log"
+PIDFILE="${STATE}.pid"
+EXITFILE="${STATE}.exit"
+RUNSCRIPT="${STATE}.run.sh"
 
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || echo "")
