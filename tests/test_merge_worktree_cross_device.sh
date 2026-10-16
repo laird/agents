@@ -34,6 +34,9 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-19102.*; rm -rf /tmp/autocoder-merge-worktree-19102; git -C "$TMP/worker" worktree prune 2>/dev/null' EXIT
+# Gate verdicts are cached per <tree, command>; this fixture's tree and command are
+# identical on every run, so the real cache would satisfy the gate without running it.
+export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 
 # ── Fake `cp` that fails exactly the way a cross-device `cp -al` fails: any
 #    `-al`/`-la` invocation on a REGULAR FILE errors out; directories and

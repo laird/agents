@@ -30,6 +30,9 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-19101.*; rm -rf /tmp/autocoder-merge-worktree-19101; git -C "$TMP/worker" worktree prune 2>/dev/null' EXIT
+# Gate verdicts are cached per <tree, command>; this fixture's tree and command are
+# identical on every run, so the real cache would satisfy the gate without running it.
+export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 
 # ── Fixture: a bare "origin" plus a worker checkout, mimicking a worktree in
 #    the swarm ─────────────────────────────────────────────────────────────

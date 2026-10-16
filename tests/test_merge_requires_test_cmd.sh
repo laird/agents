@@ -19,8 +19,11 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocoder-merge-worktree-${ISSUE}' EXIT
+trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-${ISSUE}.*; rm -rf /tmp/autocoder-merge-worktree-${ISSUE}*' EXIT
 export ISSUE_SOURCE=file
+# Gate verdicts are cached per <tree, command>; keep this run's records out of the
+# real cache so a previous run cannot satisfy a gate this test expects to execute.
+export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 
 # Fresh bare origin + worker checkout. $1 = doctrine file contents for CLAUDE.md
 # on master ("" for none).
@@ -31,7 +34,7 @@ setup() {
   cd "$TMP/worker" || exit 1
   git config user.email t@example.com; git config user.name T
   git remote add origin "$TMP/origin.git"
-  echo base > README.md
+  seq -f 'line %g' 1 10 > README.md
   [ -n "$1" ] && printf '%s\n' "$1" > CLAUDE.md
   git add -A; git commit -q -m init; git branch -M master; git push -q origin master
   git fetch -q origin
@@ -86,10 +89,13 @@ OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master 2>&
 [ "$(wc -l < "$TMP/gate-runs" 2>/dev/null)" = "1" ] && ok "Regression Test Suite command ran exactly once" || bad "gate run count wrong: $(cat "$TMP/gate-runs" 2>/dev/null)"
 echo "$OUT" | grep -q "tests passed" && ok "success message reports the tests passed" || bad "success message wrong: $OUT"
 
-# ── 4. Doctrine command fails → exit 2, master unmoved ──────────────────────
+# ── 4. Doctrine command fails on the integrated tree → exit 2, master unmoved ─
+# The command passes on master alone (no src/app.sh there), so the failure is this
+# change's. A command that fails on master too is a red base, which merges; see
+# tests/test_merge_scoped_regate.sh.
 setup '### Regression Test Suite
 ```bash
-false
+test ! -f src/app.sh
 ```'
 branch_with feature/code src/app.sh
 BEFORE=$(origin_master)
@@ -97,22 +103,26 @@ bash "$MTI" --feature feature/code --issue $ISSUE --integration master >/dev/nul
 [ "$RC" -eq 2 ] && ok "failing doctrine gate exits 2" || bad "failing doctrine gate exit=$RC"
 [ "$(origin_master)" = "$BEFORE" ] && ok "failing gate leaves integration branch unmoved" || bad "failing gate moved the integration branch"
 
-# ── 5. Rejected push → re-sync → tests re-run before the next push ──────────
+# ── 5. Rejected push → overlapping re-sync → tests re-run before the next push ─
+# The sibling edits README.md, a file this fix also edits (a different line, so the
+# re-sync merges cleanly). A re-sync that is disjoint from the fix is pushed without
+# a second gate run; tests/test_merge_scoped_regate.sh covers that split.
 setup ""
 git clone -q "$TMP/origin.git" "$TMP/sibling"
 git -C "$TMP/sibling" config user.email s@example.com; git -C "$TMP/sibling" config user.name S
 cd "$TMP/worker" || exit 1
 branch_with feature/code src/app.sh
+sed -i '1s/.*/line 1 (fixed)/' README.md; git commit -q -am "touch README"
 rm -f "$TMP/gate-runs" "$TMP/raced"
 # First gate run: a sibling lands on master meanwhile, so our push is rejected.
 GATE='echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs
 if [ ! -f '"$TMP"'/raced ]; then touch '"$TMP"'/raced
-  (cd '"$TMP"'/sibling && echo s > sibling.txt && git add sibling.txt && git commit -q -m sib && git push -q origin master)
+  (cd '"$TMP"'/sibling && sed -i "10s/.*/line 10 (sibling)/" README.md && git commit -q -am sib && git push -q origin master)
 fi'
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$GATE" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "rejected push recovered" || bad "retry path failed (rc=$RC): $OUT"
 RUNS=$(wc -l < "$TMP/gate-runs" 2>/dev/null || echo 0)
-[ "$RUNS" -eq 2 ] && ok "gate re-ran after the re-sync (2 runs)" || bad "gate ran $RUNS time(s); want 2"
+[ "$RUNS" -eq 2 ] && ok "gate re-ran after the overlapping re-sync (2 runs)" || bad "gate ran $RUNS time(s); want 2"
 PUBLISHED_TREE=$(git --git-dir="$TMP/origin.git" rev-parse 'master^{tree}')
 [ "$(tail -1 "$TMP/gate-runs")" = "$PUBLISHED_TREE" ] && ok "the published tree is the one the last gate run tested" || bad "published tree was not the tested tree"
 
