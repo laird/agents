@@ -25,20 +25,41 @@
 #                 working/NNN.md). Loser of the rename race gets exit 1;
 #                 we then try the next candidate, so N workers ticking
 #                 together claim N different issues instead of N-1 idling.
-#   GitHub backend: best-effort `issue_claim` (label-add) plus the
-#                 existing comment-scan race detector in /autocoder:fix.
+#   GitHub, Jira, ADO: `issue_claim` is a label-add that always succeeds,
+#                 so every racer "wins" it. The gate settles the race itself,
+#                 before any Claude session starts: after the label-add it
+#                 posts `🔒 claim <worker-id> <epoch-ms>`, reads the comments
+#                 back, and keeps the issue only when the earliest live claim
+#                 (smallest epoch-ms, worker-id breaking ties) is its own.
+#                 Every reader sorts the same comments the same way, so one
+#                 racer keeps the issue. Claims older than
+#                 AUTOCODER_CLAIM_WINDOW_S are settled races and are ignored.
+#                 A loser moves to the next candidate WITHOUT `issue_release`:
+#                 the label is shared, and removing it would strip the
+#                 winner's lock. The marker deliberately differs from
+#                 /autocoder:fix's `[autocoder-claim]`, which aborts when it
+#                 counts more than one; that detector still runs downstream.
+#                 If the comment or the read-back fails, the gate keeps the
+#                 claim, as it did before the read-back existed.
 #
 # Environment:
 #   AUTOCODER_WORK_JSON        work-plan path (default /tmp/autocoder-work.json)
 #   AUTOCODER_CLAIM_MAX_TRIES  claim attempts per tick before giving up
 #                              (default 10), so a backend whose claims all fail
 #                              does not scan hundreds of issues per tick.
+#   AUTOCODER_WORKER_ID        worker id in claim comments
+#                              (default <hostname>-<gate pid>)
+#   AUTOCODER_CLAIM_WINDOW_S   age in seconds past which a claim comment no
+#                              longer competes (default 120)
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_JSON="${AUTOCODER_WORK_JSON:-/tmp/autocoder-work.json}"
 MAX_TRIES="${AUTOCODER_CLAIM_MAX_TRIES:-10}"
+WORKER_ID="${AUTOCODER_WORKER_ID:-$(hostname)-$$}"
+WORKER_ID="${WORKER_ID//[[:space:]]/_}"
+CLAIM_WINDOW_S="${AUTOCODER_CLAIM_WINDOW_S:-120}"
 
 # Source backend dispatch (defines issue_list, issue_update, ...)
 # shellcheck source=issue-fns.sh
@@ -150,10 +171,32 @@ case "$PHASE" in
     ;;
 esac
 
-# Walk the candidates in order. File backend: the rename in `issue_claim`
-# gives exactly one winner per issue, so a lost race just means "try the
-# next one". GitHub backend: the label-add is best-effort; the comment-scan
-# race detector in /autocoder:fix handles cross-host racers.
+# Exit 0 when this worker holds the earliest live claim comment on issue $1.
+claim_comment_wins() {
+  local n="$1" now_ms issue_json
+  now_ms="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+  issue_comment "$n" --body "🔒 claim $WORKER_ID $now_ms" 2>/dev/null || return 0
+  issue_json="$(issue_get "$n" 2>/dev/null)" || return 0
+  ISSUE_JSON="$issue_json" ME="$WORKER_ID" NOW_MS="$now_ms" \
+    WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" python3 - <<'PY'
+import json, os, re, sys
+
+try:
+    comments = json.loads(os.environ["ISSUE_JSON"]).get("comments") or []
+except ValueError:
+    sys.exit(0)
+now = int(os.environ["NOW_MS"])
+oldest = now - int(os.environ["WINDOW_MS"])
+claims = []
+for c in comments:
+    m = re.match(r"\s*🔒 claim (\S+) (\d+)\s*$", c.get("body") or "")
+    if m and int(m.group(2)) >= oldest:
+        claims.append((int(m.group(2)), m.group(1)))
+sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)
+PY
+}
+
+# Walk the candidates in order; a lost race means "try the next one".
 tries=0
 while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   case "$PHASE" in
@@ -167,6 +210,9 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   tries=$((tries + 1))
 
   issue_claim "$ISSUE_NUM" 2>/dev/null || continue
+  if [ "$ISSUE_SOURCE" != file ]; then
+    claim_comment_wins "$ISSUE_NUM" || continue
+  fi
 
   if [ "$PHASE" = "FIX" ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s"}\n' \
