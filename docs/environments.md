@@ -9,8 +9,12 @@ commits that passed the full regression suite.
 1. `main` is the integration branch. Workers merge into it after their own gate,
    and a push race can land an untested combination. That risk is accepted.
 2. `main-sentinel.sh` tests every new `main` tip after the fact. A tip that passes
-   the full suite becomes `origin/main-green`. A tip that fails is bisected and
-   reverted, and a P0 is filed. See `plugins/autocoder/scripts/README.md` section F.
+   the full suite becomes `origin/main-green` (the green ref is
+   `<integration>-green`, so a swarm that integrates on `master` gets
+   `master-green`; `AUTOCODER_GREEN_REF` or `--green-ref` rename it). A tip that
+   fails is bisected over the pushes the pipeline recorded as tip refs, the
+   culprit push alone is reverted, and a P0 is filed against its issue. See
+   `plugins/autocoder/scripts/README.md` section F.
 3. An **environment** is a branch on origin (`env/staging`, `env/uat`, `env/prod`)
    that a deploy reads. Nothing moves it except `promote.sh`.
 4. `promote.sh` moves an environment only to a commit with **proof**: the
@@ -71,8 +75,10 @@ Exit codes: `0` moved or already there, `1` setup or config error, `2` refused.
 A refusal prints one line naming the missing proof, for example
 `⛔ staging: refused, 8b1e0d2 is not the tip of origin/main-green and its tree has no recorded full-regression pass`.
 
-`--repo DIR`, `--green-ref NAME`, and `--test-cmd "<cmd>"` match the sentinel's
-flags. `--test-cmd` matters: the gate cache keys on the exact command, so the
+`--repo DIR`, `--integration BRANCH`, `--green-ref NAME`, and `--test-cmd "<cmd>"`
+match the sentinel's flags. The green ref defaults to `AUTOCODER_GREEN_REF`, then
+`<integration>-green`, on both sides; a swarm that integrates on `master` passes
+`--integration master` to `promote.sh` or sets `AUTOCODER_GREEN_REF=master-green`. `--test-cmd` matters: the gate cache keys on the exact command, so the
 tree-pass lookup only works when `promote.sh` and `main-sentinel.sh` name the same
 command. Both default to the `### Regression Test Suite` block of `AGENTS.md` or
 `CLAUDE.md`, so a repo that relies on that default needs no flag on either side.
@@ -121,9 +127,14 @@ environment the sentinel's behavior is unchanged.
 - A worker may push a combination it never tested (a push-race re-sync), and a
   red `main` can stay red until the sentinel's next tick. Other workers keep
   landing on it. That is the speed you are buying.
-- The sentinel reverts the culprit, files a P0, and moves `main-green` to the
-  repaired tip. The red tip itself never gains proof: its tree is recorded as a
-  fail, and `promote.sh --commit <red tip>` refuses it.
+- The sentinel reverts the culprit push (and only that push: later innocent
+  pushes stay), files a P0 that names the push, its issue and how to re-land,
+  and moves `main-green` to the repaired tip. The red tip itself never gains
+  proof: its tree is recorded as a fail, and `promote.sh --commit <red tip>`
+  refuses it.
+- An issue the merge job parked under `awaiting-integration` (landed on a red
+  base, or by a disjoint re-sync) is closed by the sentinel on the first green
+  tick whose tip contains its push and that `verify-shipped.sh` accepts.
 - No environment ever points at a commit that failed, or was never run through,
   the full suite. Deploys read `env/*` branches, not `main`, so they never see
   the red window.

@@ -200,7 +200,8 @@ For the file backend specifically, also exercise:
 `merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
 push onto an integration branch that is already red. The sentinel is what makes
 both safe: it tests the integration tip after merges land, and when the tip is
-red it bisects, reverts the culprit, and files the regression.
+red it finds the push that broke it, reverts exactly that push, and files the
+regression against the issue that made it.
 
 One invocation is one idempotent tick. Run it beside the swarm:
 
@@ -209,49 +210,98 @@ plugins/autocoder/scripts/main-sentinel.sh --repo "$MAIN_WORKTREE" --integration
 ```
 
 `--test-cmd` defaults to the `### Regression Test Suite` block of `AGENTS.md`
-or `CLAUDE.md`; the script refuses to run without one. Exit 0 means idle,
-green, or repaired; 1 a setup error; 3 red and not repaired (a P0 is filed).
+or `CLAUDE.md`; the script refuses to run without one. The green ref defaults to
+`AUTOCODER_GREEN_REF`, then `<integration>-green`; `--green-ref` overrides both.
+Exit 0 means idle, green, or repaired; 1 a setup error; 3 red and not repaired
+(a P0 is filed). A tick holds `flock` on `<state file>.lock`; a second invocation
+prints that another tick is running and exits 0.
+
+### Tip refs: the record the sentinel bisects
+
+Workers merge the integration branch *into* their feature and push the feature
+tip as the new integration tip, so consecutive tips are joined by second-parent
+links or plain fast-forwards. `git bisect --first-parent` only ever visits the
+newest push's own commits, so a break from an earlier push got the newest push
+reverted. Instead, every verified push records itself:
+
+```
+refs/autocoder/tips/<integration>/<landed-sha>-<issue>
+```
+
+`merge-to-integration.sh` pushes one after each verified push; the sentinel
+pushes one for each revert it lands, with the P0 number as the issue. The
+sentinel bisects over that ordered list, never over commits.
 
 Each tick:
 
-1. Fetches `origin/<integration>`. An unmoved tip is an idle tick.
-2. Gates the tip in a persistent worktree
-   (`${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>`, created once with
-   `node_modules`/`dist` hardlinked from `--repo`) through `gate-cache-fns.sh`,
-   so a tree a worker already gated costs nothing.
-3. Green: fast-forwards `origin/<green-ref>` (default `main-green`) to the tip.
-   That ref is the deployable pointer other tools can read.
-4. Red with a green ancestor: `git bisect --first-parent` between them, with the
-   probe reusing recorded fails; reverts the culprit (`-m 1` for a merge);
-   re-gates; pushes with the same fetch+merge+retry loop
-   `merge-to-integration.sh` uses; moves `<green-ref>`; files a P0 labelled
-   `P0,test-failure` with the culprit, bisect log, revert, and gate tail; and
-   comments on the originating issue parsed from the culprit's message
-   (`#123`, `issue-123`).
-5. Red otherwise: files the P0 (or comments on the still-open one) and exits 3.
-6. Re-queues crashed hand-offs: an `autocoder-merge-<issue>.pid` whose pid is
-   dead with no `.exit` file is a merge job that died; if the issue carries
-   `awaiting-integration` the label is removed and a comment explains why.
+1. Fetches `origin/<integration>`, `origin/<green-ref>` and the tip refs. Finishes
+   the bookkeeping of a revert an earlier tick pushed but did not record
+   (`pending_revert` in the state file), drops one that never reached origin.
+2. Reconciles hand-offs (below). An unmoved tip is then an idle tick.
+3. Gates the tip in a throwaway worktree
+   (`${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>-<integration>/<pid>`,
+   seeded with `node_modules`/`dist` by `worktree-deps-fns.sh`, removed on exit)
+   through `gate-cache-fns.sh`, so a tree a worker already gated costs nothing.
+4. Green: fast-forwards `origin/<green-ref>` to the tip, closes the red P0 if one
+   was open ("green again at"), and closes every open issue labelled
+   `awaiting-integration` whose tip ref is on the tip and whose commit
+   `verify-shipped.sh` accepts. Issues without a tip ref (PR mode) are not touched.
+   Then `promote.sh --auto`.
+5. Red with a green ancestor: binary-searches the recorded tips strictly after
+   `last_green` (the tip itself is a synthetic tip with issue `unknown` when
+   nobody recorded it). Probes read the shared gate cache and write to a
+   per-repair cache that is deleted afterwards. With the first bad push `B`, its
+   issue `I` and the previous good tip `P`, the repair is
+   `git diff --binary P B | git apply -R --3way --index` on the current tip,
+   committed as `Revert autocoder push <B> (issue #I)` with trailers
+   `Autocoder-Reverts: <B>` and `Autocoder-Reverts-Issue: <I>`. A conflict stops
+   the repair. The revert tree is gated; the P0 (`P0,test-failure`, one per
+   culprit) is filed first so its number can be recorded as intent; the push
+   retries up to 8 times, rebuilding the revert on whatever tip wins the race and
+   re-gating only when the incoming files overlap the revert's files or a global
+   path (`regate-fns.sh`). Only after the revert is verified on origin does the
+   sentinel publish its tip ref, move `<green-ref>`, comment the revert sha and
+   the re-land steps on the P0 and on issue `I`, and clear the pending state.
+   Issue `I`, if parked, goes back in the queue. A reverted push's issue is never
+   closed as landed: the revert's trailer is the record step 4 checks.
+6. Red otherwise: files the P0 (or comments on the still-open one, found by title
+   when the state file lost its number) and exits 3.
+7. Hand-offs: for each open issue labelled `merging` (or `awaiting-integration`
+   with a job file, the older shape): a live job is left alone; a dead job whose
+   push has a tip ref is closed or parked; a dead job with no exit file re-runs
+   its `run.sh` once (`setsid`, idempotent: a landed sha is not merged twice) or,
+   failing that, is re-queued. Job files are
+   `autocoder-merge-<repo-id>-<issue>.{pid,exit,run.sh,log}` under
+   `${AUTOCODER_TMP:-/tmp}` (the older `autocoder-merge-<issue>.*` names are read
+   for one release); finished sets older than a day are reaped.
+8. Prunes tip refs more than 200 commits behind the green tip (keeping those a
+   parked issue still needs) and gate-cache records older than 30 days.
 
 State lives in one file,
 `${AUTOCODER_SENTINEL_STATE_DIR:-$XDG_STATE_HOME/autocoder/sentinel}/<repo-id>-<integration>`,
-with `last_tested`, `last_green`, `red_issue` (tmp+rename). `last_green` is
-re-read from `origin/<green-ref>` whenever that ref exists; the file only
-carries what git has no home for. `cat` it to see the sentinel's last tick.
-Tests point `AUTOCODER_TMP`, `AUTOCODER_SENTINEL_STATE_DIR`, and
-`AUTOCODER_GATE_CACHE_DIR` at a scratch directory.
+with `last_tested`, `last_green`, `red_issue`, and the `pending_*` fields
+(tmp+rename). `last_green` is re-read from `origin/<green-ref>` whenever that ref
+exists; the file only carries what git has no home for. `cat` it to see the
+sentinel's last tick. `push_green` returns non-zero when the ref will not
+fast-forward; `AUTOCODER_GREEN_FORCE=1` allows a lease-protected force, only for a
+sha that passed the gate this tick and is not an ancestor of the current green
+ref. Tests point `AUTOCODER_TMP`, `AUTOCODER_SENTINEL_STATE_DIR`, and
+`AUTOCODER_GATE_CACHE_DIR` at a scratch directory. The repo id comes from
+`repo-id-fns.sh`: `<repo dir>-<8 hex of the common git dir>`, the same from every
+worktree of a clone.
 
 ## G. `promote.sh` — environments, gated on the sentinel's proof
 
 `main` may be red between sentinel ticks; a release may not. An environment is a
 branch on origin (`env/staging`, `env/uat`, `env/prod`) that a deploy reads, and
 `promote.sh` is the only thing that moves it. It moves it only to a commit with
-proof of a full-regression pass: `origin/<green-ref>`, the previous environment's
-tip, or a tree the gate cache records as passing. A commit that is merely on
-`main` is refused.
+proof of a full-regression pass: `origin/<green-ref>` (default
+`<integration>-green`, `--integration main` unless told otherwise, or
+`AUTOCODER_GREEN_REF`), the previous environment's tip, or a tree the gate cache
+records as passing. A commit that is merely on `main` is refused.
 
 ```bash
-plugins/autocoder/scripts/promote.sh --to staging            # to origin/main-green
+plugins/autocoder/scripts/promote.sh --to staging            # to origin/<integration>-green
 plugins/autocoder/scripts/promote.sh --to uat                # to staging's tip
 plugins/autocoder/scripts/promote.sh --to prod --dry-run     # every check, no push
 plugins/autocoder/scripts/promote.sh --list                  # tips, proof, what is releasable
