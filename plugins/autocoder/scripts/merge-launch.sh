@@ -39,10 +39,11 @@
 #   the caller sees the refusal now instead of in a detached log.
 #
 #   --summary-file and --own-issue pass straight through: with --own-issue the
-#   detached job closes the issue (posting the summary) or escalates it to
-#   needs-clarification itself, so the worker swaps `working` for
-#   `awaiting-integration` right after this returns and moves on. Nobody has
-#   to poll; merge-poll.sh remains for humans and monitors who want to watch.
+#   detached job owns the issue from its first act (`working` → `merging`) to
+#   its last (close, park under `awaiting-integration`, or escalate to
+#   needs-clarification). The worker writes NO label after this returns; it
+#   moves on. Nobody has to poll; merge-poll.sh remains for humans and
+#   monitors who want to watch.
 #
 # State files (keyed by issue number, since only one worker holds an issue's
 # `working` lock at a time so this is unique per in-flight merge):

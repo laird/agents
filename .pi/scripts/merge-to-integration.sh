@@ -65,28 +65,40 @@
 #   every caller in this repo passes --feature-sha.
 #
 # OWNING THE ISSUE:
-#   --own-issue makes this job the owner of the issue's terminal transition, so the worker
-#   that launched it can move on instead of polling for 8-30 minutes. The issue state
-#   machine is open → working → awaiting-integration → closed | needs-clarification; the
-#   worker owns the first two transitions and swaps `working` for `awaiting-integration`
-#   when it launches this job, this job owns the last one:
-#     landed and verify-shipped.sh says the commit is on the ship branch
-#        → issue_close with "✅ Issue Resolved" and the --summary-file contents,
-#          `awaiting-integration` removed
-#     landed but not on the ship branch
-#        → left open under `awaiting-integration` with the "⏳ not yet shipped" comment
-#     exit 1 / exit 2 after launch (conflict, gate failure, publish failure)
-#        → `awaiting-integration` removed, `needs-clarification` added, comment with the
-#          reason and the last 40 lines of gate output
+#   --own-issue makes this job the owner of the issue from the moment it starts, so the
+#   worker that launched it can move on instead of polling for 8-30 minutes. The worker
+#   owns open → working (claim); this job owns everything after, through the backend's
+#   lifecycle verbs (issue-fns.sh: handoff, park, escalate, requeue), never raw labels:
+#     first act, before anything that can fail
+#        → issue_handoff: `working` → `merging`. The worker writes NO label after the
+#          launch returns; its late writes used to overwrite this job's fast-path outcome.
+#     landed, gate passed on the published tree (or docs-only), and verify-shipped.sh
+#     says the commit is on the ship branch
+#        → issue_close with "✅ Issue Resolved" and the --summary-file contents
+#     landed on any other basis (disjoint re-sync, red base) or not on the ship branch
+#        → issue_park: `awaiting-integration` with a comment naming the landed commit
+#          and the gated trees. The post-merge sentinel closes a parked issue once its
+#          landed commit is on a green tip. Only `tested` and `docs-only` may close.
+#     exit 1 / exit 2 before anything was pushed (conflict, gate failure, publish failure)
+#        → issue_escalate --label needs-clarification, comment with the reason and the
+#          last 40 lines of gate output
+#     internal error AFTER the push succeeded
+#        → issue_park (the work is on the branch; nothing is lost), never an escalation
 #   Every transition converges: an issue that is already closed is left alone (the whole
-#   run is skipped), a feature SHA already on origin/<integration> is not merged or gated
-#   again, and label removals tolerate absence. Without --own-issue none of this runs and
-#   the exit codes below are the only outcome.
+#   run is skipped and a stale `merging` is retired), a feature SHA already on
+#   origin/<integration> is not merged or gated again, and an issue someone already
+#   parked stays parked. Without --own-issue none of this runs and the exit codes below
+#   are the only outcome.
+#
+# PUBLISHED TIPS:
+#   After a verified push the landed commit is also published as
+#   refs/autocoder/tips/<integration>/<landed-sha>-<issue>, so the sentinel can map a
+#   green tip back to the issues it proves. Failure to publish the ref is logged, never
+#   fatal.
 #
 # Returns:
 #   0  merged + pushed to <integration>
-#   1  conflict, push failure, setup failure, or no test command (issue is labelled
-#      needs-clarification on conflict)
+#   1  conflict, push failure, setup failure, or no test command
 #   2  tests failed on the integrated tree and origin/<integration> passes alone
 
 set -uo pipefail
@@ -144,42 +156,61 @@ trap 'rm -f "$GATE_LOG"' EXIT
 _issue_is_closed() {
   issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq '"state": *"CLOSED"'
 }
+_issue_has_label() {
+  issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq "\"name\": *\"$1\""
+}
 
-# Terminal failure. Under --own-issue the issue leaves `awaiting-integration` for
-# `needs-clarification` with the reason and the gate's tail; an issue someone already
-# closed is left alone. Then exits with $1.
+# Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+# not lost work, and the issue is parked instead of escalated.
+PUSHED=0
+
+# Terminal failure, exits with $1. Under --own-issue an issue someone already closed is
+# left alone; otherwise it is escalated (nothing landed) or parked (the push landed and
+# only this job's bookkeeping failed), with the reason and the gate's tail.
 _fail() {
   local code="$1" reason="$2" tail=""
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     [ -s "$GATE_LOG" ] && tail=$(tail -n 40 "$GATE_LOG")
-    issue_update "$ISSUE_NUM" --remove-label "awaiting-integration" 2>/dev/null || true
-    issue_update "$ISSUE_NUM" --add-label "needs-clarification" 2>/dev/null || true
-    issue_comment "$ISSUE_NUM" --body "❌ **Auto-merge to \`${INTEGRATION_BRANCH}\` failed** (exit ${code}): ${reason}
-
-The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${tail:+
+    tail="${tail:+
 
 Last gate output:
 \`\`\`
 ${tail}
-\`\`\`}" 2>/dev/null || true
+\`\`\`}"
+    if [ "$PUSHED" -eq 1 ]; then
+      issue_park "$ISSUE_NUM" --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` pushed, then hit an internal error** (exit ${code}): ${reason}
+
+The work from \`${FEATURE}\` is on \`${INTEGRATION_BRANCH}\`; what failed was this job's bookkeeping after the push. Parked under \`awaiting-integration\` for the post-merge sentinel (or a human) to confirm and close.${tail}" 2>/dev/null || true
+    else
+      issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "❌ **Auto-merge to \`${INTEGRATION_BRANCH}\` failed** (exit ${code}): ${reason}
+
+The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${tail}" 2>/dev/null || true
+    fi
   fi
   exit "$code"
 }
 
 _escalate_conflict() {
   echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
-  echo "   Aborting the merge and escalating issue #${ISSUE_NUM} for human resolution."
   git merge --abort 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --remove-label "awaiting-integration" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --add-label "needs-clarification" 2>/dev/null || true
-  issue_comment "$ISSUE_NUM" --body "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue." 2>/dev/null || true
+  if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
+    echo "   Aborting the merge and escalating issue #${ISSUE_NUM} for human resolution."
+    issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue." 2>/dev/null || true
+  else
+    echo "   Aborting the merge. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
+  fi
   exit 1
 }
 
-# Terminal success under --own-issue: close the issue when the landed commit is on the
-# branch that ships, otherwise leave it findable under `awaiting-integration`. $1 is the
-# landed commit.
+# Terminal success under --own-issue. $1 is the landed commit. Only a tree the gate
+# passed (tested) or that needs no gate (docs-only) may close the issue, and only when
+# verify-shipped.sh says the commit is on the ship branch. Every other landing is parked
+# under `awaiting-integration` with PARK_NOTE (set by the publish-basis case below); the
+# post-merge sentinel closes a parked issue once its landed commit is on a green tip.
+PARK_NOTE=""
+_park() {
+  issue_park "$ISSUE_NUM" --comment "$1" 2>/dev/null || true
+}
 _close_or_park() {
   [ "$OWN_ISSUE" -eq 1 ] || return 0
   if _issue_is_closed; then
@@ -191,6 +222,19 @@ _close_or_park() {
   if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
     summary=$(cat "$SUMMARY_FILE")
   fi
+  case "$PUBLISH_BASIS" in
+    tested|docs-only|already-landed) ;;
+    *)
+      _park "⏳ **Landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\`, not closed.** ${PARK_NOTE}
+
+${summary}
+
+Labelled \`awaiting-integration\`; the post-merge sentinel closes this issue once \`${landed}\` is on a green \`${INTEGRATION_BRANCH}\` tip.
+
+🤖 Auto-merge (publish basis: ${PUBLISH_BASIS})"
+      echo "⏳ Issue #${ISSUE_NUM} parked under awaiting-integration (${PUBLISH_BASIS}); the sentinel closes it once ${landed:0:8} is on a green tip."
+      return 0 ;;
+  esac
   if "${_MTI_DIR}/verify-shipped.sh" "$landed"; then
     if issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
@@ -199,17 +243,16 @@ ${summary}
 **Branch**: \`${FEATURE}\` (merged and deleted)
 
 🤖 Auto-resolved by autonomous fix workflow"; then
-      issue_update "$ISSUE_NUM" --remove-label "awaiting-integration" 2>/dev/null || true
+      issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
       echo "✅ Issue #${ISSUE_NUM} closed."
     else
-      echo "⚠️  Issue #${ISSUE_NUM} could not be closed; it stays under 'awaiting-integration' with the work landed on '${INTEGRATION_BRANCH}'."
+      _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
+      echo "⚠️  Issue #${ISSUE_NUM} could not be closed; parked under 'awaiting-integration' with the work landed on '${INTEGRATION_BRANCH}'."
     fi
     return 0
   fi
   ship_branch="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  issue_comment "$ISSUE_NUM" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+  _park "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
 
 The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${landed}\`. It has **not** reached \`${ship_branch}\`, so closing would assert something false.
 
@@ -217,13 +260,23 @@ The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${land
 
 Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
 
-🤖 Ship gate (issue #35)" 2>/dev/null || true
+🤖 Ship gate (issue #35)"
   echo "⏳ Issue #${ISSUE_NUM} left OPEN — merged to ${INTEGRATION_BRANCH} but not on the shipping branch ${ship_branch}"
 }
 
-if [ "$OWN_ISSUE" -eq 1 ] && _issue_is_closed; then
-  echo "ℹ️  Issue #${ISSUE_NUM} is already closed; nothing to merge."
-  exit 0
+if [ "$OWN_ISSUE" -eq 1 ]; then
+  if _issue_is_closed; then
+    echo "ℹ️  Issue #${ISSUE_NUM} is already closed; nothing to merge."
+    issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    exit 0
+  fi
+  # The hand-off is this job's first act, before anything that can fail, so a fast
+  # failure path still finds the issue under `merging` and escalates it from there.
+  if issue_handoff "$ISSUE_NUM" 2>/dev/null; then
+    echo "ℹ️  Issue #${ISSUE_NUM} handed off: working → merging."
+  else
+    echo "⚠️  Could not hand issue #${ISSUE_NUM} off to this job (backend refused); continuing with the merge."
+  fi
 fi
 
 # Resolve the exact commit to test/push. Prefer the SHA the caller pinned before we started;
@@ -342,6 +395,14 @@ INT_SEEN_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
   echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
   git push origin --delete "$FEATURE" 2>/dev/null || true
+  if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
+    # An earlier run parked it (disjoint, red base, or not shipped); landing nothing new
+    # proves nothing new, so the sentinel keeps ownership.
+    echo "ℹ️  Issue #${ISSUE_NUM} is parked under awaiting-integration from an earlier landing; leaving it to the sentinel."
+    issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    exit 0
+  fi
+  PUBLISH_BASIS=already-landed
   _close_or_park "$FEATURE_SHA"
   exit 0
 fi
@@ -373,6 +434,10 @@ fi
 #                 touch neither this change nor a global path, so the published tree is
 #                 by construction not the tested one
 #      red-base   the gate failed on the integrated tree AND on origin/<integration> alone
+#      red-base-disjoint
+#                 red-base, then a disjoint re-sync: the published tree is neither tree
+#                 the gate ran on
+#    Only tested and docs-only let _close_or_park close the issue; the rest park it.
 TESTED_TREE=""
 PUBLISH_BASIS=""
 RED_INTEGRATED_TREE=""
@@ -458,10 +523,10 @@ _resync_overlap() {
 #    overlapping this change produces a tree nobody has tested, so it goes back through the
 #    gate before the next push (and before the API fallback below, which publishes whatever
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
-PUSHED=0
+PUSH_VIA=""
 for attempt in 1 2 3 4 5; do
   if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
-    PUSHED=1
+    PUSHED=1; PUSH_VIA=git
     break
   fi
   echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
@@ -482,7 +547,10 @@ for attempt in 1 2 3 4 5; do
     else
       INCOMING_COUNT=$(git diff --name-only "$INT_SEEN_SHA" "$INT_NEW_SHA" | wc -l | tr -d ' ')
       echo "ℹ️  Disjoint re-sync (${INCOMING_COUNT} incoming files, none overlap this change); pushing the already-gated work"
-      [ "$PUBLISH_BASIS" = tested ] && PUBLISH_BASIS=disjoint
+      case "$PUBLISH_BASIS" in
+        tested)   PUBLISH_BASIS=disjoint ;;
+        red-base) PUBLISH_BASIS=red-base-disjoint ;;
+      esac
     fi
   fi
   INT_SEEN_SHA="$INT_NEW_SHA"
@@ -499,7 +567,7 @@ if [ "$PUSHED" -ne 1 ]; then
        --message "Merge issue #${ISSUE_NUM} (${FEATURE}) into ${INTEGRATION_BRANCH}
 
 Published via the GitHub API because the git transport is blocked."; then
-    PUSHED=1
+    PUSHED=1; PUSH_VIA=api
   fi
 fi
 
@@ -524,8 +592,18 @@ if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
   _fail 1 "publication could not be verified: local tree ${LOCAL_TREE:0:8}, remote tree ${REMOTE_TREE:-<none>}"
 fi
 
+# The commit that is now on origin/<integration> carrying this work. A git push landed
+# HEAD itself; the API fallback minted a new commit, so the fetched remote tip is it.
+if [ "$PUSH_VIA" = git ]; then
+  LANDED_SHA=$(git rev-parse HEAD)
+else
+  LANDED_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+fi
+
 # The word "verified" is reserved for the one case where the gate passed on the very tree
-# that is now on the integration branch.
+# that is now on the integration branch. PARK_NOTE explains every other basis to the
+# issue when _close_or_park parks it.
+RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
 case "$PUBLISH_BASIS" in
   docs-only)
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (documentation-only change; no tests run; tree ${LOCAL_TREE:0:8})." ;;
@@ -537,14 +615,31 @@ case "$PUBLISH_BASIS" in
       _fail 1 "internal error: published tree ${LOCAL_TREE:0:8} is not the tested tree ${TESTED_TREE:0:8}"
     fi ;;
   disjoint)
+    PARK_NOTE="The gate passed on tree \`${TESTED_TREE}\`; a disjoint push-race re-sync then changed the published tree to \`${LOCAL_TREE}\`, which no gate has run on."
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (disjoint re-sync; gated tree ${TESTED_TREE:0:8}, published tree ${LOCAL_TREE:0:8})." ;;
   red-base)
-    issue_comment "$ISSUE_NUM" --body "⚠️ **Merged onto a red \`${INTEGRATION_BRANCH}\`.** The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway (published tree \`${LOCAL_TREE}\`); the post-merge sentinel owns red \`${INTEGRATION_BRANCH}\`." 2>/dev/null || true
+    PARK_NOTE="**Merged onto a red \`${INTEGRATION_BRANCH}\`.** ${RED_BASE_NOTE} (published tree \`${LOCAL_TREE}\`); the post-merge sentinel owns red \`${INTEGRATION_BRANCH}\`."
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' on a red base (gate failed on integrated tree ${RED_INTEGRATED_TREE:0:8} and on origin/${INTEGRATION_BRANCH} alone, tree ${RED_BASE_TREE:0:8}; published tree ${LOCAL_TREE:0:8}, which the gate did not pass)." ;;
+  red-base-disjoint)
+    PARK_NOTE="**Merged onto a red \`${INTEGRATION_BRANCH}\`, then re-synced.** ${RED_BASE_NOTE}, and a disjoint push-race re-sync then changed the published tree to \`${LOCAL_TREE}\`, which is neither tree the gate ran on; the post-merge sentinel owns red \`${INTEGRATION_BRANCH}\`."
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' on a red base followed by a disjoint re-sync (gate failed on integrated tree ${RED_INTEGRATED_TREE:0:8} and on origin/${INTEGRATION_BRANCH} alone, tree ${RED_BASE_TREE:0:8}; published tree ${LOCAL_TREE:0:8} is neither gated tree)." ;;
   *)
     echo "❌ Internal error: no publish basis recorded for tree ${LOCAL_TREE:0:8}." >&2
     _fail 1 "internal error: no publish basis recorded for tree ${LOCAL_TREE:0:8}" ;;
 esac
+# Without --own-issue nobody parks the issue, so a red-base landing still tells it.
+case "$PUBLISH_BASIS" in
+  red-base|red-base-disjoint)
+    [ "$OWN_ISSUE" -eq 1 ] || issue_comment "$ISSUE_NUM" --body "⚠️ ${PARK_NOTE}" 2>/dev/null || true ;;
+esac
+
+# 3d. Publish the landed commit as a tip ref for the sentinel. Never fatal.
+TIP_REF="refs/autocoder/tips/${INTEGRATION_BRANCH}/${LANDED_SHA}-${ISSUE_NUM}"
+if git push origin "${LANDED_SHA}:${TIP_REF}" >/dev/null 2>&1; then
+  echo "ℹ️  Published ${LANDED_SHA:0:8} as ${TIP_REF}."
+else
+  echo "⚠️  Could not publish ${TIP_REF} (not fatal; the sentinel will see the branch tip)."
+fi
 
 # 4. Clean up the feature branch now that its work is on the integration branch.
 git push origin --delete "$FEATURE" 2>/dev/null || true
@@ -552,5 +647,5 @@ git push origin --delete "$FEATURE" 2>/dev/null || true
 # in $CALLER_DIR is untouched by this script; the caller's own cleanup (or the next /fix
 # run branching fresh from origin/<integration-branch>) handles it.
 
-_close_or_park "$(git rev-parse HEAD)"
+_close_or_park "$LANDED_SHA"
 exit 0

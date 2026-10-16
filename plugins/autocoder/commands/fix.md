@@ -540,7 +540,7 @@ fi
 if [ "$ISSUE_SOURCE" = "github" ]; then
   EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "merging:A detached merge job is landing this issue on the integration branch:5319e7"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -687,7 +687,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
       and ((.number | IN($claimed[])) | not)
     ) |
     {
@@ -712,7 +712,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
       and ((.number | IN($claimed[])) | not)
     ) |
     {
@@ -969,7 +969,7 @@ still yours re-exposes it to the pool and invites a peer to duplicate your work.
 |---|---|---|
 | Issue closed (merged / resolved) | ✅ yes | — |
 | PR opened (`pr` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step, so the issue stays out of the claimable pool until the merge closes it |
-| Merge launched (`merge` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step; the detached job (`merge-launch.sh --own-issue`) gates, pushes, and retires that label when it closes the issue or escalates it to `needs-clarification` |
+| Merge launched (`merge` merge mode) | ✅ yes — as a hand-off | the detached job (`merge-launch.sh --own-issue`) swaps `working` for `merging` itself as its first act; this worker writes NO label after the launch returns. The job retires `merging` when it closes the issue, parks it under `awaiting-integration` (landed but not provably green, or not yet shipped), or escalates it to `needs-clarification`; the sentinel re-queues it if the job dies |
 | Blocked (`needs-design`, `needs-clarification`, `needs-approval`, `too-complex`, `future`) | ✅ yes | post a release comment in the same step |
 | Deliberately skipped or abandoned | ✅ yes | post a release comment in the same step |
 | Could not switch to the feature branch (claim never started) | ✅ yes | — |
@@ -1134,13 +1134,17 @@ else
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
   # STARTS the job (setsid, fully detached) and returns almost immediately.
   #
-  # The job OWNS the terminal outcome (--own-issue): it gates the integrated
-  # tree, pushes, runs verify-shipped.sh (issue #35) on the landed commit, and
-  # then either closes the issue with the summary written below or labels it
-  # needs-clarification with the gate output when it cannot land.
-  # This worker does NOT poll and does NOT close the issue: it hands off and
-  # moves on to the next issue.
-  cat > "/tmp/autocoder-merge-${ISSUE_NUM}.summary.md" <<'SUMMARY'
+  # The job OWNS the issue (--own-issue) from its first act to its last: it
+  # swaps `working` for `merging` itself before anything that can fail, gates
+  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
+  # landed commit, and then closes the issue with the summary written below,
+  # parks it under `awaiting-integration` (landed but not provably green or
+  # not shipped), or escalates it to needs-clarification with the gate output.
+  # This worker does NOT poll, does NOT close the issue, and writes NO label
+  # after the launch returns: its late label writes used to overwrite the
+  # job's fast-path outcome. It hands off and moves on to the next issue.
+  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
+  cat > "$SUMMARY_FILE" <<\'SUMMARY\'
 [Detailed explanation of fix]
 SUMMARY
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
@@ -1148,17 +1152,14 @@ SUMMARY
     --issue "$ISSUE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
-    --summary-file "/tmp/autocoder-merge-${ISSUE_NUM}.summary.md" \
+    --summary-file "$SUMMARY_FILE" \
     --own-issue; then
     echo "❌ Merge job did not launch for issue #${ISSUE_NUM} — keeping the 'working' label; fix the launch error and retry."
     exit 1
   fi
 
-  # Hand off the lock: 'working' (this worker) → 'awaiting-integration' (the
-  # merge job). Add before remove so the issue is never claimable in between.
-  # The job retires 'awaiting-integration' when it closes or escalates the issue.
-  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  # No label write here. The job performed the hand-off ('working' → 'merging')
+  # as its first act and retires 'merging' when it closes, parks, or escalates.
 
   # Write completion status file for agents-ui TUI monitoring
   SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
@@ -1171,7 +1172,7 @@ SUMMARY
     "Resolved on feature/issue-${ISSUE_NUM}. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
     "${ISSUE_BODY:0:150}" \
     "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log: /tmp/autocoder-merge-${ISSUE_NUM}.log); the job closes the issue when it lands"
+  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
 fi
 ```
 
@@ -1383,13 +1384,17 @@ else
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
   # STARTS the job (setsid, fully detached) and returns almost immediately.
   #
-  # The job OWNS the terminal outcome (--own-issue): it gates the integrated
-  # tree, pushes, runs verify-shipped.sh (issue #35) on the landed commit, and
-  # then either closes the issue with the summary written below or labels it
-  # needs-clarification with the gate output when it cannot land.
-  # This worker does NOT poll and does NOT close the issue: it hands off and
-  # moves on to the next issue.
-  cat > "/tmp/autocoder-merge-${ISSUE_NUM}.summary.md" <<'SUMMARY'
+  # The job OWNS the issue (--own-issue) from its first act to its last: it
+  # swaps `working` for `merging` itself before anything that can fail, gates
+  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
+  # landed commit, and then closes the issue with the summary written below,
+  # parks it under `awaiting-integration` (landed but not provably green or
+  # not shipped), or escalates it to needs-clarification with the gate output.
+  # This worker does NOT poll, does NOT close the issue, and writes NO label
+  # after the launch returns: its late label writes used to overwrite the
+  # job's fast-path outcome. It hands off and moves on to the next issue.
+  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
+  cat > "$SUMMARY_FILE" <<\'SUMMARY\'
 ## Root Cause
 [Detailed analysis]
 
@@ -1407,17 +1412,14 @@ SUMMARY
     --issue "$ISSUE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
-    --summary-file "/tmp/autocoder-merge-${ISSUE_NUM}.summary.md" \
+    --summary-file "$SUMMARY_FILE" \
     --own-issue; then
     echo "❌ Merge job did not launch for issue #${ISSUE_NUM} — keeping the 'working' label; fix the launch error and retry."
     exit 1
   fi
 
-  # Hand off the lock: 'working' (this worker) → 'awaiting-integration' (the
-  # merge job). Add before remove so the issue is never claimable in between.
-  # The job retires 'awaiting-integration' when it closes or escalates the issue.
-  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+  # No label write here. The job performed the hand-off ('working' → 'merging')
+  # as its first act and retires 'merging' when it closes, parks, or escalates.
 
   # Write completion status file for agents-ui TUI monitoring
   SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
@@ -1430,7 +1432,7 @@ SUMMARY
     "Resolved on feature/issue-${ISSUE_NUM}. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
     "${ISSUE_BODY:0:150}" \
     "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log: /tmp/autocoder-merge-${ISSUE_NUM}.log); the job closes the issue when it lands"
+  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
 fi
 ```
 
@@ -1482,7 +1484,8 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `future` | Idea for future consideration, not ready for implementation | "Expose data via MCP server", research spikes, long-term ideas |
 | `decomposed` | Complex issue broken into sub-tasks (automatically applied, not blocking) | Parent issue tracking sub-task completion |
 | `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
-| `awaiting-integration` | Applied automatically when a PR is opened in `pr` merge mode, and when a detached merge job is launched in `merge` mode (`merge-launch.sh --own-issue`). Suppresses the issue from the claimable queue so the loop does not redo finished work while review or the merge is pending. Not a human-judgement gate, so `/review-blocked` ignores it. | Merging the PR closes the issue and retires the label; the merge job retires it when it closes the issue or escalates it to `needs-clarification`. If a PR is closed **without** merging, remove the label by hand (`gh issue edit <n> --remove-label awaiting-integration`) or the issue stays invisible to the loop. |
+| `merging` | Applied by the merge job itself (`merge-launch.sh --own-issue`) as its first act while a detached merge is in flight; never by a worker. Suppresses the issue from the claimable queue. Not a human-judgement gate, so `/review-blocked` ignores it. | The job retires it when it closes, parks, or escalates the issue; the post-merge sentinel re-queues the issue if the job dies without reporting. |
+| `awaiting-integration` | Applied automatically when a PR is opened in `pr` merge mode, and by the merge job when the work landed on the integration branch but may not be closed yet: the published tree was not the gated tree (disjoint re-sync), the base was already red, or the commit is not on the ship branch. Suppresses the issue from the claimable queue so the loop does not redo finished work. Not a human-judgement gate, so `/review-blocked` ignores it. | Merging the PR closes the issue and retires the label; the post-merge sentinel closes a parked issue once its landed commit is on a green tip. If a PR is closed **without** merging, remove the label by hand (`gh issue edit <n> --remove-label awaiting-integration`) or the issue stays invisible to the loop. |
 
 ### Detection Process
 
@@ -1821,7 +1824,7 @@ issue_list --state open --label "enhancement" --limit 50 > /tmp/all-enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
             and not any(l['name'] == 'working' for l in i.get('labels', []))
@@ -1851,7 +1854,7 @@ print(len(proposals))
   BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -2195,13 +2198,17 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # failure, not a flake, if merge-to-integration.sh runs inline. This only
   # STARTS the job (setsid, fully detached) and returns almost immediately.
   #
-  # The job OWNS the terminal outcome (--own-issue): it gates the integrated
-  # tree, pushes, runs verify-shipped.sh (issue #35) on the landed commit, and
-  # then either closes the issue with the summary written below or labels it
-  # needs-clarification with the gate output when it cannot land.
-  # This worker does NOT poll and does NOT close the issue: it hands off and
-  # moves on to the next issue.
-  cat > "/tmp/autocoder-merge-${ENHANCE_NUM}.summary.md" <<'SUMMARY'
+  # The job OWNS the issue (--own-issue) from its first act to its last: it
+  # swaps `working` for `merging` itself before anything that can fail, gates
+  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
+  # landed commit, and then closes the issue with the summary written below,
+  # parks it under `awaiting-integration` (landed but not provably green or
+  # not shipped), or escalates it to needs-clarification with the gate output.
+  # This worker does NOT poll, does NOT close the issue, and writes NO label
+  # after the launch returns: its late label writes used to overwrite the
+  # job's fast-path outcome. It hands off and moves on to the next issue.
+  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ENHANCE_NUM}.summary.XXXXXX")
+  cat > "$SUMMARY_FILE" <<\'SUMMARY\'
 ## Summary
 [What was implemented]
 
@@ -2220,17 +2227,14 @@ SUMMARY
     --issue "$ENHANCE_NUM" \
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
-    --summary-file "/tmp/autocoder-merge-${ENHANCE_NUM}.summary.md" \
+    --summary-file "$SUMMARY_FILE" \
     --own-issue; then
     echo "❌ Merge job did not launch for issue #${ENHANCE_NUM} — keeping the 'working' label; fix the launch error and retry."
     exit 1
   fi
 
-  # Hand off the lock: 'working' (this worker) → 'awaiting-integration' (the
-  # merge job). Add before remove so the issue is never claimable in between.
-  # The job retires 'awaiting-integration' when it closes or escalates the issue.
-  issue_update "$ENHANCE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+  # No label write here. The job performed the hand-off ('working' → 'merging')
+  # as its first act and retires 'merging' when it closes, parks, or escalates.
 
   # Write completion status file for agents-ui TUI monitoring
   SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
@@ -2243,7 +2247,7 @@ SUMMARY
     "Resolved on enhancement/issue-${ENHANCE_NUM}-auto. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
     "${ENHANCE_BODY:0:150}" \
     "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ENHANCE_NUM} handed off to the merge job (log: /tmp/autocoder-merge-${ENHANCE_NUM}.log); the job closes the issue when it lands"
+  echo "🚀 Issue #${ENHANCE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
 fi
 ```
 
@@ -2388,7 +2392,7 @@ issue_list --state open --limit 100 > /tmp/all-issues.json
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration', 'merging']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2401,7 +2405,7 @@ print(len(priority))
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2431,7 +2435,7 @@ else
   BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
