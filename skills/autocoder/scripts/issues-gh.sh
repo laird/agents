@@ -11,6 +11,16 @@
 #   <backend> claim <number>
 #   <backend> release <number>
 #   <backend> any-claimable
+#   <backend> handoff <number>
+#   <backend> park <number> [--comment "..."]
+#   <backend> escalate <number> --label <blocking-label> [--comment "..."]
+#   <backend> requeue <number> [--comment "..."]
+#
+# The last four are the lifecycle a detached merge job drives after a worker's
+# claim (see issues-file.py's docstring). On GitHub they are label edits: the
+# label that keeps the issue out of the claimable queue is added BEFORE the one it
+# replaces is removed, so no query in between sees a claimable issue. Removing a
+# label the issue does not carry is tolerated, so every verb converges.
 #
 # Exit codes:
 #   0 — success / work exists
@@ -47,10 +57,11 @@ _igh_required_search() {
 # is a valueless qualifier meaning "issue has no labels at all", so that form
 # matches only unlabeled issues and silently hides every real issue, leaving the
 # autocoder loop permanently idle. See tests/test_issues_gh_search.sh.
-# `awaiting-integration` is excluded from the claimable queue but deliberately
-# absent from BLOCKED_LABEL_SEARCH below: the work is finished and waiting to be
-# merged, not blocked on a human decision, so /review-blocked must not surface it.
-BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration"'
+# `merging` (a detached merge job owns the issue) and `awaiting-integration` (landed,
+# waiting for a green tip or a human merge) are excluded from the claimable queue but
+# deliberately absent from BLOCKED_LABEL_SEARCH below: neither is a human-decision
+# gate, so /review-blocked must not surface them.
+BLOCKING_SEARCH='-label:"working" -label:"needs-design" -label:"needs-clarification" -label:"needs-feedback" -label:"needs-approval" -label:"too-complex" -label:"future" -label:"proposal" -label:"awaiting-integration" -label:"merging"'
 BLOCKED_LABEL_SEARCH='label:"needs-design" OR label:"needs-clarification" OR label:"needs-feedback" OR label:"needs-approval" OR label:"too-complex" OR label:"future" OR label:"proposal"'
 
 # ── list ───────────────────────────────────────────────────────────────────
@@ -188,6 +199,55 @@ cmd_release() {
   gh issue edit "$n" --remove-label working >/dev/null || exit 3
 }
 
+# ── lifecycle verbs ────────────────────────────────────────────────────────
+_igh_add_label()  { gh issue edit "$1" --add-label "$2" >/dev/null || exit 3; }
+# gh refuses to remove a label the repository has never defined; an issue that
+# simply lacks the label is a no-op. Either way the end state is "label absent".
+_igh_drop_labels() { local n="$1"; shift; local l; for l in "$@"; do gh issue edit "$n" --remove-label "$l" >/dev/null 2>&1 || true; done; }
+_igh_lifecycle_args() {  # sets LC_LABEL / LC_COMMENT from the verb's options
+  LC_LABEL=""; LC_COMMENT=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --label)   LC_LABEL="$2";   shift 2 ;;
+      --comment) LC_COMMENT="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+}
+
+cmd_handoff() {
+  local n="$1"
+  _igh_add_label "$n" merging
+  _igh_drop_labels "$n" working
+}
+
+cmd_park() {
+  local n="$1"; shift
+  _igh_lifecycle_args "$@"
+  _igh_add_label "$n" awaiting-integration
+  _igh_drop_labels "$n" working merging
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_escalate() {
+  local n="$1"; shift
+  _igh_lifecycle_args "$@"
+  [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
+  _igh_add_label "$n" "$LC_LABEL"
+  _igh_drop_labels "$n" working merging awaiting-integration
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_requeue() {
+  local n="$1"; shift
+  _igh_lifecycle_args "$@"
+  _igh_drop_labels "$n" working merging awaiting-integration
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
 # ── any-claimable ──────────────────────────────────────────────────────────
 cmd_any_claimable() {
   local count
@@ -207,6 +267,10 @@ case "${1:-}" in
   create)        shift; cmd_create "$@" ;;
   claim)         shift; cmd_claim "$@" ;;
   release)       shift; cmd_release "$@" ;;
+  handoff)       shift; cmd_handoff "$@" ;;
+  park)          shift; cmd_park "$@" ;;
+  escalate)      shift; cmd_escalate "$@" ;;
+  requeue)       shift; cmd_requeue "$@" ;;
   any-claimable) cmd_any_claimable ;;
   "")            echo "Usage: issues-gh.sh <verb> [args...]" >&2; exit 2 ;;
   *)             echo "Unknown verb: $1" >&2; exit 2 ;;

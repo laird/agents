@@ -2,7 +2,10 @@
 # issue-fns.sh — thin dispatcher to issues-<backend>.{sh,py}.
 # Source this file; do not execute it directly.
 # Exposes: issue_list, issue_get, issue_update, issue_comment, issue_close,
-#          issue_create, issue_claim, issue_release, issue_any_claimable.
+#          issue_create, issue_claim, issue_release, issue_any_claimable,
+#          and the lifecycle verbs a merge job drives after a claim:
+#          issue_handoff (working -> merging), issue_park (-> awaiting-integration),
+#          issue_escalate --label L (-> blocked), issue_requeue (-> open).
 #
 # Each function shells out to the configured backend script with the verb
 # name and the caller's arguments. No backend logic lives here — backends
@@ -36,3 +39,7 @@ issue_create()        { "$_ifns_BACKEND_BIN" create        "$@"; }
 issue_claim()         { "$_ifns_BACKEND_BIN" claim         "$@"; }
 issue_release()       { "$_ifns_BACKEND_BIN" release       "$@"; }
 issue_any_claimable() { "$_ifns_BACKEND_BIN" any-claimable; }
+issue_handoff()       { "$_ifns_BACKEND_BIN" handoff       "$@"; }
+issue_park()          { "$_ifns_BACKEND_BIN" park          "$@"; }
+issue_escalate()      { "$_ifns_BACKEND_BIN" escalate      "$@"; }
+issue_requeue()       { "$_ifns_BACKEND_BIN" requeue       "$@"; }

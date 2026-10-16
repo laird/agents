@@ -39,7 +39,25 @@ implements these subcommands:
 <backend> claim         <number>
 <backend> release       <number>
 <backend> any-claimable
+<backend> handoff       <number>
+<backend> park          <number> [--comment "..."]
+<backend> escalate      <number> --label <blocking-label> [--comment "..."]
+<backend> requeue       <number> [--comment "..."]
 ```
+
+The last four are the lifecycle a detached merge job drives after a worker's
+`claim`. They exist so that no caller ever writes a label pair by hand: each
+backend implements the bucket or label consequences once.
+
+| verb | from | to | file backend bucket |
+|---|---|---|---|
+| `handoff` | `working` | `merging` | stays in `working/` (never claimable) |
+| `park` | `working` / `merging` | `awaiting-integration` | `working/` |
+| `escalate --label L` | any lock label | `L` (a blocking label) | `blocked/` |
+| `requeue` | any lock label | none | `open/` (`blocked/` if another blocking label remains) |
+
+Every verb converges: run twice, the second run changes nothing. A closed
+issue has left the lifecycle, so each verb exits 1 on it and changes nothing.
 
 ### Output schema
 
@@ -58,15 +76,17 @@ implements these subcommands:
 ```
 
 `list` returns a JSON array of these. Write commands (`update`, `comment`,
-`close`, `create`, `claim`, `release`) produce no required output;
-`create` may print `{"number": N}` on stdout.
+`close`, `create`, `claim`, `release`, `handoff`, `park`, `escalate`,
+`requeue`) produce no required output; `create` may print `{"number": N}`
+on stdout.
 
 ### Exit-code contract
 
 - `0` — success. For `any-claimable`: at least one claimable issue exists.
 - `1` — clean negative. For `any-claimable`: no claimable issues. For
   `claim`: race lost (issue not in `open/`). For `get` / `update` /
-  `comment` / `close` / `release`: issue not found.
+  `comment` / `close` / `release`: issue not found. For `handoff` / `park` /
+  `escalate` / `requeue`: issue not found or already closed.
 - `2` — usage error (bad flags).
 - `3` — backend error (filesystem failure, network failure, auth failure,
   parse error). Callers MUST treat this as an error condition, not a
@@ -91,6 +111,13 @@ The `working` label / status is set by `claim` (the *atomic* path) and
 cleared by `release`. `update --add-label working` is also supported as
 a legacy idempotent label-set but does NOT rename to `working/` — only
 `claim` does that.
+
+Three **lock labels** say who owns an issue right now and keep it out of
+the claimable queue without making it "blocked": `working` (a worker),
+`merging` (a detached merge job), `awaiting-integration` (landed, waiting
+for the sentinel's green tip or a human merge). `list --state blocked`
+never shows them. The file backend keeps all three in `working/`; `close`
+strips all three.
 
 ### Cross-worktree discipline
 

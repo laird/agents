@@ -95,6 +95,7 @@ PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
     "needs-approval", "needs-design", "needs-clarification",
     "too-complex", "future", "decomposed", "blocked", "awaiting-integration",
+    "merging",
 }
 WORKING = "working"
 PROPOSAL = "proposal"
