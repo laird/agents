@@ -240,3 +240,28 @@ re-read from `origin/<green-ref>` whenever that ref exists; the file only
 carries what git has no home for. `cat` it to see the sentinel's last tick.
 Tests point `AUTOCODER_TMP`, `AUTOCODER_SENTINEL_STATE_DIR`, and
 `AUTOCODER_GATE_CACHE_DIR` at a scratch directory.
+
+## G. `promote.sh` — environments, gated on the sentinel's proof
+
+`main` may be red between sentinel ticks; a release may not. An environment is a
+branch on origin (`env/staging`, `env/uat`, `env/prod`) that a deploy reads, and
+`promote.sh` is the only thing that moves it. It moves it only to a commit with
+proof of a full-regression pass: `origin/<green-ref>`, the previous environment's
+tip, or a tree the gate cache records as passing. A commit that is merely on
+`main` is refused.
+
+```bash
+plugins/autocoder/scripts/promote.sh --to staging            # to origin/main-green
+plugins/autocoder/scripts/promote.sh --to uat                # to staging's tip
+plugins/autocoder/scripts/promote.sh --to prod --dry-run     # every check, no push
+plugins/autocoder/scripts/promote.sh --list                  # tips, proof, what is releasable
+plugins/autocoder/scripts/promote.sh --to prod --commit <sha> --allow-rollback
+```
+
+The pipeline is the ordered `environments` array of `.autocoder.json` (`name`,
+`ref`, `requires`, optional `test` and `auto`). An environment's `test` runs on
+the candidate tree in a throwaway worktree through `gate-cache-fns.sh`, so a
+repeat on the same tree is free. With `auto: true` the sentinel calls
+`promote.sh --auto` after every green tick; a refused promotion never changes
+the tick's exit code. Exit 0 moved or already there, 1 config error, 2 refused
+with a one-line reason. Full how-to: [docs/environments.md](../../../docs/environments.md).
