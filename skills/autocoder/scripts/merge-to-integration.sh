@@ -39,7 +39,7 @@
 #     then names the gated tree and the published tree separately instead of claiming the
 #     published tree was verified, and under --own-issue the issue is parked, not closed.
 #       AUTOCODER_GATE_GLOBAL_PATHS  space-separated bash globs, matched against each
-#         incoming path and its basename. The default is GATE_GLOBAL_PATHS_DEFAULT below,
+#         incoming path and its basename. The default is REGATE_GLOBAL_PATHS_DEFAULT in regate-fns.sh,
 #         the one place the list lives: JS/TS, .NET, Go, Rust, Python and Ruby manifests
 #         and lockfiles, Makefile, Dockerfile*, CI, the agent doctrine files, conftest.py.
 #       Gate-command paths: every whitespace token of the gate command that names a file
@@ -166,6 +166,10 @@ CALLER_DIR="$(pwd)"
 _MTI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=issue-fns.sh
 source "${_MTI_DIR}/issue-fns.sh"
+# shellcheck source=regate-fns.sh
+source "${_MTI_DIR}/regate-fns.sh"
+# shellcheck source=worktree-deps-fns.sh
+source "${_MTI_DIR}/worktree-deps-fns.sh"
 # shellcheck source=test-cmd-fns.sh
 source "${_MTI_DIR}/test-cmd-fns.sh"
 # shellcheck source=gate-cache-fns.sh
@@ -176,12 +180,8 @@ source "${_MTI_DIR}/repo-id-fns.sh"
 TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
 REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
 
-# Paths whose change can break any test regardless of what this change touched. One list,
-# matched as bash globs against each incoming path and its basename.
-GATE_GLOBAL_PATHS_DEFAULT='package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile* tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md *.csproj *.sln Directory.*.props Directory.*.targets global.json NuGet.config packages.config go.mod go.sum Cargo.toml Cargo.lock pyproject.toml requirements*.txt poetry.lock Pipfile* Gemfile* conftest.py'
-# `read -a` splits without pathname expansion, so `Dockerfile*` stays a pattern instead of
-# becoming whatever Dockerfiles happen to exist in the current directory.
-IFS=' ' read -r -a GATE_GLOBAL_PATHS <<< "${AUTOCODER_GATE_GLOBAL_PATHS:-$GATE_GLOBAL_PATHS_DEFAULT}"
+# The global-path list (paths whose change can break any test) is REGATE_GLOBAL_PATHS_DEFAULT
+# in regate-fns.sh, shared with main-sentinel.sh; AUTOCODER_GATE_GLOBAL_PATHS overrides it.
 GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 
 # Gate output is kept so a failure comment can quote it.
@@ -389,53 +389,8 @@ _cleanup_worktrees() {
 }
 _cleanup_worktrees
 
-# Hardlink every top-level node_modules tree from the caller's checkout into a throwaway
-# worktree so --test-cmd doesn't need a fresh install there (a brand-new worktree has none —
-# it's git-ignored). Hardlinks share inodes with the source tree: instant, no meaningful
-# extra disk. This matches, not upgrades, the trust the pre-#1821 in-place run already
-# placed in whatever was installed in the caller's worktree — dependency freshness there is
-# unchanged by this fix and out of scope for it.
-#
-# #1967: `cp -al` across a filesystem boundary (e.g. repo on ext4, $TMPDIR on tmpfs — true
-# on some dev boxes) fails per-file with "Invalid cross-device link", succeeding only for
-# directories and symlinks. Left unguarded that produces a tree of empty directory shells
-# and dangling symlinks while still reporting success, so any --test-cmd needing a tool not
-# already resolvable some other way fails with a confusing "not found" that reads as a
-# problem with the change under test. Fall back to a real copy on failure — but `cp -a`
-# into an already-partially-populated destination (left behind by the failed `cp -al`
-# attempt) nests the copy one level deeper (`$dst/$(basename "$src")/...`) instead of
-# merging, so the destination must be wiped first.
-_hardlink_or_copy() {
-  local src="$1" dst="$2"
-  [ -e "$dst" ] && return 0
-  mkdir -p "$(dirname "$dst")" 2>/dev/null || true
-  if ! cp -al "$src" "$dst" 2>/dev/null; then
-    rm -rf "$dst"
-    cp -a "$src" "$dst" 2>/dev/null || true
-  fi
-}
-
-# #1967: `make contracts-check` needs software-factory/packages/*/dist (gitignored build
-# output) present, which a fresh worktree never has. Unlike node_modules this must be a
-# real copy, never a hardlink: `git worktree add` checks out src/ with a brand-new mtime,
-# so a hardlinked dist/ carrying the ORIGINAL build's older mtime reads as stale to
-# check-software-factory-sync's freshness comparison even though the content is identical
-# — and because a hardlink shares the inode, any process that touched it to fix the mtime
-# would touch the caller's own dist/ too. Copy, then touch, so both problems are avoided.
-_seed_worktree_deps() {
-  local dest="$1" nm d rel
-  while IFS= read -r nm; do
-    rel="${nm#"$CALLER_DIR"/}"
-    _hardlink_or_copy "$nm" "$dest/$rel"
-  done < <(find "$CALLER_DIR" -maxdepth 4 -type d -name node_modules 2>/dev/null | grep -v '/node_modules/.*/node_modules$')
-  while IFS= read -r d; do
-    rel="${d#"$CALLER_DIR"/}"
-    [ -e "$dest/$rel" ] && continue
-    mkdir -p "$(dirname "$dest/$rel")" 2>/dev/null || true
-    cp -a "$d" "$dest/$rel" 2>/dev/null || true
-    find "$dest/$rel" -exec touch {} + 2>/dev/null || true
-  done < <(find "$CALLER_DIR/software-factory/packages" -mindepth 2 -maxdepth 2 -type d -name dist 2>/dev/null)
-}
+# node_modules/dist seeding for throwaway worktrees lives in worktree-deps-fns.sh, shared
+# with main-sentinel.sh (and it carries the #1967 cross-device and dist/mtime notes).
 
 # --detach on the raw SHA (not the branch name) is required: $FEATURE is very likely still
 # checked out in $CALLER_DIR, and git refuses to check out the same branch in two worktrees.
@@ -447,7 +402,7 @@ fi
 trap '_cleanup_worktrees; rm -f "$GATE_LOG"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
-_seed_worktree_deps "$WORKTREE_DIR"
+seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.
@@ -554,7 +509,7 @@ _gate_integrated_tree() {
     echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
   fi
-  _seed_worktree_deps "$BASE_WORKTREE_DIR"
+  seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
   if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
@@ -575,14 +530,11 @@ _gate_integrated_tree
 
 # Prints why $1 obliges a re-gate whatever this change touched (rc 0), or nothing (rc 1).
 _path_is_global() {
-  local path="$1" glob k
-  for glob in "${GATE_GLOBAL_PATHS[@]}"; do
-    # shellcheck disable=SC2053
-    if [[ "$path" == $glob || "${path##*/}" == $glob ]]; then
-      echo "a global path"
-      return 0
-    fi
-  done
+  local path="$1" k
+  if regate_path_is_global "$path"; then
+    echo "a global path"
+    return 0
+  fi
   for k in "${!TEST_CMD_PATHS[@]}"; do
     if [[ "$path" == "$k" || "$path" == "$k"/* ]]; then
       echo "a path the gate command runs"

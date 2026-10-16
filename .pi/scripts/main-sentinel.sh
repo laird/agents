@@ -93,19 +93,6 @@ if [ -z "$TEST_CMD" ]; then
   exit 1
 fi
 
-# TODO(integration): the issue backends are gaining an `issue_requeue <n> --comment <text>`
-# verb. Until issue-fns.sh exposes it, this stand-in puts an issue back in the queue by
-# dropping the in-flight labels. Delete this block once the verb exists.
-if ! declare -F issue_requeue >/dev/null; then
-  issue_requeue() {
-    local n="$1" c=""
-    [ "${2:-}" = --comment ] && c="${3:-}"
-    issue_update "$n" --remove-label merging >/dev/null 2>&1 || true
-    issue_update "$n" --remove-label awaiting-integration >/dev/null 2>&1 || true
-    [ -n "$c" ] && issue_comment "$n" --body "$c" >/dev/null 2>&1 || true
-  }
-fi
-
 REPO_ID=$(autocoder_repo_id "$REPO") || exit 1
 STATE_DIR="${STATE_DIR:-${AUTOCODER_SENTINEL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/sentinel}}"
 STATE_FILE="$STATE_DIR/${REPO_ID}-${INTEGRATION}"

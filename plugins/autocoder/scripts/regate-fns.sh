@@ -19,7 +19,7 @@
 #   AUTOCODER_GATE_GLOBAL_PATHS  space-separated bash globs matched against each incoming
 #     path and its basename. Overrides REGATE_GLOBAL_PATHS_DEFAULT below.
 
-REGATE_GLOBAL_PATHS_DEFAULT="package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile* tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md"
+REGATE_GLOBAL_PATHS_DEFAULT="package.json package-lock.json pnpm-lock.yaml yarn.lock Makefile Dockerfile* tsconfig*.json *.config.* .github/* CLAUDE.md AGENTS.md *.csproj *.sln Directory.*.props Directory.*.targets global.json NuGet.config packages.config go.mod go.sum Cargo.toml Cargo.lock pyproject.toml requirements*.txt poetry.lock Pipfile* Gemfile* conftest.py"
 
 # `read -a` splits without pathname expansion, so `Dockerfile*` stays a pattern instead of
 # becoming whatever Dockerfiles happen to exist in the current directory.

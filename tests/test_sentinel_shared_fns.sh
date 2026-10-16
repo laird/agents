@@ -30,7 +30,7 @@ check "shape is <dir>-<8 hex>" '[[ "$ID" =~ ^alpha-[0-9a-f]{8}$ ]]'
 check "a linked worktree gets the same id as its main checkout" '[ "$(autocoder_repo_id "$TMP/alpha-wt-1")" = "$ID" ]'
 check "computed from inside the repo with no argument" '[ "$(cd "$TMP/alpha-wt-1" && autocoder_repo_id)" = "$ID" ]'
 check "another clone with the same directory name differs" '[ "$(autocoder_repo_id "$TMP/other/alpha")" != "$ID" ]'
-check "not a repo: rc 1" '! autocoder_repo_id "$TMP" 2>/dev/null'
+check "not a repo: falls back to the directory itself, stable, distinct from the repo" '[ -n "$(autocoder_repo_id "$TMP")" ] && [ "$(autocoder_repo_id "$TMP")" = "$(autocoder_repo_id "$TMP")" ] && [ "$(autocoder_repo_id "$TMP")" != "$ID" ]'
 
 echo "── regate_needed ──"
 R="$TMP/regate"; git init -q "$R"; git -C "$R" config user.email t@x; git -C "$R" config user.name T
