@@ -147,10 +147,16 @@ has_proof() {
   local sha="$1" req="$2" pr tip tree
   pr=$(proof_ref "$req"); tip=$(tip_of "$pr")
   if [ -n "$tip" ] && [ "$tip" = "$sha" ]; then PROOF="tip of $pr"; return 0; fi
+  # A recorded pass proves the tree is green. For a stage that requires an earlier
+  # environment it must also be something that environment has already absorbed, or a
+  # green tip could go straight to prod without ever having been on staging.
+  if [ "$req" != green ] && ! { [ -n "$tip" ] && git merge-base --is-ancestor "$sha" "$tip" 2>/dev/null; }; then
+    return 1
+  fi
   if [ -n "$TEST_CMD" ]; then
     tree=$(git rev-parse "$sha^{tree}")
     if [ "$(gate_cache_get "$tree" "$TEST_CMD" 2>/dev/null)" = pass ]; then
-      PROOF="tree ${tree:0:7} has a recorded full-regression pass"; return 0
+      PROOF="tree ${tree:0:7} has a recorded full-regression pass${tip:+ and $pr already contains it}"; return 0
     fi
   fi
   return 1
@@ -163,6 +169,8 @@ missing_proof_reason() {
     else echo "$pr does not exist yet (nothing has been promoted to $req)"; fi
   elif [ -z "$TEST_CMD" ]; then
     echo "${sha:0:7} is not the tip of $pr (no test command resolved, so only that tip counts)"
+  elif [ "$req" != green ] && ! git merge-base --is-ancestor "$sha" "$(tip_of "$pr")" 2>/dev/null; then
+    echo "${sha:0:7} has never been on $pr; promote it to $req first"
   else
     echo "${sha:0:7} is not the tip of $pr and its tree has no recorded full-regression pass"
   fi

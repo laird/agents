@@ -90,10 +90,20 @@ check "reason names the missing proof" 'grep -q "no recorded full-regression pas
 OUT=$(promote --to uat --commit origin/main); RC=$?
 check "uat --commit origin/main: exit 2" '[ "$RC" -eq 2 ]'
 check "env/uat absent" '[ -z "$(origin_sha env/uat)" ]'
+sentinel >/dev/null
+check "setup: sentinel greened the new tip" '[ "$(origin_sha main-green)" = "$UNGATED" ]'
+OUT=$(promote --to uat --commit origin/main-green); RC=$?
+check "a green tip staging has not absorbed cannot skip to uat: exit 2" '[ "$RC" -eq 2 ]'
+check "reason says it has never been on staging" 'grep -q "has never been on origin/env/staging" <<< "$OUT"'
+check "env/uat still absent" '[ -z "$(origin_sha env/uat)" ]'
 OUT=$(promote --to uat); RC=$?
 check "uat with the default commit (staging tip): exit 0" '[ "$RC" -eq 0 ]'
 check "env/uat == env/staging" '[ "$(origin_sha env/uat)" = "$BASE" ]'
 check "proof line says tip of origin/env/staging" 'grep -q "tip of origin/env/staging" <<< "$OUT"'
+promote --to staging >/dev/null
+check "setup: staging advanced to the green tip" '[ "$(origin_sha env/staging)" = "$UNGATED" ]'
+OUT=$(promote --to uat --commit "$BASE"); RC=$?
+check "an older green commit staging already contains is still promotable (already there)" '[ "$RC" -eq 0 ]'
 
 echo "── 4. prod runs its own test on the candidate tree ──"
 echo broken > "$REPO/E2E_BROKEN"

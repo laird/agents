@@ -14,8 +14,10 @@ commits that passed the full regression suite.
 3. An **environment** is a branch on origin (`env/staging`, `env/uat`, `env/prod`)
    that a deploy reads. Nothing moves it except `promote.sh`.
 4. `promote.sh` moves an environment only to a commit with **proof**: the
-   sentinel's green tip, the previous environment's tip, or a tree the gate cache
-   records as passing the full suite. Being on `main` is never proof.
+   sentinel's green tip, or a tree the gate cache records as passing the full
+   suite. A later stage additionally requires that the previous environment
+   already contains the commit, so the pipeline order holds. Being on `main` is
+   never proof.
 5. An environment can add its own test (an E2E suite) that must pass on the
    candidate tree before the branch moves.
 
@@ -38,7 +40,7 @@ Order is the pipeline.
 |---|---|---|
 | `name` | How you refer to the environment on the command line. | required |
 | `ref` | The branch on origin that is the environment. Point your deploy at it. | `env/<name>` |
-| `requires` | The proof a commit needs. `green` means the sentinel's green tip. An earlier environment's name means that environment's current tip. In both cases a commit whose tree has a recorded full-regression pass also qualifies, so an older staging tip that was green when promoted is still promotable to uat. | required |
+| `requires` | The proof a commit needs. `green` means the sentinel's green tip, or any commit whose tree has a recorded full-regression pass. An earlier environment's name means that environment's current tip, or a green commit that environment's tip already contains. A commit that has never been on staging cannot go to uat, however green it is. | required |
 | `test` | An extra command run on the candidate tree, in a throwaway worktree, before the branch moves. Its verdict is cached by tree, so a repeat on the same tree is free. | none |
 | `auto` | The sentinel promotes this environment after every green tick. Suits staging. Do not set it on prod. | `false` |
 
