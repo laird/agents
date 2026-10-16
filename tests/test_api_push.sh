@@ -125,7 +125,9 @@ python3 - "$MTI" <<'PYVER' || exit 1
 import sys
 src = open(sys.argv[1]).read()
 i = src.find('REMOTE_TREE')
-if 'exit 1' not in src[i:i+900]:
+# `_fail 1 ...` is the --own-issue-aware spelling of `exit 1`: it labels the issue
+# and then exits with that code.
+if 'exit 1' not in src[i:i+900] and '_fail 1 ' not in src[i:i+900]:
     print("FAIL: tree verification does not exit non-zero on mismatch", file=sys.stderr)
     sys.exit(1)
 PYVER

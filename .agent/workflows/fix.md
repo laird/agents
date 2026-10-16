@@ -912,6 +912,7 @@ still yours re-exposes it to the pool and invites a peer to duplicate your work.
 |---|---|---|
 | Issue closed (merged / resolved) | ✅ yes | — |
 | PR opened (`pr` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step, so the issue stays out of the claimable pool until the merge closes it |
+| Merge launched (`merge` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step; the detached job (`merge-launch.sh --own-issue`) gates, pushes, and retires that label when it closes the issue or escalates it to `needs-clarification` |
 | Blocked (`needs-design`, `needs-clarification`, `needs-approval`, `too-complex`, `future`) | ✅ yes | post a release comment in the same step |
 | Deliberately skipped or abandoned | ✅ yes | post a release comment in the same step |
 | Could not switch to the feature branch (claim never started) | ✅ yes | — |

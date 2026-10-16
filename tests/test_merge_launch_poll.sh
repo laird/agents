@@ -18,9 +18,10 @@
 #   - pass through the underlying merge-to-integration.sh exit code (0/1/2)
 #     once it finishes, and reap state so a later poll reports "no job" (64)
 #
-# And the command docs (fix.md) must call merge-launch.sh / merge-poll.sh at
-# every merge site, never merge-to-integration.sh directly — that direct call
-# is exactly the regression this test exists to catch.
+# And the command docs (fix.md) must call merge-launch.sh at every merge site,
+# never merge-to-integration.sh directly — that direct call is exactly the
+# regression this test exists to catch. The worker no longer polls: it launches
+# with --own-issue and hands off (tests/test_fix_md_handoff.sh pins that).
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -118,8 +119,8 @@ for _ in 1 2 3 4 5 6 7 8; do kill -0 "$MPID" 2>/dev/null || break; sleep 1; done
 kill -0 "$MPID" 2>/dev/null && kill -9 "$MPID" 2>/dev/null || ok "detached merge for #19003 ran to completion on its own"
 rm -f /tmp/autocoder-merge-19003.*
 
-# ── Docs: fix.md must launch+poll at every merge site, never call
-#          merge-to-integration.sh directly ──────────────────────────────────
+# ── Docs: fix.md must launch at every merge site, never call
+#          merge-to-integration.sh directly, and never poll ──────────────────
 FIXMD="$ROOT/plugins/autocoder/commands/fix.md"
 if [ -f "$FIXMD" ]; then
   ok "plugins/autocoder/commands/fix.md exists"
@@ -131,8 +132,8 @@ if [ -f "$FIXMD" ]; then
   POLL_CALLS=$(grep -c '"\${SCRIPT_DIR}/merge-poll\.sh"' "$FIXMD")
   [ "$LAUNCH_CALLS" -ge 3 ] && ok "fix.md launches the merge at all 3 sites (found $LAUNCH_CALLS)" \
     || bad "fix.md missing merge-launch.sh at one or more sites (found $LAUNCH_CALLS, want >= 3)"
-  [ "$POLL_CALLS" -ge 3 ] && ok "fix.md polls the merge at all 3 sites (found $POLL_CALLS)" \
-    || bad "fix.md missing merge-poll.sh at one or more sites (found $POLL_CALLS, want >= 3)"
+  [ "$POLL_CALLS" -eq 0 ] && ok "fix.md never polls merge-poll.sh (the job owns the outcome via --own-issue)" \
+    || bad "fix.md polls merge-poll.sh at $POLL_CALLS site(s); the worker should hand off with --own-issue instead"
 else
   bad "plugins/autocoder/commands/fix.md exists"
 fi

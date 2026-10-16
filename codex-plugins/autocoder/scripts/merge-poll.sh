@@ -1,6 +1,11 @@
 #!/bin/bash
 # merge-poll.sh — check on a merge started with merge-launch.sh (#1693).
 #
+# The /fix worker no longer calls this: it launches the merge with
+# `merge-launch.sh --own-issue`, hands the issue off under `awaiting-integration`,
+# and moves on, while the detached job closes or escalates the issue itself.
+# This script remains for humans and monitor workers who want to watch a job.
+#
 # Designed to be called repeatedly, ONE call per turn, as separate Bash-tool
 # invocations. It sleeps a bounded slice of wall clock (default 60s, always
 # well under the ~2-minute foreground Bash-tool ceiling) and then reports
