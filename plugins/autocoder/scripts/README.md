@@ -194,3 +194,49 @@ For the file backend specifically, also exercise:
   the main worktree's `.issues/` directory.
 - **fix-loop-idle**: with empty `open/`, `fix-loop` over ~30s does not
   spawn `/fix`.
+
+## F. `main-sentinel.sh` — post-merge gate for the integration branch
+
+`merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
+push onto an integration branch that is already red. The sentinel is what makes
+both safe: it tests the integration tip after merges land, and when the tip is
+red it bisects, reverts the culprit, and files the regression.
+
+One invocation is one idempotent tick. Run it beside the swarm:
+
+```bash
+plugins/autocoder/scripts/main-sentinel.sh --repo "$MAIN_WORKTREE" --integration main --loop 300
+```
+
+`--test-cmd` defaults to the `### Regression Test Suite` block of `AGENTS.md`
+or `CLAUDE.md`; the script refuses to run without one. Exit 0 means idle,
+green, or repaired; 1 a setup error; 3 red and not repaired (a P0 is filed).
+
+Each tick:
+
+1. Fetches `origin/<integration>`. An unmoved tip is an idle tick.
+2. Gates the tip in a persistent worktree
+   (`${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>`, created once with
+   `node_modules`/`dist` hardlinked from `--repo`) through `gate-cache-fns.sh`,
+   so a tree a worker already gated costs nothing.
+3. Green: fast-forwards `origin/<green-ref>` (default `main-green`) to the tip.
+   That ref is the deployable pointer other tools can read.
+4. Red with a green ancestor: `git bisect --first-parent` between them, with the
+   probe reusing recorded fails; reverts the culprit (`-m 1` for a merge);
+   re-gates; pushes with the same fetch+merge+retry loop
+   `merge-to-integration.sh` uses; moves `<green-ref>`; files a P0 labelled
+   `P0,test-failure` with the culprit, bisect log, revert, and gate tail; and
+   comments on the originating issue parsed from the culprit's message
+   (`#123`, `issue-123`).
+5. Red otherwise: files the P0 (or comments on the still-open one) and exits 3.
+6. Re-queues crashed hand-offs: an `autocoder-merge-<issue>.pid` whose pid is
+   dead with no `.exit` file is a merge job that died; if the issue carries
+   `awaiting-integration` the label is removed and a comment explains why.
+
+State lives in one file,
+`${AUTOCODER_SENTINEL_STATE_DIR:-$XDG_STATE_HOME/autocoder/sentinel}/<repo-id>-<integration>`,
+with `last_tested`, `last_green`, `red_issue` (tmp+rename). `last_green` is
+re-read from `origin/<green-ref>` whenever that ref exists; the file only
+carries what git has no home for. `cat` it to see the sentinel's last tick.
+Tests point `AUTOCODER_TMP`, `AUTOCODER_SENTINEL_STATE_DIR`, and
+`AUTOCODER_GATE_CACHE_DIR` at a scratch directory.
