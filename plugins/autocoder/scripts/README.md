@@ -227,8 +227,10 @@ For the file backend specifically, also exercise:
 `merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
 push onto an integration branch that is already red. The sentinel is what makes
 both safe: it tests the integration tip after merges land, and when the tip is
-red it finds the push that broke it, reverts exactly that push, and files the
-regression against the issue that made it.
+red it finds the push that broke it and files the regression against the issue
+that made it. By default it stops there (report-only) and the fix rolls forward
+through a normal gated change; with `--auto-revert` it also reverts exactly that
+push, which is only appropriate when every party pushing to the branch agrees.
 
 One invocation is one idempotent tick. Run it beside the swarm:
 

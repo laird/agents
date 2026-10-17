@@ -21,7 +21,14 @@
 # USAGE:
 #   main-sentinel.sh [--repo DIR] [--integration main] [--green-ref <integration>-green]
 #                    [--test-cmd "<cmd>"] [--loop SECONDS] [--state-dir DIR]
+#                    [--auto-revert | --report-only]
 #   One invocation is one idempotent tick; --loop N repeats it every N seconds forever.
+#   By default the sentinel is REPORT-ONLY: on red it gates, bisects to name the culprit
+#   push, and files or updates the P0, but never pushes a revert; the fix rolls forward
+#   through a normal gated change. --auto-revert (or AUTOCODER_SENTINEL_AUTO_REVERT=1)
+#   lets it revert exactly the culprit push and re-gate; use that only where every party
+#   pushing to the branch has agreed to it. Green ticks move the green ref, close parked
+#   issues, and auto-promote in both modes.
 #   --test-cmd falls back to the '### Regression Test Suite' block of AGENTS.md / CLAUDE.md
 #   and the script refuses to run when neither yields a command.
 #   The green ref defaults to AUTOCODER_GREEN_REF, then <integration>-green.
@@ -63,12 +70,16 @@ source "${_MS_DIR}/regate-fns.sh"
 source "${_MS_DIR}/worktree-deps-fns.sh"
 
 REPO="" INTEGRATION="main" GREEN="${AUTOCODER_GREEN_REF:-}" TEST_CMD="" LOOP="" STATE_DIR=""
+REPORT_ONLY=1
+[ "${AUTOCODER_SENTINEL_AUTO_REVERT:-0}" = 1 ] && REPORT_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|--integration|--green-ref|--test-cmd|--loop|--state-dir)
       [ $# -ge 2 ] || { echo "main-sentinel.sh: $1 needs a value" >&2; exit 1; } ;;
   esac
   case "$1" in
+    --report-only) REPORT_ONLY=1; shift ;;
+    --auto-revert) REPORT_ONLY=0; shift ;;
     --repo)        REPO="$2"; shift 2 ;;
     --integration) INTEGRATION="$2"; shift 2 ;;
     --green-ref)   GREEN="$2"; shift 2 ;;
@@ -382,6 +393,10 @@ repair() {
   : > "$GATE_LOG.bisect"
   bisect_tips "$tip" || { echo "⚠️  No recorded pushes after ${last_green:0:7}."; return 1; }
   echo "🎯 Culprit push ${CULPRIT:0:7} (issue $(issue_ref "$CULPRIT_ISSUE")), range ${PREV_GOOD:0:7}..${CULPRIT:0:7}"
+  if [ "$REPORT_ONLY" = 1 ]; then
+    echo "ℹ️  Report-only: not reverting; filing the P0 for a human to decide."
+    return 1
+  fi
   make_revert "$tip" || return 1
   gate || { echo "⚠️  Still red after reverting push ${CULPRIT:0:7}."; return 1; }
   files=$(mktemp "$STATE_DIR/.revert-files.XXXXXX")
@@ -443,8 +458,13 @@ Gate: \`${TEST_CMD}\`
 "
   [ -n "$CULPRIT" ] && body+="Bisect over recorded pushes names \`${CULPRIT}\` (issue $(issue_ref "$CULPRIT_ISSUE")), range \`${PREV_GOOD}..${CULPRIT}\`.
 "
-  body+="Not repaired automatically: no usable green baseline, or the revert conflicted or stayed red. A human must fix or revert on \`${INTEGRATION}\`.
+  if [ "$REPORT_ONLY" = 1 ]; then
+    body+="Report-only mode: the sentinel does not revert. A human decides whether to revert the culprit push on \`${INTEGRATION}\` or fix forward.
 "
+  else
+    body+="Not repaired automatically: no usable green baseline, or the revert conflicted or stayed red. A human must fix or revert on \`${INTEGRATION}\`.
+"
+  fi
   [ -s "$BISECT_LOG" ] && body+="
 ## Bisect over recorded tips
 \`\`\`

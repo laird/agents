@@ -48,7 +48,10 @@ EOF
   export AUTOCODER_GATE_CACHE_DIR="$d/gate-cache" AUTOCODER_SENTINEL_STATE_DIR="$d/state" AUTOCODER_TMP="$d/tmp"
   REPO_ID=$(autocoder_repo_id "$REPO")
 }
-sentinel() { bash "$SENTINEL" --repo "$REPO" --integration "$BR" --test-cmd "$TEST_CMD" "$@"; }
+# Scenarios that exercise the repair path opt in to --auto-revert; the default is report-only
+# and scenario 11r calls the script without it.
+sentinel() { bash "$SENTINEL" --repo "$REPO" --integration "$BR" --test-cmd "$TEST_CMD" --auto-revert "$@"; }
+sentinel_default() { bash "$SENTINEL" --repo "$REPO" --integration "$BR" --test-cmd "$TEST_CMD" "$@"; }
 runs() { wc -l < "$RUNS"; }
 pushes_to() { grep -c "^refs/heads/$1 " "$PUSHES"; }
 origin_sha() { git -C "$ORIGIN" rev-parse -q --verify "$1" 2>/dev/null; }
@@ -289,6 +292,27 @@ check "AUTOCODER_GREEN_REF overrides the default" '[ "$(origin_sha proof)" = "$(
 human_push f2 "next again" >/dev/null
 AUTOCODER_GREEN_REF=proof sentinel --green-ref flag-wins >/dev/null
 check "--green-ref overrides both" '[ "$(origin_sha flag-wins)" = "$(origin_sha master)" ] && [ "$(origin_sha proof)" != "$(origin_sha master)" ]'
+
+echo "── 11r. same red, --report-only: culprit named, P0 filed, nothing pushed ──"
+fixture reportonly
+sentinel >/dev/null
+G0=$(origin_sha main)
+make_issue 41; make_issue 42 awaiting-integration; make_issue 43
+A=$(land 41 fa)
+B=$(land 42 BROKEN "$G0")
+C=$(land 43 fc "$A")
+MAIN_PUSHES=$(pushes_to main)
+OUT=$(sentinel_default); RC=$?
+check "exit 3 (red, not repaired)" '[ "$RC" -eq 3 ]'
+check "no push to main; tip is still C" '[ "$(pushes_to main)" -eq "$MAIN_PUSHES" ] && [ "$(origin_sha main)" = "$C" ]'
+check "culprit still named: B, issue 42" 'grep -q "Culprit push ${B:0:7} (issue #42)" <<< "$OUT" && grep -q "Report-only: not reverting" <<< "$OUT"'
+P0=$(grep -l "names \`$B\`" "$ISSUES"/open/*.md | head -1)
+check "P0 filed in the unrepaired shape, naming B and report-only" '[ -n "$P0" ] && grep -q "^title: Regression gate red on main at ${C:0:7}" "$P0" && grep -q "Report-only mode" "$P0" && grep -q "(issue #42)" "$P0"'
+check "green ref unchanged; issue 42 still parked" '[ "$(origin_sha main-green)" = "$G0" ] && grep -q "^labels:.*awaiting-integration" "$(issue_file 42)"'
+check "state: red_issue set, no pending fields" '[ -n "$(state_of red_issue)" ] && [ -z "$(state_of pending_revert)" ]'
+OUT=$(sentinel_default --report-only); RC=$?
+check "explicit --report-only: same tip is idle, nothing filed twice" '[ "$RC" -eq 0 ] && grep -q idle <<< "$OUT" && [ "$(grep -l "test-failure" "$ISSUES"/open/*.md | wc -l)" -eq 1 ]'
+check "the default never pushed to main" '[ "$(pushes_to main)" -eq "$MAIN_PUSHES" ]'
 
 echo "── 12. config errors ──"
 sentinel --loop 2>&1 >/dev/null; RC=$?

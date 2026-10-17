@@ -12,8 +12,9 @@ commits that passed the full regression suite.
    the full suite becomes `origin/main-green` (the green ref is
    `<integration>-green`, so a swarm that integrates on `master` gets
    `master-green`; `AUTOCODER_GREEN_REF` or `--green-ref` rename it). A tip that
-   fails is bisected over the pushes the pipeline recorded as tip refs, the
-   culprit push alone is reverted, and a P0 is filed against its issue. See
+   fails is bisected over the pushes the pipeline recorded as tip refs and a P0
+   is filed naming the culprit push and its issue; the fix rolls forward. Only
+   with `--auto-revert` does the sentinel revert the culprit push itself. See
    `plugins/autocoder/scripts/README.md` section F.
 3. An **environment** is a branch on origin (`env/staging`, `env/uat`, `env/prod`)
    that a deploy reads. Nothing moves it except `promote.sh`.

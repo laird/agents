@@ -179,7 +179,7 @@ check "idle tick: no promotion attempt" '[ "$RC" -eq 0 ] && [ "$(pushes_to env/s
 echo broken > "$REPO/BROKEN"
 commit_on_main f6 "break the build"
 RED=$(origin_sha main)
-OUT=$(sentinel); RC=$?
+OUT=$(sentinel --auto-revert); RC=$?
 check "repaired tick exits 0" '[ "$RC" -eq 0 ]'
 check "env/staging followed the revert, not the red tip" '[ "$(origin_sha env/staging)" = "$(origin_sha main-green)" ] && [ "$(origin_sha env/staging)" != "$RED" ]'
 
