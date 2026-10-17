@@ -99,10 +99,18 @@ eq "create applied the label"        "smoke"          "$("$BACKEND" get "$NUM" |
 "$BACKEND" claim "$NUM" >/dev/null
 HAS_WORKING=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print("working" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
 eq "claim adds the working label" "True" "$HAS_WORKING"
+"$BACKEND" claim "$NUM" >/dev/null 2>&1
+eq "a second claim on a working issue exits 1" "1" "$?"
 
 "$BACKEND" release "$NUM" >/dev/null
 HAS_WORKING=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print("working" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
 eq "release removes the working label" "False" "$HAS_WORKING"
+
+# A finished branch waiting on a manager's merge gate is refused too.
+"$BACKEND" update "$NUM" --add-label ready-for-review >/dev/null
+"$BACKEND" claim "$NUM" >/dev/null 2>&1
+eq "claim refuses a ready-for-review issue" "1" "$?"
+"$BACKEND" update "$NUM" --remove-label ready-for-review >/dev/null
 
 "$BACKEND" comment "$NUM" --body "hello there" >/dev/null
 HAS_COMMENT=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print(any(c["body"]=="hello there" for c in json.load(sys.stdin)["comments"]))')

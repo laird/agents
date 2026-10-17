@@ -63,6 +63,9 @@ case "$url" in
   */_apis/wit/workitems/*expand=relations*)
     emit '{"id":7,"rev":3,"url":"https://dev.azure.com/acme/_apis/wit/workItems/7","fields":{"System.State":"Active"},"relations":[]}' 200 ;;
   */_apis/wit/workitems/%24*)          emit '{"id":42}' 200 ;;   # create ($Task url-escaped)
+  */_apis/wit/workitems/5\?*)          emit '{"id":5,"fields":{"System.Tags":"P1"}}' 200 ;;   # unclaimed: claim must succeed
+  */_apis/wit/workitems/9\?*)          emit '{"id":9,"fields":{"System.Tags":"P1; ready-for-review"}}' 200 ;;   # banked: claim must refuse
+  */_apis/wit/workitems/13\?*)         emit '{"id":13,"fields":{"System.Tags":"P1"}}' 200 ;;   # unclaimed but blocked by 9: the blocker gate must refuse
   */_apis/wit/workitems/*)             # GET single / PATCH
     if [ "$method" = "GET" ]; then
       emit '{"id":7,"fields":{"System.Title":"first","System.Description":"the body","System.Tags":"P1; working","System.State":"Active"}}' 200
@@ -89,7 +92,7 @@ data_for_method() { awk -F'\t' -v m="$1" '$1==m {print $3}' "$CURL_CAPTURE" | ta
 run list --state open
 WIQL=$(awk -F'\t' '$2 ~ /\/wiql/ {print $3}' "$CURL_CAPTURE" | tail -1 | wiql_of)
 assert_contains "open WIQL excludes done states"        "System.State] NOT IN ('Closed', 'Done', 'Resolved', 'Removed', 'Completed')" "$WIQL"
-for t in working needs-design needs-approval awaiting-integration merging; do
+for t in working needs-design needs-approval awaiting-integration merging ready-for-review needs-rebase; do
   assert_contains "open WIQL excludes blocking tag $t" "[System.Tags] NOT CONTAINS '$t'" "$WIQL"
 done
 assert_not_contains "open WIQL does not restrict to non-empty tags (no CONTAINS-only gate)" "[System.Tags] CONTAINS ''" "$WIQL"
@@ -138,10 +141,19 @@ assert_contains "create sets System.Title via json-patch" '"path": "/fields/Syst
 assert_contains "create sets System.Tags"                 '"path": "/fields/System.Tags"' "$CREATE_BODY"
 
 # ── claim / release edit System.Tags (read-modify-write PATCH) ──────────────
-run claim 7
+run claim 5
+assert_eq "claim exits 0 for an unclaimed work item" "0" "$RC"
 PATCH=$(data_for_method PATCH)
 assert_contains "claim PATCHes System.Tags" '"path": "/fields/System.Tags"' "$PATCH"
 assert_contains "claim adds working to the tag string" "working" "$PATCH"
+# A work item reached by id that already carries a blocking tag (`working` from
+# another worker, `ready-for-review` from a finished branch) is refused with
+# exit 1 and no tag write.
+for refused in 7 9; do
+  run claim "$refused"
+  assert_eq "claim refuses #$refused, which carries a blocking tag" "1" "$RC"
+  assert_eq "claim refusing #$refused never PATCHes the tags" "" "$(data_for_method PATCH)"
+done
 
 # ── close sets System.State to a done state ─────────────────────────────────
 run close 7 --comment "done here"
@@ -200,10 +212,11 @@ assert_eq "unblock of an absent edge exits 1" "1" "$RC"
 
 run claim 13
 assert_eq "claim of a work item with an open blocker exits 1" "1" "$RC"
+assert_contains "that refusal came from the blocker gate, past the tag gate" 'workitems/13?$expand=relations' "$(awk -F'\t' '$1=="GET" {print $2}' "$CURL_CAPTURE")"
 
-run claim 7
-CLAIM_GET=$(awk -F'\t' '$1=="GET" {print $2}' "$CURL_CAPTURE" | head -1)
-assert_contains "claim's blocker read passes \$expand=relations" '$expand=relations' "$CLAIM_GET"
+run claim 5
+CLAIM_GETS=$(awk -F'\t' '$1=="GET" {print $2}' "$CURL_CAPTURE")
+assert_contains "claim's blocker read passes \$expand=relations" 'workitems/5?$expand=relations' "$CLAIM_GETS"
 
 run any-claimable
 assert_eq "any-claimable with an unblocked candidate exits 0" "0" "$RC"

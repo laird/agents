@@ -38,9 +38,9 @@ a detached merge job drives after a worker's `claim`:
   escalate  -> <blocking-label>           file moves to blocked/
   requeue   -> open                       file moves to open/ (blocked/ if another
                                           blocking label remains)
-Each converges: run twice, the second run changes nothing. All three lock labels
-(working, merging, awaiting-integration) are cleared by every verb except
-handoff, which keeps the issue locked under `merging`.
+Each converges: run twice, the second run changes nothing. Every lock label
+(LOCK_LABELS below) is cleared by every verb except handoff, which keeps the
+issue locked under `merging`.
   issues-file.py migrate-layout
   issues-file.py find-main-worktree
   issues-file.py import-from-gh
@@ -49,8 +49,9 @@ handoff, which keeps the issue locked under `merging`.
 Exit codes:
   0 — success. For `any-claimable`: at least one claimable issue exists.
   1 — clean negative. For `any-claimable`: no claimable issues (an issue with
-      an open blocker is not claimable). For `claim`: race lost, not in open/,
-      approval label missing, or a blockedBy issue is not closed (a dangling
+      an open blocker or a lock label is not claimable). For `claim`: race lost,
+      not in open/, approval label missing, the issue carries a lock label
+      (LOCK_LABELS below), or a blockedBy issue is not closed (a dangling
       blocker counts as satisfied). For get/update/comment/close/release:
       issue not found. For handoff/park/escalate/requeue: issue not found or
       already closed. For `block`: self-edge, two-node cycle, or
@@ -88,10 +89,14 @@ BLOCKING_LABELS = frozenset({
 })
 
 # Labels that mean "someone owns this right now": a worker (working), a detached
-# merge job (merging), or the sentinel waiting for a green tip (awaiting-integration).
-# None of them is a human-decision gate, so none lives in BLOCKING_LABELS, and an
-# issue carrying any of them sits in working/ so it is never claimable.
-LOCK_LABELS = ("working", "merging", "awaiting-integration")
+# merge job (merging), the sentinel waiting for a green tip (awaiting-integration),
+# or a manager process gating a finished branch (ready-for-review, and needs-rebase
+# once that branch's base went stale). None of them is a human-decision gate, so
+# none lives in BLOCKING_LABELS. The lifecycle verbs keep a locked issue in
+# working/, but a lock label can also reach open/ (an import, a hand edit, a
+# worker that swapped `working` for `ready-for-review` in place), so the
+# claimable queue and `claim` check the labels, not only the bucket.
+LOCK_LABELS = ("working", "merging", "awaiting-integration", "ready-for-review", "needs-rebase")
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +138,11 @@ def required_label() -> str:
 
 def labels_approved(labels, required: str) -> bool:
     return not required or required in (labels or [])
+
+
+def lock_label(labels):
+    """The first lock label an issue carries, or None when nobody owns it."""
+    return next((l for l in (labels or []) if l in LOCK_LABELS), None)
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +341,12 @@ def cmd_list(args):
                 data.get("labels"), required_label()
             ):
                 continue
+            # The bare `--state open` is the claimable queue, so an owned issue
+            # that sits in open/ is hidden from it. An explicit `--label X` is a
+            # probe by name (the sentinel asks for `merging` and
+            # `awaiting-integration` this way), so it still sees them.
+            if bucket == "open" and not args.label and lock_label(data.get("labels")):
+                continue
             results.append(to_gh_json(data))
     if args.limit:
         results = results[:args.limit]
@@ -507,6 +523,14 @@ def cmd_claim(args):
         print(f"Error: could not read issue #{args.number}: {e}",
               file=sys.stderr)
         sys.exit(3)
+    owner = lock_label(data.get("labels"))
+    if owner is not None:
+        print(
+            f"Refusing to claim #{args.number}: it carries the blocking label "
+            f"'{owner}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     required = required_label()
     if required and not labels_approved(data.get("labels"), required):
         print(
@@ -674,7 +698,10 @@ def cmd_any_claimable(args):
             # (KTD5): backend error, not a clean "nothing claimable".
             print(f"Error: could not read {p}: {e}", file=sys.stderr)
             sys.exit(3)
-        if not labels_approved(data.get("labels"), required):
+        labels = data.get("labels")
+        if lock_label(labels) is not None:
+            continue
+        if not labels_approved(labels, required):
             continue
         if any(state == "open" for _, state in
                _resolve_blockers(issues_dir, data.get("blockedBy"))):

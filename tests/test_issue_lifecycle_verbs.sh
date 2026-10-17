@@ -99,6 +99,22 @@ python3 "$ISSUES_PY" escalate "$N" --label future 2>/dev/null; rc=$?
 [ "$rc" -eq 1 ] && [ "$(bucket)" = closed ] && ok "escalate on a closed issue exits 1 and leaves it closed" || bad "escalate on closed: rc=$rc bucket=$(bucket)"
 python3 "$ISSUES_PY" handoff 999 2>/dev/null; [ $? -eq 1 ] && ok "handoff on a missing issue exits 1" || bad "handoff on missing issue rc=$?"
 
+# a lock label on an issue that sits in open/ (an import, a hand edit, a worker that
+# swapped `working` for `ready-for-review` in place): hidden from the claimable queue,
+# refused by claim, not a blocked issue, and claimable again once requeue clears it
+for L in ready-for-review needs-rebase; do
+  reset_issue "bug, $L"
+  python3 "$ISSUES_PY" claim "$N" 2>"$TMP/claim.err"; rc=$?
+  [ "$rc" -eq 1 ] && [ "$(bucket)" = open ] && grep -q "$L" "$TMP/claim.err" && ok "claim refuses an open/ issue carrying $L: exit 1, names the label, file stays in open/" || bad "claim with $L: rc=$rc bucket=$(bucket) stderr=$(cat "$TMP/claim.err")"
+  [ "$(in_list open)" = False ] && ok "$L: hidden from list --state open" || bad "$L: offered as claimable"
+  python3 "$ISSUES_PY" list --state open --label "$L" | grep -q "\"number\": $N" && ok "$L: still found by an explicit --label probe (the sentinel's)" || bad "$L: invisible to list --state open --label $L"
+  [ "$(in_list blocked)" = False ] && ok "$L: not shown as blocked (not a human gate)" || bad "$L: listed as blocked"
+  python3 "$ISSUES_PY" any-claimable; rc=$?
+  [ "$rc" -eq 1 ] && ok "$L: any-claimable reports nothing claimable" || bad "$L: any-claimable rc=$rc"
+  python3 "$ISSUES_PY" requeue "$N" --comment "manager handed it back"
+  [ "$(labels)" = "bug" ] && python3 "$ISSUES_PY" claim "$N" && ok "requeue strips $L; the issue is claimable again" || bad "requeue with $L: $(snapshot)"
+done
+
 # the dispatcher exposes the verbs
 (
   cd "$TMP" && git init -q repo && cd repo && printf '{"issueSource":"file","issueDir":"%s"}\n' "$TMP/issues" > .autocoder.json
@@ -135,6 +151,8 @@ gh_run escalate 7 --label needs-clarification --comment "boom" && ok "gh escalat
 gh_run escalate 7 --comment "no label" 2>/dev/null; [ $? -eq 2 ] && ok "gh escalate without --label is a usage error" || bad "gh escalate without --label rc=$?"
 gh_run requeue 7 --comment "died" && grep -q "^issue edit 7 --remove-label merging" "$GH_LOG" && grep -q "^issue comment 7 --body died" "$GH_LOG" \
   && ok "gh requeue drops the locks and comments" || bad "gh requeue calls: $(cat "$GH_LOG")"
+grep -q "^issue edit 7 --remove-label ready-for-review" "$GH_LOG" && grep -q "^issue edit 7 --remove-label needs-rebase" "$GH_LOG" \
+  && ok "gh requeue also drops ready-for-review and needs-rebase" || bad "gh requeue left a merge-gate label: $(cat "$GH_LOG")"
 OUT=$(gh_run list --state open --limit 5 2>/dev/null)
 grep -q '"number": 9' <<<"$OUT" && ! grep -q '"number": 8' <<<"$OUT" && ok "gh claimable queue excludes merging" || bad "gh claimable queue does not exclude merging: $OUT"
 
@@ -161,6 +179,7 @@ jira_run handoff 7 && grep -q '"add": "merging"' "$CURL_LOG" && grep -q '"remove
 jira_run escalate 7 --label needs-clarification --comment c && grep -q '"add": "needs-clarification"' "$CURL_LOG" && grep -q '"remove": "awaiting-integration"' "$CURL_LOG" && grep -q '"remove": "merging"' "$CURL_LOG" && grep -q '/comment' "$CURL_LOG" \
   && ok "jira escalate adds the blocking label, removes all locks, comments" || bad "jira escalate: $(cat "$CURL_LOG")"
 jira_run requeue 7 && grep -q '"remove": "merging"' "$CURL_LOG" && ok "jira requeue removes merging" || bad "jira requeue: $(cat "$CURL_LOG")"
+grep -q '"remove": "ready-for-review"' "$CURL_LOG" && grep -q '"remove": "needs-rebase"' "$CURL_LOG" && ok "jira requeue also removes ready-for-review and needs-rebase" || bad "jira requeue left a merge-gate label: $(cat "$CURL_LOG")"
 jira_run list --state open >/dev/null 2>&1; grep -q 'merging' "$CURL_LOG" && ok "jira claimable JQL excludes merging" || bad "jira JQL lacks merging"
 
 mkdir -p "$TMP/ado" && git -C "$TMP/ado" init -q && printf '{"issueSource":"ado","ado":{"orgUrl":"https://dev.azure.com/org","project":"Proj"}}\n' > "$TMP/ado/.autocoder.json"

@@ -78,6 +78,22 @@ class TestList:
         assert "Blocked" not in titles
         assert "Closed" not in titles
 
+    def test_state_open_hides_lock_labels_that_sit_in_open(self, idir):
+        # A finished branch waiting on a merge gate stays in open/ (not a human
+        # gate, so never blocked/) but must not be offered as claimable work.
+        write_issue(idir, 1, "Claimable")
+        write_issue(idir, 2, "Banked", labels=["ready-for-review"])
+        write_issue(idir, 3, "Stale", labels=["needs-rebase"])
+        write_issue(idir, 4, "Landed", labels=["awaiting-integration"])
+        out, _, rc = run(["list", "--state", "open"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        assert [i["title"] for i in json.loads(out)] == ["Claimable"]
+        # An explicit --label probe (the sentinel's) still finds them by name.
+        out, _, rc = run(["list", "--state", "open", "--label", "ready-for-review"],
+                         {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        assert [i["title"] for i in json.loads(out)] == ["Banked"]
+
     def test_state_working_returns_only_working(self, idir):
         write_issue(idir, 1, "Open")
         write_issue(idir, 2, "Working", bucket="working")
@@ -292,6 +308,12 @@ class TestAnyClaimable:
     def test_exit_1_when_only_blocked_or_closed(self, idir):
         write_issue(idir, 1, "Blocked", bucket="blocked", labels=["needs-design"])
         write_issue(idir, 2, "Closed", bucket="closed")
+        _, _, rc = run(["any-claimable"], {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 1
+
+    def test_exit_1_when_every_open_issue_carries_a_lock_label(self, idir):
+        write_issue(idir, 1, "Banked", labels=["ready-for-review"])
+        write_issue(idir, 2, "Stale", labels=["needs-rebase"])
         _, _, rc = run(["any-claimable"], {"ISSUE_DIR_PATH": str(idir)})
         assert rc == 1
 

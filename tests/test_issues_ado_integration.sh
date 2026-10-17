@@ -85,10 +85,18 @@ eq "create applied the tag"           "smoke"          "$("$BACKEND" get "$NUM" 
 "$BACKEND" claim "$NUM" >/dev/null
 HAS=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print("working" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
 eq "claim adds the working tag" "True" "$HAS"
+"$BACKEND" claim "$NUM" >/dev/null 2>&1
+eq "a second claim on a working item exits 1" "1" "$?"
 
 "$BACKEND" release "$NUM" >/dev/null
 HAS=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print("working" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
 eq "release removes the working tag" "False" "$HAS"
+
+# A finished branch waiting on a manager's merge gate is refused too.
+"$BACKEND" update "$NUM" --add-label ready-for-review >/dev/null
+"$BACKEND" claim "$NUM" >/dev/null 2>&1
+eq "claim refuses a ready-for-review item" "1" "$?"
+"$BACKEND" update "$NUM" --remove-label ready-for-review >/dev/null
 # the pre-existing 'smoke' tag must survive the read-modify-write
 KEPT=$("$BACKEND" get "$NUM" | python3 -c 'import json,sys; print("smoke" in [l["name"] for l in json.load(sys.stdin)["labels"]])')
 eq "tag edits preserve other tags" "True" "$KEPT"

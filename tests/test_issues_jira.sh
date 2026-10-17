@@ -81,6 +81,10 @@ case "$url" in
     emit '{"id":"10001"}' 201 ;;
   */rest/api/2/issue/*/assignee)
     emit '' 204 ;;
+  */rest/api/2/issue/ENG-5*)
+    emit '{"key":"ENG-5","fields":{"labels":["P1"]}}' 200 ;;   # unclaimed: claim must succeed
+  */rest/api/2/issue/ENG-9*)
+    emit '{"key":"ENG-9","fields":{"labels":["P1","ready-for-review"]}}' 200 ;;   # banked: claim must refuse
   */rest/api/2/issue/ENG-7*)
     emit '{"key":"ENG-7","fields":{"summary":"first","description":"the body","labels":["P1","working"],"status":{"statusCategory":{"key":"indeterminate"}},"comment":{"comments":[{"body":"a comment"}]}}}' 200 ;;
   */rest/api/2/issue/ENG-9*)
@@ -124,7 +128,7 @@ run list --state open
 JQL=$(last_jql)
 assert_contains "open JQL includes labels-is-EMPTY guard" 'labels is EMPTY' "$JQL"
 assert_contains "open JQL excludes blocking labels via not in" 'labels not in' "$JQL"
-for l in working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging; do
+for l in working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging ready-for-review needs-rebase; do
   assert_contains "open JQL lists blocking label $l" "\"$l\"" "$JQL"
 done
 assert_contains "open JQL scopes to project" 'project = "ENG"' "$JQL"
@@ -189,8 +193,17 @@ assert_contains "create sends project key" '"key": "ENG"' "$CREATE_PAYLOAD"
 assert_contains "create sends label" '"P2"' "$CREATE_PAYLOAD"
 
 # ── claim / release toggle the working label ────────────────────────────────
-run claim 7
+run claim 5
+assert_eq "claim exits 0 for an unclaimed issue" "0" "$RC"
 assert_contains "claim adds working label" '"add": "working"' "$(last_data)"
+# An issue reached by number that already carries a blocking label (`working`
+# from another worker, `ready-for-review` from a finished branch) is refused
+# with exit 1 and no label write.
+for refused in 7 9; do
+  run claim "$refused"
+  assert_eq "claim refuses ENG-$refused, which carries a blocking label" "1" "$RC"
+  assert_eq "claim refusing ENG-$refused never PUTs a label edit" "" "$(awk -F'\t' '$1 == "PUT"' "$CURL_CAPTURE")"
+done
 run release 7
 assert_contains "release removes working label" '"remove": "working"' "$(last_data)"
 
