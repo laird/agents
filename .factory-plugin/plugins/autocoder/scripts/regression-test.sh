@@ -129,13 +129,15 @@ if [ "$UNIT_TEST_DIR" != "." ]; then
     cd "$UNIT_TEST_DIR"
 fi
 
+# pipefail is scoped to the test pipelines: the verdict is the command's exit, not tee's.
+# Script-wide it would abort under set -e on every grep that legitimately matches nothing.
 if [ -z "$UNIT_TEST_CMD" ]; then
     echo -e "${YELLOW}No unit test command configured — skipping.${NC}"
     UNIT_STATUS="⏭️  SKIPPED (not configured)"
     UNIT_EXIT=0
     UNIT_SUITE_SKIPPED=true
     : > "$UNIT_RESULTS"
-elif $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
+elif (set -o pipefail; $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"); then
     UNIT_STATUS="✅ PASSED"
     UNIT_EXIT=0
 else
@@ -191,7 +193,7 @@ if [ -z "$E2E_TEST_CMD" ]; then
     E2E_EXIT=0
     E2E_SUITE_SKIPPED=true
     : > "$E2E_RESULTS"
-elif $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"; then
+elif (set -o pipefail; $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"); then
     E2E_STATUS="✅ PASSED"
     E2E_EXIT=0
 else
