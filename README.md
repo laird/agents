@@ -369,13 +369,18 @@ Autonomous issue resolution (GitHub, Jira, Azure DevOps, or file-backed trackers
 
 **Get help:** `/autocoder-help`
 
-**Commands:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`, `/manager-handoff`, `/manager-resume`
+**Commands:** `/set-issue-source`, `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/monitor-loop`, `/review-blocked`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/install`, `/manager-handoff`, `/manager-resume`
+
+**Prerequisites:**
+- [`gh`](https://cli.github.com/) installed and authenticated (`gh auth status`)
+- An issue backend chosen with `/set-issue-source`: GitHub Issues, Jira, Azure DevOps, or file-backed `.issues/` (see [docs/issue-backends.md](docs/issue-backends.md), [docs/jira-setup.md](docs/jira-setup.md), [docs/ado-setup.md](docs/ado-setup.md))
 
 **Quick Start:**
 ```bash
-/fix              # Fix highest priority issue
-/install          # One-time setup for continuous mode
-/fix-loop         # Run continuously (single agent)
+/set-issue-source    # Step 0: pick github, jira, ado, or file backend
+/fix                 # Fix highest priority issue
+/install             # One-time setup for continuous mode
+/fix-loop            # Run continuously (single agent)
 ```
 
 **Swarm (parallel workers):**
