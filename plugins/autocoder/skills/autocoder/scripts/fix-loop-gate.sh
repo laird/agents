@@ -7,7 +7,7 @@
 # (priority bugs, then enhancements); the first successful claim wins. Exits
 # 0 + writes a work plan to ${AUTOCODER_WORK_JSON:-/tmp/autocoder-work.json}
 # when work was claimed. Exits 1 (silently) when the queue is empty or every
-# candidate's claim failed — caller skips the LLM invocation entirely.
+# candidate's claim was refused — caller skips the LLM invocation entirely.
 #
 # Work-plan JSON shape:
 #   {"phase":"triage", "issues":[1,2,3]}        # unprioritized exist
@@ -19,6 +19,8 @@
 #   0   work claimed (work-plan written)
 #   1   no work available (idle tick — caller should not invoke Claude)
 #   2   configuration error (e.g. missing issue source)
+#   other  backend error, propagated (e.g. claim rc=3). NOT idle — callers
+#          must surface it rather than quietly skipping the tick.
 #
 # Race safety:
 #   File backend: atomic claim via `issue_claim` (rename open/NNN.md →
@@ -197,7 +199,10 @@ sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)
 PY
 }
 
-# Walk the candidates in order; a lost race means "try the next one".
+# Walk the candidates in order. A refused claim (rc=1: lost the rename race,
+# missing requiredLabel, or an open blockedBy edge) means "try the next one";
+# idling instead would let one permanently-blocked top candidate starve the
+# queue. Backend stderr is left visible so claim diagnostics reach the caller.
 tries=0
 while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   case "$PHASE" in
@@ -210,7 +215,13 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   [ "$tries" -lt "$MAX_TRIES" ] || break
   tries=$((tries + 1))
 
-  issue_claim "$ISSUE_NUM" 2>/dev/null || continue
+  claim_rc=0
+  issue_claim "$ISSUE_NUM" || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) echo "fix-loop-gate: skipping #${ISSUE_NUM}: not claimable (rc=1)" >&2; continue ;;
+    *) echo "fix-loop-gate: backend error claiming #${ISSUE_NUM} (rc=${claim_rc})" >&2; exit "$claim_rc" ;;
+  esac
   if [ "$ISSUE_SOURCE" != file ]; then
     claim_comment_wins "$ISSUE_NUM" || continue
   fi
@@ -224,6 +235,5 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   exit 0
 done 3<<< "$CLASSIFICATION"
 
-# Every candidate tried lost its claim (or the backend errored). Re-run on
-# the next tick.
+# Every candidate tried was refused. Re-run on the next tick.
 exit 1

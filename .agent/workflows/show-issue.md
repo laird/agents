@@ -25,6 +25,16 @@ if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
   exit 1
 fi
 source "${SCRIPT_DIR}/issue-fns.sh"
+
+# Stale-dispatcher guard: .agent/scripts may predate the dependency verbs.
+if ! type issue_deps >/dev/null 2>&1; then
+  SCRIPT_DIR=""
+  for d in "$(pwd)/plugins/autocoder/scripts" "$(pwd)/.claude-plugin/plugins/autocoder/scripts" $(find "$HOME/.agent/plugins/cache" -maxdepth 4 -type d -name scripts -path "*autocoder*" 2>/dev/null | head -1); do
+    [ -f "$d/issue-fns.sh" ] && SCRIPT_DIR="$d" && break
+  done
+  [ -n "$SCRIPT_DIR" ] && source "${SCRIPT_DIR}/issue-fns.sh"
+  type issue_deps >/dev/null 2>&1 || { echo "❌ issue-fns.sh predates the dependency verbs (stale .agent/scripts?); cannot continue" >&2; exit 1; }
+fi
 ```
 
 ## Usage
@@ -57,6 +67,30 @@ echo "$issue_json" | jq -r '
   .body,
   ""
 '
+```
+
+3. Fetch and display the dependency edges:
+
+```bash
+deps_json=$(issue_deps "$ISSUE_NUM")
+rc=$?
+case $rc in
+  0)
+    echo "$deps_json" | jq -r '
+      if ((.blockedBy | length) + (.blocks | length)) == 0 then empty else
+        "Dependencies:",
+        (if (.blockedBy | length) > 0 then
+          "  Blocked by: " + (.blockedBy | map("#\(.number) (\(.state))") | join(", "))
+        else empty end),
+        (if (.blocks | length) > 0 then
+          "  Blocks: " + (.blocks | map("#\(.)") | join(", "))
+        else empty end),
+        ""
+      end'
+    ;;
+  1) ;;  # clean negative — print nothing extra
+  *) echo "Warning: could not fetch dependencies for #$ISSUE_NUM (backend error)" >&2 ;;
+esac
 ```
 
 The output is identical across backends — the path detail (file backend's
