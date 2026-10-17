@@ -105,7 +105,7 @@
 #        → issue_park: `awaiting-integration` with a comment naming the landed commit
 #          and the gated trees. The post-merge sentinel closes a parked issue once its
 #          landed commit is on a green tip. Only `tested` and `docs-only` may close.
-#     exit 1 / exit 2 before anything was pushed (conflict, gate failure, publish failure)
+#     exit 1 / 2 / 3 before anything was pushed (conflict, gate failure, gate killed, publish failure)
 #        → issue_escalate --label needs-clarification, comment with the reason and the
 #          last 40 lines of gate output
 #     internal error AFTER the push succeeded
@@ -126,6 +126,7 @@
 #   0  merged + pushed to <integration>
 #   1  conflict, push failure, setup failure, or no test command
 #   2  tests failed on the integrated tree and origin/<integration> passes alone
+#   3  a gate was killed by a signal (likely OOM): no verdict, nothing pushed, safe to re-run
 
 set -uo pipefail
 
@@ -252,6 +253,15 @@ The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTE
     fi
   fi
   exit "$code"
+}
+
+# A gate that died from a signal (status 128+N, typically the OOM killer taking an
+# ancestor of the test run) reached no verdict on the tree, so it is not a test failure.
+_fail_if_killed() {  # <gate rc> <what was gated>
+  [ "$1" -ge 128 ] || return 0
+  local why="gate on $2 killed by signal $(( $1 - 128 )) (likely OOM), not a test failure"
+  echo "❌ ${why}. NOT pushing; re-run once host load drops."
+  _fail 3 "${why}; re-run once host load drops"
 }
 
 _escalate_conflict() {
@@ -491,14 +501,17 @@ _gate_integrated_tree() {
     PUBLISH_BASIS=docs-only
     return 0
   fi
-  local tree base_sha base_tree
+  local tree base_sha base_tree rc
   tree=$(git rev-parse "HEAD^{tree}")
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
-  if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"
+  rc=${PIPESTATUS[0]}
+  if [ "$rc" -eq 0 ]; then
     TESTED_TREE="$tree"
     PUBLISH_BASIS=tested
     return 0
   fi
+  _fail_if_killed "$rc" "the integrated tree ${tree:0:8}"
 
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
@@ -510,7 +523,10 @@ _gate_integrated_tree() {
     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
   fi
   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
-  if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"
+  rc=${PIPESTATUS[0]}
+  _fail_if_killed "$rc" "origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8})"
+  if [ "$rc" -eq 0 ]; then
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
