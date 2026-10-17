@@ -118,5 +118,5 @@ unblock <number> --on <m>
 
 The dependency verbs (`deps`/`block`/`unblock`) map to
 `System.LinkTypes.Dependency` relations (read back with `$expand=relations`);
-their Azure DevOps implementation lands in increment 2. See
+implemented for Azure DevOps. See
 [`docs/issue-backends.md`](issue-backends.md) for the full contract semantics.
