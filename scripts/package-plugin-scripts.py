@@ -121,6 +121,26 @@ PLATFORMS = {
             "gemini-monitor-loop.sh",
         ],
     },
+    # Antigravity runs .agent/workflows/ against .agent/scripts/. Only the issue
+    # layer is packaged: its workflows source issue-fns.sh, and that layer has no
+    # platform-specific content, so a byte-identical copy is correct (#71).
+    # `content` is empty on purpose. Scanning .agent/workflows would seed
+    # start-parallel-agents.sh and friends, whose .agent copies are hand-kept
+    # Antigravity variants that this script must not overwrite.
+    "antigravity": {
+        "package": ".agent/scripts",
+        "content": [],
+        "entry_points": [
+            "issue-fns.sh",
+            "issue-config.sh",
+            "issue-source-lib.sh",
+            "issues-gh.sh",
+            "issues-file.py",
+            "issues-jira.sh",
+            "issues-ado.sh",
+            "api-push.py",
+        ],
+    },
 }
 
 SCRIPT_NAME = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|py))")
