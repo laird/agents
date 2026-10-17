@@ -760,3 +760,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The integration branch only moves on a tree that passed the gate.
 
+
+---
+
+## 2026-10-16 16:42:21 - Merge throughput for parallel swarms: tree-keyed gate cache, scoped re-gate, worker hand-off, post-merge sentinel, environments (autocoder 4.32.0)
+
+**What Changed**: gate-cache-fns.sh records gate verdicts per <tree, command>. fix-loop-gate.sh walks the candidate list on a lost claim and settles label-based claim races by comment read-back. merge-to-integration.sh re-gates a push-race re-sync only when incoming files overlap the change or a global path, judges a failure against the base alone, publishes each landed tip as refs/autocoder/tips/<branch>/<sha>-<issue>, and with --own-issue owns the issue outcome (handoff -> merging; close only for tested/docs-only trees; park red-base and disjoint landings under awaiting-integration). Both relaxations stay off until origin/<branch>-green exists. Issue backends gained handoff/park/escalate/requeue verbs and the merging label. main-sentinel.sh gates the integration tip after merges, moves <branch>-green, bisects over recorded tips, reverts exactly the culprit push, files a P0 with exact attribution, closes parked issues on green, and reconciles dead merge jobs. promote.sh moves env/<name> refs only to commits with full-regression proof in pipeline order; docs/environments.md. Gate runs per host are capped by a slot semaphore. Merge state files are keyed by repo id under AUTOCODER_TMP.
+
+**Why Changed**: 938 measured merges: 41% of pushes lost the race and re-ran an 8-30 minute gate; workers polled their own merge for the whole gate; all N workers raced for one issue and N-1 slept 4 minutes. Follows the post-merge testing model in anthropic.com/engineering/redesigning-source-control: accept brief risk on main, test every batch after the fact, auto-revert, and release only from a proven-green tip. A four-model adversarial review drove the second wave (tip refs replaced first-parent bisect and parent guessing; one owner per issue transition; distinct merging label).
+
+**Impact**: Workers keep working during their merge; a lost push race rarely costs a second gate; main may be briefly red but <branch>-green and env/* never are. Shell suite: 50 files green. Bumped autocoder to 4.32.0, marketplaces 3.53.0 (4.31.0 is taken by the in-flight pstack branch).
+

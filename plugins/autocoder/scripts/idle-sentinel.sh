@@ -390,15 +390,20 @@ issue_source_resolved() {
 }
 
 json_issue_numbers() {
-  # stdin: backend list JSON → space-separated OPEN issue numbers.
+  # stdin: backend list JSON → space-separated OPEN issue numbers. An issue
+  # labelled `merging` is owned by a detached merge job that is still running:
+  # not banked work, not a stale claim, not claimable, so no probe counts it.
   python3 -c '
 import json, sys
 try:
     issues = json.load(sys.stdin)
 except Exception:
     sys.exit(3)
+def labels(i):
+    return {l.get("name") for l in (i.get("labels") or []) if isinstance(l, dict)}
 nums = [str(i["number"]) for i in issues
-        if str(i.get("state", "OPEN")).upper() != "CLOSED"]
+        if str(i.get("state", "OPEN")).upper() != "CLOSED"
+        and "merging" not in labels(i)]
 print(" ".join(nums))
 ' 2>/dev/null
 }

@@ -209,6 +209,16 @@ issue_list --state open | jq -r '.[] | "#\(.number): \(.title)"'
 issue_list --state working | jq -r '.[] | "#\(.number): \(.title)"'
 ```
 
+Also check the integration-branch sentinel, if one runs beside the swarm
+(`main-sentinel.sh --loop 300`, see `plugins/autocoder/scripts/README.md` §F):
+
+- **Sentinel's last tick**: `cat "${AUTOCODER_SENTINEL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/sentinel}"/*-main`
+  prints `last_tested`, `last_green`, `red_issue`. `last_tested` behind
+  `origin/main` means the sentinel has not ticked since the last merge; a
+  non-empty `red_issue` is the open P0 for a red integration branch that it
+  could not auto-revert, and `git rev-parse origin/<integration>-green` (for
+  example `origin/master-green`) is the last tip that passed the gate.
+
 ### Step 3: Decide Which Workers Are Idle
 
 Run the idle check. Do **not** eyeball a pane capture and judge for yourself —

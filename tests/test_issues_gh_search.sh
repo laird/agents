@@ -56,7 +56,7 @@ capture_search() {
 }
 
 BLOCKING_LABELS=(working needs-design needs-clarification needs-feedback \
-                 needs-approval too-complex future proposal awaiting-integration)
+                 needs-approval too-complex future proposal awaiting-integration merging)
 
 # ── list --state open must exclude each blocking label ─────────────────────
 SEARCH=$(capture_search list --state open --limit 10)

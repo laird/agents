@@ -912,6 +912,7 @@ still yours re-exposes it to the pool and invites a peer to duplicate your work.
 |---|---|---|
 | Issue closed (merged / resolved) | ✅ yes | — |
 | PR opened (`pr` merge mode) | ✅ yes — as a hand-off | swap `working` for `awaiting-integration` in the same step, so the issue stays out of the claimable pool until the merge closes it |
+| Merge launched (`merge` merge mode) | ✅ yes — as a hand-off | the detached job (`merge-launch.sh --own-issue`) swaps `working` for `merging` itself as its first act; this worker writes NO label after the launch returns. The job retires `merging` when it closes the issue, parks it under `awaiting-integration` (landed but not provably green, or not yet shipped), or escalates it to `needs-clarification`; the sentinel re-queues it if the job dies |
 | Blocked (`needs-design`, `needs-clarification`, `needs-approval`, `too-complex`, `future`) | ✅ yes | post a release comment in the same step |
 | Deliberately skipped or abandoned | ✅ yes | post a release comment in the same step |
 | Could not switch to the feature branch (claim never started) | ✅ yes | — |

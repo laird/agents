@@ -390,6 +390,8 @@ WORKER_MODEL=claude-sonnet-5 MANAGER_MODEL=claude-opus-5 startclt 3
 start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
 ```
 
+**Environments (gated releases):** the swarm lands on `main` fast and `main-sentinel.sh` repairs it when it goes red. Releases do not share that risk. Declare `environments` in `.autocoder.json` (`staging` → `uat` → `prod`, each a branch on origin that your deploy reads) and `promote.sh` moves each one only to a commit with proof of a full-regression pass: the sentinel's `main-green` tip, the previous environment's tip, or a tree the gate cache recorded as passing. Being on `main` is never enough. See [docs/environments.md](docs/environments.md).
+
 **SRE Monitor (idle fallback):**
 
 When a worker has no issues in the queue, it can fall back to monitoring production systems — scanning logs for errors, checking service health, and filing or updating GitHub issues for any problems found. This keeps workers productive during queue droughts and surfaces production incidents automatically.
