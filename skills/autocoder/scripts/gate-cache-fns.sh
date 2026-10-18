@@ -12,12 +12,15 @@
 # Source this file; callers use:
 #   gate_cache_get <tree-sha> "<test-cmd>"        -> prints pass|fail, rc 0 if recorded, 1 if not
 #   gate_cache_put <tree-sha> "<test-cmd>" pass|fail
-#   gate_cache_run <dir> "<test-cmd>"             -> rc 0 pass / 1 fail; runs only on a miss
+#   gate_cache_run <dir> "<test-cmd>"             -> rc 0 pass / 1 fail / >=128 killed; runs only on a miss
 #   gate_cache_prune [days]                       -> deletes records older than N days (default 30)
 #
 # gate_cache_run reuses a recorded pass unconditionally and a recorded fail only when
 # GATE_CACHE_REUSE_FAIL=1 (a bisect wants that; a merge retry does not, since the fail
-# may be flake). It prints one line saying whether it hit or ran, for logs.
+# may be flake). It prints one line saying whether it hit or ran, for logs. A gate that
+# dies from a signal (status 128+N, typically the OOM killer) reached no verdict about
+# the tree, so nothing is recorded and the raw status is returned for the caller to tell
+# apart from a failure.
 #
 # Location: ${AUTOCODER_GATE_CACHE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/gate-cache}
 
@@ -49,7 +52,7 @@ gate_cache_put() {
 }
 
 gate_cache_run() {
-  local dir="$1" cmd="$2" tree recorded
+  local dir="$1" cmd="$2" tree recorded rc=0
   tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
   if recorded=$(gate_cache_get "$tree" "$cmd"); then
     if [ "$recorded" = pass ] || [ "${GATE_CACHE_REUSE_FAIL:-0}" = 1 ]; then
@@ -59,9 +62,14 @@ gate_cache_run() {
     fi
   fi
   echo "gate-cache: no usable record for tree ${tree:0:8}; running gate"
-  if (cd "$dir" && bash -c "$cmd"); then
+  (cd "$dir" && bash -c "$cmd") || rc=$?
+  if [ "$rc" -eq 0 ]; then
     gate_cache_put "$tree" "$cmd" pass
     return 0
+  fi
+  if [ "$rc" -ge 128 ]; then
+    echo "gate-cache: gate killed by signal $((rc - 128)) on tree ${tree:0:8}; not recording"
+    return "$rc"
   fi
   gate_cache_put "$tree" "$cmd" fail
   return 1

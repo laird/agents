@@ -37,6 +37,11 @@ gate_cache_run . "$FAILCMD" >/dev/null && bad "failing gate reported pass on ret
 GATE_CACHE_REUSE_FAIL=1 gate_cache_run . "$FAILCMD" >/dev/null && bad "reused fail reported pass"
 [ "$(wc -l < "$COUNTER.fail")" -eq 2 ] && ok "GATE_CACHE_REUSE_FAIL=1 skips the run" || bad "fail was re-run under reuse"
 
+KILLCMD='kill -KILL $$'
+gate_cache_run . "$KILLCMD" >/dev/null; RC=$?
+[ "$RC" -eq 137 ] && ok "a gate killed by SIGKILL returns 137" || bad "killed gate rc=$RC"
+gate_cache_get "$TREE" "$KILLCMD" >/dev/null && bad "a killed gate was recorded" || ok "a killed gate leaves no record"
+
 gate_cache_get "$TREE" "some other command" >/dev/null && bad "different command shares a record" || ok "key includes the command"
 
 echo b > b; git add b; git commit -q -m b
