@@ -83,6 +83,20 @@ if [ "\$1" = "issue" ] && [ "\$2" = "list" ]; then
   cat "\${GH_FIXTURE:-$TMP/issues.json}"
   exit 0
 fi
+# any-claimable resolves each candidate's blockers: \`issue view <n> --json
+# <fields>\` answers from the same fixture, and no candidate has native edges.
+if [ "\$1" = "issue" ] && [ "\$2" = "view" ] && [ "\$4" = "--json" ]; then
+  out=\$(jq -c --argjson n "\$3" --arg f "\$5" \\
+    '.[] | select(.number == \$n) | with_entries(select(.key as \$k | \$f | split(",") | index(\$k)))' \\
+    "\${GH_FIXTURE:-$TMP/issues.json}")
+  [ -n "\$out" ] || { echo "issue not found" >&2; exit 1; }
+  printf '%s\\n' "\$out"
+  exit 0
+fi
+if [ "\$1" = "api" ] && [[ "\$2" == repos/*/issues/*/dependencies/blocked_by ]]; then
+  if [ "\$3" = "--jq" ]; then echo '[]' | jq -r "\$4"; else echo '[]'; fi
+  exit 0
+fi
 echo "MOCK: unhandled gh call: \$*" >&2
 exit 1
 STUB

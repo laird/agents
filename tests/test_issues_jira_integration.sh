@@ -43,26 +43,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── start the fake on an ephemeral port ─────────────────────────────────────
+# ── server lifecycle helper ─────────────────────────────────────────────────
+# start_fake [VAR=val ...] — (re)start the fake with the given environment on
+# a fresh ephemeral port and point JIRA_BASE_URL at it. Later sections restart
+# with dependency seeds and failure toggles.
+start_fake() {
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null
+  : > "$LOG"
+  env "$@" python3 "$FAKE" 0 >"$LOG" 2>&1 &
+  SERVER_PID=$!
+  PORT=""
+  for _ in $(seq 1 50); do
+    PORT=$(sed -n 's/^LISTENING \([0-9]*\)$/\1/p' "$LOG" 2>/dev/null | head -1)
+    [ -n "$PORT" ] && break
+    # bail early if the server died on startup
+    kill -0 "$SERVER_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ -z "$PORT" ]; then
+    echo "FAIL: fake server did not report a port"; cat "$LOG"; exit 1
+  fi
+  export JIRA_BASE_URL="http://127.0.0.1:${PORT}"
+}
+
 # FAKE_JIRA_PAGE_CAP=2 makes the fake serve at most 2 issues per search page,
 # so any list of the 5 seeded issues must follow the nextPageToken chain —
 # exercising the backend's v3 pagination loop, not just its first request.
-export FAKE_JIRA_PAGE_CAP=2
-python3 "$FAKE" 0 >"$LOG" 2>&1 &
-SERVER_PID=$!
-PORT=""
-for _ in $(seq 1 50); do
-  PORT=$(sed -n 's/^LISTENING \([0-9]*\)$/\1/p' "$LOG" 2>/dev/null | head -1)
-  [ -n "$PORT" ] && break
-  # bail early if the server died on startup
-  kill -0 "$SERVER_PID" 2>/dev/null || break
-  sleep 0.1
-done
-if [ -z "$PORT" ]; then
-  echo "FAIL: fake server did not report a port"; cat "$LOG"; exit 1
-fi
-
-export JIRA_BASE_URL="http://127.0.0.1:${PORT}"
+start_fake FAKE_JIRA_PAGE_CAP=2
 export JIRA_PROJECT="ENG"
 export JIRA_EMAIL="fake@local"
 export JIRA_API_TOKEN="ignored"
@@ -120,6 +127,89 @@ eq "list body is a plain string, not an ADF object" "True" "$ADF_IS_STR"
 
 # ── not-found is a clean negative (exit 1), not a backend error (exit 3) ─────
 "$BACKEND" get 999 >/dev/null 2>&1; eq "get on a missing issue exits 1" "1" "$?"
+
+# ── dependency edges: full lifecycle on the deps seed ────────────────────────
+# Seeds: 1 = busy blocker (working label, OPEN), 2 = blocked by 1, 3 = free.
+start_fake FAKE_JIRA_SEED_MODE=deps
+
+DEPS2=$("$BACKEND" deps 2)
+eq "deps: blocked issue reports its blocker with state" \
+  '{"blockedBy": [{"number": 1, "state": "open"}], "blocks": []}' "$DEPS2"
+DEPS1=$("$BACKEND" deps 1)
+eq "deps: blocker reports the blocks direction" \
+  '{"blockedBy": [], "blocks": [2]}' "$DEPS1"
+
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim of a blocked issue is refused (exit 1)" "1" "$?"
+"$BACKEND" any-claimable;           eq "any-claimable skips the blocked first candidate, finds the free one" "0" "$?"
+
+"$BACKEND" block 2 --on 1 >/dev/null 2>&1; eq "idempotent re-add exits 0" "0" "$?"
+LINKPOSTS=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "idempotent re-add stored no second edge" "1" "$LINKPOSTS"
+"$BACKEND" block 2 --on 2 >/dev/null 2>&1; eq "self-edge exits 1" "1" "$?"
+"$BACKEND" block 1 --on 2 >/dev/null 2>&1; eq "direct two-node cycle exits 1" "1" "$?"
+
+"$BACKEND" block 3 --on 1 >/dev/null 2>&1;   eq "block on a fresh pair exits 0" "0" "$?"
+"$BACKEND" unblock 3 --on 1 >/dev/null 2>&1; eq "unblock removes the edge (exit 0)" "0" "$?"
+"$BACKEND" unblock 3 --on 1 >/dev/null 2>&1; eq "unblock of an absent edge exits 1" "1" "$?"
+
+"$BACKEND" close 1 >/dev/null 2>&1
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim succeeds once the blocker is closed" "0" "$?"
+
+# ── dual-path status resolution: stubs without status use the fallback GET ──
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_OMIT_LINK_STATUS=1
+STATE=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(json.load(sys.stdin)["blockedBy"][0]["state"])')
+eq "stub without status resolves via the per-blocker fallback GET" "open" "$STATE"
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "fallback-resolved open blocker still refuses the claim" "1" "$?"
+
+# ── dangling blocker counts as satisfied (R4) ────────────────────────────────
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_OMIT_LINK_STATUS=1 FAKE_JIRA_404_ON_ISSUE=1
+STATE=$("$BACKEND" deps 2 | python3 -c 'import json,sys; print(json.load(sys.stdin)["blockedBy"][0]["state"])')
+eq "vanished blocker reports state missing" "missing" "$STATE"
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "dangling blocker does not block the claim" "0" "$?"
+
+# ── resolution failure is exit 3, never a clean negative ────────────────────
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_OMIT_LINK_STATUS=1 FAKE_JIRA_500_ON_ISSUE=1
+"$BACKEND" claim 2 >/dev/null 2>&1;        eq "blocker-resolution HTTP 500 makes claim exit 3" "3" "$?"
+"$BACKEND" any-claimable >/dev/null 2>&1;  eq "blocker-resolution HTTP 500 makes any-claimable exit 3" "3" "$?"
+
+# ── cross-project blockers keep their full keys (no suffix collapse) ─────────
+# FAKE_JIRA_FOREIGN_BLOCKER seeds OPS-2 — an OPEN issue in a SECOND project
+# whose numeric suffix deliberately collides with local ENG-2 — blocking both
+# ENG-2 and ENG-3 (on top of the usual ENG-1 → ENG-2 edge). A backend that
+# collapses link keys to bare suffixes confuses OPS-2 with ENG-2.
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_FOREIGN_BLOCKER=1
+
+DEPS3=$("$BACKEND" deps 3)
+eq "deps reports the foreign blocker by numeric suffix with its real state" \
+  '{"blockedBy": [{"number": 2, "state": "open"}], "blocks": []}' "$DEPS3"
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "open foreign blocker refuses the claim" "1" "$?"
+
+"$BACKEND" block 3 --on 2 >/dev/null 2>&1
+eq "local edge is not suppressed by a same-suffix foreign link (exit 0)" "0" "$?"
+NBB=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "block 3 --on 2 created the LOCAL ENG-2 edge alongside foreign OPS-2" "2" "$NBB"
+
+"$BACKEND" unblock 3 --on 2 >/dev/null 2>&1
+eq "unblock 3 --on 2 targets the local edge (exit 0)" "0" "$?"
+NBB=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["blockedBy"]))')
+eq "the same-suffix foreign OPS-2 edge survives the local unblock" "1" "$NBB"
+
+"$BACKEND" close 1 >/dev/null 2>&1
+"$BACKEND" claim 2 >/dev/null 2>&1; eq "claim 2 still refused while foreign OPS-2 is open" "1" "$?"
+"$BACKEND" close 2 >/dev/null 2>&1
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "closing local ENG-2 does not satisfy what OPS-2 blocks" "1" "$?"
+
+# ── foreign blocker via the status-fallback GET resolves the RIGHT issue ─────
+# With link stubs stripped of status, the backend must GET each blocker by the
+# link's own full key. Close local ENG-2 first: a suffix-collapsing backend
+# would re-prefix JIRA_PROJECT, GET ENG-2 (closed), and wrongly clear ENG-3 —
+# but its actual blocker OPS-2 is still open.
+start_fake FAKE_JIRA_SEED_MODE=deps FAKE_JIRA_FOREIGN_BLOCKER=1 FAKE_JIRA_OMIT_LINK_STATUS=1
+"$BACKEND" close 2 >/dev/null 2>&1
+STATE=$("$BACKEND" deps 3 | python3 -c 'import json,sys; print(json.load(sys.stdin)["blockedBy"][0]["state"])')
+eq "status fallback GETs the foreign key OPS-2, not local ENG-2" "open" "$STATE"
+"$BACKEND" claim 3 >/dev/null 2>&1; eq "fallback-resolved foreign blocker refuses the claim" "1" "$?"
+"$BACKEND" any-claimable >/dev/null 2>&1; eq "any-claimable resolves foreign blockers by full key (no work, exit 1)" "1" "$?"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

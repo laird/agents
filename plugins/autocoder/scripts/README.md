@@ -65,7 +65,7 @@ issue has left the lifecycle, so each verb exits 1 on it and changes nothing.
 
 The dependency verbs (`deps`/`block`/`unblock`) are implemented today by the
 file backend (the reference implementation, edges in `blockedBy:` frontmatter);
-the github/jira/ado implementations land in increment 2. Full semantics —
+all four backends implement them. Full semantics —
 claimability gating, idempotent `block`, dangling-blocker handling, cycle
 rejection — are in `docs/issue-backends.md`.
 
