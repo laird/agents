@@ -383,6 +383,26 @@ assert_json "dangling blocker reports state missing" "$OUT" \
 run claim 2
 assert_eq "dangling blocker does not block the claim" "0" "$RC"
 
+# ── 7a. claim refuses any blocking label on the issue itself ────────────────
+# An issue reached by number (/fix N, a manager dispatch) never passed the
+# queue filter, so the labels that hide it from `list --state open` refuse it
+# here too: a branch banked under ready-for-review is never reworked.
+for l in working awaiting-integration ready-for-review needs-rebase; do
+  reset_world
+  W_LABELS="2:P2,$l"
+  run claim 2
+  assert_eq "claim refuses an issue carrying $l" "1" "$RC"
+  assert_contains "refusal names the label $l" "$l" "$ERR"
+  assert_not_contains "refused claim ($l) never adds the working label" \
+    "--add-label working" "$CAPTURED"
+done
+reset_world
+W_LABELS="2:P2"
+run claim 2
+assert_eq "claim adds working to an issue carrying only P2" "0" "$RC"
+assert_contains "plain P2 claim adds the working label" \
+  "issue edit 2 --add-label working" "$CAPTURED"
+
 # ── 7b. mixed stores: native mode UNIONs blocked-by-<m> labels (finding #5) ─
 # Edges written as labels during a label-mode period (GHES upgraded to native
 # support, or a transient per-credential 404) must stay visible to

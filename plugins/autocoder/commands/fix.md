@@ -540,7 +540,7 @@ fi
 if [ "$ISSUE_SOURCE" = "github" ]; then
   EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "merging:A detached merge job is landing this issue on the integration branch:5319e7"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "merging:A detached merge job is landing this issue on the integration branch:5319e7" "ready-for-review:Work is finished and pushed to a branch; a manager process gates the merge. Not being coded:0e8a16" "needs-rebase:Work is finished; the branch base went stale and must be rebased before the merge gate runs:d93f0b"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -687,7 +687,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging" or . == "ready-for-review" or . == "needs-rebase") | not)
       and ((.number | IN($claimed[])) | not)
     ) |
     {
@@ -712,7 +712,7 @@ else
     select(
       (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
       and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
+      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging" or . == "ready-for-review" or . == "needs-rebase") | not)
       and ((.number | IN($claimed[])) | not)
     ) |
     {
@@ -1486,6 +1486,8 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 | `subtask` | Part of a larger decomposed issue (informational, not blocking) | Individual actionable task from decomposition |
 | `merging` | Applied by the merge job itself (`merge-launch.sh --own-issue`) as its first act while a detached merge is in flight; never by a worker. Suppresses the issue from the claimable queue. Not a human-judgement gate, so `/review-blocked` ignores it. | The job retires it when it closes, parks, or escalates the issue; the post-merge sentinel re-queues the issue if the job dies without reporting. |
 | `awaiting-integration` | Applied automatically when a PR is opened in `pr` merge mode, and by the merge job when the work landed on the integration branch but may not be closed yet: the published tree was not the gated tree (disjoint re-sync), the base was already red, or the commit is not on the ship branch. Suppresses the issue from the claimable queue so the loop does not redo finished work. Not a human-judgement gate, so `/review-blocked` ignores it. | Merging the PR closes the issue and retires the label; the post-merge sentinel closes a parked issue once its landed commit is on a green tip. If a PR is closed **without** merging, remove the label by hand (`gh issue edit <n> --remove-label awaiting-integration`) or the issue stays invisible to the loop. |
+| `ready-for-review` | Applied by a worker when its branch is finished and pushed and a manager process, not the worker, runs the merge gate; the worker drops `working` at the same time and posts a READY comment. Suppresses the issue from the claimable queue and makes `claim` refuse it, so no second worker reworks a banked branch. Not a human-judgement gate, so `/review-blocked` ignores it. | The manager retires it when it merges and closes the issue, or swaps it for `needs-rebase` when the base went stale. `requeue` strips it if the manager abandons the issue. |
+| `needs-rebase` | Applied by the manager when a finished branch's base went stale before the gate ran. Same queue exclusion and `claim` refusal as `ready-for-review`: the branch exists and needs a rebase, not a rewrite. Not a human-judgement gate, so `/review-blocked` ignores it. | Whoever rebases the branch removes it (the manager, or a worker it hands the branch to; a worker cannot `claim` the issue while the label is on). `requeue` strips it. |
 
 ### Detection Process
 
@@ -1824,7 +1826,7 @@ issue_list --state open --label "enhancement" --limit 50 > /tmp/all-enhancements
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging', 'ready-for-review', 'needs-rebase']
 approved = [i for i in issues
             if not any(l['name'] == 'proposal' for l in i.get('labels', []))
             and not any(l['name'] == 'working' for l in i.get('labels', []))
@@ -1854,7 +1856,7 @@ print(len(proposals))
   BLOCKED_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging', 'ready-for-review', 'needs-rebase']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")
@@ -2392,7 +2394,7 @@ issue_list --state open --limit 100 > /tmp/all-issues.json
 PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration', 'merging']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration', 'merging', 'ready-for-review', 'needs-rebase']
 priority = [i for i in issues
             if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2405,7 +2407,7 @@ print(len(priority))
 APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging', 'ready-for-review', 'needs-rebase']
 approved = [i for i in issues
             if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
             and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
@@ -2435,7 +2437,7 @@ else
   BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration', 'merging', 'ready-for-review', 'needs-rebase']
 blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
 print(len(blocked))
 ")

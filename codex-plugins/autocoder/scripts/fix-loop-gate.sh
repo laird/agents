@@ -27,8 +27,10 @@
 #                 working/NNN.md). Loser of the rename race gets exit 1;
 #                 we then try the next candidate, so N workers ticking
 #                 together claim N different issues instead of N-1 idling.
-#   GitHub, Jira, ADO: `issue_claim` is a label-add that always succeeds,
-#                 so every racer "wins" it. The gate settles the race itself,
+#   GitHub, Jira, ADO: `issue_claim` refuses (exit 1) an issue that already
+#                 carries a blocking label, `working` included, but its
+#                 read-then-add is not atomic, so racers that all read before
+#                 any wrote all "win" it. The gate settles that race itself,
 #                 before any Claude session starts: after the label-add it
 #                 posts `🔒 claim <worker-id> <epoch-ms>`, reads the comments
 #                 back, and keeps the issue only when the earliest live claim
@@ -97,7 +99,7 @@ PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
     "needs-approval", "needs-design", "needs-clarification",
     "too-complex", "future", "decomposed", "blocked", "awaiting-integration",
-    "merging",
+    "merging", "ready-for-review", "needs-rebase",
 }
 WORKING = "working"
 PROPOSAL = "proposal"

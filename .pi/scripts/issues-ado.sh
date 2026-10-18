@@ -61,8 +61,9 @@
 API_VERSION="7.0"
 COMMENTS_API_VERSION="7.0-preview.3"
 
-# Tags that gate claimability; same taxonomy as the other backends.
-ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging'
+# Tags that gate claimability; same taxonomy as the other backends. The list
+# feeds both the open WIQL and the claim-time refusal in cmd_claim.
+ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging ready-for-review needs-rebase'
 ADO_BLOCKED_TAGS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 # States treated as "done" across the default processes.
 ADO_DONE_STATES="Closed Done Resolved Removed Completed"
@@ -430,16 +431,22 @@ PY
 # from paths the queue never filters (manager dispatch, /fix N, a resumed
 # loop). Exit 1 is the clean negative callers already handle.
 cmd_claim() {
-  if [ -n "$REQUIRED_LABEL" ]; then
-    _ado_request_ok GET "/_apis/wit/workitems/${1}?fields=System.Tags&api-version=${API_VERSION}"
-    local tags
-    tags=$(printf '%s' "$_ADO_BODY" | python3 -c \
-      'import json,sys; print(" ".join(t.strip() for t in ((json.load(sys.stdin).get("fields",{}) or {}).get("System.Tags") or "").split(";") if t.strip()))' 2>/dev/null) || exit 3
-    if ! issue_labels_approved "$tags"; then
-      issue_approval_refusal "$1" "$REQUIRED_LABEL"
+  # The tags that hide a work item from the open WIQL refuse it here too.
+  _ado_request_ok GET "/_apis/wit/workitems/${1}?fields=System.Tags&api-version=${API_VERSION}"
+  local tags
+  tags=$(printf '%s' "$_ADO_BODY" | python3 -c \
+    'import json,sys; print(" ".join(t.strip() for t in ((json.load(sys.stdin).get("fields",{}) or {}).get("System.Tags") or "").split(";") if t.strip()))' 2>/dev/null) || exit 3
+  if [ -n "$REQUIRED_LABEL" ] && ! issue_labels_approved "$tags"; then
+    issue_approval_refusal "$1" "$REQUIRED_LABEL"
+    exit 1
+  fi
+  local t
+  for t in $ADO_BLOCKING_TAGS; do
+    if grep -qFx -- "$t" <<<"$(tr ' ' '\n' <<<"$tags")"; then
+      echo "Refusing to claim #$1: it carries the blocking tag '$t'" >&2
       exit 1
     fi
-  fi
+  done
   # Blocker gate (R3): claimable only when every blocking work item is
   # closed. Resolved at claim time from the item's own relations — which a
   # plain GET omits, hence $expand=relations — so items reached by id from
@@ -494,14 +501,14 @@ cmd_escalate() {
   local id="$1"; shift
   _ado_lifecycle_args "$@"
   [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
-  _ado_edit_tags "$id" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration"
+  _ado_edit_tags "$id" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration remove:ready-for-review remove:needs-rebase"
   [ -n "$LC_COMMENT" ] && cmd_comment "$id" --body "$LC_COMMENT"
   return 0
 }
 cmd_requeue() {
   local id="$1"; shift
   _ado_lifecycle_args "$@"
-  _ado_edit_tags "$id" "remove:working remove:merging remove:awaiting-integration"
+  _ado_edit_tags "$id" "remove:working remove:merging remove:awaiting-integration remove:ready-for-review remove:needs-rebase"
   [ -n "$LC_COMMENT" ] && cmd_comment "$id" --body "$LC_COMMENT"
   return 0
 }

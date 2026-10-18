@@ -234,6 +234,33 @@ else
   echo "FAIL: backend-error diagnostics missing — stderr: $(cat "$TMP/gate6.err")"; FAIL=$((FAIL + 1))
 fi
 
+# ── Test 7: a finished branch waiting on a merge gate is not re-claimed ───
+# open/ holds only an issue a worker already banked (ready-for-review) or one a
+# manager flagged stale (needs-rebase). The gate must idle, not claim and rework it.
+rm -f "$MAIN"/.issues/*/[0-9]*.md
+cd "$MAIN"
+for L in ready-for-review needs-rebase; do
+  cat > "$MAIN/.issues/open/002.md" <<EOF
+---
+number: 2
+title: Already banked
+priority: P2
+labels: [bug, P2, $L]
+status: open
+---
+Body.
+EOF
+  rm -f "$WORK_JSON"
+  AUTOCODER_WORK_JSON="$WORK_JSON" bash "$SCRIPT_DIR/fix-loop-gate.sh" 2>/dev/null
+  GATE_RC=$?
+  assert_eq "fix-loop-gate exit code when the only open issue carries $L" "1" "$GATE_RC"
+  if [ -f "$MAIN/.issues/working/002.md" ]; then
+    echo "FAIL: gate re-claimed an issue carrying $L"; FAIL=$((FAIL + 1))
+  else
+    echo "PASS: gate left the $L issue alone"; PASS=$((PASS + 1))
+  fi
+done
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

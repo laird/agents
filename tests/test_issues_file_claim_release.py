@@ -68,6 +68,17 @@ class TestClaim:
         _, _, rc = run(["claim", "1"], {"ISSUE_DIR_PATH": str(idir)})
         assert rc == 1
 
+    def test_claim_refuses_a_lock_label_that_sits_in_open(self, idir):
+        # A finished branch waiting on a merge gate (ready-for-review) or flagged
+        # stale (needs-rebase) is refused by number, not only hidden from list.
+        for n, label in ((1, "ready-for-review"), (2, "needs-rebase")):
+            seed_open(idir, n, labels=[label])
+            _, stderr, rc = run(["claim", str(n)], {"ISSUE_DIR_PATH": str(idir)})
+            assert rc == 1
+            assert label in stderr
+            assert (idir / "open" / f"{n:03d}.md").exists()
+            assert not (idir / "working" / f"{n:03d}.md").exists()
+
     def test_parallel_claim_exactly_one_winner(self, idir):
         """Spec §Testing-plan: N processes attempt to claim the same issue;
         assert exactly one exits 0, the rest exit 1."""

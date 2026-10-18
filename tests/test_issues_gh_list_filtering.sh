@@ -66,14 +66,18 @@ cat > "$TMP/issues.json" <<'EOF'
   {"number": 9,  "title": "needs-approval",       "body": "", "labels": [{"name":"needs-approval"}], "state": "OPEN"},
   {"number": 10, "title": "too-complex",          "body": "", "labels": [{"name":"too-complex"}], "state": "OPEN"},
   {"number": 11, "title": "future",               "body": "", "labels": [{"name":"future"}], "state": "OPEN"},
-  {"number": 12, "title": "proposal",             "body": "", "labels": [{"name":"proposal"}], "state": "OPEN"}
+  {"number": 12, "title": "proposal",             "body": "", "labels": [{"name":"proposal"}], "state": "OPEN"},
+  {"number": 13, "title": "ready-for-review",     "body": "", "labels": [{"name":"P2"},{"name":"ready-for-review"}], "state": "OPEN"},
+  {"number": 14, "title": "needs-rebase",         "body": "", "labels": [{"name":"P2"},{"name":"needs-rebase"}], "state": "OPEN"}
 ]
 EOF
 # Only lock labels, nothing a worker may claim.
 cat > "$TMP/issues_locked.json" <<'EOF'
 [
   {"number": 2, "title": "already working", "body": "", "labels": [{"name":"working"}], "state": "OPEN"},
-  {"number": 6, "title": "merging",         "body": "", "labels": [{"name":"merging"}], "state": "OPEN"}
+  {"number": 6, "title": "merging",         "body": "", "labels": [{"name":"merging"}], "state": "OPEN"},
+  {"number": 13, "title": "ready-for-review", "body": "", "labels": [{"name":"ready-for-review"}], "state": "OPEN"},
+  {"number": 14, "title": "needs-rebase",   "body": "", "labels": [{"name":"needs-rebase"}], "state": "OPEN"}
 ]
 EOF
 
@@ -109,22 +113,22 @@ run_backend() {
 
 # ── open: excludes every blocking label, keeps unrelated-labeled issues ────
 OUT=$(run_backend list --state open)
-assert_numbers "list --state open excludes all blocking labels, keeps #1 and #5" "[1,5]" "$OUT"
+assert_numbers "list --state open excludes all blocking labels (#13 ready-for-review, #14 needs-rebase included), keeps #1 and #5" "[1,5]" "$OUT"
 
 # ── working: only issues actually carrying the working label ──────────────
 OUT=$(run_backend list --state working)
 assert_numbers "list --state working selects only #2" "[2]" "$OUT"
 
 # ── blocked: every human-decision label, but not the merge-pipeline locks ─
-# `awaiting-integration` (#4) and `merging` (#6) keep an issue out of the
-# claimable queue without being blocked on a human, so /review-blocked must
-# not surface them.
+# `awaiting-integration` (#4), `merging` (#6), `ready-for-review` (#13) and
+# `needs-rebase` (#14) keep an issue out of the claimable queue without being
+# blocked on a human, so /review-blocked must not surface them.
 OUT=$(run_backend list --state blocked)
-assert_numbers "list --state blocked selects the human-decision labels, not #4/#6" "[3,7,8,9,10,11,12]" "$OUT"
+assert_numbers "list --state blocked selects the human-decision labels, not #4/#6/#13/#14" "[3,7,8,9,10,11,12]" "$OUT"
 
 # ── any-claimable: true when an unblocked issue exists, false otherwise ───
 assert_exit "any-claimable is true (0) when #1/#5 are unblocked" 0 run_backend any-claimable
-GH_FIXTURE="$TMP/issues_locked.json" assert_exit "any-claimable is false (1) when only working/merging issues remain" 1 run_backend any-claimable
+GH_FIXTURE="$TMP/issues_locked.json" assert_exit "any-claimable is false (1) when only working/merging/ready-for-review/needs-rebase issues remain" 1 run_backend any-claimable
 
 # ── --limit applies AFTER filtering, not to the raw fetch ──────────────────
 OUT=$(run_backend list --state open --limit 1)

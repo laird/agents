@@ -43,7 +43,7 @@
 #     in the gh API). Concurrent claims may both succeed; see the spec
 #     for rationale.
 #   - --state open/working/blocked filter by label, since gh has no
-#     directory partitioning. blocked = any of the BLOCKING_LABELS.
+#     directory partitioning. blocked = any of the BLOCKED_LABELS.
 #   - dependencies use GitHub's native issue-dependency endpoints
 #     (issues/<n>/dependencies/blocked_by and .../blocking); on GHES without
 #     that API (a dependencies 404 for an issue proven to exist) edges fall
@@ -58,13 +58,20 @@ _igh_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${_igh_DIR}/issue-approval-lib.sh"
 REQUIRED_LABEL="$(required_issue_label)"
 
-# Blocking/blocked label sets, as JSON arrays for jq (see cmd_list below).
-# `merging` (a detached merge job owns the issue) and `awaiting-integration` (landed,
-# waiting for a green tip or a human merge) are excluded from the claimable queue but
-# deliberately absent from BLOCKED_LABELS_JSON: neither is a human-decision gate, so
-# /review-blocked must not surface them.
-BLOCKING_LABELS_JSON='["working","needs-design","needs-clarification","needs-feedback","needs-approval","too-complex","future","proposal","awaiting-integration","merging"]'
-BLOCKED_LABELS_JSON='["needs-design","needs-clarification","needs-feedback","needs-approval","too-complex","future","proposal"]'
+# One label registry. BLOCKING_LABELS is every label that keeps an issue out of
+# the claimable queue and makes `claim` refuse it; BLOCKED_LABELS is the subset
+# that waits on a human decision, which is what `list --state blocked` and
+# /review-blocked surface. `working` (a worker owns it), `merging` (a detached
+# merge job owns it), `awaiting-integration` (landed, waiting for a green tip or
+# a human merge), `ready-for-review` (finished branch, a manager process gates
+# the merge) and `needs-rebase` (finished branch whose base went stale) are
+# blocking but not blocked: none is a human-decision gate. The JSON forms feed
+# the jq filter in _igh_filter_open_raw; the array feeds cmd_claim, so the queue
+# filter and the claim refusal cannot drift.
+BLOCKING_LABELS=(working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging ready-for-review needs-rebase)
+BLOCKED_LABELS=(needs-design needs-clarification needs-feedback needs-approval too-complex future proposal)
+BLOCKING_LABELS_JSON=$(printf '%s\n' "${BLOCKING_LABELS[@]}" | jq -Rcn '[inputs]')
+BLOCKED_LABELS_JSON=$(printf '%s\n' "${BLOCKED_LABELS[@]}" | jq -Rcn '[inputs]')
 
 # `open`/`working`/`blocked` used to be `gh issue list --search '...'`, which hits
 # GitHub's index-backed /search/issues endpoint. That index lags real-time label
@@ -228,23 +235,32 @@ cmd_claim() {
   # from several paths -- a manager dispatch, /fix N, a resumed loop -- and a
   # filtered queue does not constrain any of them. Refusing here is what makes
   # the approval actually authoritative. Exit 1: a clean negative, the same
-  # code a lost claim race returns, so callers already handle it.
-  if [ -n "$REQUIRED_LABEL" ]; then
-    local labels
-    labels=$(gh issue view "$n" --json labels --jq '.labels[].name' 2>/dev/null) || exit 3
-    if ! issue_labels_approved "$labels"; then
-      issue_approval_refusal "$n" "$REQUIRED_LABEL"
+  # code a lost claim race returns, so callers already handle it. The same
+  # labels that hide an issue from `list --state open` refuse it here, so a
+  # finished branch waiting on a merge gate is never reworked by a second worker.
+  # One label read serves the approval gate, the blocking-label gate, and the
+  # blocker gate below.
+  local vrc=0
+  _igh_view "$n" labels || vrc=$?
+  case "$vrc" in 1) exit 1 ;; 3) exit 3 ;; esac
+  local labels
+  labels=$(printf '%s' "$_IGH_VIEW_JSON" | jq -r '.labels[].name') || exit 3
+  if [ -n "$REQUIRED_LABEL" ] && ! issue_labels_approved "$labels"; then
+    issue_approval_refusal "$n" "$REQUIRED_LABEL"
+    exit 1
+  fi
+  local l
+  for l in "${BLOCKING_LABELS[@]}"; do
+    if grep -qFx -- "$l" <<<"$labels"; then
+      echo "Refusing to claim #$n: it carries the blocking label '$l'" >&2
       exit 1
     fi
-  fi
+  done
   # Blocker gate (KTD8): after the approval gate, before the label edit.
   # Resolve blockers from the issue's own dependency read; any resolution
   # failure is exit 3 — an issue must never look unclaimable because a deps
   # read failed (KTD5). Claim-time-only resolution: a blocker that reopens
   # after the claim is an accepted race, same as the file backend.
-  local vrc=0
-  _igh_view "$n" labels || vrc=$?
-  case "$vrc" in 1) exit 1 ;; 3) exit 3 ;; esac
   _igh_blockers_of "$n" "$_IGH_VIEW_JSON" || exit 3
   local m state open_blockers=""
   for m in $_IGH_BLOCKERS; do
@@ -256,7 +272,9 @@ cmd_claim() {
     exit 1
   fi
   gh issue edit "$n" --add-label working >/dev/null || exit 3
-  # Best-effort: gh has no atomic single-writer label edit. See spec §4.
+  # Best-effort: the read above and this add are two calls, so two workers that
+  # both read before either wrote both succeed. The gate's claim-comment
+  # read-back settles that race. See spec §4.
 }
 
 # ── release ────────────────────────────────────────────────────────────────
@@ -301,7 +319,7 @@ cmd_escalate() {
   _igh_lifecycle_args "$@"
   [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
   _igh_add_label "$n" "$LC_LABEL"
-  _igh_drop_labels "$n" working merging awaiting-integration
+  _igh_drop_labels "$n" working merging awaiting-integration ready-for-review needs-rebase
   [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
   return 0
 }
@@ -309,7 +327,7 @@ cmd_escalate() {
 cmd_requeue() {
   local n="$1"; shift
   _igh_lifecycle_args "$@"
-  _igh_drop_labels "$n" working merging awaiting-integration
+  _igh_drop_labels "$n" working merging awaiting-integration ready-for-review needs-rebase
   [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
   return 0
 }

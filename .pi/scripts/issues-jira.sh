@@ -75,12 +75,14 @@
 
 # ── blocking labels ─────────────────────────────────────────────────────────
 # Same set as issues-gh.sh. `working` = claimed; the rest gate on a human
-# decision. `merging` = a detached merge job owns it; `awaiting-integration` =
-# landed, waiting for a green tip or a human merge. Both are excluded from the
-# claimable queue but NOT surfaced by `list --state blocked` (neither is a
-# human-decision gate). Jira labels cannot contain spaces, which every label
-# here already satisfies.
-JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging'
+# decision, except four finished-or-owned states: `merging` (a detached merge
+# job owns it), `awaiting-integration` (landed, waiting for a green tip or a
+# human merge), `ready-for-review` (finished branch, a manager gates the merge)
+# and `needs-rebase` (finished branch whose base went stale). Those four are
+# excluded from the claimable queue and refused by `claim`, but NOT surfaced by
+# `list --state blocked` (none is a human-decision gate). Jira labels cannot
+# contain spaces, which every label here already satisfies.
+JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging ready-for-review needs-rebase'
 JIRA_BLOCKED_LABELS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -547,17 +549,23 @@ cmd_claim() {
   key=$(_jira_key "$1")
   # Gate the claim itself, not just the queue: issues reach a worker by number
   # from paths the queue never filters (manager dispatch, /fix N, a resumed
-  # loop). Exit 1 is the clean negative callers already handle.
-  if [ -n "$REQUIRED_LABEL" ]; then
-    _jira_request_ok GET "/rest/api/2/issue/${key}?fields=labels"
-    local labels
-    labels=$(printf '%s' "$_JIRA_BODY" | python3 -c \
-      'import json,sys; print(" ".join(json.load(sys.stdin).get("fields",{}).get("labels") or []))' 2>/dev/null) || exit 3
-    if ! issue_labels_approved "$labels"; then
-      issue_approval_refusal "$1" "$REQUIRED_LABEL"
+  # loop). Exit 1 is the clean negative callers already handle. The labels that
+  # hide an issue from the open JQL refuse it here too.
+  _jira_request_ok GET "/rest/api/2/issue/${key}?fields=labels"
+  local labels
+  labels=$(printf '%s' "$_JIRA_BODY" | python3 -c \
+    'import json,sys; print(" ".join(json.load(sys.stdin).get("fields",{}).get("labels") or []))' 2>/dev/null) || exit 3
+  if [ -n "$REQUIRED_LABEL" ] && ! issue_labels_approved "$labels"; then
+    issue_approval_refusal "$1" "$REQUIRED_LABEL"
+    exit 1
+  fi
+  local l
+  for l in $JIRA_BLOCKING_LABELS; do
+    if grep -qFx -- "$l" <<<"$(tr ' ' '\n' <<<"$labels")"; then
+      echo "Refusing to claim $key: it carries the blocking label '$l'" >&2
       exit 1
     fi
-  fi
+  done
   # Blocker gate (R3): claimable only when every blockedBy issue is closed.
   # Resolved at claim time from the issue's own links; dangling blockers are
   # satisfied (R4); a resolution failure exits 3, never a silent refusal.
@@ -592,7 +600,9 @@ EOF
     exit 1
   fi
   _jira_edit_labels "$key" "add:working"
-  # Best-effort: Jira has no atomic single-writer label edit. See header note.
+  # Best-effort: the read and the add are two calls, so two workers that both
+  # read before either wrote both succeed. The gate's claim-comment read-back
+  # settles that race. See header note.
 }
 
 # ── release ──────────────────────────────────────────────────────────────────
@@ -636,7 +646,7 @@ cmd_escalate() {
   key=$(_jira_key "$n")
   _jira_lifecycle_args "$@"
   [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
-  _jira_edit_labels "$key" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration"
+  _jira_edit_labels "$key" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration remove:ready-for-review remove:needs-rebase"
   [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
   return 0
 }
@@ -645,7 +655,7 @@ cmd_requeue() {
   local n="$1" key; shift
   key=$(_jira_key "$n")
   _jira_lifecycle_args "$@"
-  _jira_edit_labels "$key" "remove:working remove:merging remove:awaiting-integration"
+  _jira_edit_labels "$key" "remove:working remove:merging remove:awaiting-integration remove:ready-for-review remove:needs-rebase"
   [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
   return 0
 }
