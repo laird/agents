@@ -23,6 +23,7 @@
 #   0    merge finished successfully — same meaning as merge-to-integration.sh's own 0
 #   1    merge finished with a conflict/push failure (or died with no exit code recorded)
 #   2    merge finished with the combined-tree tests failing
+#   3    merge stopped because a gate was killed by a signal (likely OOM); safe to re-run
 #   75   still running — call this again next turn (EX_TEMPFAIL)
 #   64   no merge job recorded for this issue (never launched, or already reaped) (EX_USAGE)
 set -uo pipefail
