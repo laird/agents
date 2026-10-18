@@ -116,6 +116,7 @@ cat > "$TMP/bin/gh" <<'EOF'
 echo "$*" >> "$GH_LOG"
 # A label the repo never defined: gh fails the removal. The verb must not care.
 case "$*" in *"--remove-label awaiting-integration"*) echo "'awaiting-integration' not found" >&2; exit 1 ;; esac
+case "$*" in "issue list "*) echo '[{"number":8,"title":"merging","body":"","labels":[{"name":"merging"}],"state":"OPEN"},{"number":9,"title":"free","body":"","labels":[],"state":"OPEN"}]' ;; esac
 exit 0
 EOF
 chmod +x "$TMP/bin/gh"
@@ -134,8 +135,8 @@ gh_run escalate 7 --label needs-clarification --comment "boom" && ok "gh escalat
 gh_run escalate 7 --comment "no label" 2>/dev/null; [ $? -eq 2 ] && ok "gh escalate without --label is a usage error" || bad "gh escalate without --label rc=$?"
 gh_run requeue 7 --comment "died" && grep -q "^issue edit 7 --remove-label merging" "$GH_LOG" && grep -q "^issue comment 7 --body died" "$GH_LOG" \
   && ok "gh requeue drops the locks and comments" || bad "gh requeue calls: $(cat "$GH_LOG")"
-: > "$GH_LOG"; BASH_ENV="" PATH="$TMP/bin:$PATH" ISSUE_SOURCE=github "$SCRIPT_DIR/issues-gh.sh" list --state open --limit 5 >/dev/null 2>&1
-grep -q -- '-label:"merging"' "$GH_LOG" && ok "gh claimable search excludes merging" || bad "gh claimable search does not exclude merging: $(cat "$GH_LOG")"
+OUT=$(gh_run list --state open --limit 5 2>/dev/null)
+grep -q '"number": 9' <<<"$OUT" && ! grep -q '"number": 8' <<<"$OUT" && ok "gh claimable queue excludes merging" || bad "gh claimable queue does not exclude merging: $OUT"
 
 # ── Jira and ADO backends: one converging label edit per verb, via a curl stub ─
 cat > "$TMP/bin/curl" <<'EOF'
