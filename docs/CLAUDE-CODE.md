@@ -126,6 +126,10 @@ npm run build
 | 2.6.0 | Applied 5 retrospective improvements |
 | 2.5.0 | Added `/retro` and `/retro-apply` commands |
 
+## pstack skills (optional)
+
+autocoder and modernize use [pstack](https://github.com/michael-denyer/pstack-claude) skills when they are installed. For this platform's install command and what the commands use pstack for, see [PSTACK.md](PSTACK.md).
+
 ## See Also
 
 - [ANTIGRAVITY.md](./ANTIGRAVITY.md) - Antigravity integration

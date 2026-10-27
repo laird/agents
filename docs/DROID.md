@@ -286,6 +286,10 @@ bash scripts/droid-stop-loop.sh all
 - Skills in `.factory/skills/` are the Droid-native equivalent of Codex skills in `skills/`.
 - Custom droids in `.factory/droids/` are the Droid equivalent of Claude Code agents in `plugins/modernize/agents/`.
 
+## pstack skills (optional)
+
+autocoder and modernize use [pstack](https://github.com/michael-denyer/pstack-claude) skills when they are installed. For this platform's install command and what the commands use pstack for, see [PSTACK.md](PSTACK.md).
+
 ## See Also
 
 - [CLAUDE-CODE.md](./CLAUDE-CODE.md) - Claude Code integration

@@ -13,9 +13,14 @@ Complete installation of autocoder plugin components for autonomous issue resolu
 This command installs all autocoder plugin components:
 
 ### 0. Dependency Check
-- **Checks for**: tmux, cmux, claude, gemini, codex, gh
+- **Checks for**: tmux, cmux, claude, gemini, codex, gh, rg (ripgrep)
 - **Action**: Reports what's installed and suggests install commands for anything missing
 - **Scope**: Read-only (no changes made)
+
+### 0b. ripgrep (optional)
+- **What**: Installs `rg`, which agents use for fast code search when they shell out
+- **How**: Homebrew if present, else the official release binary (SHA-256 verified) into `~/.local/bin`; no root
+- **Scope**: Asks first; skipped when `rg` is already installed
 
 ### 1. Loop Mechanism (for infinite loops)
 - **Preferred**: Claude Code `/loop` command (CronCreate) — no installation needed
@@ -74,7 +79,7 @@ echo "🔧 Autocoder Plugin Installer"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "This installer will set up:"
-echo "  0. Dependency check (tmux/cmux, claude/gemini/codex, gh)"
+echo "  0. Dependency check (tmux/cmux, claude/gemini/codex, gh, rg)"
 echo "  1. Loop mechanism (for infinite /fix-loop)"
 echo "  2. Parallel agent scripts (terminal commands)"
 echo "  3. Shell aliases (optional shortcuts)"
@@ -161,8 +166,48 @@ else
   echo "   (Required for all autocoder commands)"
 fi
 
+# Check for ripgrep (optional: agents search code with it)
+if command -v rg &> /dev/null; then
+  echo "✅ ripgrep (rg) installed"
+  HAS_RG=true
+else
+  echo "⚠️  ripgrep (rg) not installed (optional; Part 0b offers to install it)"
+  HAS_RG=false
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+```
+
+### Part 0b: ripgrep (optional)
+
+Skip this part when `HAS_RG=true`. Otherwise, use AskUserQuestion:
+
+```
+Question: "Install ripgrep (rg)? Agents use it for fast code search, especially on large codebases."
+Header: "ripgrep"
+Options:
+  - "Yes, install rg" - "Homebrew if present, else the verified release binary into ~/.local/bin (no root)"
+  - "No, skip this step" - "Agents fall back to grep; you can install later with /install"
+```
+
+If approved:
+
+```bash
+if [ "$USER_APPROVED_RG" = "yes" ]; then
+  RG_INSTALLER=""
+  if [ -f "plugins/autocoder/scripts/install-ripgrep.sh" ]; then
+    RG_INSTALLER="plugins/autocoder/scripts/install-ripgrep.sh"
+  else
+    RG_INSTALLER=$(find "$HOME/.claude/plugins/cache" -name "install-ripgrep.sh" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1)
+  fi
+  if [ -n "$RG_INSTALLER" ]; then
+    bash "$RG_INSTALLER" && HAS_RG=true
+  else
+    echo "❌ Could not locate install-ripgrep.sh; install manually: https://github.com/BurntSushi/ripgrep#installation"
+  fi
+fi
 echo ""
 ```
 
@@ -653,6 +698,12 @@ if [ "$INSTALL_SCRIPTS" = true ] && [ "$USER_APPROVED_SCRIPTS" = "yes" ]; then
   echo "     → stop-parallel: Stop sessions (no cleanup)"
 else
   echo "  ⏭️  Parallel agent scripts (skipped)"
+fi
+
+if [ "$HAS_RG" = true ]; then
+  echo "  ✅ ripgrep (rg) available for agent code search"
+else
+  echo "  ⏭️  ripgrep (skipped; agents fall back to grep)"
 fi
 
 if [ "$USER_APPROVED_ALIASES" = "yes" ]; then

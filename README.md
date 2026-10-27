@@ -245,13 +245,19 @@ Autocoder and modernize work fine without these. Install them when you hit the s
 |--------|--------------|
 | **superpowers** | You encounter complex multi-file issues and want systematic debugging, planning, and verification skills |
 | **quint** | You need structured human-in-the-loop decisions for ultra-complex or irreversible changes |
+| **pstack** | You want regression-test bug fixes, multi-model adversarial code review, blast-radius checks, and diff/prose cleanup. It outranks Compound Engineering and superpowers for the roles it covers |
 
 ```bash
 /plugin install superpowers   # optional: structured problem-solving
 /plugin install quint         # optional: human-guided decisions
+/plugin marketplace add michael-denyer/pstack-claude   # optional: pstack skills
+/plugin install pstack@pstack-claude
 ```
 
 When installed, `/fix` invokes them automatically for the right issue types. When absent, the workflow uses direct problem-solving instead — no configuration needed either way.
+
+Inside `/fix`, `/fix-loop`, and `/modernize`, the command protocol stays in charge. pstack's session-start hook routes multi-file work to `pstack:poteto-mode`, but these commands override it (on worker hosts, set `session hook: off`; see [docs/PSTACK.md](docs/PSTACK.md)), and they never enter pstack orchestrators (`poteto-mode`, `architect`, `figure-it-out`, `swarm`, `arena`, `babysit`, `make-pr-easy-to-review`). Those skills run their own playbooks and would bypass the issue-claim sequence and the configured Merge Mode.
+For pstack install steps on Codex, Droid, Antigravity, Gemini CLI, and pi, see [docs/PSTACK.md](docs/PSTACK.md).
 
 ### Droid (Factory)
 
