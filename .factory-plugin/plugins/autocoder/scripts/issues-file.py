@@ -23,6 +23,21 @@ Usage:
   issues-file.py claim <number>
   issues-file.py release <number>
   issues-file.py any-claimable
+  issues-file.py handoff <number>
+  issues-file.py park <number> [--comment "..."]
+  issues-file.py escalate <number> --label <blocking-label> [--comment "..."]
+  issues-file.py requeue <number> [--comment "..."]
+
+Lifecycle verbs (handoff, park, escalate, requeue) are the issue state machine
+a detached merge job drives after a worker's `claim`:
+  handoff   working -> merging            file stays in working/ (never claimable)
+  park      -> awaiting-integration       file stays in (or moves to) working/
+  escalate  -> <blocking-label>           file moves to blocked/
+  requeue   -> open                       file moves to open/ (blocked/ if another
+                                          blocking label remains)
+Each converges: run twice, the second run changes nothing. All three lock labels
+(working, merging, awaiting-integration) are cleared by every verb except
+handoff, which keeps the issue locked under `merging`.
   issues-file.py migrate-layout
   issues-file.py find-main-worktree
   issues-file.py import-from-gh
@@ -32,6 +47,7 @@ Exit codes:
   0 — success. For `any-claimable`: at least one claimable issue exists.
   1 — clean negative. For `any-claimable`: no claimable issues. For `claim`: race
       lost or not in open/. For get/update/comment/close/release: issue not found.
+      For handoff/park/escalate/requeue: issue not found or already closed.
   2 — usage error.
   3 — backend error (e.g., open/ missing for any-claimable).
 """
@@ -60,6 +76,12 @@ BLOCKING_LABELS = frozenset({
     "future",
     "proposal",
 })
+
+# Labels that mean "someone owns this right now": a worker (working), a detached
+# merge job (merging), or the sentinel waiting for a green tip (awaiting-integration).
+# None of them is a human-decision gate, so none lives in BLOCKING_LABELS, and an
+# issue carrying any of them sits in working/ so it is never claimable.
+LOCK_LABELS = ("working", "merging", "awaiting-integration")
 
 
 # ---------------------------------------------------------------------------
@@ -384,8 +406,8 @@ def cmd_close(args):
         try:
             data = parse_issue_file_fd(f)
             data["status"] = "closed"
-            # Strip the working label if present (closing an in-flight issue).
-            data["labels"] = [l for l in (data.get("labels") or []) if l != "working"]
+            # A closed issue is owned by nobody: drop every lock label.
+            data["labels"] = [l for l in (data.get("labels") or []) if l not in LOCK_LABELS]
             if args.comment:
                 ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
                 data["body"] = (data.get("body") or "") + f"\n> **{ts}** {args.comment}"
@@ -499,6 +521,76 @@ def cmd_release(args):
         os.rename(src, dst)
     except FileNotFoundError:
         sys.exit(1)
+
+
+def _comment_line(text: str) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return f"\n> **{ts}** {text}"
+
+
+def _transition(number: int, add, remove, status: str, comment, target_bucket) -> None:
+    """One lifecycle step: edit labels + status under flock, append the comment,
+    then rename into `target_bucket` (a callable of the final labels, or a name).
+
+    Exit 1 when the issue is missing or closed: a closed issue has left the
+    lifecycle, and reopening it as a side effect of a merge job would be wrong.
+    """
+    issues_dir = get_issues_dir()
+    try:
+        bucket, path = resolve_path(issues_dir, number)
+    except FileNotFoundError:
+        sys.exit(1)
+    if bucket == "closed":
+        sys.exit(1)
+    with open(path, "r+") as f:
+        lock_ex(f.fileno())
+        try:
+            data = parse_issue_file_fd(f)
+            labels = [l for l in (data.get("labels") or []) if l not in remove]
+            for l in add:
+                if l not in labels:
+                    labels.append(l)
+            data["labels"] = labels
+            data["status"] = status
+            if comment:
+                data["body"] = (data.get("body") or "") + _comment_line(comment)
+            write_issue_file_fd(f, data)
+            dest = target_bucket(labels) if callable(target_bucket) else target_bucket
+        finally:
+            unlock(f.fileno())
+    if dest != bucket:
+        _ensure_bucket(issues_dir, dest)
+        try:
+            os.rename(path, issue_path(issues_dir, dest, number))
+        except FileNotFoundError:
+            pass
+
+
+def _blocked_or_open(labels) -> str:
+    return "blocked" if any(l in BLOCKING_LABELS for l in labels) else "open"
+
+
+def cmd_handoff(args):
+    _transition(args.number, add=["merging"], remove={"working"},
+                status="working", comment=None, target_bucket="working")
+
+
+def cmd_park(args):
+    _transition(args.number, add=["awaiting-integration"], remove={"working", "merging"},
+                status="working", comment=args.comment, target_bucket="working")
+
+
+def cmd_escalate(args):
+    if args.label not in BLOCKING_LABELS:
+        sys.exit(f"escalate: '{args.label}' is not a blocking label "
+                 f"({', '.join(sorted(BLOCKING_LABELS))})")
+    _transition(args.number, add=[args.label], remove=set(LOCK_LABELS),
+                status="blocked", comment=args.comment, target_bucket="blocked")
+
+
+def cmd_requeue(args):
+    _transition(args.number, add=[], remove=set(LOCK_LABELS),
+                status="open", comment=args.comment, target_bucket=_blocked_or_open)
 
 
 def cmd_any_claimable(args):
@@ -686,6 +778,22 @@ def main():
     p_release = sub.add_parser("release")
     p_release.add_argument("number", type=int)
 
+    p_handoff = sub.add_parser("handoff")
+    p_handoff.add_argument("number", type=int)
+
+    p_park = sub.add_parser("park")
+    p_park.add_argument("number", type=int)
+    p_park.add_argument("--comment")
+
+    p_escalate = sub.add_parser("escalate")
+    p_escalate.add_argument("number", type=int)
+    p_escalate.add_argument("--label", required=True)
+    p_escalate.add_argument("--comment")
+
+    p_requeue = sub.add_parser("requeue")
+    p_requeue.add_argument("number", type=int)
+    p_requeue.add_argument("--comment")
+
     sub.add_parser("any-claimable")
     sub.add_parser("migrate-layout")
     sub.add_parser("find-main-worktree")
@@ -703,6 +811,10 @@ def main():
         "create": cmd_create,
         "claim": cmd_claim,
         "release": cmd_release,
+        "handoff": cmd_handoff,
+        "park": cmd_park,
+        "escalate": cmd_escalate,
+        "requeue": cmd_requeue,
         "any-claimable": cmd_any_claimable,
         "migrate-layout": cmd_migrate_layout,
         "find-main-worktree": lambda _: cmd_find_main_worktree(),

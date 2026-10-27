@@ -114,7 +114,7 @@ run list --state open
 JQL=$(last_jql)
 assert_contains "open JQL includes labels-is-EMPTY guard" 'labels is EMPTY' "$JQL"
 assert_contains "open JQL excludes blocking labels via not in" 'labels not in' "$JQL"
-for l in working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration; do
+for l in working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging; do
   assert_contains "open JQL lists blocking label $l" "\"$l\"" "$JQL"
 done
 assert_contains "open JQL scopes to project" 'project = "ENG"' "$JQL"

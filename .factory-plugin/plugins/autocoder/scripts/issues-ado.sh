@@ -55,7 +55,7 @@ API_VERSION="7.0"
 COMMENTS_API_VERSION="7.0-preview.3"
 
 # Tags that gate claimability; same taxonomy as the other backends.
-ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration'
+ADO_BLOCKING_TAGS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging'
 ADO_BLOCKED_TAGS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 # States treated as "done" across the default processes.
 ADO_DONE_STATES="Closed Done Resolved Removed Completed"
@@ -417,6 +417,43 @@ cmd_claim() {
 }
 cmd_release() { _ado_edit_tags "$1" "remove:working"; }
 
+# ── lifecycle verbs (see issues-file.py's docstring for the state machine) ───
+# _ado_edit_tags computes the new tag set locally, so removing an absent tag is
+# a no-op and each verb converges.
+_ado_lifecycle_args() {
+  LC_LABEL=""; LC_COMMENT=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --label)   LC_LABEL="$2";   shift 2 ;;
+      --comment) LC_COMMENT="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+}
+cmd_handoff() { _ado_edit_tags "$1" "add:merging remove:working"; }
+cmd_park() {
+  local id="$1"; shift
+  _ado_lifecycle_args "$@"
+  _ado_edit_tags "$id" "add:awaiting-integration remove:working remove:merging"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$id" --body "$LC_COMMENT"
+  return 0
+}
+cmd_escalate() {
+  local id="$1"; shift
+  _ado_lifecycle_args "$@"
+  [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
+  _ado_edit_tags "$id" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$id" --body "$LC_COMMENT"
+  return 0
+}
+cmd_requeue() {
+  local id="$1"; shift
+  _ado_lifecycle_args "$@"
+  _ado_edit_tags "$id" "remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$id" --body "$LC_COMMENT"
+  return 0
+}
+
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
   _ado_wiql_ids "$(_ado_state_wiql open)"
@@ -427,7 +464,7 @@ cmd_any_claimable() {
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-ado.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|any-claimable) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -442,5 +479,9 @@ case "$verb" in
   create)        shift; cmd_create "$@" ;;
   claim)         shift; cmd_claim "$@" ;;
   release)       shift; cmd_release "$@" ;;
+  handoff)       shift; cmd_handoff "$@" ;;
+  park)          shift; cmd_park "$@" ;;
+  escalate)      shift; cmd_escalate "$@" ;;
+  requeue)       shift; cmd_requeue "$@" ;;
   any-claimable) cmd_any_claimable ;;
 esac

@@ -29,7 +29,14 @@ ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; rm -f /tmp/autocoder-merge-19101.*; rm -rf /tmp/autocoder-merge-worktree-19101; git -C "$TMP/worker" worktree prune 2>/dev/null' EXIT
+trap 'git -C "$TMP/worker" worktree prune 2>/dev/null; rm -rf "$TMP"' EXIT
+# Merge state and throwaway worktrees live under AUTOCODER_TMP, keyed by the repo id.
+export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
+# Gate verdicts are cached per <tree, command>; this fixture's tree and command are
+# identical on every run, so the real cache would satisfy the gate without running it.
+export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
 
 # ── Fixture: a bare "origin" plus a worker checkout, mimicking a worktree in
 #    the swarm ─────────────────────────────────────────────────────────────
@@ -50,6 +57,7 @@ git add README.md
 git commit -q -m "initial commit"
 git branch -M master
 git push -q origin master
+STATE="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP/worker")"
 
 # Branch A: the fix this test cares about isolating.
 git checkout -q -b feature/issue-A
@@ -85,14 +93,14 @@ CURRENT_BRANCH_DURING_RACE=$(git branch --show-current)
 
 # ── Wait for A's merge to finish and check what it actually did ─────────────
 DEADLINE=$((SECONDS + 30))
-while [ -f /tmp/autocoder-merge-19101.pid ] && [ $SECONDS -lt $DEADLINE ]; do
-  OLD_PID=$(cat /tmp/autocoder-merge-19101.pid 2>/dev/null || echo "")
+while [ -f ${STATE}-19101.pid ] && [ $SECONDS -lt $DEADLINE ]; do
+  OLD_PID=$(cat ${STATE}-19101.pid 2>/dev/null || echo "")
   [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null || break
   sleep 1
 done
 
-MERGE_LOG=$(cat /tmp/autocoder-merge-19101.log 2>/dev/null || echo "<no log>")
-MERGE_EXIT=$(cat /tmp/autocoder-merge-19101.exit 2>/dev/null || echo "<no exit code — still running?>")
+MERGE_LOG=$(cat ${STATE}-19101.log 2>/dev/null || echo "<no log>")
+MERGE_EXIT=$(cat ${STATE}-19101.exit 2>/dev/null || echo "<no exit code — still running?>")
 
 [ "$MERGE_EXIT" = "0" ] && ok "A's merge finished successfully (its --test-cmd saw fix-a.txt, not fix-b.txt)" \
   || bad "A's merge did not exit 0 (exit=$MERGE_EXIT) — log:
@@ -126,7 +134,7 @@ FINAL_BRANCH=$(git branch --show-current)
   || bad "worker directory lost fix-B's work"
 
 # The throwaway worktree must not outlive the merge.
-[ -d "/tmp/autocoder-merge-worktree-19101" ] && bad "throwaway merge worktree was not cleaned up" \
+[ -d "$AUTOCODER_TMP/autocoder-merge-worktree-$(autocoder_repo_id "$TMP/worker")-19101" ] && bad "throwaway merge worktree was not cleaned up" \
   || ok "throwaway merge worktree was cleaned up after the run"
 
 git worktree list --porcelain | grep -q "19101" && bad "git still lists a worktree entry for the finished merge" \

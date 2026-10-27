@@ -30,19 +30,30 @@
 #
 # USAGE:
 #   merge-launch.sh --feature <branch> --issue <num> \
-#     [--integration <branch>] [--test-cmd "<cmd>"]
+#     [--integration <branch>] [--test-cmd "<cmd>"] \
+#     [--summary-file <path>] [--own-issue]
 #
 #   Without --test-cmd the command is resolved from AGENTS.md / CLAUDE.md
 #   ('### Regression Test Suite'), exactly as merge-to-integration.sh does, and
 #   the launch is refused if none resolves (documents-only changes excepted) —
 #   the caller sees the refusal now instead of in a detached log.
 #
-# State files (keyed by issue number, since only one worker holds an issue's
-# `working` lock at a time so this is unique per in-flight merge):
-#   /tmp/autocoder-merge-<issue>.pid   — PID of the detached run
-#   /tmp/autocoder-merge-<issue>.log   — merge-to-integration.sh output
-#   /tmp/autocoder-merge-<issue>.exit  — its exit code, written on completion
-#   /tmp/autocoder-merge-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
+#   --summary-file and --own-issue pass straight through: with --own-issue the
+#   detached job owns the issue from its first act (`working` → `merging`) to
+#   its last (close, park under `awaiting-integration`, or escalate to
+#   needs-clarification). The worker writes NO label after this returns; it
+#   moves on. Nobody has to poll; merge-poll.sh remains for humans and
+#   monitors who want to watch.
+#
+# State files, under ${AUTOCODER_TMP:-/tmp}, keyed by <repo-id>-<issue>: only one
+# worker holds an issue's lock at a time, and repo-id (repo-id-fns.sh: the main
+# checkout's basename plus a hash of its git common dir) keeps two repos on one
+# host from sharing state for the same issue number. The id is computed from
+# the directory this is run in, so poll from the same checkout.
+#   autocoder-merge-<repo-id>-<issue>.pid    — PID of the detached run
+#   autocoder-merge-<repo-id>-<issue>.log    — merge-to-integration.sh output
+#   autocoder-merge-<repo-id>-<issue>.exit   — its exit code, written on completion
+#   autocoder-merge-<repo-id>-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
@@ -53,13 +64,17 @@ FEATURE=""
 ISSUE_NUM=""
 INTEGRATION_BRANCH="main"
 TEST_CMD=""
+SUMMARY_FILE=""
+OWN_ISSUE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --feature)     FEATURE="$2"; shift 2 ;;
-    --issue)       ISSUE_NUM="$2"; shift 2 ;;
-    --integration) INTEGRATION_BRANCH="${2:-main}"; shift 2 ;;
-    --test-cmd)    TEST_CMD="$2"; shift 2 ;;
+    --feature)      FEATURE="$2"; shift 2 ;;
+    --issue)        ISSUE_NUM="$2"; shift 2 ;;
+    --integration)  INTEGRATION_BRANCH="${2:-main}"; shift 2 ;;
+    --test-cmd)     TEST_CMD="$2"; shift 2 ;;
+    --summary-file) SUMMARY_FILE="$2"; shift 2 ;;
+    --own-issue)    OWN_ISSUE=1; shift ;;
     *) echo "merge-launch.sh: unknown arg '$1'" >&2; exit 1 ;;
   esac
 done
@@ -86,6 +101,8 @@ FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
 _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
+# shellcheck source=repo-id-fns.sh
+source "${_MLI_DIR}/repo-id-fns.sh"
 
 if [ -z "$TEST_CMD" ]; then
   TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
@@ -94,10 +111,11 @@ if [ -z "$TEST_CMD" ]; then
     exit 1
   fi
 fi
-LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
-PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
-EXITFILE="/tmp/autocoder-merge-${ISSUE_NUM}.exit"
-RUNSCRIPT="/tmp/autocoder-merge-${ISSUE_NUM}.run.sh"
+STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+LOG="${STATE}.log"
+PIDFILE="${STATE}.pid"
+EXITFILE="${STATE}.exit"
+RUNSCRIPT="${STATE}.run.sh"
 
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || echo "")
@@ -120,8 +138,11 @@ rm -f "$EXITFILE"
 {
   printf '#!/bin/bash\n'
   printf 'echo $$ > %q\n' "$PIDFILE"
-  printf '%q --feature %q --feature-sha %q --issue %q --integration %q --test-cmd %q > %q 2>&1\n' \
-    "${_MLI_DIR}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD" "$LOG"
+  printf '%q --feature %q --feature-sha %q --issue %q --integration %q --test-cmd %q' \
+    "${_MLI_DIR}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD"
+  [ -n "$SUMMARY_FILE" ] && printf ' --summary-file %q' "$SUMMARY_FILE"
+  [ "$OWN_ISSUE" -eq 1 ] && printf ' --own-issue'
+  printf ' > %q 2>&1\n' "$LOG"
   printf 'echo $? > %q\n' "$EXITFILE"
 } > "$RUNSCRIPT"
 chmod +x "$RUNSCRIPT"
@@ -139,5 +160,9 @@ done
 
 echo "🚀 merge-to-integration.sh launched detached for issue #${ISSUE_NUM}."
 echo "   Log:  ${LOG}"
-echo "   Poll: ${_MLI_DIR}/merge-poll.sh --issue ${ISSUE_NUM}"
+if [ "$OWN_ISSUE" -eq 1 ]; then
+  echo "   The job closes or escalates the issue itself; watch it with: ${_MLI_DIR}/merge-poll.sh --issue ${ISSUE_NUM}"
+else
+  echo "   Poll: ${_MLI_DIR}/merge-poll.sh --issue ${ISSUE_NUM}"
+fi
 exit 0

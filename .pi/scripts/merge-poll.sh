@@ -1,6 +1,11 @@
 #!/bin/bash
 # merge-poll.sh — check on a merge started with merge-launch.sh (#1693).
 #
+# The /fix worker no longer calls this: it launches the merge with
+# `merge-launch.sh --own-issue` and moves on, while the detached job takes the
+# issue over (`working` → `merging`) and closes, parks, or escalates it itself.
+# This script remains for humans and monitor workers who want to watch a job.
+#
 # Designed to be called repeatedly, ONE call per turn, as separate Bash-tool
 # invocations. It sleeps a bounded slice of wall clock (default 60s, always
 # well under the ~2-minute foreground Bash-tool ceiling) and then reports
@@ -10,6 +15,9 @@
 #
 # USAGE:
 #   merge-poll.sh --issue <num> [--wait <seconds, default 60>]
+#
+#   Run it from the checkout the merge was launched in: the state files are keyed
+#   by that repo's id (repo-id-fns.sh) under ${AUTOCODER_TMP:-/tmp}.
 #
 # Exit codes:
 #   0    merge finished successfully — same meaning as merge-to-integration.sh's own 0
@@ -34,13 +42,16 @@ if [ -z "$ISSUE_NUM" ]; then
   exit 1
 fi
 
-LOG="/tmp/autocoder-merge-${ISSUE_NUM}.log"
-PIDFILE="/tmp/autocoder-merge-${ISSUE_NUM}.pid"
-EXITFILE="/tmp/autocoder-merge-${ISSUE_NUM}.exit"
-RUNSCRIPT="/tmp/autocoder-merge-${ISSUE_NUM}.run.sh"
+# shellcheck source=repo-id-fns.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repo-id-fns.sh"
+STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+LOG="${STATE}.log"
+PIDFILE="${STATE}.pid"
+EXITFILE="${STATE}.exit"
+RUNSCRIPT="${STATE}.run.sh"
 
 if [ ! -f "$PIDFILE" ]; then
-  echo "❌ No merge job recorded for issue #${ISSUE_NUM} (${PIDFILE} missing)." >&2
+  echo "❌ No merge job recorded for issue #${ISSUE_NUM} (${PIDFILE} missing; run this from the checkout the merge was launched in)." >&2
   exit 64
 fi
 

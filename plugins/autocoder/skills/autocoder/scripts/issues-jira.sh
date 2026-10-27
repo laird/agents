@@ -68,11 +68,12 @@
 
 # ── blocking labels ─────────────────────────────────────────────────────────
 # Same set as issues-gh.sh. `working` = claimed; the rest gate on a human
-# decision. `awaiting-integration` = finished, waiting to merge — excluded from
-# the claimable queue but NOT surfaced by `list --state blocked` (it is not a
+# decision. `merging` = a detached merge job owns it; `awaiting-integration` =
+# landed, waiting for a green tip or a human merge. Both are excluded from the
+# claimable queue but NOT surfaced by `list --state blocked` (neither is a
 # human-decision gate). Jira labels cannot contain spaces, which every label
 # here already satisfies.
-JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration'
+JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging'
 JIRA_BLOCKED_LABELS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -558,6 +559,54 @@ cmd_release() {
   _jira_edit_labels "$key" "remove:working"
 }
 
+# ── lifecycle verbs (see issues-file.py's docstring for the state machine) ───
+# Jira accepts a label removal for a label the issue lacks, so each verb is one
+# PUT that converges, followed by the comment when one was given.
+_jira_lifecycle_args() {
+  LC_LABEL=""; LC_COMMENT=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --label)   LC_LABEL="$2";   shift 2 ;;
+      --comment) LC_COMMENT="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+}
+
+cmd_handoff() {
+  local key
+  key=$(_jira_key "$1")
+  _jira_edit_labels "$key" "add:merging remove:working"
+}
+
+cmd_park() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  _jira_edit_labels "$key" "add:awaiting-integration remove:working remove:merging"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_escalate() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
+  _jira_edit_labels "$key" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_requeue() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  _jira_edit_labels "$key" "remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
   # The v3 search/jql response has no `total` (removed with the old API), and
@@ -579,7 +628,7 @@ PY
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-jira.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|any-claimable) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -594,5 +643,9 @@ case "$verb" in
   create)        shift; cmd_create "$@" ;;
   claim)         shift; cmd_claim "$@" ;;
   release)       shift; cmd_release "$@" ;;
+  handoff)       shift; cmd_handoff "$@" ;;
+  park)          shift; cmd_park "$@" ;;
+  escalate)      shift; cmd_escalate "$@" ;;
+  requeue)       shift; cmd_requeue "$@" ;;
   any-claimable) cmd_any_claimable ;;
 esac

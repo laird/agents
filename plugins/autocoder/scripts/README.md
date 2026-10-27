@@ -39,7 +39,25 @@ implements these subcommands:
 <backend> claim         <number>
 <backend> release       <number>
 <backend> any-claimable
+<backend> handoff       <number>
+<backend> park          <number> [--comment "..."]
+<backend> escalate      <number> --label <blocking-label> [--comment "..."]
+<backend> requeue       <number> [--comment "..."]
 ```
+
+The last four are the lifecycle a detached merge job drives after a worker's
+`claim`. They exist so that no caller ever writes a label pair by hand: each
+backend implements the bucket or label consequences once.
+
+| verb | from | to | file backend bucket |
+|---|---|---|---|
+| `handoff` | `working` | `merging` | stays in `working/` (never claimable) |
+| `park` | `working` / `merging` | `awaiting-integration` | `working/` |
+| `escalate --label L` | any lock label | `L` (a blocking label) | `blocked/` |
+| `requeue` | any lock label | none | `open/` (`blocked/` if another blocking label remains) |
+
+Every verb converges: run twice, the second run changes nothing. A closed
+issue has left the lifecycle, so each verb exits 1 on it and changes nothing.
 
 ### Output schema
 
@@ -58,15 +76,17 @@ implements these subcommands:
 ```
 
 `list` returns a JSON array of these. Write commands (`update`, `comment`,
-`close`, `create`, `claim`, `release`) produce no required output;
-`create` may print `{"number": N}` on stdout.
+`close`, `create`, `claim`, `release`, `handoff`, `park`, `escalate`,
+`requeue`) produce no required output; `create` may print `{"number": N}`
+on stdout.
 
 ### Exit-code contract
 
 - `0` — success. For `any-claimable`: at least one claimable issue exists.
 - `1` — clean negative. For `any-claimable`: no claimable issues. For
   `claim`: race lost (issue not in `open/`). For `get` / `update` /
-  `comment` / `close` / `release`: issue not found.
+  `comment` / `close` / `release`: issue not found. For `handoff` / `park` /
+  `escalate` / `requeue`: issue not found or already closed.
 - `2` — usage error (bad flags).
 - `3` — backend error (filesystem failure, network failure, auth failure,
   parse error). Callers MUST treat this as an error condition, not a
@@ -91,6 +111,13 @@ The `working` label / status is set by `claim` (the *atomic* path) and
 cleared by `release`. `update --add-label working` is also supported as
 a legacy idempotent label-set but does NOT rename to `working/` — only
 `claim` does that.
+
+Three **lock labels** say who owns an issue right now and keep it out of
+the claimable queue without making it "blocked": `working` (a worker),
+`merging` (a detached merge job), `awaiting-integration` (landed, waiting
+for the sentinel's green tip or a human merge). `list --state blocked`
+never shows them. The file backend keeps all three in `working/`; `close`
+strips all three.
 
 ### Cross-worktree discipline
 
@@ -194,3 +221,126 @@ For the file backend specifically, also exercise:
   the main worktree's `.issues/` directory.
 - **fix-loop-idle**: with empty `open/`, `fix-loop` over ~30s does not
   spawn `/fix`.
+
+## F. `main-sentinel.sh` — post-merge gate for the integration branch
+
+`merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
+push onto an integration branch that is already red. The sentinel is what makes
+both safe: it tests the integration tip after merges land, and when the tip is
+red it finds the push that broke it and files the regression against the issue
+that made it. By default it stops there (report-only) and the fix rolls forward
+through a normal gated change; with `--auto-revert` it also reverts exactly that
+push, which is only appropriate when every party pushing to the branch agrees.
+
+One invocation is one idempotent tick. Run it beside the swarm:
+
+```bash
+plugins/autocoder/scripts/main-sentinel.sh --repo "$MAIN_WORKTREE" --integration main --loop 300
+```
+
+`--test-cmd` defaults to the `### Regression Test Suite` block of `AGENTS.md`
+or `CLAUDE.md`; the script refuses to run without one. The green ref defaults to
+`AUTOCODER_GREEN_REF`, then `<integration>-green`; `--green-ref` overrides both.
+Exit 0 means idle, green, or repaired; 1 a setup error; 3 red and not repaired
+(a P0 is filed). A tick holds `flock` on `<state file>.lock`; a second invocation
+prints that another tick is running and exits 0.
+
+### Tip refs: the record the sentinel bisects
+
+Workers merge the integration branch *into* their feature and push the feature
+tip as the new integration tip, so consecutive tips are joined by second-parent
+links or plain fast-forwards. `git bisect --first-parent` only ever visits the
+newest push's own commits, so a break from an earlier push got the newest push
+reverted. Instead, every verified push records itself:
+
+```
+refs/autocoder/tips/<integration>/<landed-sha>-<issue>
+```
+
+`merge-to-integration.sh` pushes one after each verified push; the sentinel
+pushes one for each revert it lands, with the P0 number as the issue. The
+sentinel bisects over that ordered list, never over commits.
+
+Each tick:
+
+1. Fetches `origin/<integration>`, `origin/<green-ref>` and the tip refs. Finishes
+   the bookkeeping of a revert an earlier tick pushed but did not record
+   (`pending_revert` in the state file), drops one that never reached origin.
+2. Reconciles hand-offs (below). An unmoved tip is then an idle tick.
+3. Gates the tip in a throwaway worktree
+   (`${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>-<integration>/<pid>`,
+   seeded with `node_modules`/`dist` by `worktree-deps-fns.sh`, removed on exit)
+   through `gate-cache-fns.sh`, so a tree a worker already gated costs nothing.
+4. Green: fast-forwards `origin/<green-ref>` to the tip, closes the red P0 if one
+   was open ("green again at"), and closes every open issue labelled
+   `awaiting-integration` whose tip ref is on the tip and whose commit
+   `verify-shipped.sh` accepts. Issues without a tip ref (PR mode) are not touched.
+   Then `promote.sh --auto`.
+5. Red with a green ancestor: binary-searches the recorded tips strictly after
+   `last_green` (the tip itself is a synthetic tip with issue `unknown` when
+   nobody recorded it). Probes read the shared gate cache and write to a
+   per-repair cache that is deleted afterwards. With the first bad push `B`, its
+   issue `I` and the previous good tip `P`, the repair is
+   `git diff --binary P B | git apply -R --3way --index` on the current tip,
+   committed as `Revert autocoder push <B> (issue #I)` with trailers
+   `Autocoder-Reverts: <B>` and `Autocoder-Reverts-Issue: <I>`. A conflict stops
+   the repair. The revert tree is gated; the P0 (`P0,test-failure`, one per
+   culprit) is filed first so its number can be recorded as intent; the push
+   retries up to 8 times, rebuilding the revert on whatever tip wins the race and
+   re-gating only when the incoming files overlap the revert's files or a global
+   path (`regate-fns.sh`). Only after the revert is verified on origin does the
+   sentinel publish its tip ref, move `<green-ref>`, comment the revert sha and
+   the re-land steps on the P0 and on issue `I`, and clear the pending state.
+   Issue `I`, if parked, goes back in the queue. A reverted push's issue is never
+   closed as landed: the revert's trailer is the record step 4 checks.
+6. Red otherwise: files the P0 (or comments on the still-open one, found by title
+   when the state file lost its number) and exits 3.
+7. Hand-offs: for each open issue labelled `merging` (or `awaiting-integration`
+   with a job file, the older shape): a live job is left alone; a dead job whose
+   push has a tip ref is closed or parked; a dead job with no exit file re-runs
+   its `run.sh` once (`setsid`, idempotent: a landed sha is not merged twice) or,
+   failing that, is re-queued. Job files are
+   `autocoder-merge-<repo-id>-<issue>.{pid,exit,run.sh,log}` under
+   `${AUTOCODER_TMP:-/tmp}` (the older `autocoder-merge-<issue>.*` names are read
+   for one release); finished sets older than a day are reaped.
+8. Prunes tip refs more than 200 commits behind the green tip (keeping those a
+   parked issue still needs) and gate-cache records older than 30 days.
+
+State lives in one file,
+`${AUTOCODER_SENTINEL_STATE_DIR:-$XDG_STATE_HOME/autocoder/sentinel}/<repo-id>-<integration>`,
+with `last_tested`, `last_green`, `red_issue`, and the `pending_*` fields
+(tmp+rename). `last_green` is re-read from `origin/<green-ref>` whenever that ref
+exists; the file only carries what git has no home for. `cat` it to see the
+sentinel's last tick. `push_green` returns non-zero when the ref will not
+fast-forward; `AUTOCODER_GREEN_FORCE=1` allows a lease-protected force, only for a
+sha that passed the gate this tick and is not an ancestor of the current green
+ref. Tests point `AUTOCODER_TMP`, `AUTOCODER_SENTINEL_STATE_DIR`, and
+`AUTOCODER_GATE_CACHE_DIR` at a scratch directory. The repo id comes from
+`repo-id-fns.sh`: `<repo dir>-<8 hex of the common git dir>`, the same from every
+worktree of a clone.
+
+## G. `promote.sh` — environments, gated on the sentinel's proof
+
+`main` may be red between sentinel ticks; a release may not. An environment is a
+branch on origin (`env/staging`, `env/uat`, `env/prod`) that a deploy reads, and
+`promote.sh` is the only thing that moves it. It moves it only to a commit with
+proof of a full-regression pass: `origin/<green-ref>` (default
+`<integration>-green`, `--integration main` unless told otherwise, or
+`AUTOCODER_GREEN_REF`), the previous environment's tip, or a tree the gate cache
+records as passing. A commit that is merely on `main` is refused.
+
+```bash
+plugins/autocoder/scripts/promote.sh --to staging            # to origin/<integration>-green
+plugins/autocoder/scripts/promote.sh --to uat                # to staging's tip
+plugins/autocoder/scripts/promote.sh --to prod --dry-run     # every check, no push
+plugins/autocoder/scripts/promote.sh --list                  # tips, proof, what is releasable
+plugins/autocoder/scripts/promote.sh --to prod --commit <sha> --allow-rollback
+```
+
+The pipeline is the ordered `environments` array of `.autocoder.json` (`name`,
+`ref`, `requires`, optional `test` and `auto`). An environment's `test` runs on
+the candidate tree in a throwaway worktree through `gate-cache-fns.sh`, so a
+repeat on the same tree is free. With `auto: true` the sentinel calls
+`promote.sh --auto` after every green tick; a refused promotion never changes
+the tick's exit code. Exit 0 moved or already there, 1 config error, 2 refused
+with a one-line reason. Full how-to: [docs/environments.md](../../../docs/environments.md).

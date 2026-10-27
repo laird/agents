@@ -78,7 +78,7 @@ data_for_method() { awk -F'\t' -v m="$1" '$1==m {print $3}' "$CURL_CAPTURE" | ta
 run list --state open
 WIQL=$(awk -F'\t' '$2 ~ /\/wiql/ {print $3}' "$CURL_CAPTURE" | tail -1 | wiql_of)
 assert_contains "open WIQL excludes done states"        "System.State] NOT IN ('Closed', 'Done', 'Resolved', 'Removed', 'Completed')" "$WIQL"
-for t in working needs-design needs-approval awaiting-integration; do
+for t in working needs-design needs-approval awaiting-integration merging; do
   assert_contains "open WIQL excludes blocking tag $t" "[System.Tags] NOT CONTAINS '$t'" "$WIQL"
 done
 assert_not_contains "open WIQL does not restrict to non-empty tags (no CONTAINS-only gate)" "[System.Tags] CONTAINS ''" "$WIQL"
