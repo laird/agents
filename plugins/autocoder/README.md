@@ -143,6 +143,43 @@ gh issue edit <issue_number> --remove-label "working"
 # Both agents will work on different issues without conflict
 ```
 
+## Merge Trains (the landing model)
+
+Workers bank; the **manager lands**, and it lands in **merge trains**, not one branch at a time.
+
+- **Why.** Per-branch landings move the integration branch every few minutes. In a swarm of ten
+  workers that produced, in one day: dozens of conflicts in wholly generated files that two branches
+  each regenerated, several red integration branches from one landing whose targeted test selection
+  never ran the repository-scanning contracts, publish starvation (every push re-sync re-gates while
+  the branch races others to push), and every stacked slice rebased on every landing. None of it was
+  defective code; it was landing cadence and shared surfaces.
+- **The train.** The manager takes the next 3–5 `ready-for-review` branches that merge clean, merges
+  each with `--no-ff` onto `train/<UTC>` cut from the freshly fetched integration branch, gates that
+  ONE tree with the project's full regression command (the same `merge-to-integration.sh` run, so the
+  combined tree is what is tested), and pushes once. Merge cleanliness is decided by a **real merge in
+  a scratch worktree** so merge drivers apply; `git merge-tree` is driver-blind and reports phantom
+  conflicts, so it is never the pre-check.
+- **Red train.** Drop the member whose files the failure names (the newest member when none is
+  named), tell its owner on the issue, exclude it until its tip changes, and re-train the rest. A
+  green train comments every member issue with the train's sha; the manager closes the issues the
+  branches complete.
+- **One train at a time per host.** Gating every train under one standing "merge train" issue makes
+  the per-issue gate lock serialise them. A hotfix still lands alone through the hotfix lane.
+- **Stacks land at their tip.** Slices stay small for review and are banked READY one by one, but a
+  stack is gated and landed as one combined tree, never slice by slice.
+- **Claim hot files and shared identifiers first.** A workstream that opens a file others will touch
+  (an access check, a repository, a route table) says so on its tracker and others queue behind it.
+  Sequence numbers and registry keys (migration numbers, refusal codes, capability ids, feature flags,
+  admin actions) are claimed on the tracker before the slice is cut.
+- **Forced contracts on any source change.** Repository-scanning contract suites are cheap; they run
+  on every diff that touches source, with the post-merge whole-suite run as the net behind them.
+- **Workers' rules do not change.** Rebase at bank time, run the cheap prefix, post READY with the
+  prebank block, never gate or push to the integration branch.
+
+The reference implementation is athena2's `scripts/mgr-train.sh` (issue #5956 there); this plugin's
+`merge-to-integration.sh` already gates whatever branch it is handed, so a train branch needs no
+plugin change. A project adopting the model states it in its `AGENTS.md` PUSH & MERGE section.
+
 ## Blocked Issue Review Workflow
 
 When fix-loop encounters issues it cannot handle autonomously, it adds blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`) and moves on. Use `/review-blocked` in a separate session to review and unblock these issues.

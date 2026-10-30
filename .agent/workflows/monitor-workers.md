@@ -51,6 +51,16 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
 10. **Step down when quiescent** — After two consecutive iterations with nothing to do, hand off to the zero-cost idle sentinel and exit (Step 6b)
 
+### Landing: merge trains
+
+READY branches are landed by the manager in **merge trains**, not one gate per branch: assemble
+`train/<UTC>` from the next 3–5 READY branches that merge clean (real merges in a scratch worktree;
+never `git merge-tree`), gate it once as one tree under the project's standing merge-train issue,
+push once, comment every member issue with the train's sha and close the ones the branches complete.
+A red train drops the member whose files the failure names (else the newest), tells its owner, and
+re-trains the rest. One train at a time per host; the hotfix lane lands alone. Stacks are gated at
+their tip. The README's "Merge Trains" section has the full model and the evidence behind it.
+
 ## Unattended Mode (`AUTOCODER_UNATTENDED=1`)
 
 A sentinel-woken manager has no human present: the idle sentinel exports
