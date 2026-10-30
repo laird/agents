@@ -972,6 +972,100 @@ work-started comment are the proof the lock is live. An abandoned lock is not
 your problem to clean up mid-flight: `/monitor-workers` detects locks with no
 agent activity and reclaims them with human confirmation.
 
+## Pre-Landing Review Gate (MANDATORY)
+
+Tests prove the change does what its tests check; they say nothing about whether
+it does what the issue asked, stays in scope, or opens a hole. Every landing
+site below runs this gate **after the final commit and before the push** — so
+before the `git merge` in `merge` mode and before `gh pr create` in `pr` mode
+(#147). The landing code refuses to proceed unless the gate set `REVIEW_OK=true`
+and wrote `$REVIEW_FILE`. In the enhancement flow, read `ISSUE_NUM` as
+`ENHANCE_NUM` throughout.
+
+**Setting.** `.autocoder.json` `"review"`: `"always"` (default — both modes),
+`"merge-only"` (skip in `pr` mode, where a human reviews), or `"off"`. When the
+setting skips the gate, still write `$REVIEW_FILE` saying so, so the record shows
+the review was skipped and not forgotten.
+
+```bash
+REVIEW_FILE="${AUTOCODER_TMP:-/tmp}/autocoder-review-${ISSUE_NUM}.md"
+REVIEW_SETTING=$(python3 -c "import json; print(json.load(open('.autocoder.json')).get('review','always'))" 2>/dev/null || echo always)
+REVIEW_BASE=$(git merge-base HEAD "origin/${INTEGRATION_BRANCH:-master}")
+REVIEW_OK=false
+if [ "$REVIEW_SETTING" = "off" ] || { [ "$REVIEW_SETTING" = "merge-only" ] && [ "$MERGE_MODE" = "pr" ]; }; then
+  printf '## Review\nSkipped: `.autocoder.json` review=%s (merge mode %s).\n' "$REVIEW_SETTING" "$MERGE_MODE" > "$REVIEW_FILE"
+  REVIEW_OK=true
+fi
+git diff --name-only "$REVIEW_BASE"..HEAD   # the paths under review
+```
+
+**1. Review in a fresh context.** Self-review in the session that wrote the code
+inherits its blind spots. Run `/code-review` on the branch where your platform provides it (or `ce-code-review` /
+`superpowers:requesting-code-review` per the skill table above). Where none is
+available, launch fresh subagents with no shared context — 2–3 in parallel at
+`$FAST_MODEL`, each with one lens and told to refute the change: **correctness**,
+**scope creep**, **security**. Give every reviewer the same three inputs: the
+diff (`git diff "$REVIEW_BASE"..HEAD`), the repo (to read callers and
+neighbouring code), and the issue's title, body and comments (the intent the
+diff must satisfy).
+
+**2. Security review on sensitive diffs.** If any changed path is sensitive,
+also run `/security-review` (or a fresh security-lens subagent where it is not
+available). Sensitive means: the `risk.high` globs in `.autocoder.json` when
+present (#165), otherwise CI workflows (`.github/workflows/**`), hooks,
+install/setup scripts, merge/push/sentinel scripts, auth, credentials or secret
+handling, crypto, and dependency manifests or lockfiles.
+
+**3. Tag every finding** exactly one of:
+
+| Tag | Meaning | Action |
+|---|---|---|
+| **Important** | A real defect, scope violation or security problem **introduced by this diff** | Fix it, or answer it with a concrete reason it does not apply. **Blocks landing while open.** |
+| **Nit** | Style or preference | Fix if trivial; never blocks |
+| **Pre-existing** | Real, but present before this diff | File it with `/record-issue` (link the finding); **do not** fix it here — that widens the diff |
+
+**4. Converge — at most 3 review-and-fix rounds (#166).**
+
+- **Round 1** reviews the whole diff. **Rounds 2–3** review only what changed
+  since the last review (`git diff <last-reviewed-sha>..HEAD`), plus whether each
+  earlier Important finding is actually resolved.
+- **Never repeat a finding.** Keep the findings list in `$REVIEW_FILE` and pass
+  it to each later round; a finding already raised is either resolved or still
+  open, not new.
+- **Fix the class, not the instance.** For each Important finding, name the bug
+  class (e.g. "unquoted variable in a path", "label write without lock release")
+  and grep the diff for every other instance before the next round.
+- Commit each round's fixes, then re-run the targeted tests before re-review.
+- **Still an open Important finding after round 3** → stop. The approach itself
+  may be wrong. Escalate with `add-blocking-label.sh`, which posts the reason and
+  releases the `working` lock in one step; do **not** land:
+
+```bash
+REVIEW_BRANCH=$(git branch --show-current)
+git push -u origin "$REVIEW_BRANCH" || true   # keep the work inspectable; this is NOT landing
+bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "needs-design" \
+  "Review did not converge in 3 rounds. Open Important findings: <list each with file:line>. Question: is this the right approach? Branch: ${REVIEW_BRANCH}."
+exit 0
+```
+
+**5. Record the outcome.** Write `$REVIEW_FILE` — it is included in the
+issue's close comment (`merge` mode) or the PR body (`pr` mode) — then set
+`REVIEW_OK=true` only when no Important finding is open:
+
+```bash
+cat > "$REVIEW_FILE" <<'REVIEW'
+## Review
+Rounds: <n> · Reviewer: </code-review | subagents: correctness, scope, security> · Security review: <ran | not needed — no sensitive paths>
+
+| # | Tag | Finding | Resolution |
+|---|---|---|---|
+| 1 | Important | <file:line — what is wrong> | Fixed in <sha> / Answered: <reason> |
+| 2 | Pre-existing | <…> | Filed as #<n> |
+| 3 | Nit | <…> | Fixed / Left: <reason> |
+REVIEW
+REVIEW_OK=true   # only when every Important finding above is Fixed or Answered
+```
+
 ## Fixing Strategy
 
 ### Step 1: Assess Complexity
@@ -1000,7 +1094,8 @@ For simple issues, proceed directly:
 2. Implement a complete fix (not partial)
 3. Run targeted tests to verify the fix works
 4. Create a git commit with the changes
-5. Mark as complete
+5. Run the Pre-Landing Review Gate (above) and resolve its findings
+6. Mark as complete
 
 ```bash
 # After fixing simple issue:
@@ -1012,6 +1107,13 @@ Detailed explanation of what was fixed and how.
 🤖 Generated with [Antigravity](https://claude.com/claude-code)
 
 Co-Authored-By: Antigravity <noreply@antigravity.ai>"
+
+# Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
+# now, on the committed branch. Nothing is published until it passes.
+if [ "${REVIEW_OK:-false}" != true ] || [ ! -s "${REVIEW_FILE:-}" ]; then
+  echo "❌ Review gate not passed for #${ISSUE_NUM} — not landing (see Pre-Landing Review Gate)"
+  exit 1
+fi
 
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
@@ -1053,6 +1155,8 @@ if [ "$MERGE_MODE" = "pr" ]; then
     --body "Closes #${ISSUE_NUM}
 
 [Detailed explanation of fix]
+
+$(cat "$REVIEW_FILE")
 
 🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
@@ -1119,6 +1223,8 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
     issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 [Detailed explanation of fix]
+
+$(cat "$REVIEW_FILE")
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 
@@ -1290,6 +1396,13 @@ Detailed multi-line explanation of:
 
 Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
+# Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
+# now, on the committed branch. Nothing is published until it passes.
+if [ "${REVIEW_OK:-false}" != true ] || [ ! -s "${REVIEW_FILE:-}" ]; then
+  echo "❌ Review gate not passed for #${ISSUE_NUM} — not landing (see Pre-Landing Review Gate)"
+  exit 1
+fi
+
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
 # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -1340,6 +1453,8 @@ if [ "$MERGE_MODE" = "pr" ]; then
 
 ## Verification
 [Test results and evidence]
+
+$(cat "$REVIEW_FILE")
 
 🤖 Generated with [Antigravity](https://claude.com/claude-code)"
 
@@ -1416,6 +1531,8 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
 
 ## Verification
 [Test results and evidence]
+
+$(cat "$REVIEW_FILE")
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 **Commit**: [commit hash]
@@ -2147,6 +2264,13 @@ Detailed explanation of:
 
 Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
+  # Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
+  # now, on the committed branch. Nothing is published until it passes.
+  if [ "${REVIEW_OK:-false}" != true ] || [ ! -s "${REVIEW_FILE:-}" ]; then
+    echo "❌ Review gate not passed for #${ENHANCE_NUM} — not landing (see Pre-Landing Review Gate)"
+    exit 1
+  fi
+
   # Push feature branch
   # Publish the branch. `git push` first; if the transport is blocked (e.g. a
   # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -2225,6 +2349,8 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
 
 ## Verification
 [Evidence that enhancement works correctly]
+
+$(cat "$REVIEW_FILE")
 
 **Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\` (merged and deleted)
 
