@@ -1054,9 +1054,12 @@ git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run t
 REVIEW_BASE=$(git merge-base HEAD "origin/${INTEGRATION_BRANCH}") \
   || { echo "❌ cannot find the merge base with origin/${INTEGRATION_BRANCH} — nothing to review against"; exit 1; }
 rm -f "$REVIEW_FILE"   # never inherit an earlier attempt's verdict
-if [ "$REVIEW_SETTING" = "off" ] || { [ "$REVIEW_SETTING" = "merge-only" ] && [ "$MERGE_MODE" != "merge" ]; }; then
+# Same reading as the landing code: only an exact "pr" takes the PR path, so only
+# "pr" may skip under merge-only. An unset mode must fail, not default to a skip.
+REVIEW_MODE="${MERGE_MODE:?MERGE_MODE unset — re-run the configuration block above}"
+if [ "$REVIEW_SETTING" = "off" ] || { [ "$REVIEW_SETTING" = "merge-only" ] && [ "$REVIEW_MODE" = "pr" ]; }; then
   printf '## Review\nSkipped: `.autocoder.json` review=%s (merge mode %s).\n\nReviewed-HEAD: %s\nVerdict: pass\n' \
-    "$REVIEW_SETTING" "${MERGE_MODE:-pr}" "$(git rev-parse HEAD)" > "$REVIEW_FILE"
+    "$REVIEW_SETTING" "$REVIEW_MODE" "$(git rev-parse HEAD)" > "$REVIEW_FILE"
 fi
 git diff --name-only "$REVIEW_BASE"..HEAD   # the paths under review
 ```
@@ -1098,16 +1101,20 @@ handling, crypto, and dependency manifests or lockfiles.
   and grep the diff for every other instance before the next round.
 - Commit each round's fixes, then re-run the targeted tests before re-review.
 - **Still an open Important finding after round 3** → stop. The approach itself
-  may be wrong. Do **not** land, and do **not** push the branch: a remote
-  `feature/issue-N` is the claim lock, and pushing it here would keep the issue
-  unclaimable after a human resolves the design question. Escalate with
+  may be wrong. Do **not** land, and do **not** push `feature/issue-N`: any
+  remote branch named `issue-<N>` is a claim lock (`claimed-issue-numbers.sh`)
+  and would keep the issue unclaimable after a human resolves the design
+  question. Push the work to `escalated/review-<N>` instead, which is not a
+  lock, so the human can read the diff and it survives the worker. Escalate with
   `add-blocking-label.sh`, which posts the reason and releases the `working`
   lock in one step. It rejects any reason containing `[lowercase…]` as an
   unfilled placeholder, so write findings as plain `file:line — problem`:
 
 ```bash
-bash "$SCRIPT_DIR/add-blocking-label.sh" "$REVIEW_ISSUE" "needs-design" \
-  "Review did not converge in 3 rounds. Open Important findings: <each as file:line — problem>. Question: is this the right approach? The work is committed on the local branch $(git branch --show-current) (not pushed)." \
+git push origin "HEAD:refs/heads/escalated/review-${REVIEW_ISSUE}" \
+  || echo "⚠️  could not push escalated/review-${REVIEW_ISSUE}; the work is only on the local branch"
+bash "${SCRIPT_DIR:?SCRIPT_DIR unset — re-run the setup block above}/add-blocking-label.sh" "$REVIEW_ISSUE" "needs-design" \
+  "Review did not converge in 3 rounds. Open Important findings: <each as file:line — problem>. Question: is this the right approach? The work is on branch escalated/review-${REVIEW_ISSUE}." \
   || { echo "❌ escalation failed — the issue still holds 'working'; fix the reason text and retry"; exit 1; }
 ```
 
