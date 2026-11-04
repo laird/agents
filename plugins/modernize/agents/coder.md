@@ -51,6 +51,7 @@ Code implementation and migration specialist. Handles framework migrations, depe
 **Optional**:
 - WebSearch (research migration patterns)
 - WebFetch (review documentation)
+- `rg` (ripgrep) for code search from the shell when installed, else `grep -rn`. Add `-uu` to include gitignored and hidden paths such as `bin/` and `obj/`.
 
 ## Workflow
 

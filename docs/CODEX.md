@@ -128,3 +128,7 @@ startcc 3
 - Codex managers run `bash scripts/codex-manage-workers-loop.sh`.
 - Both coordinate through GitHub issue state and labels, parallel to the Claude and Gemini flows.
 - Shared scripts remain shared. New Codex scripts only cover runtime gaps that depend on Claude-specific loop or hook behavior.
+
+## pstack skills (optional)
+
+autocoder and modernize use [pstack](https://github.com/michael-denyer/pstack-claude) skills when they are installed. For this platform's install command and what the commands use pstack for, see [PSTACK.md](PSTACK.md).

@@ -165,6 +165,10 @@ Protocols define standardized methodologies:
 | 1.5.0 | Added proposal system, issue triage, list-proposals workflow |
 | 1.0 | Initial Antigravity support |
 
+## pstack skills (optional)
+
+autocoder and modernize use [pstack](https://github.com/michael-denyer/pstack-claude) skills when they are installed. For this platform's install command and what the commands use pstack for, see [PSTACK.md](PSTACK.md).
+
 ## See Also
 
 - [CLAUDE-CODE.md](./CLAUDE-CODE.md) - Claude Code integration

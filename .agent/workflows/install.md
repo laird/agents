@@ -37,6 +37,11 @@ This command installs the agents framework into your project:
 - **Purpose**: Quick commands to launch parallel agent swarms
 - **Scope**: Global
 
+### 4. ripgrep (optional)
+- **What**: Installs `rg`, which agents use for fast code search when they shell out
+- **How**: `scripts/install-ripgrep.sh`. Homebrew if present, else the official release binary (SHA-256 verified) into `~/.local/bin`; no root
+- **Scope**: Global; skipped when `rg` is already installed
+
 ## Installation Process
 
 The installer will:
@@ -256,7 +261,25 @@ else
 fi
 ```
 
-### Step 6: Installation Summary
+### Step 6: Optional ripgrep
+
+Skip this step when `command -v rg` succeeds (set `INSTALL_RG=true` so the summary reports it). Otherwise, ask:
+
+```
+Question: "Install ripgrep (rg)? Agents use it for fast code search, especially on large codebases."
+Options:
+- "Yes, install rg" - "Homebrew if present, else the verified release binary into ~/.local/bin (no root)"
+- "No, skip" - "Agents fall back to grep; run /install again later to add it"
+```
+
+**If Yes:**
+
+```bash
+FRAMEWORK_PATH="<detected-framework-path>"
+bash "$FRAMEWORK_PATH/.agent/scripts/install-ripgrep.sh" && INSTALL_RG=true
+```
+
+### Step 7: Installation Summary
 
 ```bash
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -280,6 +303,10 @@ fi
 if [ "$INSTALL_SCRIPTS" = true ]; then
   echo "   • Parallel agent scripts"
   echo "     Commands: start-parallel, join-parallel"
+fi
+
+if [ "$INSTALL_RG" = true ]; then
+  echo "   • ripgrep (rg) for agent code search"
 fi
 
 if [ "$INSTALL_ALIASES" = true ]; then
