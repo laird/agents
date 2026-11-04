@@ -180,6 +180,14 @@ echo "$OUT" | grep -q "disjoint re-sync; gated tree" && ok "disjoint: success li
 issue_body | grep -q "which no gate has run on" && ok "disjoint: park comment explains the untested published tree" || bad "disjoint park comment: $(issue_body)"
 echo "$OUT" | grep -q "parked under awaiting-integration (disjoint)" && ok "disjoint: log says parked" || bad "disjoint log: $OUT"
 
+# ── 8b. documents-only re-sync + --own-issue: closed, like tested ───────────
+setup
+OUT=$(run_own "$(racing_gate 'mkdir -p docs && echo spec > docs/design.md')"); RC=$?
+[ "$RC" -eq 0 ] && ok "docs-resync merge exits 0" || bad "docs-resync rc=$RC: $OUT"
+echo "$OUT" | grep -q "a documents-only re-sync (1 document files) then published tree" && ok "docs-resync: success line names the document count" || bad "docs-resync success line wrong: $OUT"
+[ "$(issue_state)" = CLOSED ] && [ "$(issue_bucket)" = closed ] && [ "$(issue_labels)" = "bug" ] && ok "docs-resync: issue closed (documents are not an input to the test stages)" || bad "docs-resync state: $(issue_state) $(issue_bucket) $(issue_labels)"
+issue_body | grep -q "Issue Resolved" && ok "docs-resync: resolution comment posted" || bad "docs-resync comment: $(issue_body)"
+
 # ── 9. conflict: escalated under --own-issue, untouched without ─────────────
 setup
 (cd "$TMP/sibling" && mkdir -p src && echo sibling > src/app.sh && git add -A && git commit -q -m clash && git push -q origin master)

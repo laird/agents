@@ -13,7 +13,12 @@
 #   - overlap ignores renames (a sibling renaming a file this change edits re-gates), a
 #     wider manifest list counts as global, and so does any path the gate command runs;
 #   - a red-base landing followed by a disjoint re-sync says the published tree is
-#     neither gated tree.
+#     neither gated tree;
+#   - a re-sync whose incoming files are all documents never re-runs the test stages,
+#     in strict mode and with the scoped re-gate off too; it is published as docs-resync
+#     (closes like tested), AUTOCODER_DOCS_PATHS / AUTOCODER_DOCS_CODE_PATHS move the line,
+#     a document this change touched or a path the gate runs is not a documents-only
+#     delta, and AUTOCODER_DOCS_RESYNC_CMD runs first and hands a failure to the full rule.
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,7 +39,7 @@ source "$SCRIPT_DIR/repo-id-fns.sh"
 base_worktree() { echo "$AUTOCODER_TMP/autocoder-merge-worktree-$(autocoder_repo_id "$TMP/worker")-${ISSUE}-base"; }
 export ISSUE_DIR_PATH="$TMP/issues"
 export AUTOCODER_GATE_CACHE_DIR="$TMP/gate-cache"
-unset AUTOCODER_MERGE_ON_RED_BASE AUTOCODER_GATE_GLOBAL_PATHS AUTOCODER_SCOPED_REGATE AUTOCODER_GREEN_REF
+unset AUTOCODER_MERGE_ON_RED_BASE AUTOCODER_GATE_GLOBAL_PATHS AUTOCODER_SCOPED_REGATE AUTOCODER_GREEN_REF AUTOCODER_DOCS_PATHS AUTOCODER_DOCS_CODE_PATHS AUTOCODER_DOCS_RESYNC_CMD
 
 # Fresh bare origin, worker checkout on feature/code (src/app.sh added, README line 1
 # edited), sibling clone on master, empty gate-run log, and one open issue. origin gets a
@@ -216,6 +221,65 @@ OUT=$(AUTOCODER_MERGE_ON_RED_BASE=1 bash "$MTI" --feature feature/code --issue $
 [ "$RC" -eq 2 ] && ok "(g') exit 2 on a red base without a green ref" || bad "(g') rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "(g') nothing pushed" || bad "(g') master moved"
 echo "$OUT" | grep -q "no sentinel has proven a green master yet" && ok "(g') refusal says why" || bad "(g') refusal wrong: $OUT"
+
+# ── (h) documents-only re-sync: one gate run whatever the mode, published as docs-resync ──
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'mkdir -p docs/specs && echo spec > docs/specs/design.md')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "(h) documents-only re-sync merges" || bad "(h) rc=$RC: $OUT"
+[ "$(gate_runs)" -eq 1 ] && ok "(h) gate ran exactly once" || bad "(h) gate ran $(gate_runs) time(s); want 1"
+echo "$OUT" | grep -q "Documents-only re-sync (1 incoming files, all documents, none this change touched): test stages not re-run" && ok "(h) log records the documents-only basis" || bad "(h) no documents-only line: $OUT"
+echo "$OUT" | grep -q "tests passed on tree .*; a documents-only re-sync (1 document files) then published tree .* without re-running the test stages" && ok "(h) success line names the tested tree, the document count and the published tree" || bad "(h) success line wrong: $OUT"
+echo "$OUT" | grep -q "verified" && bad "(h) a tree the gate never ran on was called verified" || ok "(h) never says verified"
+git --git-dir="$TMP/origin.git" cat-file -e master:docs/specs/design.md 2>/dev/null && git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "(h) master has the fix and the document" || bad "(h) master is missing the fix or the document"
+
+setup nogreen
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo notes > NOTES.md')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ "$(gate_runs)" -eq 1 ] && ok "(h) strict mode (no green ref) still skips the test stages for a documents-only delta" || bad "(h) strict mode rc=$RC runs=$(gate_runs): $OUT"
+echo "$OUT" | grep -q "strict mode" && echo "$OUT" | grep -q "Documents-only re-sync" && ok "(h) strict mode is logged and the documents-only basis beside it" || bad "(h) strict-mode log wrong: $OUT"
+
+setup
+OUT=$(AUTOCODER_SCOPED_REGATE=0 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo notes > NOTES.md')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 1 ] && ok "(h) AUTOCODER_SCOPED_REGATE=0 does not re-gate a documents-only delta" || bad "(h) scoped-off re-gated documents ($(gate_runs) runs): $OUT"
+
+# ── (h') what is not a documents-only delta: mixed, a document this change touched, a gate path ──
+setup nogreen
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo notes > NOTES.md && echo s > sibling.txt')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && ok "(h') a delta mixing a document and code re-gates" || bad "(h') mixed delta ran $(gate_runs) time(s); want 2: $OUT"
+echo "$OUT" | grep -q "Documents-only re-sync" && bad "(h') mixed delta logged as documents-only" || ok "(h') mixed delta never logged as documents-only"
+
+setup
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'sed -i "10s/.*/line 10 (sibling)/" README.md')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "README.md (a file this change touched)" && ok "(h') a document this change touched is an overlap, not a documents-only delta" || bad "(h') touched document ran $(gate_runs) time(s): $OUT"
+
+setup nogreen
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "# patched" >> scripts/helper.md') && cat scripts/helper.md" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && ok "(h') a document the gate command reads is not a documents-only delta" || bad "(h') gate-path document ran $(gate_runs) time(s): $OUT"
+
+# ── (h'') the repo moves the line: AUTOCODER_DOCS_PATHS and AUTOCODER_DOCS_CODE_PATHS ──
+setup nogreen
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "{}" > wiki-nav-manifest.json')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && ok "(h'') a JSON file is code by default" || bad "(h'') JSON delta ran $(gate_runs) time(s): $OUT"
+
+setup nogreen
+OUT=$(AUTOCODER_DOCS_PATHS="wiki-nav-manifest.json" bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "{}" > wiki-nav-manifest.json')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 1 ] && echo "$OUT" | grep -q "Documents-only re-sync" && ok "(h'') AUTOCODER_DOCS_PATHS makes it a document" || bad "(h'') docs-paths knob ignored ($(gate_runs) runs): $OUT"
+
+setup nogreen
+OUT=$(AUTOCODER_DOCS_CODE_PATHS="skills/*" bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'mkdir -p skills/x && echo prompt > skills/x/skill.md')" 2>&1); RC=$?
+[ "$(gate_runs)" -eq 2 ] && ok "(h'') AUTOCODER_DOCS_CODE_PATHS makes a Markdown skill code" || bad "(h'') code-paths knob ignored ($(gate_runs) runs): $OUT"
+echo "$OUT" | grep -q "Documents-only re-sync" && bad "(h'') a code-path skill logged as documents-only" || ok "(h'') skill delta never logged as documents-only"
+
+# ── (h''') AUTOCODER_DOCS_RESYNC_CMD runs on the re-synced tree; a failure hands over to the full rule ──
+setup nogreen
+OUT=$(AUTOCODER_DOCS_RESYNC_CMD="test -f docs/specs/design.md && touch $TMP/docs-checks-ran" bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'mkdir -p docs/specs && echo spec > docs/specs/design.md')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ -f "$TMP/docs-checks-ran" ] && [ "$(gate_runs)" -eq 1 ] && ok "(h''') the document checks ran on the re-synced tree and the test stages did not" || bad "(h''') rc=$RC ran=$([ -f "$TMP/docs-checks-ran" ] && echo yes || echo no) runs=$(gate_runs): $OUT"
+echo "$OUT" | grep -q "running the document checks on the re-synced tree" && ok "(h''') log names the document checks" || bad "(h''') document checks not logged: $OUT"
+
+setup nogreen
+OUT=$(AUTOCODER_DOCS_RESYNC_CMD="false" bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'mkdir -p docs/specs && echo spec > docs/specs/design.md')" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ "$(gate_runs)" -eq 2 ] && ok "(h''') failing document checks fall back to the full re-gate" || bad "(h''') rc=$RC runs=$(gate_runs): $OUT"
+echo "$OUT" | grep -q "document checks failed on the re-synced tree; treating the delta as code" && ok "(h''') log says why the delta was re-gated" || bad "(h''') fallback not logged: $OUT"
+echo "$OUT" | grep -q "verified: tests passed on the published tree" && ok "(h''') the re-gated tree is published as verified" || bad "(h''') success line wrong: $OUT"
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
