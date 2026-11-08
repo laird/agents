@@ -36,6 +36,7 @@ This command installs all autocoder plugin components:
   - `join-parallel` → `join-parallel-agents.sh`
   - `end-parallel` → `end-parallel-agents.sh`
   - `stop-parallel` → `stop-parallel-agents.sh`
+  - `remote-swarm-setup` → `remote-swarm-setup.sh` (join a swarm on another machine over Tailscale; see `docs/remote-swarm.md`)
 - **Purpose**: Terminal commands to launch, add/start/remove workers, join, end, and stop parallel agent sessions
 - **Action**: Creates symlinks, adds `~/.local/bin` to PATH
 - **Scope**: Global (available in all terminals)
@@ -467,6 +468,7 @@ else
   echo "  join-parallel  -> $SCRIPT_DIR/join-parallel-agents.sh"
   echo "  end-parallel   -> $SCRIPT_DIR/end-parallel-agents.sh"
   echo "  stop-parallel  -> $SCRIPT_DIR/stop-parallel-agents.sh"
+  echo "  remote-swarm-setup -> $SCRIPT_DIR/remote-swarm-setup.sh"
   echo ""
   echo "Terminal usage after install:"
   echo "  cd ~/src/myproject"
@@ -581,6 +583,7 @@ WRAPPER
   install_cli join-parallel join-parallel-agents.sh
   install_cli end-parallel end-parallel-agents.sh
   install_cli stop-parallel stop-parallel-agents.sh
+  install_cli remote-swarm-setup remote-swarm-setup.sh
 
   echo "✅ Commands installed:"
   echo "   $INSTALL_DIR/start-parallel"
