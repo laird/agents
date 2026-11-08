@@ -38,7 +38,13 @@ This:
 - installs a `swarm` command in `~/.local/bin`;
 - prints the exact line to run on the host.
 
-**2. On the host**, paste that line:
+If the host already runs **Tailscale SSH** (`tailscale set --ssh`), the client
+can log in right away. Step 1 tests this, prints "No host step needed", and
+you can skip step 2. Tailscale SSH needs no sshd and no keys; your tailnet's
+SSH policy decides who may log in. To turn it on from the host, run
+`remote-swarm-setup host --tailscale-ssh`.
+
+**2. On the host** (only when step 1 asks for it), paste the line it printed:
 
 ```bash
 remote-swarm-setup host --authorize 'ssh-ed25519 AAAA… uconsole-swarm'
@@ -77,8 +83,17 @@ cmux has no remote attach.
 - Logins are by key only, and the client's key is dedicated to this alias, so
   revoking it is one line in the host's `~/.ssh/authorized_keys`.
 - With ufw active, sshd is reachable only from your tailnet. Without a
-  firewall it also listens on the LAN; logins are still key-only. Tailscale
-  SSH (`tailscale set --ssh`) is an alternative that needs no sshd, but its
-  default policy asks for periodic browser re-authentication.
+  firewall it also listens on the LAN; logins are still key-only.
+- With Tailscale SSH, access follows your tailnet ACL `ssh` rules. A rule with
+  `"action": "check"` asks for periodic browser re-authentication;
+  `"accept"` does not.
+
+## First attach: herdr may offer to restart the host's server
+
+If the host's herdr server was started outside an SSH-safe launch, the first
+`swarm` warns that the server may not survive a dropped SSH connection, and
+offers to restart it. Restarting stops every pane on the host, agents included.
+Say yes once, when no agent is mid-task; after that, a dropped connection
+(common on laptops and handhelds) disconnects only that client.
 - An attached client can do anything the host user can, and so can the agents.
   Only authorize devices you control.

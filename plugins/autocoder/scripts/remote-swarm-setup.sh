@@ -10,10 +10,13 @@
 #      Creates a dedicated SSH key, an SSH alias (default "swarm") that points
 #      at <host>'s Tailscale address, trusts <host>'s SSH host key, and installs
 #      a `swarm` command in ~/.local/bin. Prints the line to run on the host.
+#      If the host already runs Tailscale SSH, the client can log in right away
+#      and step 2 is skipped (the script tests this and says so).
 # 2. On the host:     remote-swarm-setup.sh host --authorize '<public key>'
 #      Authorizes the client's key, and (with sudo) turns on sshd with password
 #      and root logins disabled. If ufw is active, port 22 is opened on the
-#      tailscale0 interface only.
+#      tailscale0 interface only. With --tailscale-ssh it turns on Tailscale
+#      SSH instead (no sshd, no keys; your tailnet policy decides access).
 # 3. On the client:   swarm        (or: join-parallel --remote swarm)
 #
 # Run either half again at any time; every step is idempotent.
@@ -25,8 +28,14 @@ say() { printf '%s\n' "$*"; }
 die() { say "❌ $*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
+}
+
+# Tailscale SSH: tailscaled answers port 22 on the tailnet address and checks
+# the peer's tailnet identity, so no sshd or authorized key is needed.
+tailscale_ssh_on() {
+  tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true'
 }
 
 need_tailscale() {
@@ -38,15 +47,28 @@ need_tailscale() {
 # host: run on the machine where the swarm runs
 # ---------------------------------------------------------------------------
 host_setup() {
-  local keys=()
+  local keys=() ts_ssh=false
   while [[ $# -gt 0 ]]; do
     case $1 in
       --authorize) keys+=("$2"); shift 2 ;;
+      --tailscale-ssh) ts_ssh=true; shift ;;
       -h|--help) usage ;;
       *) die "unknown option: $1" ;;
     esac
   done
   need_tailscale
+
+  if $ts_ssh; then
+    tailscale_ssh_on || sudo tailscale set --ssh
+    say "✅ Tailscale SSH is on: tailnet devices your policy allows can log in (no sshd, no keys)"
+    say "   Clients join with: swarm"
+    return
+  fi
+  if tailscale_ssh_on && ! systemctl is-active -q sshd 2>/dev/null; then
+    say "✅ Tailscale SSH is already on here, so clients can log in without sshd."
+    say "   Nothing to do. See docs/remote-swarm.md to use sshd and keys instead."
+    return
+  fi
 
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
   touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
@@ -148,8 +170,14 @@ EOF
   say "✅ installed ~/.local/bin/$name"
 
   say ""
+  if ssh -o BatchMode=yes -o ConnectTimeout=10 "$name" true 2>/dev/null; then
+    say "✅ $name already accepts this login (Tailscale SSH or an authorized key)."
+    say "   No host step needed. Run:  $name"
+    return
+  fi
   say "Next, on $host run:"
   say "  remote-swarm-setup.sh host --authorize '$(cat "$key.pub")'"
+  say "  (or: remote-swarm-setup.sh host --tailscale-ssh)"
   say "Then here:  $name"
 }
 
