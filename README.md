@@ -157,6 +157,8 @@ Platform-specific install and run guides for each supported agent:
 | OpenAI Codex CLI | [docs/swarm-quickstart-codex.md](docs/swarm-quickstart-codex.md) |
 | Droid (Factory) | [docs/swarm-quickstart-droid.md](docs/swarm-quickstart-droid.md) |
 
+To manage a swarm from another machine (a laptop, a uConsole) over Tailscale, see [docs/remote-swarm.md](docs/remote-swarm.md): `remote-swarm-setup`, then `swarm` or `join-parallel --remote <host>`.
+
 ---
 
 ## Shell Aliases — All Combinations

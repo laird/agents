@@ -6,6 +6,9 @@
 #
 # Options:
 #   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
+#   --remote <ssh-target>  Join a swarm running on another machine over SSH
+#                          (e.g. over Tailscale; see docs/remote-swarm.md).
+#                          Also read from $SWARM_REMOTE.
 
 SOURCE_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE_PATH" ]; do
@@ -21,6 +24,7 @@ source "$SCRIPT_DIR/mux-send-lib.sh"
 # Parse arguments
 MUX=""
 SESSION_NAME=""
+REMOTE="${SWARM_REMOTE:-}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -28,11 +32,21 @@ while [[ $# -gt 0 ]]; do
       MUX="$2"
       shift 2
       ;;
+    --remote)
+      REMOTE="$2"
+      shift 2
+      ;;
+    --local)
+      REMOTE=""
+      shift
+      ;;
     -h|--help)
       echo "Usage: join-parallel-agents.sh [options] [session_name]"
       echo ""
       echo "Options:"
       echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
+      echo "  --remote <ssh-target>  Join a swarm on another machine over SSH (default: \$SWARM_REMOTE)"
+      echo "  --local                Ignore \$SWARM_REMOTE and join on this machine"
       echo ""
       echo "If no session name is given, auto-detects from current directory."
       exit 0
@@ -43,6 +57,43 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# ============================================================================
+# REMOTE MODE: the swarm runs on another machine; attach to it over SSH.
+# herdr attaches natively (herdr --remote), tmux through ssh -t. cmux is a
+# macOS GUI app with no remote attach, so it is rejected.
+# ============================================================================
+if [ -n "$REMOTE" ]; then
+  if [ -z "$MUX" ]; then
+    MUX=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE" \
+      'if command -v herdr >/dev/null 2>&1 && herdr status server 2>/dev/null | grep -q "status: running"; then echo herdr; elif command -v tmux >/dev/null 2>&1; then echo tmux; fi' 2>/dev/null)
+    if [ -z "$MUX" ]; then
+      echo "❌ Error: cannot reach $REMOTE, or it runs neither a herdr server nor tmux" >&2
+      echo "   Check: ssh $REMOTE true   (see docs/remote-swarm.md)" >&2
+      exit 1
+    fi
+  fi
+  case "$MUX" in
+    herdr)
+      echo "🔗 Attaching to the herdr swarm on $REMOTE (detach: prefix, then d)"
+      if command -v herdr >/dev/null 2>&1; then
+        exec herdr --remote "$REMOTE" ${SESSION_NAME:+--session "$SESSION_NAME"}
+      fi
+      exec ssh -t "$REMOTE" herdr ${SESSION_NAME:+--session "$SESSION_NAME"}
+      ;;
+    tmux)
+      echo "🔗 Attaching to tmux on $REMOTE (detach: Ctrl+b, then d)"
+      if [ -n "$SESSION_NAME" ]; then
+        exec ssh -t "$REMOTE" tmux attach -t "$SESSION_NAME"
+      fi
+      exec ssh -t "$REMOTE" tmux attach
+      ;;
+    *)
+      echo "❌ Error: --remote supports herdr and tmux, not '$MUX'" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 # Auto-detect multiplexer if not specified.
 # Prefer cmux/herdr only when actually running — see cmux_is_running() /
