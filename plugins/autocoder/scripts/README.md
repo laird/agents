@@ -119,6 +119,28 @@ for the sentinel's green tip or a human merge). `list --state blocked`
 never shows them. The file backend keeps all three in `working/`; `close`
 strips all three.
 
+### Dependencies: work issues in the order they allow
+
+The claimable queue (`issue_list --state open`, and `list` with no `--state`)
+leaves out any issue whose dependencies are not closed yet. That policy lives
+in `issue-deps.sh`, sourced by `issue-fns.sh`, so it holds for every backend
+and every caller: the fix-loop gate, `/fix`, the manager's dispatch and
+scaling, and `issue_any_claimable` (which the idle sentinel relies on).
+
+- **Declared in the body**: every `#N` on a line that says `Depends on` or
+  `Blocked by` (the decomposition template's `## Dependencies` section writes
+  these). `Sub-task of #N` is the parent, not a dependency.
+- **Native on GitHub**: open "blocked by" relationships, read for all open
+  issues in one GraphQL query; skipped when there is no `origin` or the server
+  has no issue dependencies.
+- **Met** means the dependency's state is closed (`closed`, `done`, `resolved`,
+  `completed`, `removed`). A dependency that can't be read counts as met, so a
+  typo never wedges the queue.
+- Waiting issues are named on stderr (`⏳ #350 waits on #347, #348`).
+  `issue_unmet_dependencies <n>` prints what one issue waits on; `/fix <n>`
+  refuses an issue that still waits, before claiming it.
+- `AUTOCODER_IGNORE_DEPENDENCIES=1` turns the filter off.
+
 ### Cross-worktree discipline
 
 `ISSUE_DIR_PATH` is always resolved to the **main worktree's** `.issues/`

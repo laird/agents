@@ -59,7 +59,7 @@ work_plan() { cat "$WORK_JSON" 2>/dev/null; }
 # That is the real race: the gate saw the issue open, then lost the rename.
 RACE_DIR="$TMP/race-scripts"
 mkdir -p "$RACE_DIR"
-cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-config.sh} "$RACE_DIR/"
+cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$RACE_DIR/"
 cp "$SCRIPT_DIR/issues-file.py" "$RACE_DIR/issues-file-real.py"
 cat > "$RACE_DIR/issues-file.py" <<'EOF'
 #!/bin/bash
@@ -118,6 +118,22 @@ run_gate >/dev/null
 assert_eq "P1 bug before P1 enhancement" '{"phase":"fix","issue":2,"priority":"P1"}' "$(work_plan)"
 run_gate >/dev/null
 assert_eq "enhancement last" '{"phase":"enhance","issue":1}' "$(work_plan)"
+
+# ── 3b. Dependencies: a P0 that depends on an open P1 waits for it ────────
+# The real failure: a worker finished one sub-task and claimed its dependent,
+# the highest-priority issue left, before the dependency had landed.
+reset_issues
+add_issue 1 "bug, P1"; add_issue 2 "bug, P0"
+sed -i 's/^Body\.$/## Dependencies\n- Sub-task of #9\n- Depends on: #1 — needs its model/' "$ISSUE_DIR_PATH/open/002.md"
+run_gate >/dev/null
+assert_eq "dependent P0 skipped while its dependency is open" '{"phase":"fix","issue":1,"priority":"P1"}' "$(work_plan)"
+RC=$(run_gate)
+assert_eq "dependency in flight: dependent still not claimed" "1" "$RC"
+assert_eq "dependency in flight: #2 left open" "1" "$(ls "$ISSUE_DIR_PATH/open" | wc -l | tr -d ' ')"
+mv "$ISSUE_DIR_PATH/working/001.md" "$ISSUE_DIR_PATH/closed/001.md"
+sed -i 's/^status: .*/status: closed/' "$ISSUE_DIR_PATH/closed/001.md"
+run_gate >/dev/null
+assert_eq "dependency closed: dependent claimed" '{"phase":"fix","issue":2,"priority":"P0"}' "$(work_plan)"
 
 # ── 4. Triage wins and claims nothing ─────────────────────────────────────
 reset_issues
