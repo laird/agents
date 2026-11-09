@@ -1185,6 +1185,19 @@ Analyze the issue and determine if it's simple or complex:
 - Requires design/architecture
 - Keywords: "implement", "system", "management", "integration", "~30 failures"
 
+**Conflict hotspots** (check before you start):
+- If your change has to edit a file other workers keep editing (it conflicted recently, or another open
+  branch touches it: `git diff --name-only origin/<integration>...origin/feature/*`), keep your edit there
+  as **small and additive** as you can. Put new logic in a **new file or module** and hook it in with a
+  one-line registration or import, rather than growing the shared file's central functions.
+- If the file has no seam to add to (one giant dispatch, render or route function that every feature must
+  edit), say so in a comment on the issue and suggest a decomposition, so the manager can file it (see
+  monitor-workers Step 5d). Don't do a large split of a shared file as a side effect of an unrelated issue.
+- **Always rebase onto the integration branch immediately before launching the merge**, resolve any
+  conflicts yourself keeping both sides' behaviour, and re-run the full test suite. A conflict reported
+  by the merge job means rebase again and re-launch. It is not a `needs-clarification` question for the
+  human. Escalate only if the same conflict returns twice.
+
 ### Step 2A: Simple Issue - Direct Fix
 
 For simple issues, proceed directly:

@@ -48,6 +48,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via the multiplexer (tmux/cmux/herdr)
 7. **Scale the fleet dynamically** — Create workers+worktrees (`add-worker`) when the claimable queue outgrows the fleet, and retire idle workers (`remove-worker --remove-worktree`) once their work is banked, so capacity tracks the queue in both directions
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
+   - **Find conflict hotspots** (Step 5d) — Spot files that keep causing merge conflicts or that most queued issues must edit, and file a decomposition issue (with the queued work sequenced behind it) so workers can run in parallel safely
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
 10. **Step down when quiescent** — After two consecutive iterations with nothing to do, hand off to the zero-cost idle sentinel and exit (Step 6b)
 
@@ -701,6 +702,84 @@ When triggered, use the Skill tool:
 ```
 Use the Skill tool to invoke: autocoder:review-blocked
 ```
+
+### Step 5d: Find Conflict Hotspots and Decompose Them
+
+Parallel workers are only safe when their changes land in different places. A
+file that most issues have to edit turns every pair of in-flight branches into a
+likely merge conflict: merges park, workers rebase and re-test, and adding
+workers makes it worse instead of faster. Look for these hotspots on every
+iteration, and once one is confirmed, fix it at its source by decomposing it.
+Serializing the queue around it forever is not the fix.
+
+**Detect.** A file is a hotspot when any of these hold:
+
+```bash
+# 1. Conflicts: files named in merge-job conflict failures in the last few days
+#    (merge-to-integration.sh exit 1, and the issue comments it posts)
+grep -lE 'CONFLICT|conflict' "${AUTOCODER_TMP:-/tmp}"/autocoder-merge-*.log 2>/dev/null \
+  | xargs -r grep -hoE 'CONFLICT \(content\): Merge conflict in [^ ]+' | sort | uniq -c | sort -rn
+
+# 2. Churn: files touched by many distinct issue branches recently
+git log origin/<integration> --since='3 days ago' --name-only --format='%s' \
+  | grep -vE '^(Merge|Re-sync|$)' | sort | uniq -c | sort -rn | head
+
+# 3. Overlap in flight: the same file changed on two or more open feature branches
+for b in $(git branch -r --list 'origin/feature/*'); do
+  git diff --name-only "origin/<integration>...$b"
+done | sort | uniq -c | awk '$1 > 1' | sort -rn
+
+# 4. Size and centrality: one very large file that most features must edit
+#    (e.g. a single multi-thousand-line page or module with one central dispatch
+#    function that every feature extends)
+```
+
+Treat a file as a confirmed hotspot when it shows up in **two or more conflicts
+within a day or so**, or when **three or more open or in-flight issues will
+touch it**. Size alone is not enough: a big file nobody else edits is harmless.
+
+**Decompose.** File one issue (P1 when conflicts are already stalling work) to
+split the hotspot so that future features mostly **add new files**. Editing a
+shared one should be the exception. Ask for:
+
+- **Structure along feature seams.** One module per concern, using the file's
+  existing sections as the split points.
+- **Extension points.** Replace the central functions every feature edits (a
+  big `switch`/dispatch, a `paint()`/`render()` that draws everything, a hit-test
+  or route table, a counters/labels list) with registries that features
+  register into. "Add a feature" then becomes "new module plus one import
+  line".
+- **No behaviour change.** It's a pure refactor, verified by the existing tests
+  plus before/after evidence (screenshots or output) where the tests can't see.
+- **Docs.** An "adding a feature here" note in the project's agent
+  instructions, so new issues follow the structure.
+
+**Sequence it.** A split touches every line of the hotspot, so it must not race
+other branches on that file:
+
+1. Let the branches already in flight on that file land. The split issue says
+   `Depends on: #<each in-flight issue>`.
+2. Give every *queued* issue that will touch the file a `Depends on: #<split>`
+   line, so it builds on the new structure.
+3. Keep the rest of the queue parallel. Only the hotspot's work waits.
+
+Wording matters here. The dependency parser treats **any** line containing
+"depends on" or "blocked by" as declaring dependencies on every `#N` it
+mentions. In the split issue, describe the queued issues without those words
+(for example "the queued issues list this one as a prerequisite"). Otherwise
+the split ends up depending on its own dependents, and nothing can be claimed.
+After editing, check that `issue_list --state open` shows the split as
+claimable and the queued issues as `⏳ waits on #<split>`.
+
+**Scale with it.** While a hotspot is unresolved, cap the fleet so no more than
+about two workers are in flight on it at once. Raise the cap to the normal
+ceiling once the split lands.
+
+**Tell workers.** Until the split lands, tell the in-flight workers that the
+file is a hotspot. They should rebase onto the integration branch immediately
+before every merge, resolve conflicts themselves keeping both sides' behaviour,
+and re-test. A conflict on a hotspot is a rebase, not a `needs-clarification`
+question for the human.
 
 ### Step 6: Check Deploy Readiness
 
