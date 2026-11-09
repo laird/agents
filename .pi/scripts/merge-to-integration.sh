@@ -48,6 +48,18 @@
 #         reason to re-run it, whatever this change touched.
 #       AUTOCODER_SCOPED_REGATE  default 1; 0 re-gates every re-sync that brought in work,
 #         for a repo that wants the integration branch itself kept strictly green.
+#   - A re-sync whose incoming files are ALL documents (test-cmd-fns.sh's is_docs_path:
+#     Markdown, reStructuredText, AsciiDoc, docs/, plus AUTOCODER_DOCS_PATHS, minus
+#     AUTOCODER_DOCS_CODE_PATHS), none of them a file this change touched or a path the
+#     gate command runs, never re-runs the test stages, whatever the green ref or
+#     AUTOCODER_SCOPED_REGATE say: documents are not an input to a test suite, so a second
+#     run proves nothing new (a design spec pushed every few minutes once put one gate
+#     through five full passes with no code change under it). The published tree is
+#     recorded as basis `docs-resync`, which closes the issue like `tested`; the success
+#     line names the tested tree, the document count and the published tree.
+#       AUTOCODER_DOCS_RESYNC_CMD  optional; a repo's cheap document checks, run on the
+#         re-synced tree before it is pushed on that basis. When it fails the delta is
+#         treated as code and the ordinary re-gate rule decides.
 #   - When the gate fails on the integrated tree, origin/<integration> is gated ALONE in a
 #     second throwaway worktree. If the base passes, this change broke it: exit 2. If the
 #     base fails too, the integration branch is red independent of this change, so the work
@@ -287,7 +299,7 @@ _close_or_park() {
     summary=$(cat "$SUMMARY_FILE")
   fi
   case "$PUBLISH_BASIS" in
-    tested|docs-only|already-landed) ;;
+    tested|docs-only|docs-resync|already-landed) ;;
     *)
       _park "⏳ **Landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\`, not closed.** ${PARK_NOTE}
 
@@ -473,6 +485,10 @@ fi
 #    final success line is a case over it:
 #      tested     the gate passed on exactly the tree we publish (TESTED_TREE)
 #      docs-only  nothing for a test suite to verify
+#      docs-resync
+#                 the gate passed on TESTED_TREE; a later re-sync brought in documents
+#                 only, which no test stage reads, so the published tree differs from
+#                 the tested one in documents alone (DOCS_RESYNC_FILES of them)
 #      disjoint   the gate passed on TESTED_TREE; a later re-sync brought in files that
 #                 touch neither this change nor a global path, so the published tree is
 #                 by construction not the tested one
@@ -485,6 +501,7 @@ TESTED_TREE=""
 PUBLISH_BASIS=""
 RED_INTEGRATED_TREE=""
 RED_BASE_TREE=""
+DOCS_RESYNC_FILES=0
 
 _gate_integrated_tree() {
   if [ "$DOCS_ONLY" -eq 1 ]; then
@@ -528,19 +545,28 @@ _gate_integrated_tree() {
 }
 _gate_integrated_tree
 
+# rc 0 when $1 is a path the gate command runs, or lies under a directory it runs.
+_path_is_gate_cmd() {
+  local path="$1" k
+  for k in "${!TEST_CMD_PATHS[@]}"; do
+    if [[ "$path" == "$k" || "$path" == "$k"/* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Prints why $1 obliges a re-gate whatever this change touched (rc 0), or nothing (rc 1).
 _path_is_global() {
-  local path="$1" k
+  local path="$1"
   if regate_path_is_global "$path"; then
     echo "a global path"
     return 0
   fi
-  for k in "${!TEST_CMD_PATHS[@]}"; do
-    if [[ "$path" == "$k" || "$path" == "$k"/* ]]; then
-      echo "a path the gate command runs"
-      return 0
-    fi
-  done
+  if _path_is_gate_cmd "$path"; then
+    echo "a path the gate command runs"
+    return 0
+  fi
   return 1
 }
 
@@ -566,6 +592,48 @@ _resync_overlap() {
   return 1
 }
 
+# A re-sync whose incoming files are all documents, none a file this change touched or a
+# path the gate command runs: prints the incoming file count (rc 0), or nothing (rc 1).
+# Needs a merge base, like the overlap test: an unknown file set is never documents-only.
+_resync_docs_only() {
+  local old="$1" new="$2" f n=0
+  [ -n "$FEATURE_BASE" ] || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -z "${FEATURE_FILE_SET[$f]+x}" ] || return 1
+    _path_is_gate_cmd "$f" && return 1
+    is_docs_path "$f" || return 1
+    n=$((n + 1))
+  done < <(git diff --name-only --no-renames "$old" "$new")
+  echo "$n"
+}
+
+# AUTOCODER_DOCS_RESYNC_CMD on the re-synced tree (a repo's cheap document checks): rc 0
+# when unset or passing; on failure says so and returns 1, so the delta is re-gated as code.
+_docs_resync_checks_pass() {
+  [ -n "${AUTOCODER_DOCS_RESYNC_CMD:-}" ] || return 0
+  echo "🧪 Documents-only re-sync: running the document checks on the re-synced tree: ${AUTOCODER_DOCS_RESYNC_CMD}"
+  (cd "$WORKTREE_DIR" && bash -c "$AUTOCODER_DOCS_RESYNC_CMD") 2>&1 | tee -a "$GATE_LOG"
+  if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+    return 0
+  fi
+  echo "⚠️  The document checks failed on the re-synced tree; treating the delta as code, so the ordinary re-gate rule decides"
+  return 1
+}
+
+# Records a documents-only re-sync of $1 files in the publish basis. A tested tree that the
+# documents left byte-identical stays tested; otherwise tested becomes docs-resync. A red
+# base stays parked, as after any re-sync.
+_note_docs_resync() {
+  local tree
+  tree=$(git rev-parse "HEAD^{tree}")
+  DOCS_RESYNC_FILES=$((DOCS_RESYNC_FILES + $1))
+  case "$PUBLISH_BASIS" in
+    tested)   [ "$tree" = "$TESTED_TREE" ] || PUBLISH_BASIS=docs-resync ;;
+    red-base) PUBLISH_BASIS=red-base-disjoint ;;
+  esac
+}
+
 # 3. Push the feature tip to the integration branch. If a sibling worker pushed in the
 #    meantime the push is rejected; re-sync and retry. A re-sync that brings in work
 #    overlapping this change produces a tree nobody has tested, so it goes back through the
@@ -586,7 +654,10 @@ for attempt in 1 2 3 4 5; do
     _escalate_conflict
   fi
   if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
-    if [ "$SCOPED_REGATE" != "1" ]; then
+    if DOCS_COUNT=$(_resync_docs_only "$INT_SEEN_SHA" "$INT_NEW_SHA") && _docs_resync_checks_pass; then
+      echo "ℹ️  Documents-only re-sync (${DOCS_COUNT} incoming files, all documents, none this change touched): test stages not re-run; pushing the gated work"
+      _note_docs_resync "$DOCS_COUNT"
+    elif [ "$SCOPED_REGATE" != "1" ]; then
       echo "ℹ️  Re-sync brought in new work and the scoped re-gate is off; re-gating the merged tree"
       _gate_integrated_tree
     elif OVERLAP=$(_resync_overlap "$INT_SEEN_SHA" "$INT_NEW_SHA"); then
@@ -596,8 +667,8 @@ for attempt in 1 2 3 4 5; do
       INCOMING_COUNT=$(git diff --name-only --no-renames "$INT_SEEN_SHA" "$INT_NEW_SHA" | wc -l | tr -d ' ')
       echo "ℹ️  Disjoint re-sync (${INCOMING_COUNT} incoming files, none overlap this change); pushing the already-gated work"
       case "$PUBLISH_BASIS" in
-        tested)   PUBLISH_BASIS=disjoint ;;
-        red-base) PUBLISH_BASIS=red-base-disjoint ;;
+        tested|docs-resync) PUBLISH_BASIS=disjoint ;;
+        red-base)           PUBLISH_BASIS=red-base-disjoint ;;
       esac
     fi
   fi
@@ -662,6 +733,8 @@ case "$PUBLISH_BASIS" in
       echo "❌ Internal error: published tree ${LOCAL_TREE:0:8} is not the tree the tests passed on (${TESTED_TREE:0:8})." >&2
       _fail 1 "internal error: published tree ${LOCAL_TREE:0:8} is not the tested tree ${TESTED_TREE:0:8}"
     fi ;;
+  docs-resync)
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}': tests passed on tree ${TESTED_TREE:0:8}; a documents-only re-sync (${DOCS_RESYNC_FILES} document files) then published tree ${LOCAL_TREE:0:8} without re-running the test stages." ;;
   disjoint)
     PARK_NOTE="The gate passed on tree \`${TESTED_TREE}\`; a disjoint push-race re-sync then changed the published tree to \`${LOCAL_TREE}\`, which no gate has run on."
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (disjoint re-sync; gated tree ${TESTED_TREE:0:8}, published tree ${LOCAL_TREE:0:8})." ;;
