@@ -34,7 +34,7 @@ WORK_JSON="$TMP/work.json"
 # shared `working` label.
 GH_DIR="$TMP/gh-scripts"
 mkdir -p "$GH_DIR"
-cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-config.sh} "$GH_DIR/"
+cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
 cat > "$GH_DIR/issues-gh.sh" <<'EOF'
 #!/bin/bash
 verb="$1"; shift

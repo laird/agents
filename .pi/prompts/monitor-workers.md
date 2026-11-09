@@ -652,6 +652,10 @@ add-worker --agent claude   # or gemini, codex, droid
   the queue is deeper.
 - Size against the CLAIMABLE queue only — blocked/needs-*/already-working issues do
   not justify capacity.
+- Issues waiting on open dependencies are not claimable either: `issue_list --state open`
+  already leaves out any issue whose `Depends on: #N` lines (or GitHub blocked-by) name an
+  issue that is still open, and `/autocoder:fix <N>` refuses one. Never add a worker for,
+  or dispatch, a dependent issue early; it becomes claimable when its last dependency closes.
 
 **Scale DOWN** when a worker has been idle for two consecutive monitoring cycles
 with no dispatchable issue for it:

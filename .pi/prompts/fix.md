@@ -610,6 +610,16 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
   ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
 
+  # Dependencies first: an issue whose "Depends on" / "Blocked by" issues (or
+  # GitHub's native blocked-by) are still open is not ready, even when named
+  # explicitly. Refuse before claiming, so no `working` label is left behind.
+  # AUTOCODER_IGNORE_DEPENDENCIES=1 overrides it on purpose.
+  if UNMET_DEPS=$(issue_unmet_dependencies "$ISSUE_NUM"); then :; else
+    echo "⏳ Issue #$ISSUE_NUM waits on $UNMET_DEPS, still open. Not starting it."
+    echo "   Work those first, or set AUTOCODER_IGNORE_DEPENDENCIES=1 to override."
+    exit 1
+  fi
+
   # Remote branch is the strongest lock — check it before the working label.
   # A peer may have pushed the branch before the label propagated, or a manager
   # may have cleared a stale label without realising work was still in flight.
@@ -695,6 +705,8 @@ else
   [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
   echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
 
+  # issue_list --state open has already left out issues whose dependencies
+  # ("Depends on: #N" lines, GitHub blocked-by) are not closed (issue-deps.sh).
   # Filter out issues with 'working' label (being worked on by another agent)
   # Also filter out issues with blocking labels (needs human review)
   # Also filter out decomposed parent issues (work on their sub-tasks instead)
@@ -1609,7 +1621,7 @@ For issues too large for autonomous resolution (>100 test failures, major archit
 **Decomposition rules — each sub-task MUST satisfy ALL of these:**
 
 1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
-2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body.
+2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body. Write it on a `Depends on: #<n>` line in the sub-task's `## Dependencies` section: workers will not claim a sub-task until every issue on its "Depends on" lines is closed (`issue-deps.sh`), so the order is enforced, not just described.
 3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
 4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
 
