@@ -1450,7 +1450,36 @@ This will:
 
 ### Step 3: Commit and Close
 
-After verification passes:
+After verification passes, and before the branch is banked (pushed, READY'd or handed to
+`merge-to-integration.sh`), apply the **pre-merge rule**. The gate's job is to test, not to
+merge: a branch that arrives already merged with the integration branch spends no gate pass
+on a conflict, and a train that is launched right after the hotfixes have landed spends no
+pass re-syncing (operator, 2026-11-11, after a 65-minute train).
+
+1. **Merge the freshly fetched integration branch into the branch first, with the merge
+   drivers installed** (`git fetch origin && git merge origin/<integration>`, or a rebase onto
+   it), build and run the cheap prefix on the combined tree, and only then push and READY.
+   A READY branch has already absorbed the integration branch; the gate only tests it.
+2. **When the train planner reports `does not merge clean onto master plus the train so far
+   (<file>)`**, the branch conflicts with a sibling already on the train, not with the
+   integration branch. The owner (or the manager) pre-merges the branch onto that sibling's
+   tip in a scratch worktree, resolves it there, pushes with `--force-with-lease`, and
+   re-READYs **with its own branch named first in backticks** (the queue takes the first
+   backticked branch that exists on origin from the newest READY comment; on 2026-11-11 it
+   picked a sibling's branch out of a manager comment that named the sibling first). After
+   the sibling lands, a rebase onto the integration branch drops the duplicate commits by
+   patch-id. Two such skips on 2026-11-11 (#6418's audit-report section, #6393's ledger
+   base-image row) each took under five minutes to clear this way.
+3. **Trains for an operator-priority item are small** (3 to 4 members) **and are launched
+   right after the hotfix landings, never before them**: every landing under a running gate is
+   a re-sync pass over the whole train, so padding the priority item with more branches, or
+   launching while a hotfix is about to land, buys only churn.
+4. **Never `pgrep -f` a pattern your own command line contains when killing a stale run.**
+   `pkill -f merge-to-integration` from a shell whose own command mentions that name kills
+   the shell; name the pid from the pidfile (`/tmp/autocoder-merge-<issue>.pid`) or bracket
+   the pattern (`merge-to-integratio[n]`).
+
+Then:
 
 ```bash
 # Commit changes
