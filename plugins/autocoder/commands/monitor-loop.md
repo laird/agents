@@ -17,10 +17,11 @@ Run `/monitor-workers` in a continuous loop. This is the default command for the
 Schedules `/autocoder:monitor-workers` to run on a recurring interval using the `/loop` command. Each iteration:
 
 1. Checks worker status via the swarm's multiplexer (tmux, cmux, or herdr)
-2. Detects stale "working" labels
-3. Dispatches idle workers to unblocked issues
-4. Runs `/autocoder:review-blocked` when all issues are blocked
-5. Deploys when all work is complete
+2. Watches gate efficiency: every live or recent merge gate's duration, passes and re-gates, test-selection size and stage, with a warning and remedy for each threshold crossed (monitor-workers Step 2b)
+3. Detects stale "working" labels
+4. Dispatches idle workers to unblocked issues
+5. Runs `/autocoder:review-blocked` when all issues are blocked
+6. Deploys when all work is complete
 
 `/autocoder:monitor-workers` detects the hosting multiplexer itself from live state
 (its "Multiplexer detection" section) and carries the tmux, cmux, **and herdr**
@@ -28,6 +29,27 @@ read/dispatch forms natively — including herdr-aware `worker-idle`, `worker-he
 and `restart-worker`. Schedule it **bare**; do not append per-multiplexer
 instructions to the loop prompt. An appended note goes stale (e.g. one claiming the
 helpers are tmux-only) and then overrides the newer, correct protocol on every tick.
+
+## Gate efficiency, every tick
+
+The loop is where a slow or churning gate gets noticed while it still runs. Each
+`/autocoder:monitor-workers` iteration runs the project's gate monitor
+(athena2: `scripts/mgr-gate-health.sh --since 6h`; elsewhere the plugin's generic read
+of `/tmp/autocoder-merge-*.log`) and acts on its warnings. The thresholds, which the
+project overrides through its own environment:
+
+- a gate pass over **20 minutes** (`MGR_GATE_SLOW_PASS_MIN`): read the three largest stages;
+- a targeted selection over **150 backend or 100 dashboard** test files
+  (`MGR_GATE_WIDE_SELECTION`, `MGR_GATE_WIDE_SELECTION_DASHBOARD`): the train or diff is too wide;
+- **two or more re-gates** in one gate (the integration branch moved under it): land waiting
+  hotfixes before the next train, or ask the other swarm to hold landings while it gates;
+- a live gate with **no log write for 15 minutes** (`MGR_GATE_STALL_MIN`): a wedge, check it;
+- **READY branches waiting with no gate or train live**: launch one.
+
+The interval sets how late a warning can be: at the default 15 minutes a 20-minute pass is
+seen at most one tick after it crossed the line, which is the point of the loop. A tick that
+skips the gate read because nothing else changed has skipped the one thing the operator asked
+the loop to watch.
 
 ## Routing mode (self vs manager)
 
@@ -86,6 +108,7 @@ echo "   Interval: ${INTERVAL_MINUTES}m"
 echo ""
 echo "This will:"
 echo "  • Check worker status every ${INTERVAL_MINUTES} minutes"
+echo "  • Watch gate efficiency (duration, re-gates, test selection) every tick"
 echo "  • Dispatch idle workers to unblocked issues"
 echo "  • Run /review-blocked when all issues need human review"
 echo "  • Deploy to ey-staging when all work completes"
