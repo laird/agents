@@ -1,6 +1,6 @@
 {
   "name": "autocoder",
-  "version": "4.35.0",
+  "version": "4.36.0",
   "description": "Autonomous GitHub issue resolution workflows for Codex, including fix loops, worker coordination, proposal handling, and validation-oriented issue triage.",
   "author": {
     "name": "Agent Protocols Team",

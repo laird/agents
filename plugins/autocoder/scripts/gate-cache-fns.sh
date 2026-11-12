@@ -61,10 +61,24 @@ gate_cache_run() {
   echo "gate-cache: no usable record for tree ${tree:0:8}; running gate"
   if (cd "$dir" && bash -c "$cmd"); then
     gate_cache_put "$tree" "$cmd" pass
+    _gate_cache_record_left_tree "$dir" "$tree" "$cmd" pass
     return 0
   fi
   gate_cache_put "$tree" "$cmd" fail
+  _gate_cache_record_left_tree "$dir" "$tree" "$cmd" fail
   return 1
+}
+
+# A gate command may commit inside its worktree before its test stages (regenerated
+# files, a baseline ratchet), so the tree it LEAVES is the one its verdict is about as
+# much as the tree it started from. Record both: the caller publishes the left tree, and
+# a later run on that exact tree is a hit, not a second run.
+_gate_cache_record_left_tree() {
+  local dir="$1" started="$2" cmd="$3" verdict="$4" left
+  left=$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 0
+  [ "$left" != "$started" ] || return 0
+  echo "gate-cache: the command left tree ${left:0:8} (started on ${started:0:8}); ${verdict} recorded for it too"
+  gate_cache_put "$left" "$cmd" "$verdict"
 }
 
 gate_cache_prune() {

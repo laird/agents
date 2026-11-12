@@ -483,7 +483,14 @@ fi
 #
 #    PUBLISH_BASIS is the one record of why the tree we push is allowed to land, and the
 #    final success line is a case over it:
-#      tested     the gate passed on exactly the tree we publish (TESTED_TREE)
+#      tested     the gate passed on exactly the tree we publish (TESTED_TREE). TESTED_TREE
+#                 is HEAD's tree when the gate command ENDS, not when it starts: a gate
+#                 command may commit inside its worktree by contract (regenerated files,
+#                 a baseline ratchet) before its test stages, and the tree it leaves is the
+#                 one its tests ran on. Reading the tree first declared every such pass an
+#                 internal error after the push. The push loop compares HEAD's tree with
+#                 TESTED_TREE before EVERY push and re-gates on a mismatch, so a tree the
+#                 gate did not pass is never published under this basis.
 #      docs-only  nothing for a test suite to verify
 #      docs-resync
 #                 the gate passed on TESTED_TREE; a later re-sync brought in documents
@@ -508,15 +515,25 @@ _gate_integrated_tree() {
     PUBLISH_BASIS=docs-only
     return 0
   fi
-  local tree base_sha base_tree
+  local tree head_before after base_sha base_tree
+  head_before=$(git rev-parse HEAD)
   tree=$(git rev-parse "HEAD^{tree}")
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
   if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
-    TESTED_TREE="$tree"
+    # The tested tree is the one the command LEFT. A gate command may commit inside its
+    # worktree before its test stages (regenerated files, a baseline ratchet); its tests
+    # then ran on that tree, and publishing it is right. Keeping the ordering (commits
+    # before the test stages) is the gate command's own contract.
+    after=$(git rev-parse "HEAD^{tree}")
+    if [ "$after" != "$tree" ]; then
+      echo "ℹ️  The gate command committed inside its worktree (tree ${tree:0:8} -> ${after:0:8}: $(git log --format='%h %s' "${head_before}..HEAD" | paste -sd ';' - | sed 's/;/; /g')). The tested tree is the one it left, ${after:0:8}."
+    fi
+    TESTED_TREE="$after"
     PUBLISH_BASIS=tested
     return 0
   fi
 
+  tree=$(git rev-parse "HEAD^{tree}")
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8}."
@@ -641,6 +658,18 @@ _note_docs_resync() {
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
 PUSH_VIA=""
 for attempt in 1 2 3 4 5; do
+  # Never publish a tree the gate did not pass. Under the `tested` basis HEAD's tree must
+  # still be TESTED_TREE here: every re-sync below either re-gates or changes the basis,
+  # so anything else moved HEAD behind the gate's back (a hook, a stage that committed
+  # after the record). That tree goes through the gate again BEFORE the push, instead of
+  # being pushed and then declared an internal error afterwards.
+  if [ "$PUBLISH_BASIS" = tested ]; then
+    HEAD_TREE=$(git rev-parse "HEAD^{tree}")
+    if [ "$HEAD_TREE" != "$TESTED_TREE" ]; then
+      echo "⚠️  HEAD's tree ${HEAD_TREE:0:8} is not the tested tree ${TESTED_TREE:0:8} (last commit: $(git log -1 --format='%h %s')); not pushing an untested tree. Re-gating it."
+      _gate_integrated_tree
+    fi
+  fi
   if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
     PUSHED=1; PUSH_VIA=git
     break
