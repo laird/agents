@@ -413,6 +413,29 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 
 ### Merge Mode
 ```
-pr
+merge
 ```
 Options: `merge` (auto-merge to parent branch and push) or `pr` (push feature branch and create a pull request, then stop).
+
+Workers merge tested work straight to `master` and push (laird, 2026-11-16). Do
+not open pull requests for swarm work: an open PR leaves the issue looking
+unworked, and another worker picks it up again.
+
+### Integration Branch
+```
+master
+```
+
+### Landing work
+
+- **Rebase before you merge.** Immediately before `merge-launch.sh`, run
+  `git fetch origin && git rebase origin/master`, resolve conflicts yourself
+  keeping both sides' behaviour, re-run the regression suite, then launch.
+- **A conflict or a rejected push is not a `needs-clarification` question.**
+  If the merge job reports one, rebase again, re-test and relaunch, and put the
+  issue's label back to `working`. Escalate only if the same conflict comes back twice.
+- **Don't bump plugin versions in an issue branch.** Every manifest version is
+  a line all branches would edit, so parallel bumps always conflict. Note the
+  change under `## [Unreleased]` in the plugin's CHANGELOG, if there is one, and
+  leave the version alone. The manager bumps every manifest once (Version
+  Management, below) when it releases a batch.
