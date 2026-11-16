@@ -12,6 +12,8 @@
 # Source this file; callers use:
 #   gate_cache_get <tree-sha> "<test-cmd>"        -> prints pass|fail, rc 0 if recorded, 1 if not
 #   gate_cache_put <tree-sha> "<test-cmd>" pass|fail
+#   gate_cache_forget <tree-sha> "<test-cmd>"     -> removes the record (a run that was no
+#                                                    verdict: the host could not run the gate)
 #   gate_cache_run <dir> "<test-cmd>"             -> rc 0 pass / 1 fail; runs only on a miss
 #   gate_cache_prune [days]                       -> deletes records older than N days (default 30)
 #
@@ -166,6 +168,18 @@ _gate_cache_report_flaky() {  # <tree> <before> <after> [whole]
       gate_cache_on_flaky "$tree" "$name" "$(printf '%b' "$excerpt")" || true
     fi
   done <<< "$before"
+}
+
+# A run the host could not complete (a disk-space stage over its threshold, ENOSPC, a
+# missing tool) is recorded as a fail by gate_cache_run, which cannot see the output. The
+# caller that classified it removes the record so a bisect reusing fails never reads a
+# host condition as a verdict. Prints one line when a record was there.
+gate_cache_forget() {
+  local tree="$1" cmd="$2" f
+  f="$(gate_cache_dir)/$(_gate_cache_key "$tree" "$cmd")"
+  [ -f "$f" ] || return 0
+  rm -f "$f"
+  echo "gate-cache: forgot the record for tree ${tree:0:8} (the run was not a verdict)"
 }
 
 gate_cache_run() {
