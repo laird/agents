@@ -373,8 +373,11 @@ This section configures the `/fix` command for autonomous issue resolution.
 
 ### Regression Test Suite
 ```bash
-bash plugins/autocoder/scripts/regression-test.sh
+bash tests/run-shell-suite.sh
 ```
+The merge gate uses this, not `plugins/autocoder/scripts/regression-test.sh`:
+that script prints "All tests passed" and exits 0 even when a suite fails, so a
+gate on it passes anything.
 
 ### Unit Tests Only
 ```bash
