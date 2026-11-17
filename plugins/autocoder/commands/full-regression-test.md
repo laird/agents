@@ -60,11 +60,7 @@ If no configuration is found, defaults are used.
 
 ```bash
 # Source issue config — exits with clear error if not configured
-# Resolve the autocoder script directory. A project-local tree only wins if it is
-# a COMPLETE override — i.e. it actually contains the file we are about to source.
-# Testing for the directory alone let a stale vendored .agent/ or plugins/autocoder/
-# tree, left behind by an old project import, shadow the installed plugin: the
-# source below then failed and every issue_* call silently used the wrong backend.
+# Resolve SCRIPT_DIR — see scripts/README.md#script-dir
 SCRIPT_DIR=$(
   for d in "$(pwd)/.agent/scripts" \
            "$(pwd)/plugins/autocoder/scripts" \
@@ -314,11 +310,7 @@ Failures are assigned priority based on impact:
 3. **Add analysis comments**: Document test results on relevant issues
 
 ```bash
-# Resolve the autocoder script directory. A project-local tree only wins if it is
-# a COMPLETE override — i.e. it actually contains the file we are about to source.
-# Testing for the directory alone let a stale vendored .agent/ or plugins/autocoder/
-# tree, left behind by an old project import, shadow the installed plugin: the
-# source below then failed and every issue_* call silently used the wrong backend.
+# Resolve SCRIPT_DIR — see scripts/README.md#script-dir
 SCRIPT_DIR=$(
   for d in "$(pwd)/.agent/scripts" \
            "$(pwd)/plugins/autocoder/scripts" \

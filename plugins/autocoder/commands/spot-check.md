@@ -27,8 +27,7 @@ the sampled items get read.
 ## Instructions
 
 ```bash
-# Resolve the autocoder script directory. A project-local tree only wins if it is
-# a COMPLETE override — i.e. it actually contains the file we are about to source.
+# Resolve SCRIPT_DIR — see scripts/README.md#script-dir
 SCRIPT_DIR=$(
   for d in "$(pwd)/.agent/scripts" \
            "$(pwd)/plugins/autocoder/scripts" \
