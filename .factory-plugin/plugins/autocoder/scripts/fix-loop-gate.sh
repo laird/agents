@@ -285,7 +285,7 @@ esac
 # `.autocoder.json` `claims.avoid_overlap`: `prefer` tries candidates whose
 # declared areas (`Touches:` / Files Affected, see touches-fns.sh) overlap an
 # in-flight `working` issue's only after the rest; `strict` skips them; `off`
-# (the default) changes nothing and costs nothing. The config is the main
+# (the default) changes nothing and makes no backend call. The config is the main
 # worktree's, as for issueSource (issue-config.sh). Runs after the resume step
 # and on the branch-filtered list. Fails open: if the in-flight issues cannot be
 # listed, candidates keep their order.

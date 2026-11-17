@@ -15,8 +15,13 @@
 #
 # Entries are comma-separated: an exact path, a directory (a trailing `/` means
 # everything under it) or a glob (`*` and `?` within one path segment, `**`
-# across segments). Backticks around entries are ignored. With no `Touches:`
-# line, the backticked paths in a `## Files Affected` section count instead.
+# across segments). Backticks around entries are ignored; `Touches: none`
+# declares no areas. With no `Touches:` line (or an empty one), the backticked
+# paths in a `## Files Affected` section count instead. Lines inside fenced code
+# blocks are ignored, so an issue that quotes the format does not declare it.
+# A catch-all (`**`, `*`, `/`) names nothing and is dropped; at most 64 areas of
+# 32 segments are read per issue.
+# Bodies are read as markdown: a backend that stores HTML (ADO) declares nothing.
 #
 # Two areas overlap when one of them, or a prefix of it, matches the other:
 # `src/web/` overlaps `src/web/server.rs`, `src/*/server.rs` overlaps
@@ -44,11 +49,13 @@
 #                                        warns on stderr and reads as off)
 
 _TOUCHES_PY=$(cat <<'PY'
-import fnmatch, json, os, re, sys
+import fnmatch, functools, json, os, re, sys
 
-TOUCHES_RE = re.compile(r"^[ \t>*_-]*Touches:[*_]*[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
+TOUCHES_RE = re.compile(r"^[ \t>*_-]*Touches[*_]*:[*_]*[ \t]*(.*)$", re.IGNORECASE)
 HEADING_RE = re.compile(r"^#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$")
+FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
 BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+NO_AREAS = {"none", "n/a", "na", "-", "nothing", "tbd"}
 
 def clean(entry):
     e = entry.strip().strip("`").strip()
@@ -59,26 +66,63 @@ def clean(entry):
 def looks_like_path(s):
     return bool(s) and not re.search(r"\s", s) and ("/" in s or "." in s or "*" in s)
 
+def prose_lines(body):
+    # Lines outside fenced code blocks: a fence that quotes the format, or a
+    # `# comment` in a shell snippet, is not a declaration or a heading.
+    fenced = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            fenced = not fenced
+            continue
+        if not fenced:
+            yield line
+
 def areas_of(issue):
     body = issue.get("body") or ""
-    m = TOUCHES_RE.search(body)
-    if m:
-        return [a for a in (clean(e) for e in m.group(1).split(",")) if a]
+    body = body if isinstance(body, str) else ""
+    for line in prose_lines(body):
+        m = TOUCHES_RE.match(line)
+        if m and m.group(1).strip():
+            entries = [clean(e) for e in m.group(1).split(",")]
+            # `Touches: none` declares no areas; an empty line falls through below.
+            return keep([a for a in entries if a and a.lower() not in NO_AREAS])
     areas, in_section = [], False
-    for line in body.splitlines():
+    for line in prose_lines(body):
         h = HEADING_RE.match(line)
         if h:
-            in_section = h.group(1).strip().lower() == "files affected"
+            in_section = h.group(1).strip().rstrip(":").strip().lower() == "files affected"
             continue
         if in_section:
             areas += [a for a in (clean(t) for t in BACKTICK_RE.findall(line)) if looks_like_path(a)]
-    seen = set()
-    return [a for a in areas if not (a in seen or seen.add(a))]
+    return keep(areas)
+
+def keep(areas):
+    seen, out = set(), []
+    for a in areas:
+        if a not in seen and not is_catch_all(a):
+            seen.add(a)
+            out.append(a)
+    return out[:MAX_AREAS]
 
 WILD = re.compile(r"[*?\[]")
 
+MAX_SEGS = 32     # an area deeper than this is cut to its first segments
+MAX_AREAS = 64    # areas read per issue
+
 def segs(area):
-    return [s for s in area.split("/") if s not in ("", ".")]
+    out = []
+    for s in area.split("/"):
+        if s in ("", "."):
+            continue
+        if s == "**" and out and out[-1] == "**":
+            continue   # `**/**` matches what `**` does
+        out.append(s)
+    return out[:MAX_SEGS]
+
+def is_catch_all(area):
+    # `**`, `*`, `/`: names no part of the tree, so it would overlap every issue
+    # and, under strict, idle every other worker. Not a declaration.
+    return not any(not WILD.search(s) for s in segs(area))
 
 def is_leaf(area):
     # A file, with nothing under it: no trailing `/` and the last segment has an
@@ -100,18 +144,24 @@ def comparable(a, b, a_leaf, b_leaf):
     # True when some path matched by one equals, or lies under, some path matched
     # by the other. Running out of one side means it names an ancestor of the
     # other's remaining path, which counts only when it can have children.
-    if not a or not b:
-        rest = b or a
-        leaf = a_leaf if not a else b_leaf
-        return not rest or not leaf or all(s == "**" for s in rest)
-    if a[0] == "**":
-        return comparable(a[1:], b, a_leaf, b_leaf) or comparable(a, b[1:], a_leaf, b_leaf)
-    if b[0] == "**":
-        return comparable(a, b[1:], a_leaf, b_leaf) or comparable(a[1:], b, a_leaf, b_leaf)
-    return seg_eq(a[0], b[0]) and comparable(a[1:], b[1:], a_leaf, b_leaf)
+    # Memoised on positions, so `**` costs O(len(a) * len(b)), not exponential
+    # time: issue bodies are untrusted and the gate runs unattended.
+    @functools.lru_cache(maxsize=None)
+    def go(i, j):
+        if i == len(a) or j == len(b):
+            rest = b[j:] if i == len(a) else a[i:]
+            leaf = a_leaf if i == len(a) else b_leaf
+            return not rest or not leaf or all(s == "**" for s in rest)
+        if a[i] == "**":
+            return go(i + 1, j) or go(i, j + 1)
+        if b[j] == "**":
+            return go(i, j + 1) or go(i + 1, j)
+        return seg_eq(a[i], b[j]) and go(i + 1, j + 1)
+    return go(0, 0)
 
 def lists_overlap(xs, ys):
-    return any(comparable(segs(x), segs(y), is_leaf(x), is_leaf(y)) for x in xs for y in ys)
+    return any(comparable(tuple(segs(x)), tuple(segs(y)), is_leaf(x), is_leaf(y))
+               for x in xs for y in ys)
 
 def lines(s):
     return [l.strip() for l in (s or "").splitlines() if l.strip()]
@@ -126,7 +176,8 @@ if cmd == "of":
     for a in areas_of(issue if isinstance(issue, dict) else {}):
         print(a)
 elif cmd == "overlap":
-    a, b = lines(os.environ["T_A"]), lines(os.environ["T_B"])
+    a = [x for x in lines(os.environ["T_A"]) if not is_catch_all(x)]
+    b = [x for x in lines(os.environ["T_B"]) if not is_catch_all(x)]
     sys.exit(0 if a and b and lists_overlap(a, b) else 1)
 elif cmd == "order":
     mode = os.environ["T_MODE"]
@@ -176,7 +227,12 @@ PY
 )
 
 touches_of() {
-  T_JSON="$1" python3 -c "$_TOUCHES_PY" of
+  # Through stdin, not the environment: one variable is capped at 128 KB.
+  if [ "$1" = - ]; then
+    T_JSON=- python3 -c "$_TOUCHES_PY" of
+  else
+    printf '%s' "$1" | T_JSON=- python3 -c "$_TOUCHES_PY" of
+  fi
 }
 
 areas_overlap() {

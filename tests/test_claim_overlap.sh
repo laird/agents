@@ -35,7 +35,32 @@ assert_eq "a Touches: mid-line (an example in prose) is not a declaration" "" \
   "$(touches_of "$(body_json $'Format: one line `Touches: a/b`.\n## Files Affected\n[List specific files]')")"
 assert_eq "stdin form" "d/" "$(body_json 'Touches: d/' | touches_of -)"
 
+assert_eq "a Touches: inside a code fence is an example, not a declaration" "real/" \
+  "$(touches_of "$(body_json $'```\nTouches: example/\n```\nTouches: real/')")"
+assert_eq "an empty Touches: falls back to Files Affected" "b/c.sh" \
+  "$(touches_of "$(body_json $'Touches:\n## Files Affected\n- `b/c.sh`')")"
+assert_eq "Touches: none declares no areas" "" "$(touches_of "$(body_json 'Touches: none')")"
+assert_eq "**Touches**: and 'Files Affected:' spellings" "x/" \
+  "$(touches_of "$(body_json '**Touches**: x/')")"
+assert_eq "a # comment in a fence does not end Files Affected" "$(printf 'a/x.sh\nb/y.sh')" \
+  "$(touches_of "$(body_json $'## Files Affected:\n- `a/x.sh`\n```\n# note\n```\n- `b/y.sh`')")"
+assert_eq "catch-all areas are dropped" "src/" \
+  "$(touches_of "$(body_json 'Touches: **, /, *, src/')")"
+BIG=$(python3 -c 'import json; print(json.dumps({"body": "x" * 300000 + "\nTouches: big/"}))')
+assert_eq "a body over 128 KB is read (stdin, not env)" "big/" "$(touches_of "$BIG")"
+
+# Untrusted bodies must not hang the gate: `**` matching was exponential.
+DEEP="$(python3 -c 'print("**/" * 400 + "zzz.rs")')"
+START=$SECONDS
+areas_overlap "$DEEP" "plugins/autocoder/scripts/fix-loop-gate.sh"
+assert_eq "a pathological ** area is decided quickly" yes "$([ $((SECONDS - START)) -lt 5 ] && echo yes)"
+WIDE="$(python3 -c 'print("/".join(["**", "a"] * 40) + "/x.rs")')"
+START=$SECONDS
+areas_overlap "$WIDE" "$WIDE"
+assert_eq "** on both sides is decided quickly" yes "$([ $((SECONDS - START)) -lt 5 ] && echo yes)"
+
 ov() { if areas_overlap "$1" "$2"; then echo yes; else echo no; fi; }
+assert_eq "a catch-all overlaps nothing"             no  "$(ov '**' src/a.rs)"
 assert_eq "directory covers a file under it"        yes "$(ov src/web/ src/web/server.rs)"
 assert_eq "directory without its slash still covers" yes "$(ov src/web src/web/x.rs)"
 assert_eq "sibling prefix is not a parent"           no  "$(ov src/web src/webby/x.rs)"

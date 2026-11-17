@@ -691,7 +691,11 @@ checks each candidate against the issues other workers hold (`working`):
 
 `prefer` tries overlapping candidates only after every other one, even a
 lower-priority one; `strict` skips them; `off` (the default) changes nothing.
-An issue with no declared areas never counts as overlapping.
+An issue with no declared areas (or `Touches: none`) never counts as
+overlapping, and a catch-all such as `**` is ignored. Bodies are read as
+markdown, so on Azure DevOps, whose descriptions are HTML, nothing is declared
+yet. `strict` treats every `working` issue as in flight, so an abandoned claim
+on the file backend keeps blocking until it is released.
 
 ### Registering a Custom Backend
 
