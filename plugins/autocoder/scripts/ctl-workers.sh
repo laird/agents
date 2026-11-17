@@ -171,6 +171,17 @@ _ctlw_setup() {  # after _ctlw_args: finds the worker and loads mux-send-lib
   return 0
 }
 
+# Free text from a UI must reach the agent as typed. Without -l, tmux reads text that
+# is a key name ("C-c", "Escape") as that key; without --, text such as "-t other:0.1"
+# is read as options and could retarget the send. Enter is a separate call, as in
+# send_tmux_text_enter (mux-send-lib.sh), so the TUI does not take it as pasted text.
+# herdr's send-text and agent prompt take a leading-dash text as the positional argument.
+_ctlw_tmux_send_literal() {  # <pane> <text>
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -l -t "$1" -- "$2" || return 1
+  sleep "$AUTOCODER_MUX_SUBMIT_DELAY"
+  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$1" Enter
+}
+
 ctl_verb_nudge() {
   _ctlw_args nudge 1 "usage: nudge <worktree> [text] [--session <name>]" -- "$@" || return
   local text="$AUTOCODER_CTL_NUDGE_TEXT"
@@ -190,9 +201,11 @@ ctl_verb_nudge() {
 
   local via rc
   case "$_W_MUX" in
-    tmux)  via="tmux send-keys, then Enter"
-           send_tmux_text_enter "$_W_PANE" "$text"; rc=$? ;;
-    cmux)  via="cmux send, then send-key enter"
+    tmux)  via="tmux send-keys -l, then Enter"
+           _ctlw_tmux_send_literal "$_W_PANE" "$text"; rc=$? ;;
+    cmux)  # cmux's own parser decides whether "-x" is an option; we cannot check it.
+           case "$text" in -*) ctl_fail "$_W_WORKTREE" "cmux: text starting with '-' could be read as an option; not sending"; return ;; esac
+           via="cmux send, then send-key enter"
            send_cmux_command "$_W_PANE" "$text"; rc=$? ;;
     herdr) if [ "$_W_COMMAND_MODE" = "agent-input" ]; then
              # herdr's agent prompt submits text and enter as one ordered write.

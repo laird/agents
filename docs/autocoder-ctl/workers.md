@@ -46,8 +46,8 @@ Each multiplexer needs its own way to submit, and the verb uses the one from `mu
 
 | mux | How the text is sent |
 |---|---|
-| tmux | `send-keys` with the text, then a separate `send-keys Enter`. A trailing Enter in the same call is read as part of a paste and never submits. |
-| cmux | `cmux send --workspace`, then `cmux send-key --workspace … enter`. |
+| tmux | `send-keys -l -t <pane> -- <text>`, then a separate `send-keys Enter`. `-l` types the text literally (a text of `C-c` is typed, not pressed) and `--` stops a leading-dash text being read as options. A trailing Enter in the same call is read as part of a paste and never submits. |
+| cmux | `cmux send --workspace`, then `cmux send-key --workspace … enter`. Text starting with `-` is refused (exit 1), since cmux might read it as an option. |
 | herdr | `herdr agent prompt` for an `agent-input` worker (one ordered write of text and enter). If that fails, and for `shell`-mode workers, the verb uses `pane send-text` followed by `pane send-keys enter`. |
 
 The verb refuses (exit 1, nothing typed):
@@ -62,7 +62,7 @@ The verb refuses (exit 1, nothing typed):
 {"ok": true, "action": "nudge", "target": "/src/agents-wt-2",
  "detail": {"worktree": "/src/agents-wt-2", "session": "claude-agents", "worker": 2,
             "mux": "tmux", "pane": "claude-agents:1.2", "sent": true,
-            "via": "tmux send-keys, then Enter", "text": "Resume the autocoder fix loop: …"}}
+            "via": "tmux send-keys -l, then Enter", "text": "Resume the autocoder fix loop: …"}}
 ```
 
 A send that fails returns `"sent": false` with the multiplexer's `exit` code.
