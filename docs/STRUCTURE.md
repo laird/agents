@@ -96,6 +96,8 @@ agents/
 │           ├── issues-jira.sh           # Jira-backend issue store
 │           ├── issues-ado.sh            # Azure DevOps-backend issue store
 │           ├── merge-to-integration.sh  # Land worktree work on shared integration branch
+│           ├── merge-conflict-fns.sh    # Resolve a conflicted merge rebase before bouncing (#164)
+│           ├── merge-conflict-claude.sh # Bundled headless-Claude conflict resolver (#164)
 │           ├── regression-test.sh       # Full test suite with GitHub integration
 │           ├── fetch-blocked-issues.sh  # List blocked/needs-review issues
 │           ├── add-blocking-label.sh    # Label an issue as blocked

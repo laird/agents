@@ -711,6 +711,43 @@ them with `plugins/autocoder/scripts/touches-fns.sh hot`.
 { "claims": { "avoid_overlap": "prefer", "hot_window": "7d" } }
 ```
 
+### Resolving Merge Conflicts in the Merge Job
+
+When the merge job's rebase onto the integration branch stops on a conflict,
+it normally aborts and bounces the issue back to its worker. Two settings in
+`.autocoder.json` let the job try first, inside its own throwaway worktree:
+
+```json
+{
+  "unionMerge": ["CHANGELOG.md", "tests/*.list"],
+  "conflictResolver": "claude",
+  "conflictResolverTimeout": 600
+}
+```
+
+`unionMerge` lists append-only files (module lists, test lists, changelog
+paragraphs). A conflict in one of them is rebuilt with
+`git merge-file --union`, which keeps both sides' lines. Globs are bash
+patterns on the repo-relative path, and `*` also matches `/`.
+
+`conflictResolver` gets one try per job, bounded by `conflictResolverTimeout`
+seconds. `claude` runs `merge-conflict-claude.sh`, a headless session that can
+read the worktree but may only edit the conflicted files. Any other value is
+a shell command run in the worktree, with `AUTOCODER_CONFLICT_FILES` and
+`AUTOCODER_CONFLICT_CONTEXT` (both sides' commit messages) in its
+environment. It must exit 0 only when it resolved every file. The job refuses
+the result if it leaves conflict markers or unmerged paths, or if it moved
+`HEAD`. The default is `off`.
+
+A resolved tree is gated like any other before it is pushed. A re-sync after
+a lost push race that needed resolving is always re-gated. The close comment
+names the resolved files and says the resolution was not part of the reviewed
+commit. When the attempt is refused, or the resolved tree fails the gate, the
+issue is bounced or escalated as before, and the comment includes the
+attempted diff. `AUTOCODER_UNION_MERGE`, `AUTOCODER_CONFLICT_RESOLVER` and
+`AUTOCODER_CONFLICT_RESOLVER_TIMEOUT` override these settings for one run
+(`AUTOCODER_CONFLICT_RESOLVER=off` disables the resolver).
+
 ### Registering a Custom Backend
 
 The built-in sources (`file`, `github`, `jira`, `ado`) need only `issueSource`. A custom backend additionally points `issueBackend` at an executable:

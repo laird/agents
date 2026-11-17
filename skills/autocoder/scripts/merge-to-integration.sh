@@ -96,6 +96,12 @@
 #     mechanical, so the close comment says so and names both commits; a conflicted rebase
 #     is aborted and bounced to the worker (kind=conflict, #207), who resolves it and has it
 #     re-reviewed.
+#   - Before that bounce, merge-conflict-fns.sh tries to resolve the conflict in this
+#     job's worktree (#164): union-merge for files .autocoder.json "unionMerge" declares
+#     append-only, then one bounded attempt by the "conflictResolver" command (off by
+#     default; "claude" runs merge-conflict-claude.sh). A resolved tree is gated like any
+#     other (a re-sync that needed resolving is always re-gated), and the close comment
+#     names the resolved files. A refused attempt is attached to the bounce or escalation.
 #   - A lost push race re-syncs by rebasing again; whether that re-gates follows the same
 #     rules as before (scoped re-gate, documents-only re-sync, strict mode).
 #   - The feature branch is deleted with a lease on FEATURE_SHA, the commit that was on
@@ -243,6 +249,9 @@ AUTOCODER_EVENT_NO_RELEASE=1   # its label cleanup is not the worker releasing t
 source "${_MTI_DIR}/feature-ref-fns.sh"
 # shellcheck source=merge-queue-fns.sh
 source "${_MTI_DIR}/merge-queue-fns.sh"
+# shellcheck source=merge-conflict-fns.sh
+source "${_MTI_DIR}/merge-conflict-fns.sh"   # #164: resolve a conflicted rebase first
+conflict_load_config "$CALLER_DIR"
 
 TMP_ROOT=$(autocoder_tmp_root) || exit 1   # private per-user dir (#213)
 REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
@@ -311,7 +320,8 @@ _emit_attempt_event() {
   merge_event event=attempt outcome="$outcome" repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
     files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
-    landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON"
+    landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON" \
+    conflict_resolved_by="${CONFLICT_RESOLVED_BY:-}"
   issue_event gate-end "${ISSUE_NUM:-}" repo="$(_merge_repo_id)" outcome="$outcome" \
     attempt="${AUTOCODER_MERGE_ATTEMPT:-}" duration_s="$((SECONDS - MERGE_T0))" exit="$rc" \
     reason="$MERGE_REASON"
@@ -429,7 +439,7 @@ ${tail}
     if [ "$PUSHED" -eq 0 ] && [ "${GATE_BOUNCE:-0}" -eq 1 ]; then
       if _bounce gate "$(_failing_suites)" "
 
-Gate verdict: ${reason}${tail}"; then
+Gate verdict: ${reason}$(conflict_resolution_note)${tail}"; then
         exit "$code"
       fi
       repeat="
@@ -443,7 +453,7 @@ The work from \`${FEATURE}\` is on \`${INTEGRATION_BRANCH}\`; what failed was th
     else
       issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "❌ **Auto-merge to \`${INTEGRATION_BRANCH}\` failed** (exit ${code}): ${reason}
 
-The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${repeat}${tail}" 2>/dev/null || true
+The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${repeat}$(conflict_resolution_note)${tail}" 2>/dev/null || true
     fi
   fi
   exit "$code"
@@ -463,7 +473,7 @@ _escalate_conflict() {
   echo "❌ Conflict rebasing ${FEATURE} onto '${INTEGRATION_BRANCH}'."
   MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED="$OWN_ISSUE"   # a successful _bounce clears it
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
-    if _bounce conflict "$files" ""; then
+    if _bounce conflict "$files" "$(conflict_resolution_note)"; then
       echo "   Aborted the rebase; the worker rebases and relaunches."
       exit 1
     fi
@@ -471,7 +481,7 @@ _escalate_conflict() {
     issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit the same conflict twice** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue.
 
 Conflicting files:
-$(printf '%s\n' "$files" | sed '/^$/d' | sed 's/^/- `/; s/$/`/')" 2>/dev/null || true
+$(printf '%s\n' "$files" | sed '/^$/d' | sed 's/^/- `/; s/$/`/')$(conflict_resolution_note)" 2>/dev/null || true
   else
     echo "   Aborted the rebase. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
   fi
@@ -497,7 +507,11 @@ _close_or_park() {
     summary=$(cat "$SUMMARY_FILE")
   fi
   # The review record names the pre-rebase HEAD; say how the landed commit relates to it.
-  if [ "$landed" != "$FEATURE_SHA" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
+  if [ -n "$CONFLICT_RESOLVED_FILES" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
+    rebase_note="
+
+**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` and landed as \`${landed}\`. The rebase hit a conflict that the merge job resolved itself; the gate passed on the resolved tree, but the resolution was not part of the reviewed HEAD.$(conflict_resolution_note)"
+  elif [ "$landed" != "$FEATURE_SHA" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
     rebase_note="
 
 **Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` without conflicts and landed as \`${landed}\`. A clean rebase is mechanical; a conflicted one is bounced back to the worker for re-review."
@@ -667,7 +681,7 @@ if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; 
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST" "${CONFLICT_ATTEMPT_FILE:-}"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
@@ -761,9 +775,18 @@ unset _tok
 _GIT_PINNED=(-c core.hooksPath=/dev/null -c rerere.enabled=false -c commit.gpgsign=false
   -c rebase.autoSquash=false -c rebase.autoStash=false -c rebase.updateRefs=false
   -c rebase.rebaseMerges=false)
+# REBASE_RESOLVED=1 when this rebase stopped on a conflict that merge-conflict-fns.sh
+# resolved: the tree then holds edits nobody gated, so a re-sync must re-gate it.
+REBASE_RESOLVED=0
 _rebase_onto_integration() {
+  REBASE_RESOLVED=0
   if ! git "${_GIT_PINNED[@]}" rebase "origin/${INTEGRATION_BRANCH}"; then
-    _escalate_conflict
+    if conflict_try_resolve; then
+      REBASE_RESOLVED=1
+      echo "ℹ️  Conflict resolved in the merge worktree (${CONFLICT_RESOLVED_BY}); the gate decides whether the result is right."
+    else
+      _escalate_conflict
+    fi
   fi
   REBASE_ONTO=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 }
@@ -1058,7 +1081,10 @@ for attempt in 1 2 3 4 5; do
     # Someone else landed the same changes while we gated.
     _nothing_left_to_land "$INT_NEW_SHA"
   fi
-  if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
+  if [ "$REBASE_RESOLVED" -eq 1 ]; then
+    echo "ℹ️  Re-sync needed a conflict resolution; re-gating the merged tree"
+    _gate_integrated_tree
+  elif [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
     if DOCS_COUNT=$(_resync_docs_only "$INT_SEEN_SHA" "$INT_NEW_SHA") && _docs_resync_checks_pass; then
       echo "ℹ️  Documents-only re-sync (${DOCS_COUNT} incoming files, all documents, none this change touched): test stages not re-run; pushing the gated work"
       _note_docs_resync "$DOCS_COUNT"
