@@ -547,7 +547,8 @@ This is a contract. Field set **version 1**:
   `first-commit` is written once per issue, when its work first goes to the gate, but
   stamped with the commit's own time.
 - `repo`: the repo id (`autocoder_repo_id`, shared by every worktree of a checkout).
-- `issue`: the issue number, or `null` for the repo-wide `deployed` and `released-tag`.
+- `issue`: the issue number, or `null` for the repo-wide `deployed` and `released-tag`, and
+  for a `ctl` command whose target is not an issue.
 - `worker`: `AUTOCODER_WORKER` (`<session>:<n>` in a swarm), else the worktree's dir name.
 - `branch`: the issue branch, else the current branch.
 - `event` and its `detail` keys:
@@ -565,6 +566,7 @@ This is a contract. Field set **version 1**:
 | `decomposed` | `issue_update --add-label decomposed` | `children` (from `AUTOCODER_EVENT_CHILDREN`) |
 | `deployed` | `deploy.sh`, after the check passes | `environment`, `sha`, `deployment` |
 | `released-tag` | `release.sh` | `tag`, `sha`, `environment` |
+| `ctl` | `autocoder-ctl.sh`, after each command's result (not `help` or `status`); `issue` is the target when that is an issue number, else `null` | `action`, `target`, `ok` (boolean), `exit`, `actor`, `summary` (the result's `detail`, first 200 characters) |
 
 An issue counts as deployed or released once its `landed` sha is an ancestor of the
 event's `sha`. A step can be recorded twice (a release by label and by `issue_release`);

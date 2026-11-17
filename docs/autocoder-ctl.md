@@ -45,6 +45,28 @@ Verbs that write to the issue tracker say who acted, taken from
 person (or bot) using it, so the comment on the issue names them rather than the
 account the UI runs under.
 
+### Events
+
+After the result is printed, every command except the read-only `help` and `status`
+appends one `ctl` event to the issue lifecycle log, `issue-events.jsonl` (#190, format
+in [scripts/README.md](../plugins/autocoder/scripts/README.md#issue-lifecycle-issue-eventsjsonl-190)).
+Failures are recorded too, usage errors included:
+
+```json
+{"v":1,"ts":"2026-11-17T05:02:11Z","repo":"agents-5ea0ca80","issue":17,"worker":"agents",
+ "branch":"master","event":"ctl","detail":{"action":"release","target":"17","ok":true,
+ "exit":0,"actor":"dashboard-ui","summary":"{\"issue\":\"17\",\"released\":true,...}"}}
+```
+
+`issue` is the target when the target is an issue number, else `null`. `summary` is the
+first 200 characters of `detail` (compact JSON when `detail` is an object). `worker` and
+`branch` are the caller's checkout, so `actor` is what names who acted.
+
+Recording is best effort. A missing events library, an unwritable log or an error while
+writing changes neither the result nor the exit code. `status` is left out because a UI
+polls it every few seconds, and those lines would bury the lifecycle log.
+`AUTOCODER_ISSUE_EVENTS` points the log elsewhere; the tests use a private one.
+
 ## Verbs
 
 Verbs are grouped into modules (`ctl-<group>.sh` beside the dispatcher). The
@@ -121,6 +143,6 @@ points `status` at another checkout.
    stdout: the dispatcher points stdout at stderr while the verb runs, and a verb
    that reports nothing is answered as a failure.
 3. Every result leaves through `ctl_emit`, so anything that should happen once per
-   action (recording an event, #247) goes there.
+   action goes there: it records the action's event (`ctl_record`, #247).
 4. Run `python3 scripts/package-plugin-scripts.py` and add the cases to
    `tests/test_autocoder_ctl.sh` or a test of the module's own.

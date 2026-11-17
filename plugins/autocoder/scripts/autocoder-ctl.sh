@@ -46,8 +46,8 @@ ctl_module_for() {
 CTL_VERBS="release status nudge stop restart approve reject request-changes file start add-worker remove-worker stop-swarm"
 
 # ── Result ────────────────────────────────────────────────────────────────────
-# A verb sets the result; the dispatcher prints it once, through ctl_emit. Recording
-# an event per action (#247) belongs in ctl_emit and nowhere else.
+# A verb sets the result; the dispatcher prints it once, through ctl_emit, which then
+# records it (ctl_record, #247). Anything that should happen once per action goes there.
 CTL_ACTION="" CTL_SET=false CTL_OK=false CTL_RC=1 CTL_TARGET="" CTL_DETAIL="" CTL_DETAIL_JSON=false
 
 _ctl_set() {  # _ctl_set <ok> <rc> <target> <detail> [--json]
@@ -72,7 +72,37 @@ ctl_emit() {
   fi
   jq -cn --argjson ok "$CTL_OK" --arg action "$CTL_ACTION" --arg target "$CTL_TARGET" "${detail_arg[@]}" \
     '{ok: $ok, action: $action, target: (if $target == "" then null else $target end), detail: $detail}' >&3
+  ctl_record
   return "$CTL_RC"
+}
+
+# ── Event per action (#247) ───────────────────────────────────────────────────
+# After the result is out, append one `ctl` event to the lifecycle log (#190,
+# issue-events-lib.sh): action, target, ok, exit, actor and the first 200 characters
+# of the detail. `issue` is the target when the target is an issue number.
+#
+# Best effort: it runs in a subshell with every stream closed, so a missing library,
+# an unwritable log or a crash here changes neither the result nor the exit code.
+#
+# Read-only verbs are not recorded: they change nothing, and a UI polls `status`
+# every few seconds, which would bury the lifecycle log in lines nobody reads.
+CTL_UNRECORDED="help status"
+
+ctl_record() {
+  case " $CTL_UNRECORDED " in *" $CTL_ACTION "*) return 0 ;; esac
+  (
+    lib="${_ctl_DIR}/issue-events-lib.sh"
+    [ -f "$lib" ] || exit 0
+    # shellcheck source=issue-events-lib.sh
+    source "$lib"
+    issue=-
+    [[ "$CTL_TARGET" =~ ^[0-9]+$ ]] && issue="$CTL_TARGET"
+    summary="$CTL_DETAIL"
+    if $CTL_DETAIL_JSON; then summary=$(printf '%s' "$CTL_DETAIL" | jq -c . 2>/dev/null) || summary="$CTL_DETAIL"; fi
+    issue_event ctl "$issue" action="$CTL_ACTION" target="$CTL_TARGET" ok="$CTL_OK" \
+      exit="$CTL_RC" actor="$(ctl_actor)" summary="${summary:0:200}"
+  ) </dev/null >/dev/null 2>&1 || true
+  return 0
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────

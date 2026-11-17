@@ -18,6 +18,18 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 unset ISSUE_SOURCE ISSUE_BACKEND ISSUE_DIR
+# Events (#247) go to a private log, never the user's real state dir.
+EV="$TMP/issue-events.jsonl"
+export AUTOCODER_ISSUE_EVENTS="$EV"
+# mark; <run a verb>; new_ctl — the ctl events appended since the mark, one per line.
+mark()    { MARK=$(cat "$EV" 2>/dev/null | wc -l); }
+new_ctl() { tail -n +$((MARK + 1)) "$EV" 2>/dev/null | jq -c 'select(.event == "ctl")'; }
+# one_ctl <name> <jq test> — exactly one new ctl event, and it passes the test.
+one_ctl() {
+  local evs; evs=$(new_ctl)
+  if [ "$(printf '%s' "$evs" | grep -c .)" -ne 1 ]; then bad "$1: want one ctl event, got: ${evs:-none}"; return 1; fi
+  jq -e "$2" <<<"$evs" >/dev/null && ok "$1" || bad "$1: $evs"
+}
 
 # run <expected-rc> <expected-ok> <name> -- <ctl> <args...>
 # Checks: the exit code, stdout is exactly one line holding one JSON object with
@@ -48,6 +60,17 @@ run 2 false "release with an unknown option"                -- "$CTL" release 5 
 run 2 false "status with an unknown argument"               -- "$CTL" status --bogus
 run 2 false "status --session with no value"                -- "$CTL" status --session
 
+# ── An event per command (#247) ───────────────────────────────────────────────
+mark; run 2 false "frobnicate again" -- "$CTL" frobnicate
+one_ctl "a usage failure records one event" \
+  '.v == 1 and .issue == null and (.ts | test("Z$")) and .detail.action == "frobnicate" and .detail.ok == false and .detail.exit == 2
+   and (.detail.summary | startswith("unknown verb"))'
+mark; run 2 false "release usage again" -- "$CTL" release 5 --force
+one_ctl "a known verb's usage failure records one event" '.detail.action == "release" and .detail.exit == 2'
+mark
+"$CTL" >/dev/null 2>&1; "$CTL" help >/dev/null 2>&1; "$CTL" status --bogus >/dev/null 2>&1
+[ -z "$(new_ctl)" ] && ok "help and status (read-only) record nothing" || bad "read-only recorded: $(new_ctl)"
+
 # ── Verbs whose module is not installed answer "not implemented" (exit 3) ─────
 for v in nudge stop restart approve reject request-changes file start add-worker remove-worker stop-swarm; do
   case "$v" in
@@ -72,6 +95,40 @@ grep -q 'noise a verb prints' "$TMP/stderr" && ok "the verb's output went to std
 run 1 false "a verb that reports nothing fails"             -- "$TMP/mod/autocoder-ctl.sh" stop
 run 1 false "a verb with invalid JSON detail fails"         -- "$TMP/mod/autocoder-ctl.sh" restart
 run 3 false "a module without the verb's function"          -- "$TMP/mod/autocoder-ctl.sh" approve
+mark; "$TMP/mod/autocoder-ctl.sh" nudge 3 >/dev/null 2>&1
+[ -z "$(new_ctl)" ] && ok "with no events library next to it, the dispatcher records nothing" || bad "recorded without lib"
+
+cp "$SCRIPTS/issue-events-lib.sh" "$SCRIPTS/repo-id-fns.sh" "$TMP/mod/"
+mark; run 0 true "a module verb, recorded" -- env AUTOCODER_CTL_ACTOR=ui-test "$TMP/mod/autocoder-ctl.sh" nudge 3
+one_ctl "a success records action, target, ok, exit, actor and the detail" \
+  '.issue == null and .detail == {action: "nudge", target: "wt-3", ok: true, exit: 0, actor: "ui-test", summary: "{\"sent\":true}"}'
+mark; run 1 false "a verb that reports nothing, recorded" -- "$TMP/mod/autocoder-ctl.sh" stop
+one_ctl "a failure records one event" '.detail.action == "stop" and .detail.ok == false and .detail.exit == 1 and .detail.target == null'
+mark; run 3 false "not implemented, recorded" -- "$TMP/mod/autocoder-ctl.sh" approve
+one_ctl "not implemented records exit 3" '.detail.action == "approve" and .detail.exit == 3'
+
+# A long detail is cut to 200 characters in the event, never in the result.
+cat >> "$TMP/mod/ctl-workers.sh" <<'SH'
+ctl_verb_restart() { ctl_fail "$1" "$(printf 'x%.0s' $(seq 1 500))"; }
+SH
+mark; run 1 false "a long detail" -- "$TMP/mod/autocoder-ctl.sh" restart 12
+[ "$(jq -r '.detail | length' <<<"$OUT")" = 500 ] && ok "the result keeps the whole detail" || bad "result cut: $OUT"
+one_ctl "the event keeps 200 characters, and a numeric target is the issue" '.issue == 12 and (.detail.summary | length) == 200'
+
+# Recording is best effort: an unwritable log leaves the result and exit code alone.
+want=$("$TMP/mod/autocoder-ctl.sh" nudge 3 2>/dev/null)
+touch "$TMP/a-file"
+for bad_log in "$TMP" "$TMP/a-file/events.jsonl"; do
+  got=$(AUTOCODER_ISSUE_EVENTS="$bad_log" "$TMP/mod/autocoder-ctl.sh" nudge 3 2>"$TMP/stderr"); rc=$?
+  [ "$rc" -eq 0 ] && [ "$got" = "$want" ] && ok "unwritable log ($bad_log): same result, exit 0" || bad "unwritable $bad_log: rc=$rc $got"
+  AUTOCODER_ISSUE_EVENTS="$bad_log" "$TMP/mod/autocoder-ctl.sh" stop >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 1 ] && ok "unwritable log ($bad_log): a failure still exits 1" || bad "unwritable $bad_log fail rc=$rc"
+done
+# A library that misbehaves (prints, exits) cannot reach stdout or the exit code.
+mkdir -p "$TMP/mod2"; cp "$TMP/mod/autocoder-ctl.sh" "$TMP/mod/ctl-workers.sh" "$TMP/mod2/"
+printf 'echo junk on stdout; echo junk on stderr >&2; exit 9\n' > "$TMP/mod2/issue-events-lib.sh"
+run 0 true "a broken events library changes nothing" -- "$TMP/mod2/autocoder-ctl.sh" nudge 3
+[ "$OUT" = "$want" ] && ok "the result is the same as with a working library" || bad "broken lib: $OUT"
 
 # ── release, against the file backend in a private repo ───────────────────────
 git init -q "$TMP/repo"; cd "$TMP/repo" || exit 1
@@ -82,7 +139,10 @@ IF() { ( source "$SCRIPTS/issue-fns.sh" >/dev/null 2>&1; "$@" ); }
 N=$(IF issue_create --title "t" --body "b" | jq -r .number)
 IF issue_claim "$N" >/dev/null 2>&1
 
+mark
 run 0 true "release drops a claim" -- env AUTOCODER_CTL_ACTOR=dashboard-ui "$CTL" release "$N" --reason "worker crashed"
+one_ctl "release records the issue and the actor" \
+  ".issue == $N and .detail.target == \"$N\" and .detail.ok == true and .detail.exit == 0 and .detail.actor == \"dashboard-ui\""
 jq -e --arg n "$N" '.target == $n and .detail.released and .detail.commented and .detail.actor == "dashboard-ui"
   and .detail.reason == "worker crashed"' <<<"$OUT" >/dev/null && ok "release reports issue, actor and reason" || bad "release detail: $OUT"
 J=$(IF issue_get "$N")
@@ -98,7 +158,9 @@ run 0 true "release without --reason uses \$USER" -- env -u AUTOCODER_CTL_ACTOR 
 jq -e '.detail.actor == "someone" and .detail.reason == null' <<<"$OUT" >/dev/null && ok "actor falls back to \$USER" || bad "fallback: $OUT"
 
 # ── status, with a manifest and a stubbed worker-idle.sh ──────────────────────
+mark
 run 0 true "status with no swarm" -- "$CTL" status --json
+[ -z "$(new_ctl)" ] && ok "a status call records nothing" || bad "status recorded: $(new_ctl)"
 jq -e '.detail == {swarms: 0, workers: []}' <<<"$OUT" >/dev/null && ok "no manifest means no workers" || bad "empty status: $OUT"
 run 1 false "status for a session with no manifest" -- "$CTL" status --session nope
 

@@ -38,8 +38,8 @@ issue_events_file() {
 #   AUTOCODER_WORKER (else the checkout's dir name), branch from AUTOCODER_EVENT_BRANCH
 #   (else the current branch). A merge job sets both shell variables, since it runs in a
 #   throwaway worktree on a branch of its own.
-#   Detail keys named in ISSUE_EVENT_INT_KEYS are written as numbers; children= takes a
-#   space- or comma-separated list of issue numbers.
+#   Detail keys attempt, duration_s, exit and push_retries are written as numbers, ok
+#   as a boolean; children= takes a space- or comma-separated list of issue numbers.
 issue_event() {
   [ $# -ge 2 ] || return 0
   local f top repo worker branch
@@ -68,6 +68,7 @@ ev = {"v": 1, "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m
       "repo": top["repo"], "issue": issue, "worker": top["worker"], "branch": top["branch"],
       "event": event, "detail": {}}
 ints = {"attempt", "duration_s", "exit", "push_retries"}
+bools = {"ok"}
 for a in rest:
     k, _, v = a.partition("=")
     if k in ("repo", "worker", "branch"):
@@ -77,6 +78,8 @@ for a in rest:
             ev["ts"] = v
     elif k == "children":
         ev["detail"][k] = [int(x) for x in re.split(r"[\s,#]+", v) if x.isdigit()]
+    elif k in bools:
+        ev["detail"][k] = v == "true" if v in ("true", "false") else None
     elif k in ints:
         try:
             ev["detail"][k] = int(v)
