@@ -754,9 +754,14 @@ if [ -n "$(git rev-list --merges "${INT_SEEN_SHA}..HEAD")" ]; then
   SQUASH_MSG="Issue #${ISSUE_NUM}: ${FEATURE} (squashed: the branch contained merge commits)
 
 $(git log --no-merges --format='- %s' "${SQUASH_BASE}..HEAD")"
-  if git reset -q --soft "$SQUASH_BASE" \
-     && git "${_GIT_PINNED[@]}" commit -q --no-verify --allow-empty \
-          --author="$(git log -1 --format='%an <%ae>' "$FEATURE_SHA")" -m "$SQUASH_MSG"; then
+  git reset -q --soft "$SQUASH_BASE" \
+    || _fail 1 "could not squash ${FEATURE_SHA:0:8}, which contains merge commits, before rebasing it"
+  if git diff --cached --quiet; then
+    # No net change: nothing to commit, so the rebase below fast-forwards to the tip and
+    # _nothing_left_to_land decides, instead of an empty commit landing.
+    echo "ℹ️  ${FEATURE} contains merge commits and no net change against ${SQUASH_BASE:0:8}."
+  elif git "${_GIT_PINNED[@]}" commit -q --no-verify \
+         --author="$(git log -1 --format='%an <%ae>' "$FEATURE_SHA")" -m "$SQUASH_MSG"; then
     echo "ℹ️  ${FEATURE} contains merge commits; squashed its net change against ${SQUASH_BASE:0:8} into one commit before rebasing."
   else
     _fail 1 "could not squash ${FEATURE_SHA:0:8}, which contains merge commits, before rebasing it"
