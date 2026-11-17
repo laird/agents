@@ -385,12 +385,16 @@ The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merg
 ```
 
 - `event`: `attempt` (one per job, its final outcome) or `push-retry` (one per rejected push).
-- `outcome`: `landed`, `parked` (landed but not closed), `conflict`, `gate-failed`, `escalated`
-  (to needs-clarification), `failed` (any other exit), or `push-retry`.
+- `outcome`: `landed`, `parked` (landed but not closed), `skipped` (nothing to do: the issue
+  was already closed, or the commit was already landed and parked), `conflict`, `gate-failed`,
+  `escalated` (to needs-clarification), `failed` (any other exit), or `push-retry`.
 - `escalated`: true when the attempt went to a human rather than back to the worker (#207).
 - `files`: conflicting files. `gate_tests_failed`: failing suites. Both are sorted and may be empty.
 - `landed`: the commit pushed to the integration branch, when one was.
 
 Lines older than `AUTOCODER_MERGE_EVENTS_DAYS` (default 30) are dropped once the file
-passes 1 MiB. Recording is best effort and never fails a merge. `tests/run-shell-suite.sh`
+passes 1 MiB. The file is created 0600. Recording is best effort and never fails a merge.
+After a day, the post-merge sentinel archives a finished job's current log as the next
+numbered attempt instead of deleting it. Archived attempts are pruned after
+`AUTOCODER_MERGE_ARCHIVE_DAYS` (default 14). `tests/run-shell-suite.sh`
 points the file at a temp path, so test runs never write to the real one.

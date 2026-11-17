@@ -205,7 +205,7 @@ bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cm
 # ── 10. merge-launch.sh passes the new options through, state keyed by repo id ──
 mkdir -p "$TMP/fakebin"
 cp "$SCRIPT_DIR/merge-launch.sh" "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" \
-   "$SCRIPT_DIR/feature-ref-fns.sh" "$TMP/fakebin/"
+   "$SCRIPT_DIR/feature-ref-fns.sh" "$SCRIPT_DIR/merge-archive-fns.sh" "$TMP/fakebin/"
 printf '#!/bin/bash\nexit 0\n' > "$TMP/fakebin/merge-to-integration.sh"; chmod +x "$TMP/fakebin/merge-to-integration.sh"
 STATE="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP/worker")-${ISSUE}"
 RUN="${STATE}.run.sh"

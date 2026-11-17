@@ -68,6 +68,8 @@ source "${_MS_DIR}/repo-id-fns.sh"
 source "${_MS_DIR}/regate-fns.sh"
 # shellcheck source=worktree-deps-fns.sh
 source "${_MS_DIR}/worktree-deps-fns.sh"
+# shellcheck source=merge-archive-fns.sh
+source "${_MS_DIR}/merge-archive-fns.sh"
 
 REPO="" INTEGRATION="main" GREEN="${AUTOCODER_GREEN_REF:-}" TEST_CMD="" LOOP="" STATE_DIR=""
 REPORT_ONLY=1
@@ -570,14 +572,9 @@ reconcile_handoffs() {
   done < <(open_issues_with_label merging; open_issues_with_label awaiting-integration)
 
   # A finished job (--own-issue) has nobody reading its exit file any more; keep it a day
-  # for humans and monitor-workers, then reap the set so the tmp root does not fill up.
-  local pf
-  for pf in "$TMP_ROOT"/autocoder-merge-*.exit; do
-    [ -f "$pf" ] || continue
-    job_is_live "${pf%.exit}" && continue
-    [ -n "$(find "$pf" -mmin +1440 2>/dev/null)" ] || continue
-    rm -f "${pf%.exit}".{pid,exit,run.sh,log,rerun}
-  done
+  # for humans and monitor-workers, then archive its log and exit status as the next
+  # numbered attempt rather than deleting them (#184; merge-archive-fns.sh).
+  merge_reap_finished "$TMP_ROOT" job_is_live
 }
 
 # ── housekeeping ──────────────────────────────────────────────────────────────────────────

@@ -120,6 +120,8 @@ fi
 source "${_MLI_DIR}/test-cmd-fns.sh"
 # shellcheck source=repo-id-fns.sh
 source "${_MLI_DIR}/repo-id-fns.sh"
+# shellcheck source=merge-archive-fns.sh
+source "${_MLI_DIR}/merge-archive-fns.sh"
 
 if [ -z "$TEST_CMD" ]; then
   TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
@@ -147,26 +149,11 @@ if [ -f "$PIDFILE" ]; then
   rm -rf "${STATE}".scripts.*
 fi
 
-# Keep every attempt (#184). A relaunch used to truncate the log and drop the exit
-# file, so an issue's earlier bounces, retries and conflicts were lost. The previous
-# attempt is archived as <state>.<n>.log / .exit; the current attempt keeps the plain
+# Keep every attempt (#184): archive the previous attempt's log and exit status as
+# <state>.<n>.log/.exit (merge-archive-fns.sh). The current attempt keeps the plain
 # names, which merge-poll.sh reads.
-_last_archived() {
-  local f n max=0
-  for f in "${STATE}".[0-9]*.log; do
-    [ -e "$f" ] || continue
-    n="${f%.log}"; n="${n##*.}"
-    [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt "$max" ] && max="$n"
-  done
-  echo "$max"
-}
-ARCHIVED=$(_last_archived)
-if [ -s "$LOG" ] || [ -f "$EXITFILE" ]; then
-  ARCHIVED=$((ARCHIVED + 1))
-  [ -f "$LOG" ] && mv -f "$LOG" "${STATE}.${ARCHIVED}.log"
-  [ -f "$EXITFILE" ] && mv -f "$EXITFILE" "${STATE}.${ARCHIVED}.exit"
-fi
-ATTEMPT=$((ARCHIVED + 1))
+merge_archive_attempt "$STATE"
+ATTEMPT=$(merge_next_attempt "$STATE")
 
 : > "$LOG"
 rm -f "$EXITFILE"

@@ -11,7 +11,7 @@
 #   ${AUTOCODER_MERGE_EVENTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/merge-events.jsonl}
 #   {"ts": "<ISO-8601 UTC>", "repo": "<repo id>", "issue": <n>, "branch": "<feature>",
 #    "attempt": <n>, "event": "attempt"|"push-retry",
-#    "outcome": "landed"|"parked"|"conflict"|"gate-failed"|"escalated"|"failed"|"push-retry",
+#    "outcome": "landed"|"parked"|"skipped"|"conflict"|"gate-failed"|"escalated"|"failed"|"push-retry",
 #    "escalated": true|false, "files": [...], "gate_tests_failed": [...],
 #    "duration_s": <n>, "landed": "<sha>"|null, "push_retries": <n>, "exit": <code>|null,
 #    "reason": "<text>"}
@@ -19,7 +19,8 @@
 #   rejected push. Documented for readers (agents-ui) in scripts/README.md.
 #
 # ROTATION: lines older than AUTOCODER_MERGE_EVENTS_DAYS (default 30) are dropped when
-#   the file passes 1 MiB, under flock when available.
+#   the file passes 1 MiB. Rotators serialise on a lock file; appenders do not take it, so
+#   a line appended mid-rotation can be lost. That is acceptable for a best-effort log.
 #
 # Recording is best effort: a failure here never fails or delays a merge.
 
@@ -56,7 +57,8 @@ for k in ("files", "gate_tests_failed"):
 ev.setdefault("escalated", False)
 line = json.dumps(ev, separators=(",", ":")) + "\n"
 # One write() of an O_APPEND line: concurrent jobs do not interleave.
-fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+# 0600 and O_NOFOLLOW: the log names branches, files and failure reasons.
+fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
 try:
     os.write(fd, line.encode())
 finally:
@@ -80,8 +82,9 @@ if os.path.getsize(path) > 1 << 20:
                     keep.append(l)
             except Exception:
                 pass
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
+    import tempfile
+    tfd, tmp = tempfile.mkstemp(prefix=".merge-events.", dir=os.path.dirname(path) or ".")
+    with os.fdopen(tfd, "w") as fh:
         fh.writelines(keep)
     os.replace(tmp, path)
 PY

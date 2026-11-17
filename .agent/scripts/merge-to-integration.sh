@@ -368,8 +368,9 @@ _fail() {
   local code="$1" reason="$2" tail="" repeat=""
   MERGE_REASON="$reason"
   if [ "$PUSHED" -eq 1 ]; then MERGE_OUTCOME=parked
-  elif [ "${GATE_BOUNCE:-0}" -eq 1 ]; then MERGE_OUTCOME=gate-failed MERGE_ESCALATED=1 MERGE_TESTS="$(_failing_suites 2>/dev/null)"
+  elif [ "${GATE_BOUNCE:-0}" -eq 1 ]; then MERGE_OUTCOME=gate-failed MERGE_ESCALATED=1 MERGE_TESTS="$(_failing_suites 2>/dev/null || true)"
   else MERGE_OUTCOME=escalated MERGE_ESCALATED=1; fi
+  [ "$OWN_ISSUE" -eq 1 ] || MERGE_ESCALATED=0   # without --own-issue nothing is escalated
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     [ -s "$GATE_LOG" ] && tail=$(tail -n 40 "$GATE_LOG")
     tail="${tail:+
@@ -406,7 +407,7 @@ _escalate_conflict() {
   echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
   files=$(git diff --name-only --diff-filter=U 2>/dev/null)
   git merge --abort 2>/dev/null || true
-  MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED=1   # a successful _bounce clears it
+  MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED="$OWN_ISSUE"   # a successful _bounce clears it
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     if _bounce conflict "$files" ""; then
       echo "   Aborted the merge; the worker rebases and relaunches."
@@ -433,13 +434,14 @@ _park() {
   issue_park "$ISSUE_NUM" --comment "$1" 2>/dev/null || true
 }
 _close_or_park() {
+  # Something landed whatever happens to the issue below: record it before any return.
+  MERGE_LANDED="$1" MERGE_OUTCOME=landed
   [ "$OWN_ISSUE" -eq 1 ] || return 0
   if _issue_is_closed; then
     echo "ℹ️  Issue #${ISSUE_NUM} is already closed; leaving it alone."
     return 0
   fi
   local landed="$1" summary ship_branch
-  MERGE_LANDED="$landed" MERGE_OUTCOME=landed
   summary="Merged \`${FEATURE}\` into \`${INTEGRATION_BRANCH}\`."
   if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
     summary=$(cat "$SUMMARY_FILE")
@@ -473,12 +475,14 @@ ${summary}
       bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
         --base "$INT_SEEN_SHA" --head "$FEATURE_SHA" --apply || true
     else
+      MERGE_OUTCOME=parked
       _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
       echo "⚠️  Issue #${ISSUE_NUM} could not be closed; parked under 'awaiting-integration' with the work landed on '${INTEGRATION_BRANCH}'."
     fi
     return 0
   fi
   ship_branch="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+  MERGE_OUTCOME=parked
   _park "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
 
 The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${landed}\`. It has **not** reached \`${ship_branch}\`, so closing would assert something false.
@@ -495,6 +499,7 @@ if [ "$OWN_ISSUE" -eq 1 ]; then
   if _issue_is_closed; then
     echo "ℹ️  Issue #${ISSUE_NUM} is already closed; nothing to merge."
     issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    MERGE_OUTCOME=skipped MERGE_REASON="issue already closed; nothing merged"
     exit 0
   fi
   # The hand-off is this job's first act, before anything that can fail, so a fast
@@ -597,6 +602,7 @@ if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
     # proves nothing new, so the sentinel keeps ownership.
     echo "ℹ️  Issue #${ISSUE_NUM} is parked under awaiting-integration from an earlier landing; leaving it to the sentinel."
     issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    MERGE_OUTCOME=skipped MERGE_REASON="already on ${INTEGRATION_BRANCH} and parked by an earlier run"
     exit 0
   fi
   PUBLISH_BASIS=already-landed

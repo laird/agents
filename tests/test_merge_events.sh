@@ -101,9 +101,10 @@ PY
 LANDED=$(python3 -c 'import json,sys; print([json.loads(l) for l in open(sys.argv[1])][-1].get("landed") or "")' "$AUTOCODER_MERGE_EVENTS")
 [ "$LANDED" = "$(git -C "$TMP/origin.git" rev-parse master)" ] && ok "landed event names the landed commit" || bad "landed=$LANDED"
 
-# ── the real state file is untouched ────────────────────────────────────────
-[ ! -e "$HOME/.local/state/autocoder/merge-events.jsonl" ] || ! grep -q '"issue":18401' "$HOME/.local/state/autocoder/merge-events.jsonl" \
-  && ok "test events stayed out of ~/.local/state" || bad "test events leaked into ~/.local/state"
+# ── a relaunch with nothing to do is "skipped", not "landed" ────────────────
+launch
+LAST=$(python3 -c 'import json,sys; e=[json.loads(l) for l in open(sys.argv[1])][-1]; print(e["attempt"], e["outcome"], e["landed"])' "$AUTOCODER_MERGE_EVENTS")
+eq "attempt 4 on a closed issue records skipped" "4 skipped None" "$LAST"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
