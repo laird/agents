@@ -96,9 +96,13 @@ fi
 # we return. Empty is a valid fallback: merge-to-integration.sh re-resolves
 # $FEATURE itself when no SHA is supplied (e.g. this isn't run inside a git
 # checkout, as in tests/test_merge_launch_poll.sh's fixtures).
-FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
-
 _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The pushed origin/$FEATURE wins over a same-named local branch, which every
+# worktree on the host shares and which may be a stray from another run (#143).
+# shellcheck source=feature-ref-fns.sh
+source "${_MLI_DIR}/feature-ref-fns.sh"
+FEATURE_SHA=$(resolve_feature_sha "$PWD" "$FEATURE" || echo "")
+
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
 # shellcheck source=repo-id-fns.sh
