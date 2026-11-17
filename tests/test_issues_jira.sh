@@ -178,6 +178,16 @@ CREATE_PAYLOAD=$(awk -F'\t' '$2 ~ /\/rest\/api\/2\/issue$/ {print $3}' "$CURL_CA
 assert_contains "create sends project key" '"key": "ENG"' "$CREATE_PAYLOAD"
 assert_contains "create sends label" '"P2"' "$CREATE_PAYLOAD"
 
+# ── create --priority becomes the priority label; bad input exits 2 (#199) ──
+run create --title "Prio" --body "x" --priority P1 --label bug
+CREATE_PAYLOAD=$(awk -F'\t' '$2 ~ /\/rest\/api\/2\/issue$/ {print $3}' "$CURL_CAPTURE" | tail -1)
+assert_contains "create --priority P1 sends the P1 label" '"P1"' "$CREATE_PAYLOAD"
+assert_contains "create --priority keeps other labels" '"bug"' "$CREATE_PAYLOAD"
+run create --title "Prio" --priority P7
+assert_eq "create --priority P7 exits 2" "2" "$RC"
+run create --title "Prio" --assignee me
+assert_eq "create with an unknown flag exits 2" "2" "$RC"
+
 # ── claim / release toggle the working label ────────────────────────────────
 run claim 7
 assert_contains "claim adds working label" '"add": "working"' "$(last_data)"
