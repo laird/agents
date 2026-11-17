@@ -132,7 +132,7 @@ classify() {
   # Note: heredoc IS python stdin; the issues JSON must come via env var
   # (heredoc overrides any `< file` redirect, so we use ALL_JSON_PATH).
   ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" python3 - <<'PY'
-import json, os, sys
+import json, os, random, sys
 
 with open(os.environ["ALL_JSON_PATH"]) as f:
     issues = json.load(f)
@@ -155,7 +155,7 @@ def labels(issue):
     return {l["name"] for l in issue.get("labels", [])}
 
 unprioritized = []
-priority = []     # list of (priority_index, rank, kind, number); rank 0 = fresh
+priority = []     # (priority_index, rank, tiebreak, kind, number); rank 0 = fresh
 enhancements = []
 
 for issue in issues:
@@ -169,8 +169,10 @@ for issue in issues:
                 and issue["number"] not in claimed_by_branch:
             p_idx = next(i for i, p in enumerate(PRIORITY_LABELS) if p in ls)
             kind = "enhance" if ENHANCEMENT in ls else "fix"
+            # Shuffled within a priority (random tiebreak), so the per-tick
+            # check cap cannot starve the same abandoned issue forever.
             (enhancements if kind == "enhance" else priority).append(
-                (p_idx, 1, "TAKEOVER", issue["number"]))
+                (p_idx, 1, random.random(), "TAKEOVER", issue["number"]))
         continue
 
     has_priority = bool(ls & set(PRIORITY_LABELS))
@@ -194,9 +196,9 @@ for issue in issues:
         continue  # awaiting human approval
 
     if ENHANCEMENT in ls:
-        enhancements.append((p_idx, 0, "ENHANCE", issue["number"]))
+        enhancements.append((p_idx, 0, 0.0, "ENHANCE", issue["number"]))
     else:
-        priority.append((p_idx, 0, "FIX", issue["number"]))
+        priority.append((p_idx, 0, float(issue["number"]), "FIX", issue["number"]))
 
 # Triage takes precedence over fix work
 if unprioritized:
@@ -210,12 +212,12 @@ if not priority and not enhancements:
     sys.exit(0)
 
 # A fresh issue goes before a takeover at the same priority.
-for p_idx, _, kind, num in priority:
+for p_idx, _, _, kind, num in priority:
     if kind == "TAKEOVER":
         print(f"TAKEOVER {num} {PRIORITY_LABELS[p_idx]} fix")
     else:
         print(f"FIX {num} {PRIORITY_LABELS[p_idx]}")
-for p_idx, _, kind, num in enhancements:
+for p_idx, _, _, kind, num in enhancements:
     if kind == "TAKEOVER":
         print(f"TAKEOVER {num} {PRIORITY_LABELS[p_idx]} enhance")
     else:

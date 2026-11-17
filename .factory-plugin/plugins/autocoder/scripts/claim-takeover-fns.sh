@@ -12,13 +12,19 @@
 # A claim is abandoned when there is no evidence of work (no feature/issue-N
 # branch, local or on origin) AND either
 #   - its owner is on THIS host and is dead: the pid is gone, or now belongs to a
-#     different process (its start time differs from the recorded start=); or
-#   - its owner is elsewhere, names no pid (AUTOCODER_WORKER_ID), or the marker
-#     predates #202 (no wt= field: it named the gate's own pid, which is always
-#     dead seconds later, so its pid proves nothing), and the claim is older than
-#     the grace period, AUTOCODER_CLAIM_GRACE_S (default 120 s).
-# A live owner, or any branch, means the claim stands. An issue is taken over only
-# when EVERY claim on it is abandoned.
+#     different process (its start time differs from the recorded start=), AND
+#     the claim's worktree (wt=) does not hold the issue in its #182 record. The
+#     record catches an owner pid that was only ever short-lived (claim-owner.sh
+#     falls back to the gate's parent when it finds no agent ancestor): the gate
+#     writes the record in the same run as the claim; or
+#   - its owner cannot be checked from here (another host, no pid, or a marker
+#     from before #202, which named the gate's own always-dead pid) and the claim
+#     is older than AUTOCODER_CLAIM_GRACE_S (default 7200 s). Another host's
+#     branch only shows on origin once it is pushed, often most of an hour into
+#     the work, so this grace must be long.
+# A live owner, a worktree record, any branch, or an origin that cannot be asked,
+# means the claim stands. An issue is taken over only when EVERY claim on it is
+# abandoned.
 #
 # Requires claim-owner.sh to be sourced (for _co_start).
 #
@@ -28,12 +34,24 @@
 #             1 otherwise (live claim, branch evidence, or no claim markers)
 
 # _ct_branch_exists <issue-num> → exit 0 when feature/issue-N exists locally (the
-# branch namespace every worktree on this host shares) or on origin.
+# branch namespace every worktree on this host shares) or on origin, AND when
+# origin cannot be asked: only a definite "no such branch" (ls-remote exit 2)
+# counts as no evidence.
 _ct_branch_exists() {
-  local n="$1"
+  local n="$1" rc=0
   git show-ref --verify -q "refs/heads/feature/issue-${n}" && return 0
-  git ls-remote --exit-code --heads origin "feature/issue-${n}" >/dev/null 2>&1 && return 0
-  return 1
+  git ls-remote --exit-code --heads origin "feature/issue-${n}" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 2 ]
+}
+
+# _ct_worktree_holds <wt-path> <issue-num> → exit 0 when that worktree's #182
+# record (worker-state-fns.sh) names the issue.
+_ct_worktree_holds() {
+  local wt="$1" n="$2" gd rec
+  [ -n "$wt" ] && [ -d "$wt" ] || return 1
+  gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  rec=$(cut -d' ' -f1 "$gd/autocoder-worker-state" 2>/dev/null) || return 1
+  [ "$rec" = "$n" ]
 }
 
 # _ct_owner_alive <pid> <recorded-start> → exit 0 when the pid is alive and is the
@@ -49,27 +67,27 @@ _ct_owner_alive() {
 claims_abandoned() {
   local json="$1" n="$2" now_ms="${3:-}" grace_ms host claims ms id start age pid out="" seen=0
   [ -n "$now_ms" ] || now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-  grace_ms=$(( ${AUTOCODER_CLAIM_GRACE_S:-120} * 1000 ))
+  grace_ms=$(( ${AUTOCODER_CLAIM_GRACE_S:-7200} * 1000 ))
   host=$(hostname 2>/dev/null || echo host)
 
-  _ct_branch_exists "$n" && return 1
-
-  # "<ms> <id> <start-or-dash> <has-wt>" per claim marker.
+  # "<ms> <id> <start-or-dash> <wt-or-dash>" per claim marker; wt is last, as it
+  # may contain spaces.
   claims=$(printf '%s' "$json" | jq -r '
     .comments[]?.body // ""
-    | capture("^\\s*🔒 claim (?<id>\\S+) (?<ms>[0-9]+)( start=(?<start>[0-9]+))?(?<wt> wt=[^\\n]*)?\\s*$")?
-    | "\(.ms) \(.id) \(.start // "-") \(if .wt then "wt" else "-" end)"' 2>/dev/null) || return 1
+    | capture("^\\s*🔒 claim (?<id>\\S+) (?<ms>[0-9]+)( start=(?<start>[0-9]+))?( wt=(?<wt>[^\\n]*))?\\s*$")?
+    | "\(.ms) \(.id) \(.start // "-") \(.wt // "-")"' 2>/dev/null) || return 1
   [ -n "$claims" ] || return 1
 
-  local has_wt
-  while read -r ms id start has_wt; do
+  local wt
+  while read -r ms id start wt; do
     [ -n "$ms" ] || continue
     seen=1
     [ "$start" = "-" ] && start=""
     age=$(( now_ms - ms ))
-    if [ "$has_wt" = wt ] && [[ "$id" =~ ^(.+)-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" = "$host" ]; then
+    if [ "$wt" != "-" ] && [[ "$id" =~ ^(.+)-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" = "$host" ]; then
       pid="${BASH_REMATCH[2]}"
       _ct_owner_alive "$pid" "$start" && return 1
+      _ct_worktree_holds "$wt" "$n" && return 1
       out+="${ms} ${id} owner pid ${pid} is no longer running on ${host}"$'\n'
     else
       [ "$age" -gt "$grace_ms" ] || return 1
@@ -78,5 +96,7 @@ claims_abandoned() {
   done <<< "$claims"
 
   [ "$seen" -eq 1 ] || return 1
+  # Last, as it is the one network call: any branch means work is under way.
+  _ct_branch_exists "$n" && return 1
   printf '%s' "$out"
 }

@@ -113,7 +113,7 @@ The `working` label provides concurrency control when multiple agents run in par
 ### How It Works
 
 1. **Claim**: When an agent starts work on an issue, it adds the `working` label
-2. **Filter**: All issue queries exclude issues with the `working` label
+2. **Filter**: Issue queries exclude issues with the `working` label. The one exception is the fix-loop gate, which takes over a `working` issue only when every claim on it is abandoned (owner dead and no branch, or no branch after a long grace period; see `claim-takeover-fns.sh`)
 3. **Release**: When work completes (success, skip, or failure), the label is removed
 
 ### Benefits
@@ -499,7 +499,7 @@ You can also tell the manager agent directly to scale the fleet:
 ### Worker Coordination
 
 Workers coordinate automatically via GitHub labels:
-- **`working` label**: Concurrency lock — when a worker starts an issue, it adds this label. Other workers skip issues with this label.
+- **`working` label**: Concurrency lock — when a worker starts an issue, it adds this label. Other workers skip issues with this label, unless every claim on it is abandoned, in which case the gate takes it over and says so in a comment.
 - **Priority order**: Workers pick the highest priority unblocked issue (P0 > P1 > P2 > P3).
 - **Idle sleep**: When no work is available, workers sleep and periodically check for new issues.
 

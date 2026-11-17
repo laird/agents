@@ -6,7 +6,7 @@
 # Abandoned (claim-takeover-fns.sh): no feature/issue-N branch, and either the
 # owner named in a #202 marker is dead on this host (pid gone or reused), or the
 # owner cannot be checked from here (another host, no pid, a pre-#202 marker) and
-# the claim is older than the grace period.
+# the claim is older than the grace period (AUTOCODER_CLAIM_GRACE_S, 7200 s).
 
 PASS=0; FAIL=0
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts"
@@ -143,6 +143,9 @@ HOST=$(hostname)
 source "$SCRIPT_DIR/claim-owner.sh"
 git -C "$REPO" config user.email t@example.com; git -C "$REPO" config user.name T
 git -C "$REPO" commit -q --allow-empty -m base
+# A reachable origin: only a definite "no such branch" counts as no evidence.
+git init -q --bare "$TMP/origin.git"
+git -C "$REPO" remote add origin "$TMP/origin.git"
 
 ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -179,10 +182,10 @@ assert_eq "reused pid (start time differs): taken over" "9" "$(plan_issue)"
 
 # ── 4. Another host's claim: judged by age and branch only ──────────────────
 reset_issues
-working_issue 10 P1 "🔒 claim otherhost-4242 $(ms_ago 30) start=1 wt=/x"
-assert_eq "other host, inside the grace period: respected" "1" "$(run_gate)"
+working_issue 10 P1 "🔒 claim otherhost-4242 $(ms_ago 1800) start=1 wt=/x"
+assert_eq "other host, 30 min in (no push yet): respected" "1" "$(run_gate)"
 reset_issues
-working_issue 10 P1 "🔒 claim otherhost-4242 $(ms_ago 600) start=1 wt=/x"
+working_issue 10 P1 "🔒 claim otherhost-4242 $(ms_ago 8000) start=1 wt=/x"
 run_gate >/dev/null
 assert_eq "other host, past the grace period, no branch: taken over" "10" "$(plan_issue)"
 
@@ -200,9 +203,32 @@ P=$(dead_pid)
 working_issue 12 P1 "🔒 claim ${HOST}-${P} $(ms_ago 30)"
 assert_eq "old marker, young: respected despite the dead pid" "1" "$(run_gate)"
 reset_issues
-working_issue 12 P1 "🔒 claim ${HOST}-${P} $(ms_ago 600)"
+working_issue 12 P1 "🔒 claim ${HOST}-${P} $(ms_ago 8000)"
 run_gate >/dev/null
 assert_eq "old marker, past the grace period: taken over" "12" "$(plan_issue)"
+
+# ── 6b. Origin cannot be asked: the claim stands ────────────────────────────
+reset_issues
+working_issue 19 P1 "🔒 claim otherhost-4242 $(ms_ago 8000) start=1 wt=/x"
+git -C "$REPO" remote set-url origin "$TMP/no-such-origin.git"
+assert_eq "origin unreachable: respected (no evidence is not proof of none)" "1" "$(run_gate)"
+git -C "$REPO" remote set-url origin "$TMP/origin.git"
+# ...and a branch on origin is evidence too.
+git -C "$REPO" push -q origin HEAD:refs/heads/feature/issue-19
+assert_eq "feature/issue-19 on origin: respected" "1" "$(run_gate)"
+
+# ── 6c. Dead pid, but the claim's worktree still holds the issue ────────────
+# (an owner pid that was only ever short-lived: the gate's parent shell)
+reset_issues
+P=$(dead_pid)
+WT2="$TMP/wt2"; git -C "$REPO" worktree add -q --detach "$WT2"
+working_issue 20 P1 "🔒 claim ${HOST}-${P} $(ms_ago 10) start=1 wt=$WT2"
+echo "20 123 -" > "$(git -C "$WT2" rev-parse --absolute-git-dir)/autocoder-worker-state"
+assert_eq "dead pid but its worktree's record names #20: respected" "1" "$(run_gate)"
+echo "99 123 -" > "$(git -C "$WT2" rev-parse --absolute-git-dir)/autocoder-worker-state"
+run_gate >/dev/null
+assert_eq "...and once that worktree holds something else: taken over" "20" "$(plan_issue)"
+git -C "$REPO" worktree remove --force "$WT2"
 
 # ── 7. Every claim must be abandoned ─────────────────────────────────────────
 reset_issues
