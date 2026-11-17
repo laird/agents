@@ -18,8 +18,10 @@
 # explicit-release path (comment + label removal) is the right tool, not this.
 #
 # Exit codes:
-#   0  released, or the claim had already ended (record cleared)
-#   1  refused: bad arguments, the record names another issue, or work has started
+#   0  released, or the claim had already ended or passed to another worker
+#      (record cleared, issue untouched)
+#   1  refused: bad arguments, the record names another issue, work has started,
+#      the issue cannot be read back, or the label could not be removed
 set -uo pipefail
 
 N="${1:-}"
@@ -36,40 +38,50 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 source "${SCRIPT_DIR}/worker-state-fns.sh"
 
 STATE_FILE="$(worker_state_file 2>/dev/null || true)"
-HELD=""
-[ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] && read -r HELD _ < "$STATE_FILE"
+HELD=""; HELD_MS=""
+[ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] && read -r HELD HELD_MS _ < "$STATE_FILE"
+[ "$HELD_MS" = "-" ] && HELD_MS=""
 if [ "$HELD" != "$N" ]; then
   echo "release-gate-claim: this worktree's gate holds no claim on #${N} (record: ${HELD:-none}); not touching it" >&2
   exit 1
 fi
 
+# A remote check that fails reads as "no branch": a branch pushed from another
+# clone means another worker, and the still-ours check below catches its claim.
 if git show-ref --verify --quiet "refs/heads/feature/issue-${N}" \
    || [ -n "$(git ls-remote --heads origin "feature/issue-${N}" 2>/dev/null)" ]; then
   echo "release-gate-claim: feature/issue-${N} exists, so work on #${N} has started; use /fix's explicit release instead" >&2
   exit 1
 fi
 
-# Only an open issue still marked `working` has a claim left to give back.
-JSON="$(issue_get "$N" 2>/dev/null || true)"
-STILL_HELD="$(printf '%s' "$JSON" | python3 -c '
-import json, sys
-try:
-    i = json.load(sys.stdin)
-except ValueError:
-    print("unknown"); sys.exit()
-open_ = str(i.get("state", "")).lower() in ("open", "")
-working = any(l.get("name") == "working" for l in i.get("labels") or [])
-print("yes" if open_ and working else "no")
-' 2>/dev/null || echo unknown)"
-if [ "$STILL_HELD" = no ]; then
-  echo "release-gate-claim: #${N} is no longer open and working; clearing the record only" >&2
+# An issue that cannot be read back is left alone, as the gate's own #204
+# release does: removing the label blind could strip a lock that is not ours.
+if ! JSON="$(issue_get "$N" 2>/dev/null)" || ! printf '%s' "$JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  echo "release-gate-claim: cannot read #${N} back; leaving its claim and the record alone" >&2
+  exit 1
+fi
+
+# Still ours: open, `working`, and no `🔒 claim` posted after our claim's race
+# window (a takeover or a re-claim after a release), the rule a resume uses too.
+# Otherwise the claim has already ended or passed to someone else: forget it.
+if ! _worker_still_ours "$JSON" "$HELD_MS"; then
+  echo "release-gate-claim: #${N} is no longer this worktree's claim (ended or re-claimed); clearing the record only" >&2
   worker_state_clear
   exit 0
 fi
 
+# The reason is free text from the agent: keep it short and unable to @-mention.
+REASON="${REASON:0:200}"
+REASON="${REASON//@/@​}"
+
 # Label first, then the 🔓: a racer that reads the 🔓 and wins re-adds the label,
 # and that must come after our removal (same order as the gate's #204 release).
-issue_release "$N" 2>/dev/null || issue_update "$N" --remove-label working 2>/dev/null || true
+# If the label cannot be removed, post nothing: a 🔓 on a still-locked issue
+# would end every claim on it in the parsers while the lock stays.
+if ! issue_release "$N" 2>/dev/null && ! issue_update "$N" --remove-label working 2>/dev/null; then
+  echo "release-gate-claim: could not remove 'working' from #${N}; record kept, retry later" >&2
+  exit 1
+fi
 issue_comment "$N" --body "🔓 **Releasing claim**
 
 **Reason**: ${REASON}

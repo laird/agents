@@ -74,7 +74,57 @@ bash "$REL" >/dev/null 2>&1 && bad "no args accepted" || ok "no args refused"
 bash "$REL" abc "x" >/dev/null 2>&1 && bad "non-numeric issue accepted" || ok "non-numeric issue refused"
 bash "$REL" 41 >/dev/null 2>&1 && bad "missing reason accepted" || ok "missing reason refused"
 
-# 6. The gate command tells a declining session to run it.
+# 6. GitHub-shaped backend (fake): a claim another worker took after ours is not
+#    ours to release; an unreadable issue or a failed label removal is left alone.
+GH="$TMP/gh-scripts"; mkdir -p "$GH"
+cp "$SCRIPT_DIR"/{release-gate-claim.sh,issue-fns.sh,worker-state-fns.sh,issue-config.sh} "$GH/"
+cat > "$GH/issues-gh.sh" <<'FAKE'
+#!/bin/bash
+verb="$1"; shift
+echo "$verb $*" >> "$FAKE_LOG"
+case "$verb" in
+  get)     [ "${FAKE_GET_FAIL:-0}" = 1 ] && exit 1; cat "$FAKE_JSON" ;;
+  release|update) [ "${FAKE_UNLABEL_FAIL:-0}" = 1 ] && exit 1; exit 0 ;;
+  *) exit 0 ;;
+esac
+FAKE
+chmod +x "$GH/issues-gh.sh"
+export FAKE_LOG="$TMP/gh.log" FAKE_JSON="$TMP/issue.json"
+NOW_MS=$(( $(date +%s) * 1000 ))
+gh_issue() {   # gh_issue <comment bodies...>: open, working #50 with these comments
+  python3 - "$@" > "$FAKE_JSON" <<'PY'
+import json, sys
+print(json.dumps({"number": 50, "state": "OPEN", "labels": [{"name": "bug"}, {"name": "working"}],
+                  "comments": [{"body": b} for b in sys.argv[1:]]}))
+PY
+}
+run_gh() { : > "$FAKE_LOG"; ISSUE_SOURCE=github bash "$GH/release-gate-claim.sh" "$@" 2>&1; }
+
+printf '50 %s -\n' "$NOW_MS" > "$STATE"
+gh_issue "🔒 claim me-1 $NOW_MS wt=/x"
+OUT=$(run_gh 50 "compact @someone"); rc=$?
+[ "$rc" -eq 0 ] && grep -q '^release 50' "$FAKE_LOG" && ok "github: own live claim released" || bad "github own claim: rc=$rc $(cat "$FAKE_LOG")"
+grep -q '^comment 50' "$FAKE_LOG" && ok "github: release comment posted" || bad "github: no comment"
+grep '^comment 50' "$FAKE_LOG" | grep -q '@someone' && bad "github: reason can @-mention" || ok "github: @-mentions defused"
+
+printf '50 %s -\n' "$NOW_MS" > "$STATE"
+gh_issue "🔒 claim me-1 $NOW_MS wt=/x" "🔒 claim other-2 $(( NOW_MS + 600000 )) wt=/y"
+OUT=$(run_gh 50 "compact"); rc=$?
+[ "$rc" -eq 0 ] && ! grep -qE '^(release|update|comment) 50' "$FAKE_LOG" && ok "github: re-claimed issue untouched" || bad "github: touched a re-claimed issue: $(cat "$FAKE_LOG")"
+[ ! -f "$STATE" ] && ok "github: re-claimed issue's record cleared" || bad "github: stale record kept"
+
+printf '50 %s -\n' "$NOW_MS" > "$STATE"
+gh_issue "🔒 claim me-1 $NOW_MS wt=/x"
+OUT=$(FAKE_GET_FAIL=1 run_gh 50 "compact"); rc=$?
+[ "$rc" -ne 0 ] && ! grep -qE '^(release|update|comment) 50' "$FAKE_LOG" && ok "github: unreadable issue untouched" || bad "github: unreadable issue rc=$rc $(cat "$FAKE_LOG")"
+[ -f "$STATE" ] && ok "github: record kept when unreadable" || bad "github: record dropped when unreadable"
+
+OUT=$(FAKE_UNLABEL_FAIL=1 run_gh 50 "compact"); rc=$?
+[ "$rc" -ne 0 ] && ! grep -q '^comment 50' "$FAKE_LOG" && ok "github: no 🔓 when the label stays" || bad "github: label failure rc=$rc $(cat "$FAKE_LOG")"
+[ -f "$STATE" ] && ok "github: record kept when the label stays" || bad "github: record dropped on label failure"
+rm -f "$STATE"
+
+# 7. The gate command tells a declining session to run it.
 grep -q 'release-gate-claim.sh' "$ROOT/plugins/autocoder/commands/gate.md" \
   && ok "gate.md documents the release" || bad "gate.md does not mention release-gate-claim.sh"
 

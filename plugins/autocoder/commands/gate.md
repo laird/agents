@@ -141,5 +141,6 @@ bash "$SCRIPT_DIR/release-gate-claim.sh" "$(jq -r .issue "$WORK_JSON")" "<why th
 
 Then emit `GATE_CLAIM_RELEASED #<issue>` and stop. The script releases only a claim this
 worktree's gate recorded, and refuses once `feature/issue-<N>` exists (work has started:
-use `/fix`'s explicit release then). Never run it for an `"in_flight": true` plan, which is
-work this session already has under way.
+use `/fix`'s explicit release then) or once another worker has claimed the issue since.
+A `"resume": true` plan whose branch does not exist yet may be released the same way. Never
+run it for an `"in_flight": true` plan, which is work this session already has under way.
