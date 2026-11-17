@@ -809,14 +809,17 @@ _landed_by_patch_id() {
   # --no-renames on both the patch and the name list, so every name is a patch entry;
   # --include takes a glob, so the name is escaped; and an include that matches nothing
   # also exits 0, so a slice counts only when --numstat shows it is non-empty.
-  local f pat
-  while IFS= read -r -d '' f; do
+  local f pat names
+  # Capture the list first: an error must refuse, not skip the per-file check.
+  names=$(git diff -z --name-only --no-renames "$base" "$FEATURE_SHA" | tr '\0' '\001') \
+    || { rm -f "$patch"; return 1; }
+  while IFS= read -r -d $'\001' f; do
     pat=$(printf '%s' "$f" | sed 's/[][*?\\]/\\&/g')
     [ -n "$(git apply --numstat --include="$pat" "$patch" 2>/dev/null)" ] || continue
     if git apply --check --include="$pat" "$patch" 2>/dev/null; then
       rm -f "$patch"; return 1                             # this file's change was undone
     fi
-  done < <(git diff -z --name-only --no-renames "$base" "$FEATURE_SHA" 2>/dev/null)
+  done <<< "$names"
   rm -f "$patch"
   # The upstream copies: commits on tip's side that git marks patch-equivalent ('=').
   eq=$(git log --cherry-mark --right-only --no-merges --format='%m %H' "${FEATURE_SHA}...${tip}" 2>/dev/null \
