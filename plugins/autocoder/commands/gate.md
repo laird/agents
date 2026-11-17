@@ -68,18 +68,27 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 ### phase = `fix` or `enhance`
 
 **`"in_flight": true`: this session already holds the issue (#130).** In inline `/loop`
-mode a tick can fire while this very session is mid-issue (waiting on a subagent, a merge
-job, or a test run). The gate recognises its own session and does not claim new work or
-touch the checkout. **Do not invoke `/autocoder:fix` again and do not write a handoff
-file**: its claim steps are already done. Then:
+mode a tick can fire while this very session is mid-issue. The gate recognises its own
+session and does not claim new work or touch the checkout. **Never invoke
+`/autocoder:fix` and never write a handoff file for an in-flight issue**: `/fix`'s claim
+steps are already done, and re-running them can race the work in progress. Decide which
+case applies by checking, not by recollection:
 
-- **Work on the issue is under way in this session** (a subagent, merge job or test run
-  you started is still going): emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick.
-- **Nothing is under way** (the work was interrupted or abandoned, or you have lost track
-  after a compaction): pick it back up now. Re-read its comments and
-  `git log origin/<integration>..HEAD` on `feature/issue-<issue>`, then continue the
-  `/fix` workflow from where the branch stands. Do not leave a held issue idle, or it
-  stays `working` with nobody on it.
+1. **Is anything for this issue still running?** Check each of these:
+   - a merge job: `merge-poll.sh --issue <issue>` reports it running;
+   - a background agent or task you started for it that has not reported back;
+   - a test or build you started in the background.
+
+   **If any is running:** emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick. The
+   next tick checks again.
+2. **If none is running:** the work was interrupted, abandoned or forgotten, perhaps
+   after a compaction. Pick it up in this session:
+   - check out `feature/issue-<issue>` if the tree is not on it;
+   - re-read the issue's comments and `git log origin/<integration>..HEAD`;
+   - carry on with the remaining steps (implement, test, review, land) as `/fix`
+     describes them, without re-running its claim sequence.
+
+   A held issue must not sit idle, or it stays `working` with nobody on it.
 
 A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
 picked up by a new session** (#182): a restart or a fresh worker process found an open

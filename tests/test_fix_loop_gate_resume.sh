@@ -170,6 +170,16 @@ git checkout -q master
 CLAUDE_CODE_SESSION_ID=sess-B AUTOCODER_NEXT_FIX_FILE="$TMP/handoff" gate >/dev/null
 assert_eq "shell-loop mode ignores an inherited session id" "false" "$(plan .in_flight)"
 assert_eq "...and records none" "-" "$(cut -d' ' -f3 "$STATE" 2>/dev/null)"
+# Shell-loop mode on a FRESH claim (fix-loop-gate.sh's own recording, not a resume).
+reset
+add_issue 30 "P1"
+CLAUDE_CODE_SESSION_ID=sess-B AUTOCODER_NEXT_FIX_FILE="$TMP/handoff" gate >/dev/null
+assert_eq "shell-loop fresh claim: #30 claimed" "30" "$(plan .issue)"
+assert_eq "shell-loop fresh claim: no session recorded" "-" "$(cut -d' ' -f3 "$STATE" 2>/dev/null)"
+CLAUDE_CODE_SESSION_ID=sess-B gate >/dev/null
+assert_eq "...so a later tick with that inherited id is not in_flight" "false" "$(plan .in_flight)"
+add_issue 20 "P2"; backend issue_claim 20
+git branch -q -f feature/issue-20 master 2>/dev/null || true
 # A two-field record written before session ids existed still resumes.
 git checkout -q master
 printf '20 %s\n' "$(cut -d' ' -f2 "$STATE")" > "$STATE"
@@ -179,9 +189,9 @@ assert_eq "...as a new session, not in_flight" "false" "$(plan .in_flight)"
 git checkout -q master
 
 GATE_MD="$SCRIPT_DIR/../commands/gate.md"
-grep -q '"in_flight": true' "$GATE_MD" && grep -q 'Do not invoke `/autocoder:fix` again' "$GATE_MD" \
-  && grep -q 'pick it back up now' "$GATE_MD" \
-  && ok "gate.md: an in-flight session does not re-dispatch /fix, and picks idle work back up" \
+grep -q '"in_flight": true' "$GATE_MD" && grep -q 'Never invoke' "$GATE_MD" \
+  && grep -q 'If none is running' "$GATE_MD" \
+  && ok "gate.md documents the in_flight rule (no re-dispatch; a pick-up branch)" \
   || bad "gate.md does not document the in_flight rule"
 
 # ── 9. AUTOCODER_RESUME_OWN_CLAIM=0 turns resume off ────────────────────────
