@@ -1157,7 +1157,11 @@ available, launch fresh subagents with no shared context — 2–3 in parallel a
 **scope creep**, **security**. Give every reviewer the same three inputs: the
 diff (`git diff "$REVIEW_BASE"..HEAD`), the repo (to read callers and
 neighbouring code), and the issue's title, body and comments (the intent the
-diff must satisfy).
+diff must satisfy). If the repo has a `REVIEW.md` at its root, give it to every
+reviewer too, as the repo's review rules (#169): what failure looks like there,
+the nit cap, paths to skip, and how to write findings. Where it and this gate
+differ, the gate's tags and blocking rules still decide what blocks landing.
+`/install` writes a starter `REVIEW.md` (`scaffold-review-md.sh`).
 
 **2. Security review on sensitive diffs.** If any changed path is sensitive,
 also run `/security-review` (or a fresh security-lens subagent where it is not
@@ -1184,6 +1188,10 @@ handling, crypto, and dependency manifests or lockfiles.
 - **Fix the class, not the instance.** For each Important finding, name the bug
   class (e.g. "unquoted variable in a path", "label write without lock release")
   and grep the diff for every other instance before the next round.
+- **A finding that keeps coming back across issues is a missing rule.** If
+  reviewers raise the same kind of finding again and again, record it with
+  `/record-issue` proposing where the rule should live: a line in `REVIEW.md`, a
+  lint or test check, or a skill. Don't widen this diff to add it.
 - Commit each round's fixes, then re-run the targeted tests before re-review.
 - **Still an open Important finding after round 3** → stop. The approach itself
   may be wrong. Do **not** land, and do **not** push `feature/issue-N`: any

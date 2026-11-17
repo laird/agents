@@ -42,6 +42,10 @@ This command installs the agents framework into your project:
 - **How**: `scripts/install-ripgrep.sh`. Homebrew if present, else the official release binary (SHA-256 verified) into `~/.local/bin`; no root
 - **Scope**: Global; skipped when `rg` is already installed
 
+### 5. REVIEW.md (optional)
+- **What**: A starter `REVIEW.md` at the project root: the review rules the `/fix` pre-landing review hands to every reviewer
+- **Installed by**: `.agent/scripts/scaffold-review-md.sh`; asks first; never overwrites an existing file
+
 ## Installation Process
 
 The installer will:
@@ -285,6 +289,25 @@ FRAMEWORK_PATH="<detected-framework-path>"
 bash "$FRAMEWORK_PATH/.agent/scripts/install-ripgrep.sh" && INSTALL_RG=true
 ```
 
+### Step 6b: Optional REVIEW.md
+
+Skip this step when the target project already has a `REVIEW.md` at its root.
+Otherwise ask:
+
+```
+Question: "Add a starter REVIEW.md to this project? The /fix pre-landing review gives it to every reviewer."
+Options:
+- "Yes" - "Write a starter REVIEW.md at the project root to edit later"
+- "No" - "Skip; reviewers use the built-in rules only"
+```
+
+**If Yes:**
+
+```bash
+FRAMEWORK_PATH="<detected-framework-path>"
+bash "$FRAMEWORK_PATH/.agent/scripts/scaffold-review-md.sh" "$TARGET_PATH" && INSTALL_REVIEW_MD=true
+```
+
 ### Step 7: Installation Summary
 
 ```bash
@@ -313,6 +336,10 @@ fi
 
 if [ "$INSTALL_RG" = true ]; then
   echo "   • ripgrep (rg) for agent code search"
+fi
+
+if [ "$INSTALL_REVIEW_MD" = true ]; then
+  echo "   • Starter REVIEW.md at the project root (edit it to fit the repo)"
 fi
 
 if [ "$INSTALL_ALIASES" = true ]; then

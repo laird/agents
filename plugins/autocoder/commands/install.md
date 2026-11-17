@@ -52,6 +52,11 @@ This command installs all autocoder plugin components:
 - **Action**: Appends aliases to shell config (only for installed multiplexers)
 - **Scope**: Global (available in all terminals after restart)
 
+### 4. REVIEW.md (optional)
+- **What**: A starter `REVIEW.md` at the project root: the review rules the `/fix` pre-landing review hands to every reviewer (failure modes, a nit cap, paths to skip, `file:line` findings, a summary that leads with a count)
+- **Installed by**: `scaffold-review-md.sh`
+- **Scope**: Current project only; asks first; never overwrites an existing `REVIEW.md`
+
 ## Installation Process
 
 The installer will:
@@ -84,6 +89,7 @@ echo "  0. Dependency check (tmux/cmux, claude/gemini/codex, gh, rg)"
 echo "  1. Loop mechanism (for infinite /fix-loop)"
 echo "  2. Parallel agent scripts (terminal commands)"
 echo "  3. Shell aliases (optional shortcuts)"
+echo "  4. Starter REVIEW.md (optional, this project)"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -677,6 +683,33 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 ```
 
+### Part 4: REVIEW.md (Optional)
+
+`CLAUDE.md` is loaded into every agent turn, so review rules don't belong
+there. They go in `REVIEW.md`, which the pre-landing review in `/fix` gives
+to each reviewer (#169). Skip this part when the project already has a
+`REVIEW.md` at its root (set `USER_APPROVED_REVIEW_MD=exists`).
+
+Otherwise use AskUserQuestion:
+
+```
+Question: "Add a starter REVIEW.md to this project? The /fix pre-landing review gives it to every reviewer."
+Header: "REVIEW.md"
+Options:
+  - "Yes" - "Write a starter REVIEW.md at the project root to edit later"
+  - "No" - "Skip; reviewers use the built-in rules only"
+```
+
+If approved (`SCRIPT_DIR` as resolved in Part 2):
+
+```bash
+if [ "$USER_APPROVED_REVIEW_MD" = "yes" ]; then
+  bash "$SCRIPT_DIR/scaffold-review-md.sh" .
+else
+  echo "⏭️  Skipped REVIEW.md"
+fi
+```
+
 ### Summary
 
 ```bash
@@ -711,6 +744,14 @@ if [ "$HAS_RG" = true ]; then
   echo "  ✅ ripgrep (rg) available for agent code search"
 else
   echo "  ⏭️  ripgrep (skipped; agents fall back to grep)"
+fi
+
+if [ "$USER_APPROVED_REVIEW_MD" = "yes" ]; then
+  echo "  ✅ Starter REVIEW.md at the project root (edit it to fit the repo)"
+elif [ "$USER_APPROVED_REVIEW_MD" = "exists" ]; then
+  echo "  ✅ REVIEW.md already present (left unchanged)"
+else
+  echo "  ⏭️  REVIEW.md (skipped)"
 fi
 
 if [ "$USER_APPROVED_ALIASES" = "yes" ]; then
@@ -772,7 +813,10 @@ echo ""
    - Only if scripts approved
    - Points to plugin script, stays updated with plugin
 
-4. **`~/.bashrc` or `~/.zshrc`** (global)
+4. **`REVIEW.md`** (project root)
+   - Only if approved, and only when the file does not already exist
+
+5. **`~/.bashrc` or `~/.zshrc`** (global)
    - Only if PATH needed or aliases approved
    - Appends lines, never modifies existing content
    - Safe to run multiple times (checks before adding)

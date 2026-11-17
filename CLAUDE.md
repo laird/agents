@@ -1,377 +1,61 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Repository Overview
-
-This is the **Modernize** Claude Code plugin - a production-validated framework providing protocols, specialized agents, and automation for systematic AI-assisted software modernization and development. The plugin supports a complete workflow: assess → plan → execute → improve.
-
-**Key Characteristics**:
-- Protocol-driven architecture where each command is a comprehensive protocol document
-- Multi-agent coordination system with 6 specialized agents
-- Originally created for .NET Framework migrations but universally applicable
-- Emphasizes continuous improvement through retrospective analysis
-
-## Issue Management
-
-This project uses a pluggable issue source. Run `/set-issue-source` before running autonomous agents for the first time. Issue state is shared across all agents via `.issues/` at the repo root (file backend), via GitHub Issues (github backend), via a Jira project (jira backend), or via Azure DevOps work items (ado backend) — whichever is configured in `.autocoder.json`.
-
-Each backend is a self-contained script implementing the same 9-verb contract (list, get, update, comment, close, create, claim, release, any-claimable): `issues-file.py`, `issues-gh.sh`, `issues-jira.sh`, and `issues-ado.sh`. Non-secret connection settings live in `.autocoder.json` and credentials come from the environment — secrets are never committed:
-- **Jira** reads `baseUrl`/`project` from the `jira` object; credentials via `JIRA_EMAIL` + `JIRA_API_TOKEN` (or `JIRA_AUTH_HEADER` for a Server/DC PAT). See `docs/jira-setup.md`.
-- **Azure DevOps** reads `orgUrl`/`project` from the `ado` object; credentials via `ADO_PAT`. Labels map to work-item Tags. See `docs/ado-setup.md`.
-
-## Commands
-
-This plugin provides 5 slash commands that are comprehensive protocol documents:
-
-### Primary Workflow Commands
-
-```bash
-# 1. Assessment - Evaluate modernization readiness
-/assess
-# Output: ASSESSMENT.md with viability analysis across 8 dimensions
-
-# 2. Planning - Create detailed execution strategy
-/plan
-# Output: PLAN.md with phase breakdown, timeline, resource allocation
-
-# 3. Execution - Orchestrate multi-agent modernization
-/modernize
-# Coordinates 6 specialist agents through 7 phases
-# Requires: Optional ASSESSMENT.md and PLAN.md for best results
-```
-
-### Continuous Improvement Commands
-
-```bash
-# 4. Retrospective - Analyze project history for improvements
-/retro
-# Reviews git history, user corrections, agent mistakes
-# Output: IMPROVEMENTS.md with 3-5 evidence-based recommendations
-
-# 5. Apply Improvements - Implement retrospective findings
-/retro-apply
-# Updates commands, protocols, and automation based on IMPROVEMENTS.md
-```
-
-**Recommended Workflow**: `/assess` → `/plan` → `/modernize` → `/retro` → `/retro-apply`
-
-### Retrospective
-
-```bash
-# Analyze accumulated history and produce workflow improvement recommendations
-/retro
-
-# Scope to a specific date range
-/retro --since 2026-01-01
-# Output: IMPROVEMENTS.md with 3-5 evidence-backed recommendations
-```
-
-**Recommended cadence**: Run after every 20–30 issues processed. Apply approved recommendations to `plugins/autocoder/commands/` manually.
-
-## Architecture
-
-### Directory Structure
-
-```
-agents/
-├── commands/           # 5 slash commands (protocol documents)
-│   ├── assess.md      # Assessment protocol with 8 evaluation dimensions
-│   ├── plan.md        # Planning protocol with execution strategy
-│   ├── modernize.md   # Full modernization protocol (7 phases, 6 agents)
-│   ├── retro.md       # Retrospective analysis protocol
-│   └── retro-apply.md # Improvement application protocol
-├── agents/            # 6 specialist agent definitions
-│   ├── migration-coordinator.md  # Orchestrator for multi-stage projects
-│   ├── security.md              # Vulnerability scanning and remediation
-│   ├── architect.md             # Technology decisions and ADRs
-│   ├── coder.md                 # Implementation and migration
-│   ├── tester.md                # Comprehensive testing and validation
-│   └── documentation.md         # Knowledge management and docs
-├── protocols/         # Supporting protocol documentation
-├── scripts/          # Automation scripts (5 utilities)
-└── docs/            # Additional documentation
-```
-
-### Multi-Agent Coordination System
-
-**6 Specialized Agents** work together through protocol-defined coordination:
-
-1. **Migration Coordinator** (Orchestrator)
-   - Role: Strategic oversight, agent coordination, quality gate enforcement
-   - Active: Throughout entire project
-   - Invoked via: Task tool when complex multi-stage orchestration needed
-
-2. **Security Agent** (Blocker)
-   - Role: CVE scanning, security scoring, vulnerability remediation
-   - Active: Phase 1 (blocks progress until CRITICAL/HIGH issues resolved)
-   - Quality Gate: Security score ≥45/100 required to proceed
-
-3. **Architect Agent** (Decision Maker)
-   - Role: Technology research, architectural decisions, ADR creation
-   - Active: Phases 1-2 (planning and design)
-   - Outputs: ADR files following MADR 3.0.0 format
-
-4. **Coder Agent** (Implementation)
-   - Role: Framework updates, API replacement, build fixes
-   - Active: Phases 3-4
-   - Note: Multiple coder agents can run in parallel on independent components
-
-5. **Tester Agent** (Quality Gate)
-   - Role: 6-phase testing protocol, fix-and-retest cycles
-   - Active: After every code change (blocks progression)
-   - Quality Gate: 100% test pass rate required
-
-6. **Documentation Agent** (Knowledge Management)
-   - Role: HISTORY.md logging, ADRs, migration guides, changelogs
-   - Active: Continuous throughout project
-   - Templates: Follows structured documentation protocols
-
-### Protocol-Driven Design
-
-Each command file contains:
-- **Agent coordination instructions** - How specialists work together
-- **Phase-by-phase workflows** - Detailed steps with durations and deliverables
-- **Quality gates** - Blocking criteria that must be satisfied
-- **Success criteria** - Validation checkpoints
-- **Examples and anti-patterns** - Real-world scenarios and pitfalls to avoid
-- **Troubleshooting guides** - Common issues and resolutions
-
-### Key Quality Gates
-
-These are enforced throughout the modernization workflow:
-
-- **Security**: Score ≥45/100 before migration starts
-- **Build**: 100% success before next stage
-- **Tests**: 100% pass rate before proceeding
-- **Issues**: All P0/P1 resolved before release
-
-## Utility Scripts
-
-Located in `scripts/` directory:
-
-```bash
-# Log agent activity to HISTORY.md
-./scripts/append-to-history.sh "Title" "Details" "Context" "Impact"
-
-# Analyze project dependencies
-./scripts/analyze-dependencies.sh
-
-# Capture baseline test results
-./scripts/capture-test-baseline.sh
-
-# Run comprehensive stage testing
-./scripts/run-stage-tests.sh
-
-# Validate migration stage completion
-./scripts/validate-migration-stage.sh
-```
-
-**Usage Pattern**: Agents invoke these scripts to maintain audit trails and enforce quality gates.
-
-## Development Patterns
-
-### Parallel Maintenance Requirement
-
-**CRITICAL**: This repository maintains two parallel implementations that MUST stay in sync:
-
-| Platform | Directory | Guidance File |
-|----------|-----------|---------------|
-| **Claude Code** | `plugins/` | `CLAUDE.md` (this file) |
-| **Antigravity** | `.agent/` | `GEMINI.md` |
-
-**When modifying any workflow, command, or protocol:**
-
-1. **Always update BOTH versions** - Changes to one must be mirrored to the other
-2. **Check the mapping**:
-   - `plugins/autocoder/commands/*.md` ↔ `.agent/workflows/*.md`
-   - `plugins/modernize/commands/*.md` ↔ `.agent/workflows/*.md`
-   - `plugins/modernize/agents/*.md` ↔ `.agent/rules/*.md`
-3. **Verify parity** after changes: Both should have identical functionality
-4. **Test both platforms** if possible before committing
-
-**Key parallel files:**
-- `/improve-test-coverage`: `plugins/autocoder/commands/improve-test-coverage.md` ↔ `.agent/workflows/improve-test-coverage.md`
-- `/fix`: `plugins/autocoder/commands/fix.md` ↔ `.agent/workflows/fix.md`
-- `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
-- `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
-- `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
-- `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
-
-**Key parallel scripts:**
-- `start-parallel-agents.sh`: `plugins/autocoder/scripts/start-parallel-agents.sh` ↔ `.agent/scripts/start-parallel-agents.sh`
-- `join-parallel-agents.sh`: `plugins/autocoder/scripts/join-parallel-agents.sh` ↔ `.agent/scripts/join-parallel-agents.sh`
-- `fetch-blocked-issues.sh`: `plugins/autocoder/scripts/fetch-blocked-issues.sh` ↔ `.agent/scripts/fetch-blocked-issues.sh`
-- `add-blocking-label.sh`: `plugins/autocoder/scripts/add-blocking-label.sh` ↔ `.agent/scripts/add-blocking-label.sh`
-- `approve-blocked-issue.sh`: `plugins/autocoder/scripts/approve-blocked-issue.sh` ↔ `.agent/scripts/approve-blocked-issue.sh`
-- `reject-blocked-issue.sh`: `plugins/autocoder/scripts/reject-blocked-issue.sh` ↔ `.agent/scripts/reject-blocked-issue.sh`
-
-`.agent/scripts/` is a **generated mirror** (#153): `scripts/package-plugin-scripts.py`
-fills it, and `tests/test_script_packaging.sh` fails on drift. Edit the plugin copy
-and re-run the packager. The exceptions are the scripts listed as `local` for the
-`antigravity` platform (`start-parallel-agents.sh`, `end-parallel-agents.sh`,
-`regression-test.sh`, `idle-sentinel.sh`), which carry Antigravity adaptations and are still synced by hand.
-
-### Skill Packaging
-
-`skills/` at the repo root is the source of truth, but a skill that lives only
-there reaches **nobody**: each platform loads skills from its own plugin tree.
-Every root skill must be mirrored into the plugin that ships it:
-
-| root skill | Claude Code (byte-identical, enforced) | Codex (adapted) | Droid (adapted) |
-|---|---|---|---|
-| `skills/autocoder/` | `plugins/autocoder/skills/autocoder/` | `codex-plugins/autocoder/skills/autocoder/` | `.factory/skills/autocoder/` |
-| `skills/improve/` | `plugins/autocoder/skills/improve/` | — | — |
-| `skills/modernize/` | `plugins/modernize/skills/modernize/` | `codex-plugins/modernize/skills/modernize/` | `.factory/skills/modernize/` |
-
-**Only the Claude Code column is byte-identical**, and it is the only one
-`tests/test_skill_packaging.sh` enforces. The Codex and Droid columns are
-*platform-adapted* copies maintained by hand: `.factory/` says "Droid" where the
-root says "Codex", and both drop the `references/model-config.md` pointer. Copy
-the root file over the `plugins/` mirror; **hand-apply** the same edit to the
-Codex and Droid trees and re-diff afterward to confirm only those intentional
-differences remain. Nothing machine-checks that, so an edit made only in
-`skills/` silently never reaches Codex or Droid users.
-
-Copies, not symlinks — plugin installation copies trees, and a symlink that
-survives git may not survive the install. **Adding a new `skills/<name>/`
-directory requires adding it to the `SKILL_OWNER` map** in
-`tests/test_skill_packaging.sh`, or the suite fails.
-
-Note that a command referring to `autocoder:references/<file>.md` resolves
-against the *plugin's* skills tree, not the repo root, so such a reference is
-broken until the mirror exists.
-
-### Agent Invocation Pattern
-
-When working with this repository:
-
-1. **For exploration tasks**: Use `Task` tool with `subagent_type=Explore`
-2. **For complex workflows**: Commands invoke agents via Task tool
-3. **For protocol updates**: Follow continuous improvement cycle (retro → retro-apply)
-
-### Protocol Update Workflow
-
-When modifying protocols or commands:
-
-1. Understand the protocol-driven architecture (each command IS a protocol)
-2. Review existing agent coordination patterns
-3. Maintain quality gate enforcement
-4. Update related agent definitions if coordination changes
-5. Consider running `/retro-apply` workflow for systematic improvements
-
-### Continuous Improvement Philosophy
-
-This repository practices what it preaches:
-
-- **Git history is valuable data**: User corrections indicate agent behavior issues
-- **Evidence-based improvements**: Recommendations backed by commit analysis
-- **Self-improving system**: Each project makes the next one better
-- **Protocol evolution**: Commands and agents updated based on retrospectives
-
-## Important Protocols
-
-### ADR Lifecycle (7 Stages)
-
-Architectural Decision Records follow MADR 3.0.0 format through:
-1. Problem Identification
-2. Research
-3. Evaluation
-4. Decision
-5. Implementation
-6. Review
-7. Superseded (when replaced)
-
-**Location**: `protocols/adr-lifecycle.md` for details
-
-### Testing Protocol (6 Phases)
-
-All code changes must pass:
-1. Unit Tests (isolated component validation)
-2. Integration Tests (component interaction)
-3. Build Tests (compilation and packaging)
-4. Smoke Tests (critical path validation)
-5. Security Tests (vulnerability scanning)
-6. Performance Tests (regression detection)
-
-**Location**: `protocols/testing-protocol.md` for details
-**Enforcement**: 100% pass rate required by Tester agent
-
-### Agent Logging Protocol
-
-All agent work is logged to `HISTORY.md` using:
-```bash
-./scripts/append-to-history.sh "<title>" "<details>" "<context>" "<impact>"
-```
-
-**Templates Available**:
-- Template 1: Migration Stage Completion
-- Template 2: Security Remediation
-- Template 3: Testing Results
-- Template 4: Architectural Decision
-- Template 5: Documentation Update
-
-## Production Validation
-
-This framework has proven results:
-- **32/32 projects** migrated successfully (100% success rate)
-- **100% test pass rate** achieved
-- **Security improvement**: 0/100 → 45/100 (CRITICAL CVEs eliminated)
-- **Zero P0/P1** blocking issues in production
-- **1,500+ lines** of documentation auto-generated
-
-## Plugin Configuration
-
-**Plugin Metadata**: `.claude-plugin/marketplace.json` — there is no separate
-per-plugin `plugin.json` for Claude Code. Each `plugins[]` entry is the manifest:
-it carries the name, version, description, and a `source` pointing at
-`./plugins/<name>/`, and **that entry is what the loader reads.** Verified: with
-a marketplace entry at 9.9.9 and a nested `plugin.json` at 7.7.7,
-`claude plugin details` reported 9.9.9. Nested `.claude-plugin/plugins/*/plugin.json`
-files were removed for this reason — they were maintained by hand and read by nothing.
-
-**Installation**: add this repo as a plugin marketplace, or clone it.
-
-### Which manifest each platform actually loads
-
-| Platform | Manifest it reads | Per-plugin manifest |
-|---|---|---|
-| Claude Code | `.claude-plugin/marketplace.json` | none — the marketplace entry *is* the manifest |
-| Codex | `.agents/plugins/marketplace.json` | `codex-plugins/<name>/.codex-plugin/plugin.json` (carries the version) |
-| Droid | `.factory-plugin/marketplace.json` | `.factory-plugin/plugins/<name>/plugin.json` |
-| Antigravity | `.agent/` (rules + workflows, no marketplace) | — |
-
-`tests/test_manifest_versions.sh` asserts every one of these agrees on a version.
-
-### Version Management
-
-**CRITICAL**: a version bump must move **every** manifest together, or a platform
-advertises a version it isn't shipping. The Droid marketplace once sat twelve minor
-versions behind because only the Claude one was bumped.
-
-1. `.claude-plugin/marketplace.json` — root `version` **and** each `plugins[].version`
-2. `.factory-plugin/marketplace.json` — root `version` **and** each `plugins[].version`
-3. `.factory-plugin/plugins/<name>/plugin.json`
-4. `codex-plugins/<name>/.codex-plugin/plugin.json`
-
-Both root marketplace versions must match; the update mechanism keys on them. Run
-`bash tests/test_manifest_versions.sh` after any bump.
-
-**Example workflow:**
-```bash
-# When updating autocoder from 3.5.0 to 3.6.0:
-# 1. Update plugins[].version: "3.6.0"  (individual plugin)
-# 2. Update root version: "3.10.0"     (marketplace version bump)
-```
-
-**Why this matters**: The marketplace update mechanism relies on the root version number to detect that new plugin versions are available. Forgetting to bump the marketplace version will prevent users from receiving your plugin updates.
-
-## References
-
-- **MADR 3.0.0**: https://adr.github.io/madr/ - ADR format specification
-- **Keep a Changelog**: https://keepachangelog.com/ - CHANGELOG format
-- **Repository**: https://github.com/laird/agents
-- **Claude Code Docs**: https://docs.claude.com/en/docs/claude-code/
+Guidance for agents working in this repository. Keep it short: it is loaded into
+every agent turn and every review. Detail lives in the docs linked below.
+
+## What this repo is
+
+Two plugins, shipped for several agent platforms:
+
+- **autocoder** (`plugins/autocoder/`): autonomous issue resolution. `/fix`,
+  `/fix-loop`, `/monitor-workers`, parallel worktree swarms, a detached merge
+  pipeline, and pluggable issue backends (GitHub, file, Jira, Azure DevOps).
+- **modernize** (`plugins/modernize/`): assess → plan → modernize → retro for
+  migration projects, with specialist agents.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `plugins/autocoder/commands/`, `plugins/modernize/commands/` | Slash commands. Each command file is a protocol the agent follows. |
+| `plugins/modernize/agents/` | Specialist agent definitions |
+| `plugins/autocoder/scripts/` | Shell/Python the commands run: issue backends (`issues-*.sh`, `issues-file.py`, `issue-fns.sh`), gate, merge, sentinel and swarm scripts |
+| `.agent/` | Antigravity copies: `workflows/` (commands), `rules/` (agents), `scripts/` (generated mirror) |
+| `codex-plugins/`, `.factory*/`, `.pi/`, `skills/` | Codex, Droid, pi and Gemini packaging |
+| `scripts/` | Repo tooling and per-runtime loop drivers; `package-plugin-scripts.py` mirrors scripts to every platform |
+| `tests/` | `test_*.sh` shell tests (plus a few pytest files) |
+| `docs/` | Setup guides, specs, plans; see `docs/STRUCTURE.md` for the full tree |
+
+## Rules when changing things
+
+- **Keep the Claude and Antigravity copies in step.** An edit to
+  `plugins/autocoder/commands/X.md` needs the same edit in `.agent/workflows/X.md`
+  (modernize agents ↔ `.agent/rules/`).
+- **Edit scripts in `plugins/autocoder/scripts/`, then run
+  `python3 scripts/package-plugin-scripts.py`.** The other platforms' script
+  trees are generated; `tests/test_script_packaging.sh` fails on drift. A few
+  Antigravity scripts are hand-synced exceptions.
+- **Skills:** `skills/` is the source; mirror each into the plugin that ships it
+  (`tests/test_skill_packaging.sh` checks the Claude copy only).
+- **Versions:** never bump in an issue branch (see Landing work below). A release
+  bumps every manifest together; `tests/test_manifest_versions.sh` checks them.
+- **Tests that touch the issue layer** must run in a private temp repo with its own
+  `.autocoder.json`: from inside this checkout, `issueSource: github` wins over
+  `ISSUE_SOURCE=file` and the test acts on the real tracker.
+
+Details, mapping tables and the reasons behind each rule: `docs/maintaining.md`.
+
+## Issue tracking
+
+Issues come from the backend named in `.autocoder.json` (here: GitHub). Each
+backend implements the same verbs (list, get, update, comment, close, create,
+claim, release, any-claimable). Credentials come from the environment, never the
+repo. Setup: `docs/issue-backends.md`, `docs/jira-setup.md`, `docs/ado-setup.md`.
+
+## Code review
+
+The `/fix` pre-landing review gives `REVIEW.md` (repo root) to every reviewer.
+Put review rules there, not here.
 
 ## Automated Testing & Issue Management
 
@@ -447,4 +131,4 @@ master
   a line all branches would edit, so parallel bumps always conflict. Note the
   change under `## [Unreleased]` in the plugin's CHANGELOG, if there is one, and
   leave the version alone. The manager bumps every manifest once (Version
-  Management, below) when it releases a batch.
+  Management in `docs/maintaining.md`) when it releases a batch.
