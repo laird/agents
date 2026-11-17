@@ -96,6 +96,15 @@ ALL_JSON="$(mktemp)"
 trap 'rm -f "$ALL_JSON"' EXIT
 issue_list --state open --limit 500 > "$ALL_JSON"
 
+# ── 1b. Issues with a live remote branch are someone's work in flight ────
+# /fix treats a pushed feature/issue-N branch as the strongest lock, because it
+# survives a dropped or not-yet-propagated `working` label. This gate used to
+# filter on labels alone, so an issue its owner was actively resuming (#140) or
+# working (#153) was claimed by a second worker (#210). One ls-remote per tick;
+# fails open to [] when origin is unreachable, as /fix does.
+CLAIMED_BY_BRANCH="$(bash "${SCRIPT_DIR}/claimed-issue-numbers.sh" origin 2>/dev/null || true)"
+[ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
+
 # ── 2. Classify in pure python (no LLM) ──────────────────────────────────
 # Outputs one of:
 #   TRIAGE <n> <n> <n>...       (single line)
@@ -106,11 +115,15 @@ issue_list --state open --limit 500 > "$ALL_JSON"
 classify() {
   # Note: heredoc IS python stdin; the issues JSON must come via env var
   # (heredoc overrides any `< file` redirect, so we use ALL_JSON_PATH).
-  ALL_JSON_PATH="$ALL_JSON" python3 - <<'PY'
+  ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" python3 - <<'PY'
 import json, os, sys
 
 with open(os.environ["ALL_JSON_PATH"]) as f:
     issues = json.load(f)
+try:
+    claimed_by_branch = set(json.loads(os.environ.get("CLAIMED_BY_BRANCH") or "[]"))
+except ValueError:
+    claimed_by_branch = set()
 
 PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
@@ -143,6 +156,11 @@ for issue in issues:
         # *unless* it's a proposal (those wait for human approval).
         if PROPOSAL not in ls:
             unprioritized.append(issue["number"])
+        continue
+
+    # A live feature/issue-N branch means another worker owns it; triage
+    # above is metadata only, but fix/enhance work must not be claimed twice.
+    if issue["number"] in claimed_by_branch:
         continue
 
     # Priority issue: pick its priority index
