@@ -518,3 +518,35 @@ items = [json.loads(line) for line in sys.stdin if line.strip()]
 print(json.dumps(items))
 '
 }
+
+# next_worker_number <manifest-path-or-empty> <project-root> <use-worktrees:true|false>
+# The number for a worker add-worker.sh is about to create (#233): the lowest N >= 1
+# that no worker in the swarm manifest already has and, with worktrees, whose
+# <project-root>-wt-N directory does not exist yet. Under --no-worktrees the old code
+# always answered 1, so every added worker collided with worker 1's manifest entry,
+# its wt1-<project> label and its AUTOCODER_WORKER=<session>:1 marker. With no
+# manifest and no worktrees there is no record to consult, and the answer stays 1.
+next_worker_number() {
+  local manifest="$1" root="$2" use_wt="$3" taken="" n=1
+  if [ -n "$manifest" ] && [ -f "$manifest" ]; then
+    taken=$(python3 - "$manifest" <<'PY' 2>/dev/null
+import json, sys
+try:
+    workers = json.load(open(sys.argv[1], encoding="utf-8")).get("workers") or []
+except (OSError, ValueError):
+    workers = []
+for w in workers:
+    try:
+        print(int(w.get("number")))
+    except (TypeError, ValueError):
+        pass
+PY
+)
+  fi
+  while :; do
+    if printf '%s\n' "$taken" | grep -qx "$n"; then n=$((n + 1)); continue; fi
+    if [ "$use_wt" = true ] && [ -e "${root}-wt-${n}" ]; then n=$((n + 1)); continue; fi
+    break
+  done
+  printf '%s\n' "$n"
+}
