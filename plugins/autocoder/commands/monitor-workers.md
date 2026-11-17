@@ -433,9 +433,13 @@ comfortably fine. An inverted context alarm is worse than no alarm, because it f
 reassuringly at exactly the moment the worker is about to wedge.
 
 `ctx NN%` from the status line always means **used**, on every pane, in every version,
-because this repo renders it. If a pane shows no `ctx` segment, the status line is not
-installed there — fix that (`install-statusline.sh`) rather than parsing the footer. A pane
-with no `ctx` reading is **unknown**, not healthy; report it as unknown.
+because this repo renders it. Headless workers (`claude -p` under `claude-worker-loop.sh`)
+have no TUI, so the status-line hook never runs there. Their pane instead shows the same
+line, prefixed `── `, rendered from the session's stream by `stream-render.sh` (#132) each
+time context moves a whole point; the grep above reads both. A worker pane with no `ctx`
+yet has not finished its first request. An interactive pane with none is missing the hook:
+fix that (`install-statusline.sh`) rather than parsing the footer. A pane with no `ctx`
+reading is **unknown**, not healthy; report it as unknown.
 
 For **any worker at ≥95% context**, orchestrate handoff → clear → resume so nothing is lost:
 
