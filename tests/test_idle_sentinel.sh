@@ -953,6 +953,27 @@ echo "$OUT" | grep -q "already scheduled" \
   && ok "both sibling projects hold exactly one entry each" \
   || bad "sibling entries wrong: $(cat "$STORE2")"
 
+# A ' or % in the project path (#235): the cron line must still be one valid /bin/sh
+# command (POSIX '\'' quoting, not bash %q) and cron-escaped (\% — cron turns a bare %
+# into a newline), and a second --ensure must still find the entry by its mark.
+QDIR="$TMP/it's 100% proj"
+git init -q "$QDIR"; mkdir -p "$QDIR/.issues"
+python3 -c 'import json,sys; json.dump({"issueSource":"file","issueDir":sys.argv[1]}, open(sys.argv[2],"w"))' "$QDIR/.issues" "$QDIR/.autocoder.json"
+STORE4="$TMP/cronstore-quote"
+run_sentinel "$CRONSHIM:$BASEPATH" CRONTAB_STORE="$STORE4" -- --ensure --project "$QDIR" >/dev/null 2>&1
+QLINE=$(head -1 "$STORE4" 2>/dev/null)
+# What cron hands to /bin/sh: fields 6+ with \% turned back into %.
+QCMD=$(printf '%s\n' "$QLINE" | cut -d' ' -f6- | sed 's/\\%/%/g')
+sh -n -c "$QCMD" 2>/dev/null && ok "quoted cron line parses under /bin/sh" || bad "cron line does not parse: $QLINE"
+GOT=$(sh -c "${QCMD%% && *} && pwd" 2>/dev/null)
+[ "$GOT" = "$QDIR" ] && ok "its cd lands in the project dir with ' and % in the path" \
+  || bad "cd went to '$GOT', wanted '$QDIR' (line: $QLINE)"
+printf '%s' "$QLINE" | grep -q '100\\%' && ok "the % is cron-escaped" || bad "unescaped % in: $QLINE"
+OUT=$(run_sentinel "$CRONSHIM:$BASEPATH" CRONTAB_STORE="$STORE4" -- --ensure --project "$QDIR" 2>&1)
+echo "$OUT" | grep -q "already scheduled via cron" && [ "$(wc -l < "$STORE4")" -eq 1 ] \
+  && ok "second --ensure finds the escaped entry (no double install)" \
+  || bad "quoted-path entry not detected: $OUT / $(cat "$STORE4")"
+
 # Loop detection: a running --loop for THIS project blocks a cron install.
 P=$(new_project ensloop file)
 STORE3="$TMP/cronstore-loop"

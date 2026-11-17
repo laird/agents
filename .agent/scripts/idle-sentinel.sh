@@ -112,6 +112,12 @@ while [ -L "$SOURCE_PATH" ]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
+
+# sh_quote <s>: <s> as one POSIX-shell word, '…' with each ' written '\'' (#235).
+# Cron runs its lines with /bin/sh, so bash's printf %q ($'…' forms) is not safe here.
+sh_quote() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
+# cron_escape <s>: cron turns an unescaped % in the command into a newline; \% keeps it.
+cron_escape() { printf '%s' "${1//%/\\%}"; }
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # shellcheck source=swarm-manifest-lib.sh
@@ -1232,7 +1238,7 @@ prepare_manager_target() {
       # No session at all (host reboot): bootstrap via --manager-only (CDR #4)
       # — manifest with a manager entry only, zero workers, no auto-dispatch.
       if [ "$DRY_RUN" = true ]; then
-        echo "  (cd '$PROJECT_ROOT' && '$SCRIPT_DIR/start-parallel-agents.sh' --manager-only --mux tmux --agent '$AGENT_NAME')"
+        echo "  (cd $(sh_quote "$PROJECT_ROOT") && $(sh_quote "$SCRIPT_DIR/start-parallel-agents.sh") --manager-only --mux tmux --agent $(sh_quote "$AGENT_NAME"))"
         WAKE_TARGET="<bootstrap-tmux-pane>"
         return 0
       fi
@@ -1249,7 +1255,7 @@ prepare_manager_target() {
       # --manager-only only when there is no manifest at all.
       if [ ! -f "$MANIFEST_PATH" ]; then
         if [ "$DRY_RUN" = true ]; then
-          echo "  (cd '$PROJECT_ROOT' && '$SCRIPT_DIR/start-parallel-agents.sh' --manager-only --mux $MUX --agent '$AGENT_NAME')"
+          echo "  (cd $(sh_quote "$PROJECT_ROOT") && $(sh_quote "$SCRIPT_DIR/start-parallel-agents.sh") --manager-only --mux $MUX --agent $(sh_quote "$AGENT_NAME"))"
           WAKE_TARGET="<bootstrap-$MUX-workspace>"
           return 0
         fi
@@ -1262,9 +1268,9 @@ prepare_manager_target() {
       fi
       if [ "$DRY_RUN" = true ]; then
         if [ "$MUX" = cmux ]; then
-          echo "  cmux new-workspace --cwd '$PROJECT_ROOT'   # then rename manager-$PROJECT_NAME"
+          echo "  cmux new-workspace --cwd $(sh_quote "$PROJECT_ROOT")   # then rename manager-$PROJECT_NAME"
         else
-          echo "  herdr workspace create --cwd '$PROJECT_ROOT' --label 'manager-$PROJECT_NAME' --no-focus"
+          echo "  herdr workspace create --cwd $(sh_quote "$PROJECT_ROOT") --label $(sh_quote "manager-$PROJECT_NAME") --no-focus"
         fi
         WAKE_TARGET="<new-$MUX-workspace>"
         return 0
@@ -1827,6 +1833,7 @@ run_locked_tick() {
 
 CRON_MARK="# autocoder-idle-sentinel:$PROJECT_ROOT"
 
+
 detect_scheduler() {
   # Prints cron|systemd|loop|none. Never installs anything.
   # Every check is anchored to THIS exact project (#18): on a shared host,
@@ -1834,7 +1841,8 @@ detect_scheduler() {
   # norm, and a substring false-positive here means --ensure reports
   # "already scheduled", the manager exits trusting it, and nobody watches.
   if command -v crontab >/dev/null 2>&1 &&
-     crontab -l 2>/dev/null | awk -v mark="$CRON_MARK" '
+     crontab -l 2>/dev/null | CRON_MARK_LINE="$(cron_escape "$CRON_MARK")" awk '
+       BEGIN { mark = ENVIRON["CRON_MARK_LINE"] }   # ENVIRON: no awk escape processing of \%
        length($0) >= length(mark) &&
        substr($0, length($0) - length(mark) + 1) == mark { found = 1 }
        END { exit found ? 0 : 1 }'; then
@@ -1903,7 +1911,9 @@ cmd_ensure() {
     else
       sched="*/$mins * * * *"
     fi
-    local line="$sched cd '$PROJECT_ROOT' && '$SELF_PATH' --once >> '$AC_DIR/sentinel.cron.log' 2>&1 $CRON_MARK"
+    # Every path is quoted for /bin/sh and %-escaped for cron (#235): a ' or % in the
+    # project path used to break the line, or run part of it as shell.
+    local line="$sched $(cron_escape "cd $(sh_quote "$PROJECT_ROOT") && $(sh_quote "$SELF_PATH") --once >> $(sh_quote "$AC_DIR/sentinel.cron.log") 2>&1 $CRON_MARK")"
     if [ "$DRY_RUN" = true ]; then
       echo "DRY-RUN would install crontab entry:"
       echo "  $line"
