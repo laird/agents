@@ -374,6 +374,9 @@ release_pending_claim() {
     own_claim_is_live "$json" || return 0
   fi
   echo "fix-loop-gate: exiting (status ${rc}) before handing off #${n}; releasing its claim" >&2
+  # Label first, then the 🔓: a racer that reads the 🔓 and wins re-adds the label,
+  # and that must come after our removal or the issue is handed off unlabelled.
+  issue_release "$n" 2>/dev/null || issue_update "$n" --remove-label working 2>/dev/null || true
   issue_comment "$n" --body "🔓 **Releasing claim**
 
 **Reason**: the fix-loop gate exited (status ${rc}) after claiming this issue and before handing it to a worker session.
@@ -381,7 +384,6 @@ release_pending_claim() {
 **State left behind**: nothing; no work was started.
 
 Releasing the \`working\` lock so another agent can pick this up." 2>/dev/null || true
-  issue_release "$n" 2>/dev/null || issue_update "$n" --remove-label working 2>/dev/null || true
   # worker_state_set may already have recorded the claim, and a record of a
   # released issue would make the next tick try to resume it.
   if declare -F worker_state_file >/dev/null && f="$(worker_state_file 2>/dev/null)" && [ -f "$f" ]; then
