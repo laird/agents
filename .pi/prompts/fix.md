@@ -1199,27 +1199,27 @@ so a placeholder body can never ship.
 DIGEST_SECTIONS="$(git rev-parse --git-common-dir)/autocoder-digest-${REVIEW_ISSUE:-$ISSUE_NUM}.md"
 cat > "$DIGEST_SECTIONS" <<'DIGEST'
 ## Intent
-<one sentence: what problem this solves and for whom>
+{{FILL: one sentence: what problem this solves and for whom}}
 
 ## Where to look
-<the 1-3 hunks (file:line) where a mistake would matter; label everything else
-"mechanical" with a one-line reason, e.g. "mirrors: byte-identical copies">
+{{FILL: the 1-3 hunks (file:line) where a mistake would matter; label everything
+else "mechanical" with a one-line reason, e.g. "mirrors: byte-identical copies"}}
 
 ## Verification
-<the exact commands you ran and their actual result lines, e.g.
-$ bash tests/run-shell-suite.sh
-Tests: 0 failed, 60 passed, 60 total>
+{{FILL: the exact commands you ran and their actual result lines, e.g.
+"$ bash tests/run-shell-suite.sh" then "Tests: 0 failed, 60 passed, 60 total"}}
 
 ## Not verified / confidence
-<what you did not exercise, known risks, and confidence: high|medium|low>
+{{FILL: what you did not exercise, known risks, and confidence: high|medium|low}}
 DIGEST
 # Only when the renderer asks for it (insertions > 3x deletions and > 200 lines):
-#   printf '\n## Why net growth\n<one sentence>\n' >> "$DIGEST_SECTIONS"
+#   printf '\n## Why net growth\n%s\n' "one sentence" >> "$DIGEST_SECTIONS"
 ```
 
-Replace every `<...>` line with real content. The renderer leaves your text
-alone (it may contain `Vec<T>` or `<sha>`), so an unreplaced line ships as
-written. Read the rendered body before publishing.
+Replace every `{{FILL: ...}}` slot, including the hint, with real content. The
+renderer refuses a body that still contains one, so a forgotten slot stops the
+publish instead of shipping. It does not police anything else you write: `Vec<T>`,
+`<sha>` and `[links](url)` are fine.
 
 **REVIEW FIT after implementation.** Before publishing, check the size the
 reviewer will face. Over the limit, **always publish anyway**: add
@@ -1338,7 +1338,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop. The body is the review digest (see
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "$DIGEST_SECTIONS" --pr) \
+    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
     || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   gh pr create \
     --base "$INTEGRATION_BRANCH" \
@@ -1384,7 +1384,7 @@ else
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "$DIGEST_SECTIONS" > "$SUMMARY_FILE" \
+    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
     || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
@@ -1595,7 +1595,7 @@ if [ "$MERGE_MODE" = "pr" ]; then
   # Create a pull request and stop. The body is the review digest (see
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "$DIGEST_SECTIONS" --pr) \
+    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
     || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   gh pr create \
     --base "$INTEGRATION_BRANCH" \
@@ -1641,7 +1641,7 @@ else
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "$DIGEST_SECTIONS" > "$SUMMARY_FILE" \
+    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
     || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
@@ -2488,7 +2488,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "$DIGEST_SECTIONS" > "$SUMMARY_FILE" \
+    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
     || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \

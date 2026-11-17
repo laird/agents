@@ -74,7 +74,9 @@ fi
 # ── Size ────────────────────────────────────────────────────────────────────
 # One pass over numstat: "<added>\t<deleted>\t<path>"; binary files show "-".
 read -r INS DEL FILES M_INS M_DEL M_FILES < <(
-  git diff --numstat "${BASE}...HEAD" | awk -F'\t' '
+  # --no-renames: a rename is a delete plus an add, each under its own plain path
+  # (numstat would otherwise print "a => b", which the mirror match cannot read).
+  git -c core.quotePath=false diff --no-renames --numstat "${BASE}...HEAD" | awk -F'\t' '
     function mirror(p) {
       return p ~ /^\.agent\// || p ~ /^plugins\/[^\/]+\/skills\// || p ~ /^codex-plugins\// \
           || p ~ /^\.factory\// || p ~ /^\.factory-plugin\// || p ~ /^\.pi\//
@@ -116,12 +118,19 @@ fi
 
 # ── Sections ────────────────────────────────────────────────────────────────
 # section <heading> — the body under "## <heading>" in $SECTIONS, trimmed.
+# Headings inside ``` / ~~~ fences are content, not headings: pasted markdown or
+# test output must neither end a section nor start one. CRLF and trailing
+# whitespace on a heading line are tolerated.
 section() {
   [ -n "$SECTIONS" ] || return 0
-  awk -v h="## $1" '
-    $0 == h { on = 1; next }
-    /^## / && on { exit }
-    on { print }' "$SECTIONS" | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
+  tr -d '\r' < "$SECTIONS" | awk -v h="## $1" '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; if (on) print; next }
+    !fence && /^## / {
+      line = $0; sub(/[[:space:]]+$/, "", line)
+      if (on) exit
+      if (line == h) { on = 1; next }
+    }
+    on { print }' | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
 }
 slot() {  # slot <heading> <fill hint>
   local body; body=$(section "$1")

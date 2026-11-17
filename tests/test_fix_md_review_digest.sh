@@ -24,13 +24,13 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   PR_FROM_DIGEST=$(grep -c -- '--body "\${DIGEST}' "$P")
   eq "$F: both gh pr create sites exist" 2 "$PRS"
   eq "$F: every gh pr create body is \${DIGEST}" "$PRS" "$PR_FROM_DIGEST"
-  [ "$(grep -c -- '--sections "\$DIGEST_SECTIONS" --pr) \\' "$P")" -eq "$PRS" ] \
+  [ "$(grep -c -- '--sections "\${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \\' "$P")" -eq "$PRS" ] \
     && ok "$F: every PR digest is rendered with --pr" || bad "$F: a PR digest is not rendered with --pr"
 
   # Merge-mode closes.
   if grep -q 'SUMMARY_FILE=$(mktemp' "$P"; then   # Claude copy: the merge job closes
     SUMS=$(grep -c 'SUMMARY_FILE=$(mktemp' "$P")
-    SUM_RENDERS=$(grep -c -- '--sections "\$DIGEST_SECTIONS" > "\$SUMMARY_FILE"' "$P")
+    SUM_RENDERS=$(grep -c -- '--sections "\${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "\$SUMMARY_FILE"' "$P")
     eq "$F: all 3 merge summaries exist" 3 "$SUMS"
     eq "$F: every merge summary is rendered" "$SUMS" "$SUM_RENDERS"
     CLOSES_LITERAL=$(grep -c "<<\\\\'SUMMARY\\\\'" "$P")
@@ -54,6 +54,11 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
     && ok "$F: rollup close is rendered" || bad "$F: rollup close not rendered"
   grep -A12 'ROLLUP=$(bash' "$P" | grep -q 'leaving it open' \
     && ok "$F: rollup stays open when the render fails" || bad "$F: rollup closes without a digest"
+
+  # The sections template uses {{FILL: slots, which the renderer rejects, so a
+  # worker who forgets one cannot ship it (a bare <...> line would pass).
+  FILLS=$(sed -n '/cat > "\$DIGEST_SECTIONS" <<.DIGEST./,/^DIGEST$/p' "$P" | grep -c '{{FILL:')
+  [ "$FILLS" -ge 4 ] && ok "$F: digest template slots are {{FILL: (found $FILLS)" || bad "$F: digest template has $FILLS {{FILL: slots, want 4"
 
   # REVIEW FIT: scope gate criterion + post-implementation label, never split.
   grep -q '#   3. REVIEW FIT' "$P" && ok "$F: REVIEW FIT is in the scope gate" || bad "$F: no REVIEW FIT in the scope gate"

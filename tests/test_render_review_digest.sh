@@ -110,6 +110,28 @@ rm .autocoder.json
 OUT=$(AUTOCODER_REVIEW_MAX_LINES=100 bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>/dev/null)
 has "over-limit body says so" "$OUT" "over the review-fit limit of 100 lines"
 
+# ── 8b. Headings inside a fence are content; CRLF is tolerated ───────────
+filled
+python3 - "$TMP/sections.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace("- Mirrors are mechanical copies.\n",
+    "- Mirrors are mechanical copies.\n```\n## Not verified / confidence\n## Intent\nfenced text\n```\nafter fence\n")
+open(p, "w").write(s + "\n## Why net growth\nFixture data.\n")
+PY
+OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>/dev/null); RC=$?
+[ "$RC" -eq 0 ] && ok "fenced headings: exits 0" || bad "fenced headings exited $RC"
+WHERE=$(printf '%s\n' "$OUT" | awk '/^## Where to look$/{on=1;next} /^## Verification$/{on=0} on')
+has "fenced headings stay inside Where to look" "$WHERE" "after fence"
+# The real heading is the LAST one; the first is the fenced copy inside Where to look.
+NV=$(printf '%s\n' "$OUT" | awk '/^## Not verified \/ confidence$/{buf="";on=1;next} /^## Size$/{on=0} on{buf=buf $0 "\n"} END{printf "%s", buf}')
+lacks "fence content does not leak into Not verified" "$NV" "fenced text"
+filled; printf '\n## Why net growth\nFixture data.\n' >> "$TMP/sections.md"
+sed -i 's/$/\r/; s/^## Intent\r$/## Intent   \r/' "$TMP/sections.md"
+OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>/dev/null); RC=$?
+[ "$RC" -eq 0 ] && ok "CRLF + trailing-space headings: exits 0" || bad "CRLF sections exited $RC"
+lacks "CRLF: no carriage returns in the body" "$OUT" $'\r'
+
 # ── 9. Bad arguments ─────────────────────────────────────────────────────
 bash "$R" --issue 42 --base no-such-ref >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 2 ] && ok "unresolvable base exits 2" || bad "unresolvable base exited $RC"
