@@ -79,6 +79,10 @@ _scs_issue_fns() {
 FULL_SHA=$(git rev-parse --verify -q "${SHA}^{commit}" 2>/dev/null) || FULL_SHA=""
 [ -n "$FULL_SHA" ] && SHA="$FULL_SHA"
 SHA=$(printf '%s' "$SHA" | tr 'A-F' 'a-f')
+if [ -n "$BASE" ]; then
+  BASE=$(git rev-parse --verify -q "${BASE}^{commit}" 2>/dev/null) \
+    || { echo "spot-check-select.sh: base does not resolve to a commit" >&2; exit 2; }
+fi
 HEAD_SHA=$(git rev-parse --verify -q "${HEAD_REF:-$SHA}^{commit}" 2>/dev/null) || HEAD_SHA=""
 if [ -z "$BASE" ] && [ -n "$FULL_SHA" ]; then
   BASE=$(git rev-parse --verify -q "${FULL_SHA}^2" 2>/dev/null) \
@@ -87,21 +91,34 @@ fi
 
 if [ "$LABELS_GIVEN" -eq 0 ]; then
   if _scs_issue_fns; then
-    LABELS=$(issue_get "$ISSUE" 2>/dev/null | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || LABELS=""
+    if _j=$(issue_get "$ISSUE" 2>/dev/null) && LABELS=$(printf '%s' "$_j" | jq -r '.labels | map(.name) | .[]' 2>/dev/null); then :
+    else { LABELS=""; echo "spot-check-select.sh: could not read the labels of #${ISSUE}; P0/P1/security not checked" >&2; }
+    fi
+  else
+    echo "spot-check-select.sh: cannot load the issue functions; P0/P1/security not checked" >&2
   fi
 fi
-has_label() { case ",${LABELS}," in *",$1,"*) return 0 ;; esac; return 1; }
+# Exact names, one per line (a tracker label may itself contain a comma). --labels is a
+# comma list, split here.
+[ "$LABELS_GIVEN" -eq 1 ] && LABELS=$(printf '%s' "$LABELS" | tr ',' '\n')
+has_label() { printf '%s\n' "$LABELS" | grep -qxF -- "$1"; }
 
 # ── .autocoder.json spotCheck settings ──────────────────────────────────────────
-TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# Read from the BASE commit (the integration side), never from the change under review:
+# the merge job runs inside the feature's worktree, and a change must not be able to
+# switch off its own sampling by editing `spotCheck`. Only with no base (an unresolvable
+# landed commit) does the working tree's file stand in.
 CFG_RATE=""; SECURITY_GLOBS=()
-if [ -f "$TOP/.autocoder.json" ]; then
-  _cfg=$(python3 - "$TOP/.autocoder.json" <<'PY' 2>/dev/null
+if [ -n "$BASE" ]; then
+  _cfg_json=$(git show "${BASE}:.autocoder.json" 2>/dev/null) || _cfg_json=""
+else
+  _top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  _cfg_json=$(cat "$_top/.autocoder.json" 2>/dev/null) || _cfg_json=""
+fi
+if [ -n "$_cfg_json" ]; then
+  if ! _cfg=$(printf '%s' "$_cfg_json" | python3 -c '
 import json, sys
-try:
-    sc = json.load(open(sys.argv[1])).get("spotCheck") or {}
-except (OSError, ValueError):
-    sc = {}
+sc = json.load(sys.stdin).get("spotCheck") or {}
 if not isinstance(sc, dict):
     sc = {}
 print(sc.get("rate", ""))
@@ -110,16 +127,21 @@ if isinstance(paths, list):
     for p in paths:
         if isinstance(p, str) and p.strip():
             print(p.strip())
-PY
-)
+' 2>/dev/null); then
+    echo "spot-check-select.sh: cannot read the spotCheck settings in .autocoder.json; using defaults" >&2
+    _cfg=""
+  fi
   CFG_RATE=$(printf '%s\n' "$_cfg" | sed -n 1p)
   while IFS= read -r g; do [ -n "$g" ] && SECURITY_GLOBS+=("$g"); done < <(printf '%s\n' "$_cfg" | sed -n '2,$p')
 fi
-RATE="${AUTOCODER_SPOT_CHECK_RATE:-${CFG_RATE:-0.10}}"
-if ! awk -v r="$RATE" 'BEGIN { exit !(r ~ /^([0-9]+\.?[0-9]*|\.[0-9]+)$/ && r + 0 <= 1) }'; then
-  echo "spot-check-select.sh: rate '$RATE' is not a number in [0, 1]; using 0.10" >&2
-  RATE=0.10
-fi
+_valid_rate() { awk -v r="$1" 'BEGIN { exit !(r ~ /^([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$/ && r + 0 <= 1) }'; }
+RATE=0.10
+for _r in "$CFG_RATE" "${AUTOCODER_SPOT_CHECK_RATE:-}"; do   # later wins
+  [ -n "$_r" ] || continue
+  if _valid_rate "$_r"; then RATE="$_r"
+  else echo "spot-check-select.sh: rate '$_r' is not a number in [0, 1]; ignoring it" >&2
+  fi
+done
 
 # ── Selection ───────────────────────────────────────────────────────────────────
 REASON=""
@@ -147,8 +169,10 @@ if [ -z "$REASON" ] && [ -n "$BASE" ] && [ -n "$HEAD_SHA" ]; then
 fi
 
 if [ -z "$REASON" ]; then
-  _h=$(printf '%s' "$SHA" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-8)
-  if awk -v h=$((16#$_h)) -v r="$RATE" 'BEGIN { exit !(h < r * 4294967296) }'; then
+  _h=$(printf '%s' "$SHA" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | cut -c1-8)
+  if ! [[ "$_h" =~ ^[0-9a-f]{8}$ ]]; then
+    echo "spot-check-select.sh: no sha256sum or shasum; not sampling" >&2
+  elif awk -v h=$((16#$_h)) -v r="$RATE" 'BEGIN { exit !(h < r * 4294967296) }'; then
     REASON=sampled
   fi
 fi

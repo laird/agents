@@ -37,6 +37,14 @@ seq 1 50 > big.txt; g add .; g commit -qm big
 BIG=$(git rev-parse HEAD)
 
 sel() { bash "$S" "$@" 2>/dev/null; }
+# cfg_on <parent> <json> → a commit on <parent> that only adds .autocoder.json. The
+# selector reads its settings from the BASE commit, so config is set up as a base.
+cfg_on() {
+  local cur; cur=$(git rev-parse --abbrev-ref HEAD)
+  g checkout -q --detach "$1"; printf '%s\n' "$2" > .autocoder.json
+  g add .autocoder.json; g commit -qm cfg; git rev-parse HEAD
+  g checkout -q "$cur"
+}
 
 # ── 1. Priority ────────────────────────────────────────────────────────────────
 eq "P0 selects" "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --labels P0,bug)" P0
@@ -47,15 +55,15 @@ eq "P2 alone does not select at rate 0" "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --iss
 eq "the security label selects" "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --labels P3,security)" security
 eq "no securityPaths configured: a workflow change alone does not select" \
   "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$CI" --labels P3)" ""
-printf '{"spotCheck": {"securityPaths": [".github/workflows/*"]}}\n' > .autocoder.json
+CFG_WF=$(cfg_on "$SMALL" '{"spotCheck": {"securityPaths": [".github/workflows/*"]}}')
 eq "a changed path matching a securityPaths glob selects" \
-  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$CI" --labels P3)" security
+  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$CI" --base "$CFG_WF" --head "$CI" --labels P3)" security
+CFG_WF0=$(cfg_on "$BASE" '{"spotCheck": {"securityPaths": [".github/workflows/*"]}}')
 eq "a change outside the securityPaths globs does not" \
-  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --labels P3)" ""
-printf '{"spotCheck": {"securityPaths": ["*token*", "*auth*"]}}\n' > .autocoder.json
+  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --base "$CFG_WF0" --head "$SMALL" --labels P3)" ""
+CFG_TOK=$(cfg_on "$BASE" '{"spotCheck": {"securityPaths": ["*token*", "*auth*"]}}')
 eq "free text 'token'/'auth' inside the diff never selects (paths only)" \
-  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --labels P3)" ""
-rm -f .autocoder.json
+  "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --base "$CFG_TOK" --head "$SMALL" --labels P3)" ""
 
 # ── 3. Size (the #196 review-fit thresholds) ───────────────────────────────────
 eq "a diff over the review-fit line threshold selects" \
@@ -107,9 +115,22 @@ for c in $(git rev-list --all); do
   SEEN_BOTH+="${want:-none} "
 done
 ok "sampling at rate 0.5 is hash(sha) < rate, stable across runs and for a short id"
+CFG_R1=$(cfg_on "$BASE" '{"spotCheck": {"rate": 1}}')
+eq "spotCheck.rate in the base commit's .autocoder.json is read" "$(sel --issue 1 --sha "$SMALL" --base "$CFG_R1" --head "$SMALL" --labels P3)" sampled
+eq "AUTOCODER_SPOT_CHECK_RATE overrides it" "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --base "$CFG_R1" --head "$SMALL" --labels P3)" ""
+eq "an invalid env rate falls back to the configured one, not the default" \
+  "$(AUTOCODER_SPOT_CHECK_RATE=2 sel --issue 1 --sha "$SMALL" --base "$CFG_R1" --head "$SMALL" --labels P3)" sampled
+# The change under review cannot switch off its own sampling: a commit that sets
+# rate 0 and drops securityPaths is judged by its base's settings.
+CFG_STRICT=$(cfg_on "$BASE" '{"spotCheck": {"rate": 1, "securityPaths": [".github/*"]}}')
+g checkout -q --detach "$CFG_STRICT"
+printf '{"spotCheck": {"rate": 0}}\n' > .autocoder.json; g commit -qam "disable spot-check"
+EVADE=$(git rev-parse HEAD); g checkout -q master
+eq "a change that sets its own rate to 0 is still sampled at the base's rate" \
+  "$(sel --issue 1 --sha "$EVADE" --labels P3)" sampled
 printf '{"spotCheck": {"rate": 1}}\n' > .autocoder.json
-eq "spotCheck.rate in .autocoder.json is read" "$(sel --issue 1 --sha "$SMALL" --labels P3)" sampled
-eq "AUTOCODER_SPOT_CHECK_RATE overrides it" "$(AUTOCODER_SPOT_CHECK_RATE=0 sel --issue 1 --sha "$SMALL" --labels P3)" ""
+eq "the working tree's .autocoder.json is not read when there is a base" \
+  "$(sel --issue 1 --sha "$SMALL" --labels P3)" ""
 rm -f .autocoder.json
 OUT=$(AUTOCODER_SPOT_CHECK_RATE=banana bash "$S" --issue 1 --sha "$SMALL" --labels P3 2>&1 >/dev/null)
 printf '%s' "$OUT" | grep -q "not a number" && ok "a malformed rate is reported and falls back to the default" \

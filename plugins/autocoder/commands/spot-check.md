@@ -107,7 +107,8 @@ When no items are left, say so and stop.
 
 ## Settings
 
-`.autocoder.json`:
+`.autocoder.json`, read from the integration side of the landed change (never from the
+change itself, so a change cannot switch off its own sampling):
 
 ```json
 {
@@ -121,8 +122,8 @@ When no items are left, say so and stop.
 
 - `rate`: share of other merged work sampled, 0 to 1. `AUTOCODER_SPOT_CHECK_RATE`
   overrides it.
-- `securityPaths`: globs for paths that always select; `*` also matches `/`. Empty
-  by default.
+- `securityPaths`: globs for paths that always select. A glob matches the whole path
+  and `*` also matches `/`, so write `auth/*`, not `auth/`. Empty by default.
 - `backlogMax`: `/monitor-workers` warns when more items than this are unreviewed. It
   never pauses the swarm.
 
