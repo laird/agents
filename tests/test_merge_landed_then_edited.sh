@@ -1,7 +1,8 @@
 #!/bin/bash
 # tests/test_merge_landed_then_edited.sh — a change that already landed (as a patch-equivalent
 # commit) and was then edited by a sibling is recognised as landed, not escalated as
-# "nothing landed"; a landed change that was REVERTED is still refused (#236).
+# "nothing landed"; a landed change that was REVERTED, or undone in any one file, is
+# still refused (#236, #237).
 #
 # _nothing_left_to_land used to decide only by reverse-applying the feature diff to the
 # integration tip. A later sibling edit to the same lines makes that fail, so the job
@@ -71,6 +72,55 @@ OUT=$(cd "$TMP/undone/w" && bash "$MTI" --feature feature/x --issue 23603 --inte
   --test-cmd true --own-issue 2>&1); RC=$?
 [ "$RC" -ne 0 ] && ok "landed-then-undone-by-hand: refused (rc=$RC)" || bad "manually undone change treated as landed"
 [ "$(state 23603)" != "CLOSED" ] && ok "undone: issue left open" || bad "undone issue was closed"
+
+# setup2 <name> <issue> <feature-cmds>: like setup, but the feature commit is whatever
+# <feature-cmds> does to a two-file tree (a.txt, b.txt, and a file with glob characters).
+setup2() {
+  local d="$TMP/$1" n="$2"
+  printf -- '---\nnumber: %s\ntitle: T\npriority: P3\nlabels: [bug]\nstatus: open\n---\nB.\n' "$n" > "$TMP/issues/open/$n.md"
+  python3 "$ISSUES_PY" claim "$n" >/dev/null
+  git init --bare -q "$d/origin.git"; git init -q "$d/w"
+  cd "$d/w" || exit 1
+  git config user.email t@example.com; git config user.name T
+  git remote add origin "$d/origin.git"
+  printf 'a1\na2\na3\n' > a.txt; printf 'b1\nb2\nb3\n' > b.txt; printf 'g1\ng2\ng3\n' > 'g[1]*.txt'
+  printf 'r1\nr2\nr3\nr4\nr5\nr6\n' > old.txt
+  git add -A; git commit -q -m base; git branch -M master
+  git push -q origin master master:master-green
+  git checkout -q -b feature/x; eval "$3"; git add -A; git commit -qm "feature"
+  FEAT=$(git rev-parse HEAD)
+  git checkout -q master; git cherry-pick -x "$FEAT" >/dev/null
+}
+run_mti() { (cd "$TMP/$1/w" && bash "$MTI" --feature feature/x --issue "$2" --integration master --test-cmd true --own-issue 2>&1); }
+
+# ── 4. partial undo: a.txt restored by hand, b.txt edited by a sibling (#237) ──
+# Both whole-patch checks fail, but a.txt's slice still applies forward: refused.
+setup2 partial 23604 "printf 'a1\nA2-feature\na3\n' > a.txt; printf 'b1\nB2-feature\nb3\n' > b.txt"
+printf 'a1\na2\na3\n' > a.txt; printf 'b1\nB2-sibling\nb3\n' > b.txt; git commit -qam "undo a by hand, sibling edits b"; git push -q origin master
+OUT=$(run_mti partial 23604); RC=$?
+[ "$RC" -ne 0 ] && ok "partial undo: refused (rc=$RC)" || bad "partially undone change treated as landed"
+[ "$(state 23604)" != "CLOSED" ] && ok "partial undo: issue left open" || bad "partially undone issue was closed"
+
+# ── 5. landed feature that renames a file, then a sibling edits it: still landed ──
+# With rename detection the patch had one a/old b/new entry; an --include on the old name
+# matched nothing and exited 0, which read as "applies forward" and refused every rename.
+setup2 rename 23605 "git mv old.txt new.txt; printf 'r1\nr2\nr3\nr4\nr5\nR6-feature\n' > new.txt; printf 'a1\nA2-feature\na3\n' > a.txt"
+printf 'a1\nA2-sibling\na3\n' > a.txt; git commit -qam "sibling edits a"; git push -q origin master
+OUT=$(run_mti rename 23605); RC=$?
+[ "$RC" -eq 0 ] && ok "landed rename, later edited: closes (rc 0)" || bad "landed rename refused: rc=$RC: $(tail -4 <<<"$OUT")"
+[ "$(state 23605)" = "CLOSED" ] && ok "landed rename: issue closed" || bad "landed rename: issue $(state 23605)"
+
+# ── 6. glob characters in a name: matched literally, not as a pattern ──
+# The feature edits g[1]*.txt and b.txt; b.txt is later edited by a sibling. A glob match
+# on 'g[1]*.txt' would select nothing (or other files) and must not decide the outcome.
+setup2 glob 23606 "printf 'g1\nG2-feature\ng3\n' > 'g[1]*.txt'; printf 'b1\nB2-feature\nb3\n' > b.txt"
+printf 'b1\nB2-sibling\nb3\n' > b.txt; git commit -qam "sibling edits b"; git push -q origin master
+OUT=$(run_mti glob 23606); RC=$?
+[ "$RC" -eq 0 ] && ok "landed change to a file with glob characters: closes" || bad "glob-named landed change refused: rc=$RC: $(tail -4 <<<"$OUT")"
+setup2 globundo 23607 "printf 'g1\nG2-feature\ng3\n' > 'g[1]*.txt'; printf 'b1\nB2-feature\nb3\n' > b.txt"
+printf 'g1\ng2\ng3\n' > 'g[1]*.txt'; printf 'b1\nB2-sibling\nb3\n' > b.txt; git commit -qam "undo g by hand, sibling edits b"; git push -q origin master
+OUT=$(run_mti globundo 23607); RC=$?
+[ "$RC" -ne 0 ] && ok "undoing the glob-named file is detected (refused)" || bad "undo of glob-named file treated as landed"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"

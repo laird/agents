@@ -787,7 +787,8 @@ fi
 # reverse-applies the feature diff, which also fails when a later sibling commit edited the
 # same lines. All of these must hold:
 #   - every feature commit has a patch-equivalent commit in tip's history (git cherry);
-#   - the feature diff does NOT apply forward to the tip: if it did, those lines look
+#   - the feature diff does NOT apply forward to the tip, as a whole or for any one file
+#     (#237): if it did, those lines look
 #     exactly as before the change, i.e. it was undone (a manual undo or a squash/PR
 #     revert leaves no standard revert message);
 #   - no equivalent commit is named by a later "This reverts commit <sha>" message.
@@ -799,10 +800,23 @@ _landed_by_patch_id() {
   [ -n "$marks" ] || return 1
   case $'\n'"$marks" in *$'\n+'*) return 1 ;; esac      # some commit has no upstream copy
   patch=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.fwd.XXXXXX")
-  git diff --binary "$base" "$FEATURE_SHA" > "$patch"
+  git diff --binary --no-renames "$base" "$FEATURE_SHA" > "$patch"
   if [ -s "$patch" ] && git apply --check "$patch" 2>/dev/null; then
     rm -f "$patch"; return 1                               # undone: the tip is pre-change there
   fi
+  # Per file too (#237): a partial undo (one file restored by hand, another edited later)
+  # fails the whole-patch check, but the restored file's slice still applies forward.
+  # --no-renames on both the patch and the name list, so every name is a patch entry;
+  # --include takes a glob, so the name is escaped; and an include that matches nothing
+  # also exits 0, so a slice counts only when --numstat shows it is non-empty.
+  local f pat
+  while IFS= read -r -d '' f; do
+    pat=$(printf '%s' "$f" | sed 's/[][*?\\]/\\&/g')
+    [ -n "$(git apply --numstat --include="$pat" "$patch" 2>/dev/null)" ] || continue
+    if git apply --check --include="$pat" "$patch" 2>/dev/null; then
+      rm -f "$patch"; return 1                             # this file's change was undone
+    fi
+  done < <(git diff -z --name-only --no-renames "$base" "$FEATURE_SHA" 2>/dev/null)
   rm -f "$patch"
   # The upstream copies: commits on tip's side that git marks patch-equivalent ('=').
   eq=$(git log --cherry-mark --right-only --no-merges --format='%m %H' "${FEATURE_SHA}...${tip}" 2>/dev/null \
