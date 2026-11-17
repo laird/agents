@@ -82,6 +82,22 @@ for mux in tmux cmux; do
   check "$mux: dialog after typing → no Enter" "$SENT_ENTER" 0
 done
 
+# claude --dangerously-skip-permissions shows "bypass permissions on" in its
+# footer the whole time it runs; that is a ready agent, not a dialog.
+FOOTER="> 
+  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+for mux in tmux cmux herdr; do
+  run_stub "$mux" "$FOOTER"
+  check "$mux: claude's bypass footer is not a dialog → sent" "$RC" 0
+  check "$mux: claude's bypass footer → submitted" "$SENT_ENTER" 1
+done
+
+# herdr: a dialog drawn while the agent surface was tried stops the fallback.
+HERDR_PROMPT_FAILS=1 run_stub herdr "$READY" "Do you trust this folder?"
+check "herdr: dialog before typed fallback → rc 3" "$RC" 3
+grep -q '^herdr pane send-text' "$CALLS" && bad "herdr: fallback typed into a dialog" \
+  || ok "herdr: fallback held back from a dialog"
+
 # herdr: the agent surface failing falls back to typing into the pane.
 HERDR_PROMPT_FAILS=1 run_stub herdr "$READY"
 check "herdr: agent prompt fails → typed fallback (rc)" "$RC" 0
@@ -110,8 +126,21 @@ for screen in \
   "> /autocoder:fix-loop" \
   "╭─ Welcome to Claude Code ─╮" \
   "Type your message or @path/to/file" \
-  "gemini-2.5-pro (99% context left)"; do
+  "gemini-2.5-pro (99% context left)" \
+  "  ⏵⏵ bypass permissions on (shift+tab to cycle)"; do
   check "pattern ignores: $screen" "$(match "$screen")" no
+done
+# The prompt is on screen for the check before Enter, so no prompt a launcher
+# sends may itself match the pattern: it would withhold its own Enter.
+for agent in claude gemini codex pi droid; do
+  for mux in tmux herdr; do
+    out=$( (source "$LIB"; source "$ROOT/plugins/autocoder/scripts/worker-launch-lib.sh"
+            resolve_worker_launch "$agent" "$ROOT" "$mux" >/dev/null 2>&1 || exit 0
+            for c in "$WORKER_CMD" "$MANAGER_CMD"; do
+              printf '%s\n' "$c" | grep -Eq "$AUTOCODER_CONSENT_PATTERN" && echo "$c"
+            done) )
+    check "$agent/$mux: no launch prompt matches the pattern" "$out" ""
+  done
 done
 check "AUTOCODER_CONSENT_PATTERN overrides the default" \
   "$( (AUTOCODER_CONSENT_PATTERN='Custom gate'; source "$LIB"; printf 'Custom gate here\n' | grep -Eq "$AUTOCODER_CONSENT_PATTERN") && echo yes || echo no)" yes

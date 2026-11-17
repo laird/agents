@@ -233,7 +233,14 @@ capture_target() {
 # first prompt and Enter a fixed time after starting the agent answers such a
 # dialog with its default instead of submitting the prompt (#253). Override
 # with an extended regex when an agent words its dialog differently.
-AUTOCODER_CONSENT_PATTERN="${AUTOCODER_CONSENT_PATTERN:-No, exit|Bypass Permissions|bypass permissions|[Dd]o you trust|one you trust|[Tt]rust (this |the |parent )?folder|work in this folder}"
+#
+# Case matters: a claude started with --dangerously-skip-permissions shows
+# "bypass permissions on" in its footer for as long as it runs, so only the
+# dialog's capitalised "Bypass Permissions" may match, never the lowercase
+# words. The prompt typed after the first check is on screen for the second
+# one, so no prompt a launcher sends may match this pattern either
+# (tests/test_agent_prompt_consent.sh checks every agent's prompts).
+AUTOCODER_CONSENT_PATTERN="${AUTOCODER_CONSENT_PATTERN:-No, exit|Bypass Permissions|[Dd]o you trust|one you trust|[Tt]rust (this |the |parent )?folder|work in this folder}"
 
 # 0 when the pane shows a consent or trust dialog. A pane that cannot be read
 # counts as showing none: the send that follows reports that failure itself.
@@ -266,6 +273,7 @@ send_agent_prompt() {
       ;;
     cmux)
       run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux send --workspace "$target" "$text" >/dev/null || return 1
+      sleep "$AUTOCODER_MUX_SUBMIT_DELAY"
       if consent_dialog_showing cmux "$target"; then
         _agent_prompt_withheld "$target" "$text"
         return 3
@@ -274,8 +282,15 @@ send_agent_prompt() {
       ;;
     herdr)
       # `herdr agent prompt` writes text and Enter as one; the check above is
-      # the last chance to hold it back.
-      prompt_herdr_agent "$target" "$text" || send_herdr_command "$target" "$text" || return 1
+      # the last chance to hold it back. Its typed fallback is checked again,
+      # since time has passed while the agent surface was tried.
+      if ! prompt_herdr_agent "$target" "$text"; then
+        if consent_dialog_showing herdr "$target"; then
+          _agent_prompt_withheld "$target" "$text"
+          return 3
+        fi
+        send_herdr_command "$target" "$text" || return 1
+      fi
       ;;
     *)
       echo "send_agent_prompt: unknown multiplexer '$mux'" >&2
