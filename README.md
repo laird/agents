@@ -159,6 +159,8 @@ Platform-specific install and run guides for each supported agent:
 
 To manage a swarm from another machine (a laptop, a uConsole) over Tailscale, see [docs/remote-swarm.md](docs/remote-swarm.md): `remote-swarm-setup`, then `swarm` or `join-parallel --remote <host>`.
 
+Tools that read a running swarm's state (`.autocoder/swarm/<session>.json`) should follow [docs/swarm-manifest.md](docs/swarm-manifest.md): the fields, the lock, the worker and manager markers, and what a reader may rely on.
+
 ---
 
 ## Shell Aliases — All Combinations
