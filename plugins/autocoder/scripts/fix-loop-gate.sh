@@ -24,6 +24,10 @@
 #   1   no work available (idle tick — caller should not invoke Claude)
 #   2   configuration error (e.g. missing issue source)
 #
+# Abandoned claims (#203): a `working` issue is also a candidate, ranked after
+# fresh issues of the same priority. It is taken over only when every claim on
+# it is abandoned (see claim-takeover-fns.sh); live claims are always respected.
+#
 # Race safety:
 #   File backend: atomic claim via `issue_claim` (rename open/NNN.md →
 #                 working/NNN.md). Loser of the rename race gets exit 1;
@@ -151,14 +155,22 @@ def labels(issue):
     return {l["name"] for l in issue.get("labels", [])}
 
 unprioritized = []
-priority = []     # list of (priority_index, number)
+priority = []     # list of (priority_index, rank, kind, number); rank 0 = fresh
 enhancements = []
 
 for issue in issues:
     ls = labels(issue)
-    if WORKING in ls:
-        continue
     if ls & BLOCKING:
+        continue
+    if WORKING in ls:
+        # Someone holds it. A candidate only for taking over an abandoned
+        # claim (#203); the shell checks its claims before touching it.
+        if (ls & set(PRIORITY_LABELS)) and PROPOSAL not in ls \
+                and issue["number"] not in claimed_by_branch:
+            p_idx = next(i for i, p in enumerate(PRIORITY_LABELS) if p in ls)
+            kind = "enhance" if ENHANCEMENT in ls else "fix"
+            (enhancements if kind == "enhance" else priority).append(
+                (p_idx, 1, "TAKEOVER", issue["number"]))
         continue
 
     has_priority = bool(ls & set(PRIORITY_LABELS))
@@ -182,9 +194,9 @@ for issue in issues:
         continue  # awaiting human approval
 
     if ENHANCEMENT in ls:
-        enhancements.append((p_idx, issue["number"]))
+        enhancements.append((p_idx, 0, "ENHANCE", issue["number"]))
     else:
-        priority.append((p_idx, issue["number"]))
+        priority.append((p_idx, 0, "FIX", issue["number"]))
 
 # Triage takes precedence over fix work
 if unprioritized:
@@ -197,10 +209,17 @@ if not priority and not enhancements:
     print("IDLE")
     sys.exit(0)
 
-for p_idx, num in priority:
-    print(f"FIX {num} {PRIORITY_LABELS[p_idx]}")
-for _, num in enhancements:
-    print(f"ENHANCE {num}")
+# A fresh issue goes before a takeover at the same priority.
+for p_idx, _, kind, num in priority:
+    if kind == "TAKEOVER":
+        print(f"TAKEOVER {num} {PRIORITY_LABELS[p_idx]} fix")
+    else:
+        print(f"FIX {num} {PRIORITY_LABELS[p_idx]}")
+for p_idx, _, kind, num in enhancements:
+    if kind == "TAKEOVER":
+        print(f"TAKEOVER {num} {PRIORITY_LABELS[p_idx]} enhance")
+    else:
+        print(f"ENHANCE {num}")
 PY
 }
 
@@ -231,8 +250,16 @@ claim_comment_wins() {
   CLAIM_MS="$now_ms"   # recorded with the claim, so a resume can prove it is still ours (#182)
   issue_json="$(issue_get "$n" 2>/dev/null)" || return 0
   ISSUE_JSON="$issue_json" ME="$WORKER_ID" NOW_MS="$now_ms" \
-    WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" python3 - <<'PY'
+    WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" EXCLUDE="${CLAIM_EXCLUDE:-}" python3 - <<'PY'
 import json, os, re, sys
+
+# Claims being taken over (#203): "<ms> <id> ..." lines. They are abandoned, so
+# they cannot win the race against the takers.
+excluded = set()
+for line in os.environ.get("EXCLUDE", "").splitlines():
+    f = line.split()
+    if len(f) >= 2 and f[0].isdigit():
+        excluded.add((int(f[0]), f[1]))
 
 try:
     comments = json.loads(os.environ["ISSUE_JSON"]).get("comments") or []
@@ -244,29 +271,67 @@ claims = []
 for c in comments:
     # Old markers end after the epoch-ms; new ones add owner fields (#202).
     m = re.match(r"\s*🔒 claim (\S+) (\d+)(?: start=\d+)?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
-    if m and int(m.group(2)) >= oldest:
+    if m and int(m.group(2)) >= oldest and (int(m.group(2)), m.group(1)) not in excluded:
         claims.append((int(m.group(2)), m.group(1)))
 sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)
 PY
 }
 
+# ── Take over an abandoned claim (#203) ──────────────────────────────────
+# A `working` issue whose every claim is abandoned (claim-takeover-fns.sh: owner
+# dead on this host, or no branch after the grace period) is taken over instead
+# of being backed off from forever. The race between takers is settled exactly as
+# on a fresh claim, with the abandoned claims excluded so they cannot win it.
+# Only comment-based backends carry claim markers; the file backend is skipped.
+TAKEOVER_MAX="${AUTOCODER_TAKEOVER_MAX_CHECKS:-5}"
+takeover_checks=0
+if [ -f "${SCRIPT_DIR}/claim-takeover-fns.sh" ]; then
+  # shellcheck source=claim-takeover-fns.sh
+  source "${SCRIPT_DIR}/claim-takeover-fns.sh"
+fi
+
+# take_over_abandoned <issue> → exit 0 when this worker now holds the issue.
+take_over_abandoned() {
+  local n="$1" json abandoned list
+  [ "$ISSUE_SOURCE" != file ] || return 1
+  declare -F claims_abandoned >/dev/null || return 1
+  [ "$takeover_checks" -lt "$TAKEOVER_MAX" ] || return 1
+  takeover_checks=$((takeover_checks + 1))
+  json="$(issue_get "$n" 2>/dev/null)" || return 1
+  abandoned="$(claims_abandoned "$json" "$n")" || return 1
+  CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || return 1
+  list="$(printf '%s\n' "$abandoned" | sed -E 's/^[0-9]+ ([^ ]+) (.*)$/- `\1`: \2/')"
+  issue_comment "$n" --body "♻️ **Taking over an abandoned claim**
+
+This issue was \`working\`, but every claim on it was abandoned:
+${list}
+
+\`${WORKER_ID}\` has claimed it and will carry the work on." 2>/dev/null || true
+  return 0
+}
+
 # Walk the candidates in order; a lost race means "try the next one".
 tries=0
-while read -r PHASE ISSUE_NUM PRIORITY <&3; do
+while read -r PHASE ISSUE_NUM PRIORITY KIND <&3; do
   case "$PHASE" in
-    FIX|ENHANCE) ;;
+    FIX|ENHANCE|TAKEOVER) ;;
     *)
       echo "fix-loop-gate: unexpected classification '$PHASE'" >&2
       exit 2
       ;;
   esac
-  [ "$tries" -lt "$MAX_TRIES" ] || break
-  tries=$((tries + 1))
 
   CLAIM_MS=""
-  issue_claim "$ISSUE_NUM" 2>/dev/null || continue
-  if [ "$ISSUE_SOURCE" != file ]; then
-    claim_comment_wins "$ISSUE_NUM" || continue
+  if [ "$PHASE" = TAKEOVER ]; then
+    take_over_abandoned "$ISSUE_NUM" || continue
+    if [ "$KIND" = enhance ]; then PHASE=ENHANCE; else PHASE=FIX; fi
+  else
+    [ "$tries" -lt "$MAX_TRIES" ] || break
+    tries=$((tries + 1))
+    issue_claim "$ISSUE_NUM" 2>/dev/null || continue
+    if [ "$ISSUE_SOURCE" != file ]; then
+      claim_comment_wins "$ISSUE_NUM" || continue
+    fi
   fi
 
   SESSION_ID=""
