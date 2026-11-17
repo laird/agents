@@ -488,8 +488,10 @@ once on the same tree before calling it red. A clean re-run records the sighting
 branch lands; a second failure is a real failure. By default the whole command re-runs.
 `AUTOCODER_GATE_RERUN_CMD` re-runs only the failed tests: `{tests}` is replaced by their
 names, e.g. `bash tests/run-shell-suite.sh {tests}` (the suite runner takes test names).
-Names with characters outside `[A-Za-z0-9._/:+-]` are never put in a command; the whole
-command re-runs instead.
+The narrowed re-run is used only when the first run's `Tests: N failed` summary counts
+exactly the named tests (so no unnamed failure can hide behind a narrowed pass) and every
+name is a plain word: characters in `[A-Za-z0-9._/:+-]`, no leading `-`, no `..`. Otherwise
+the whole command re-runs. At most 50 failing tests are recorded per run.
 
 `flaky-report.sh [--days N] [--repo ID] [--json]` lists the tests seen flaky in the last N
 days (default 14), most sightings first, with the issues whose gates saw them.

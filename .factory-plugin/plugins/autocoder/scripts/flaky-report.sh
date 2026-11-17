@@ -16,8 +16,10 @@
 DAYS=14 REPO="" JSON=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --days) DAYS="${2:-}"; shift 2 ;;
-    --repo) REPO="${2:-}"; shift 2 ;;
+    --days|--repo)
+      [ $# -ge 2 ] || { echo "flaky-report: $1 needs a value" >&2; exit 2; }
+      if [ "$1" = --days ]; then DAYS="$2"; else REPO="$2"; fi
+      shift 2 ;;
     --json) JSON=1; shift ;;
     -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "flaky-report: unknown argument: $1" >&2; exit 2 ;;
@@ -54,7 +56,9 @@ for line in fh:
         t["last_seen"], t["last_excerpt"] = e["ts"], e.get("first_failure_excerpt") or ""
     if e.get("issue") is not None:
         t["issues"].add(e["issue"])
-rows = sorted(tests.values(), key=lambda t: (-t["sightings"], t["last_seen"]), reverse=False)
+# Most sightings first; among ties, the most recently seen first.
+rows = sorted(tests.values(), key=lambda t: t["last_seen"], reverse=True)
+rows.sort(key=lambda t: -t["sightings"])
 if as_json:
     for t in rows:
         t["issues"] = sorted(t["issues"])
@@ -65,7 +69,9 @@ if not rows:
     sys.exit(0)
 print(f"Flaky tests seen in the last {days} day(s) (same tree failed, then passed):")
 print(f"{'SIGHTINGS':>9}  {'LAST SEEN':20}  {'REPO':24}  TEST  (issues)")
+def clean(x):  # test names come from test output: no terminal control characters
+    return "".join(c if c.isprintable() else "?" for c in str(x))
 for t in rows:
     issues = ", ".join(f"#{i}" for i in sorted(t["issues"]))
-    print(f"{t['sightings']:>9}  {t['last_seen']:20}  {t['repo'][:24]:24}  {t['test']}" + (f"  ({issues})" if issues else ""))
+    print(f"{t['sightings']:>9}  {t['last_seen']:20}  {clean(t['repo'])[:24]:24}  {clean(t['test'])}" + (f"  ({issues})" if issues else ""))
 PY

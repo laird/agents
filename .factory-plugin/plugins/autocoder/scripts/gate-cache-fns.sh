@@ -34,7 +34,11 @@
 # A clean re-run records pass, reports each first-run failure as a sighting, and the gate
 # passes. A second failure is a real failure.
 #
-#   gate_log_failed_tests <log>                   -> failing test names, one per line
+# The narrowed re-run is used only when the first run's "Tests: N failed" summary (as
+# tests/run-shell-suite.sh prints) counts exactly the named tests, and every name is a
+# plain word (no leading '-', no '..'); the runner must not read names as options.
+#
+#   gate_log_failed_tests <log>                   -> failing test names, one per line (<= 50)
 #
 # Location: ${AUTOCODER_GATE_CACHE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/gate-cache}
 #
@@ -94,19 +98,26 @@ gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir] [gate-log]
         [ -n "$t" ] || continue
         # One line per test: "test <name>\t<excerpt with \\ and newlines escaped>".
         printf 'test %s\t%s\n' "$t" "$(gate_log_failure_excerpt "$log" "$t" | _gate_cache_escape)"
-      done < <(gate_log_failed_tests "$log")
+      done < <(gate_log_failed_tests "$log" files)
     fi
   } > "$tmp" && mv -f "$tmp" "$f"
 }
 
 # Failing test names in a gate log, one per line: run-shell-suite.sh's "Failing suites:"
 # line, else "FAIL <name>" lines (both the suite's and per-assertion "FAIL: <name>").
-gate_log_failed_tests() {  # <log>
+# With "files", the fallback takes only file-shaped names (test_x.sh, spec/a_test.rb):
+# free-text assertion lines ("FAIL: expected 3") name nothing a later run can match, so
+# flaky detection must not read them as tests.
+gate_log_failed_tests() {  # <log> [files]
   local f="$1" names
   [ -s "$f" ] || return 0
   names=$(sed -n 's/^Failing suites://p' "$f" | tr ' ' '\n')
-  [ -n "$names" ] || names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
-  printf '%s\n' "$names" | sed '/^$/d' | sort -u
+  if [ -z "$names" ] && [ "${2:-}" = files ]; then
+    names=$(sed -nE 's/^FAIL[: ]+([A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z0-9]+)( .*)?$/\1/p' "$f")
+  elif [ -z "$names" ]; then
+    names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
+  fi
+  printf '%s\n' "$names" | sed '/^$/d' | sort -u | head -n 50
 }
 
 # The first "FAIL <test>" line of <log> and what follows it, up to the next PASS/FAIL or
@@ -116,6 +127,13 @@ gate_log_failure_excerpt() {  # <log> <test>
     on && /^(PASS|FAIL)[: ]|^Failing suites:|^Tests: / { exit }
     !on && /^FAIL[: ]+/ { n = $0; sub(/^FAIL[: ]+/, "", n); sub(/ .*/, "", n); if (n == t) { on = 1; print; c = 1; next } }
     on { print; if (++c >= 20) exit }' "$1" 2>/dev/null | head -c 2000
+}
+
+# rc 0 when <log>'s last "Tests: N failed" summary counts exactly the <names> given.
+_gate_log_names_every_failure() {  # <log> <names>
+  local n
+  n=$(sed -nE 's/^Tests: ([0-9]+) failed.*/\1/p' "$1" | tail -1)
+  [ -n "$n" ] && [ "$n" -eq "$(printf '%s\n' "$2" | grep -c .)" ]
 }
 
 _gate_cache_escape() { sed 's/\\/\\\\/g' | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'; }
@@ -134,7 +152,10 @@ _gate_cache_failed_tests() {  # <tree> "<cmd>" [git-dir]
 # (names, one per line). <before> with no names reports the whole gate once.
 _gate_cache_report_flaky() {  # <tree> <before> <after> [whole]
   local tree="$1" before="$2" after="$3" name excerpt
-  [ -n "$before" ] || { [ "${4:-}" = whole ] && before=$'\t'; }
+  if [ -z "$before" ]; then
+    [ "${4:-}" = whole ] || return 0   # nothing named before, and the run is not green
+    before=$'\t'
+  fi
   while IFS=$'\t' read -r name excerpt; do
     if [ -n "$name" ] && printf '%s\n' "$after" | grep -qxF -- "$name"; then continue; fi
     echo "gate-cache: flaky: ${name:-the gate} failed earlier on tree ${tree:0:8} and passed now"
@@ -160,16 +181,23 @@ gate_cache_run() {
   [ "$recorded" = fail ] || earlier=""
   out=$(mktemp "${TMPDIR:-/tmp}/gate-cache-run.XXXXXX") || return 1
   gate_env_run "$dir" "$cmd" 2>&1 | tee "$out"; rc=${PIPESTATUS[0]}
-  failed=$(gate_log_failed_tests "$out")
+  failed=$(gate_log_failed_tests "$out" files)
   if [ "$recorded" = fail ]; then
     # Same tree, same command, red before: what passes now is flaky.
+    # A red run that names no failing test (a crash, an OOM kill, a timeout) says nothing
+    # about which earlier failures went away, so it reports nothing.
     if [ "$rc" -eq 0 ]; then _gate_cache_report_flaky "$tree" "$earlier" "" whole
-    else _gate_cache_report_flaky "$tree" "$earlier" "$failed"; fi
+    elif [ -n "$failed" ]; then _gate_cache_report_flaky "$tree" "$earlier" "$failed"; fi
   fi
   if [ "$rc" -ne 0 ] && [ "${AUTOCODER_GATE_FLAKE_RERUN:-0}" = 1 ]; then
     rerun="$cmd"
+    # Narrow the re-run to the named tests only when they are every failure the run had,
+    # by the runner's own "Tests: N failed" count. Otherwise a failure no FAIL line named
+    # (a crash, an odd format) would never re-run, and a narrowed pass would hide it.
     if [ -n "${AUTOCODER_GATE_RERUN_CMD:-}" ] && [ -n "$failed" ] \
-       && ! printf '%s\n' "$failed" | grep -qv '^[A-Za-z0-9._/:+-]*$'; then
+       && _gate_log_names_every_failure "$out" "$failed" \
+       && ! printf '%s\n' "$failed" | grep -qvE '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*$' \
+       && ! printf '%s\n' "$failed" | grep -qF '..'; then
       rerun=${AUTOCODER_GATE_RERUN_CMD//\{tests\}/$(printf '%s\n' "$failed" | paste -sd' ' -)}
     fi
     echo "gate-cache: gate failed on tree ${tree:0:8}; re-running once to tell flake from failure: $rerun"
@@ -184,10 +212,15 @@ gate_cache_run() {
     if [ "$rc" -eq 0 ]; then
       _gate_cache_report_flaky "$tree" "$earlier" "" whole
     else
-      _gate_cache_report_flaky "$tree" "$earlier" "$(gate_log_failed_tests "$out2")"
-      # Keep the failures the re-run confirmed. A re-run that named none (a crash, or a
-      # whole-command re-run with other output) keeps the first run's list.
-      [ -n "$(gate_log_failed_tests "$out2")" ] && mv -f "$out2" "$out"
+      # Keep the failures the re-run confirmed, and report the ones it no longer has. A
+      # re-run that named none (a crash, a usage error) reports nothing and keeps the
+      # first run's list.
+      local failed2
+      failed2=$(gate_log_failed_tests "$out2" files)
+      if [ -n "$failed2" ]; then
+        _gate_cache_report_flaky "$tree" "$earlier" "$failed2"
+        mv -f "$out2" "$out"
+      fi
     fi
     rm -f "$out2"
   fi

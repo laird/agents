@@ -38,7 +38,11 @@ for t in "$@"; do
     *) echo "PASS  $t" ;;
   esac
 done
-[ -z "$failed" ] || { echo "Failing suites:$failed"; exit 1; }
+# UNNAMED=1: one more failure that no FAIL line names (counted in the summary only).
+n=$(echo $failed | wc -w); [ "${UNNAMED:-0}" = 1 ] && n=$((n + 1))
+[ -z "$failed" ] || echo "Failing suites:$failed"
+echo "Tests: $n failed"
+[ "$n" -eq 0 ]
 SH
 chmod +x "$TMP/suite.sh"
 
@@ -87,6 +91,15 @@ chmod +x "$TMP/suite.sh"
   [ "$(tail -1 "$TMP/st3.ran")" = test_flaky.sh ] || echo "BAD targeted re-run ran the wrong test"
   [ "$(wc -l < "$SIGHTINGS")" -eq 1 ] || echo "BAD targeted sightings: $(cat "$SIGHTINGS")"
 
+  # 1d'. A failure the log does not name: the narrowed re-run is not trusted, so the
+  # whole command re-runs and the unnamed failure keeps the gate red.
+  : > "$SIGHTINGS"; rm -f "$TMP/st5" "$TMP/st5.ran"
+  CMD6="UNNAMED=1 $TMP/suite.sh $TMP/st5"
+  AUTOCODER_GATE_FLAKE_RERUN=1 AUTOCODER_GATE_RERUN_CMD="$TMP/suite.sh $TMP/st5 {tests}" \
+    gate_cache_run . "$CMD6" >/dev/null && echo "BAD a narrowed re-run hid an unnamed failure"
+  [ "$(grep -c . "$TMP/st5.ran")" = 6 ] || echo "BAD unnamed failure: re-run was not the whole command ($(paste -sd, "$TMP/st5.ran"))"
+  [ "$(gate_cache_get "$TREE" "$CMD6")" = fail ] || echo "BAD unnamed failure not recorded fail"
+
   # 1e. Re-run that fails again: red, no sighting, and the record keeps the failure.
   : > "$SIGHTINGS"; rm -f "$TMP/st4"
   CMD5="FLAKY_FAILS=2 $TMP/suite.sh $TMP/st4"
@@ -97,13 +110,33 @@ chmod +x "$TMP/suite.sh"
   gate_cache_run . "$CMD5" >/dev/null || echo "BAD third run failed"
   [ "$(cut -d'|' -f2 "$SIGHTINGS")" = test_flaky.sh ] || echo "BAD late sighting: $(cat "$SIGHTINGS")"
 
+  # 1g. A red retry that names no test (OOM kill, crash) reports no sighting.
+  : > "$SIGHTINGS"; rm -f "$TMP/st6"
+  printf '#!/bin/bash\nif [ -f "%s.once" ]; then echo "OOM killed"; exit 137; fi\n: > "%s.once"; echo "FAIL  test_a.sh"; echo "Failing suites: test_a.sh"; exit 1\n' \
+    "$TMP/st6" "$TMP/st6" > "$TMP/oom.sh"
+  gate_cache_run . "bash $TMP/oom.sh" >/dev/null && echo "BAD oom run 1 passed"
+  gate_cache_run . "bash $TMP/oom.sh" >/dev/null && echo "BAD oom run 2 passed"
+  [ -s "$SIGHTINGS" ] && echo "BAD a red unnamed retry reported a sighting: $(cat "$SIGHTINGS")"
+  # ...nor does a re-run that errors without naming tests.
+  rm -f "$TMP/st6.once"
+  AUTOCODER_GATE_FLAKE_RERUN=1 gate_cache_run . "bash $TMP/oom.sh" >/dev/null && echo "BAD oom re-run passed"
+  [ -s "$SIGHTINGS" ] && echo "BAD an erroring re-run reported a sighting: $(cat "$SIGHTINGS")"
+
+  # 1h. Free-text assertion lines are not test names: a test failing twice with a
+  # different message is not flaky.
+  : > "$SIGHTINGS"
+  printf '#!/bin/bash\necho "FAIL: $RANDOM ms exceeded"\nexit 1\n' > "$TMP/text.sh"
+  gate_cache_run . "bash $TMP/text.sh" >/dev/null
+  gate_cache_run . "bash $TMP/text.sh" >/dev/null
+  [ -s "$SIGHTINGS" ] && echo "BAD free text read as a test name: $(cat "$SIGHTINGS")"
+
   # 1f. A failing test name that is not safe to put in a command re-runs the whole
   # command; {tests} is never filled with it.
   : > "$SIGHTINGS"
   cat > "$TMP/odd.sh" <<SH
 #!/bin/bash
 echo "\$*" >> "$TMP/odd.args"
-if [ ! -f "$TMP/odd.once" ]; then : > "$TMP/odd.once"; echo 'FAIL  a;touch_x'; echo 'Failing suites: a;touch_x'; exit 1; fi
+if [ ! -f "$TMP/odd.once" ]; then : > "$TMP/odd.once"; echo 'FAIL  a;touch_x'; echo 'Failing suites: a;touch_x'; echo 'Tests: 1 failed'; exit 1; fi
 SH
   AUTOCODER_GATE_FLAKE_RERUN=1 AUTOCODER_GATE_RERUN_CMD="bash $TMP/odd.sh only {tests}" \
     gate_cache_run . "bash $TMP/odd.sh all" >/dev/null || echo "BAD unsafe-name re-run did not pass"
@@ -174,6 +207,8 @@ for l in sys.stdin:
     t = json.loads(l); print(t["test"], t["sightings"], json.dumps(t["issues"]))')"
 bash "$SCRIPT_DIR/flaky-report.sh" --repo nosuchrepo | grep -q '^No flaky tests' && ok "--repo filters" || bad "--repo did not filter"
 bash "$SCRIPT_DIR/flaky-report.sh" --days x >/dev/null 2>&1; eq "--days must be a number" "2" "$?"
+timeout 10 bash "$SCRIPT_DIR/flaky-report.sh" --days >/dev/null 2>&1; eq "--days with no value is a usage error" "2" "$?"
+timeout 10 bash "$SCRIPT_DIR/flaky-report.sh" --repo >/dev/null 2>&1; eq "--repo with no value is a usage error" "2" "$?"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
