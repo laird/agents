@@ -733,10 +733,10 @@ EOF
   # #256: the consent check must tell claude's bypass-mode footer, shown the
   # whole time an accepted --dangerously-skip-permissions manager runs, from
   # the consent dialog itself. Each wake uses a stub claude that prints one.
-  consent_wake() {  # consent_wake <label> <screen text> → last_tick_result
+  consent_wake() {  # consent_wake <label> <screen text> [delay s] → last_tick_result
     local bin="$TMP/shim-$1" p sess
     mkdir -p "$bin"
-    printf '#!/bin/bash\nprintf "%%s\\n" %q\nsleep 120\n' "$2" > "$bin/claude"
+    printf '#!/bin/bash\nsleep %s\nprintf "%%s\\n" %q\nsleep 120\n' "${3:-0}" "$2" > "$bin/claude"
     cp "$SHIM/crontab" "$bin/crontab"; chmod +x "$bin/claude"
     p=$(new_project "$1" file); sess="claude-$(basename "$p")"
     seed_state "$p" '{"version":1,"last_duty_wake_at":"2020-01-01T00:00:00Z"}'
@@ -791,6 +791,12 @@ DIALOG
   [ "$R" = "wake-failed:consent-dialog" ] \
     && ok "a full-size consent dialog at the bottom of the pane is still detected (#258)" \
     || bad "full dialog wake: last_tick_result=$R, wanted wake-failed:consent-dialog (#258)"
+  # #261: a dialog that draws seconds after the pid appears (a slow start)
+  # is still caught; one look 3s in used to miss it and record a started wake.
+  R=$(consent_wake late '❯ 1. No, exit' 6)
+  [ "$R" = "wake-failed:consent-dialog" ] \
+    && ok "a consent dialog drawn 6s after the manager starts is detected (#261)" \
+    || bad "late dialog wake: last_tick_result=$R, wanted wake-failed:consent-dialog (#261)"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 9. start-parallel-agents.sh --manager-only (U2): manifest shape

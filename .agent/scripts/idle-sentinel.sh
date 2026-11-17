@@ -89,6 +89,8 @@
 #   AUTOCODER_SENTINEL_STALL_THRESHOLD   2h    working-claim staleness bar
 #   AUTOCODER_SENTINEL_WAKE_TIMEOUT      10m   hard ceiling on one wake attempt
 #   AUTOCODER_SENTINEL_ACTIVITY_TIMEOUT  60    seconds to see manager activity
+#   AUTOCODER_SENTINEL_CONSENT_WATCH     10    seconds to watch a started manager's
+#                                              pane for a late consent dialog
 #   AUTOCODER_SENTINEL_GIT_LOCK_AGE      10m   minimum age before sweeping .git/*.lock
 #   AUTOCODER_GH_USER                    unset pin gh credentials per tick
 #   AUTOCODER_MUX / AUTOCODER_AGENT      unset force mux / agent framework
@@ -253,6 +255,7 @@ BACKOFF_CAP_S=$(parse_duration "${AUTOCODER_SENTINEL_BACKOFF_CAP:-12h}") || exit
 STALL_THRESHOLD_S=$(parse_duration "${AUTOCODER_SENTINEL_STALL_THRESHOLD:-2h}") || exit 1
 WAKE_TIMEOUT_S=$(parse_duration "${AUTOCODER_SENTINEL_WAKE_TIMEOUT:-10m}") || exit 1
 ACTIVITY_TIMEOUT_S=$(parse_duration "${AUTOCODER_SENTINEL_ACTIVITY_TIMEOUT:-60}") || exit 1
+CONSENT_WATCH_S=$(parse_duration "${AUTOCODER_SENTINEL_CONSENT_WATCH:-10}") || exit 1
 GIT_LOCK_AGE_S=$(parse_duration "${AUTOCODER_SENTINEL_GIT_LOCK_AGE:-10m}") || exit 1
 
 AGENT_NAME="${AUTOCODER_AGENT:-claude}"
@@ -1331,7 +1334,7 @@ cleanup_created_target() {
 # marker pid within the activity window, then a consent-dialog check.
 # Returns: 0 started, 1 no activity, 2 consent dialog visible.
 # The activity window is capped by the remaining whole-wake budget (#16):
-# ACTIVITY_TIMEOUT_S polling plus the settle sleep must never push the wake
+# ACTIVITY_TIMEOUT_S polling plus the consent watch must never push the wake
 # past WAKE_TIMEOUT_S.
 verify_manager_started() {
   local target="$1" pid cap window
@@ -1350,12 +1353,22 @@ verify_manager_started() {
   fi
   SPAWNED_PID="$pid"
   SPAWNED_PID_START=$(process_start_time "$pid") || SPAWNED_PID_START=""
-  sleep 3
-  cap=$(capture_target "$MUX" "$target")
-  if consent_dialog_on_screen "$cap"; then
-    return 2
-  fi
-  return 0
+  # The dialog can draw well after the pid appears (a slow start), so one
+  # look a few seconds in can miss it (#261). Watch the pane once a second for
+  # CONSENT_WATCH_S, within what is left of the wake budget.
+  local watch
+  watch="$CONSENT_WATCH_S"
+  budget=$(wake_budget)
+  [ "$budget" -lt "$watch" ] && watch="$budget"
+  while :; do
+    sleep 1
+    cap=$(capture_target "$MUX" "$target")
+    if consent_dialog_on_screen "$cap"; then
+      return 2
+    fi
+    watch=$(( watch - 1 ))
+    [ "$watch" -gt 0 ] || return 0
+  done
 }
 
 record_spawn_in_manifest() {
