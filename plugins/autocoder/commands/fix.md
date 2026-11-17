@@ -848,8 +848,15 @@ echo "Issue: #$ISSUE_NUM"
 echo "Priority: P$ISSUE_PRIORITY"
 echo "Title: $ISSUE_TITLE"
 echo ""
-echo "Description:"
-echo "$ISSUE_BODY" | head -20
+# The spec is the body PLUS the comment thread (issue #134). Corrections,
+# narrowed scope and review deltas arrive as comments; the body is the oldest
+# text on the page. Print all of it — no `head` truncation.
+ISSUE_SPEC=$("${SCRIPT_DIR}/issue-spec.sh" "$ISSUE_NUM") || {
+  echo "⚠️  Could not read the comment thread for #$ISSUE_NUM — showing the body only. Read the comments yourself before writing code."
+  ISSUE_SPEC="$ISSUE_BODY"
+}
+echo "Specification (body, then comments — a later comment overrides the body):"
+echo "$ISSUE_SPEC"
 echo ""
 echo "════════════════════════════════════════"
 echo ""
@@ -955,6 +962,8 @@ echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TI
 ```
 
 **⚠️ The claim sequence above (working label → `feature/issue-<N>` branch → work-started comment) is mandatory and runs FIRST for every issue — bug OR enhancement.** Do not begin triage analysis, brainstorming, or implementation until all three exist. Priority-labeled enhancements (P0–P3) are handled by this standard path, **not** by the "No Priority Issues Found → 5C" flow (that flow only applies when there are no priority issues left). If you ever notice you are editing files while still on the parent branch (`main`, `main-wt-N`, etc.), stop immediately and run the claim sequence — committing on the parent branch strands the `working` lock with no matching branch and makes peers treat it as stale.
+
+**Build from the body *and* the comments — a later comment overrides the body.** The specification printed above (`issue-spec.sh`) is the issue body followed by every comment, oldest first, with autocoder's claim and work-started markers filtered out. Review deltas, corrected API contracts, narrowed scope and "that earlier instruction was wrong" all arrive as comments, so the body alone is the stalest spec on the page (#134). Read the whole thread before writing code, and re-read it (`issue-spec.sh "$ISSUE_NUM"`) immediately before launching the merge, in case a correction landed while you worked. In the merge summary or PR body, name the comment you built to (e.g. "built to comment 3 by `<author>`, which supersedes the body's `onConflict` default"), or say "body only — no correcting comments" — so a worker that missed a correction is caught in review, not after merge.
 
 ## First-Run: Configure Merge Mode
 
@@ -1897,14 +1906,25 @@ When processing issues in the main loop, check for decomposed issues where all s
 ```bash
 # After fixing each issue, check if it was a sub-task that completes a decomposed issue
 # Get parent issue if this was a subtask
-PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body' | sed -nE 's/.*Sub-task of #([0-9]+).*/\\1/p' || echo "")
+PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body // ""' | sed -nE 's/.*Sub-task of #([0-9]+).*/\1/p' | head -1)
 
 if [ -n "$PARENT_ISSUE" ]; then
   echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
 
-  # Check if all sub-tasks of parent are closed
-  PARENT_SUBTASKS=$(issue_get "$PARENT_ISSUE" | jq -r '.body' | grep -oE '#[0-9]+' | tr -d '#' || echo "")
+  # Check if all sub-tasks of parent are closed. The sub-task list lives in the
+  # "Issue Decomposed into Sub-Tasks" COMMENT, not the body (#134): take the
+  # checklist from the latest such comment, so a list corrected by a later
+  # re-decomposition wins. Fall back to the body only when no such comment exists
+  # (older decompositions, and the file backend, which folds comments into the body).
+  PARENT_JSON=$(issue_get "$PARENT_ISSUE")
+  PARENT_SUBTASKS=$(printf '%s' "$PARENT_JSON" | jq -r '
+    ([(.comments // [])[] | (.body // "") | select(test("Issue Decomposed into Sub-Tasks"))] | last)
+      // (.body // "")' | tr -d '\r' | grep -oE '^- \[[ xX]\] #[0-9]+' | grep -oE '[0-9]+$')
   ALL_CLOSED=true
+  if [ -z "$PARENT_SUBTASKS" ]; then
+    echo "⚠️  No sub-task checklist found on #$PARENT_ISSUE — not auto-closing it."
+    ALL_CLOSED=false
+  fi
 
   for SUBTASK_NUM in $PARENT_SUBTASKS; do
     SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
@@ -2011,6 +2031,13 @@ if [ "$ENHANCEMENT_COUNT" -gt 0 ]; then
   ENHANCE_TITLE=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['title'])")
   ENHANCE_BODY=$(echo "$APPROVED_ENHANCEMENTS" | python3 -c "import json,sys; print(json.load(sys.stdin)[0].get('body',''))")
   echo "📋 Working on approved enhancement #$ENHANCE_NUM: $ENHANCE_TITLE"
+  # Body + comment thread (issue #134): design against the whole thread, not the body.
+  ENHANCE_SPEC=$("${SCRIPT_DIR}/issue-spec.sh" "$ENHANCE_NUM") || {
+    echo "⚠️  Could not read the comment thread for #$ENHANCE_NUM — read it yourself before designing."
+    ENHANCE_SPEC="$ENHANCE_BODY"
+  }
+  echo "Specification (body, then comments — a later comment overrides the body):"
+  echo "$ENHANCE_SPEC"
 else
   # Check if there are pending proposals
   PROPOSAL_COUNT=$(cat /tmp/all-enhancements.json | python3 -c "
