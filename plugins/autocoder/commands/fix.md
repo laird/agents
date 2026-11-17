@@ -1328,6 +1328,31 @@ git fetch -q origin "$INTEGRATION_BRANCH" && git rebase "origin/${INTEGRATION_BR
 
 Every landing block below also does a trial rebase right before its review check.
 
+**Declare the areas you edit: keep `Touches:` current (#229).** The fix-loop gate
+steers other workers away from files a claimed issue holds (`claims.avoid_overlap`,
+`touches-fns.sh`), using a `Touches:` line in the issue body: comma-separated paths,
+directories (a trailing `/` covers everything under it) or globs, e.g.
+`Touches: src/web/village/, src/web/server.rs`. With no such line, the backticked
+paths of a `## Files Affected` section count instead. An issue that declares nothing
+overlaps nothing, so it gets no protection.
+
+- **When you start** an issue with no `Touches:` line, add one once you have read
+  the code and know which files you expect to change.
+- **After each commit**, bring it up to date. Declared entries are kept; every file
+  the branch actually changed (`git diff --name-only origin/<integration>...HEAD`)
+  that they do not cover is added, three or more files in one directory collapsed
+  to that directory.
+
+```bash
+# Touches: (#229). On the GitHub backend this rewrites the line in the issue body;
+# other backends have no body edit verb, so it prints the line to add by hand.
+# On start, before the first commit (the areas you expect to edit):
+"${SCRIPT_DIR}/touches-set.sh" "$ISSUE_NUM" --base "origin/${INTEGRATION_BRANCH}" \
+  --declare "src/web/village/, src/web/server.rs"
+# After each commit:
+"${SCRIPT_DIR}/touches-set.sh" "$ISSUE_NUM" --base "origin/${INTEGRATION_BRANCH}"
+```
+
 ### Step 2A: Simple Issue - Direct Fix
 
 For simple issues, proceed directly:
@@ -1931,7 +1956,7 @@ For issues too large for autonomous resolution (>100 test failures, major archit
 **Decomposition rules — each sub-task MUST satisfy ALL of these:**
 
 1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
-2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body. Write it on a `Depends on: #<n>` line in the sub-task's `## Dependencies` section: workers will not claim a sub-task until every issue on its "Depends on" lines is closed (`issue-deps.sh`), so the order is enforced, not just described.
+2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body. Write it on a `Depends on: #<n>` line in the sub-task's `## Dependencies` section: workers will not claim a sub-task until every issue on its "Depends on" lines is closed (`issue-deps.sh`), so the order is enforced, not just described. Each sub-task's `Touches:` line (in the template below) names its areas; two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`, never run in parallel.
 3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
 4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
 
@@ -1971,6 +1996,8 @@ This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
 [List specific files or directories this sub-task will modify. This MUST NOT overlap
 with the files listed in sibling sub-tasks unless those sub-tasks have a sequential
 dependency (listed below). Overlapping file lists = merge conflict in the worktree swarm.]
+
+Touches: [comma-separated files, directories (trailing /) or globs from the list above]
 
 ## Acceptance Criteria
 - [ ] Criterion 1

@@ -48,6 +48,13 @@
 #       hot file (below) that an in-flight claim also touches: at most one
 #       in-flight claim may hold a hot file. Hot files come from T_HOT
 #       (newline-separated; the gate fills it from touches_hot_files).
+#   touches_update <body> <declare> <changed-files>
+#       The issue body with its `Touches:` line brought up to date (#229): the
+#       declared entries kept, <declare> (comma-separated) added, and every
+#       changed file (newline-separated) not already covered added, three or more
+#       in one directory collapsed to the directory. The line is replaced in place
+#       or appended. Prints the new line, then the new body; exit 3 when nothing
+#       would change (or there is nothing to declare). See touches-set.sh.
 #   touches_mode [<config-file>]          print the configured mode: off, prefer
 #                                        or strict (default off; an unknown value
 #                                        warns on stderr and reads as off)
@@ -83,32 +90,42 @@ def looks_like_path(s):
     return bool(s) and not re.search(r"\s", s) and ("/" in s or "." in s or "*" in s)
 
 def prose_lines(body):
-    # Lines outside fenced code blocks: a fence that quotes the format, or a
-    # `# comment` in a shell snippet, is not a declaration or a heading. A fence
-    # closes only on a bare run of its own character at least as long (CommonMark).
+    # (index, line) for lines outside fenced code blocks: a fence that quotes the
+    # format, or a `# comment` in a shell snippet, is not a declaration or a
+    # heading. A fence closes only on a bare run of its own character at least as
+    # long (CommonMark).
     opener = None
-    for line in body.splitlines():
+    for i, line in enumerate(body.splitlines()):
         m = FENCE_RE.match(line)
         if opener is None:
             if m:
                 opener = m.group(1)
                 continue
-            yield line
+            yield i, line
         elif m and m.group(1)[0] == opener[0] and len(m.group(1)) >= len(opener) \
                 and not m.group(2).strip():
             opener = None
 
+def touches_line(body):
+    # (index, entries) of the first `Touches:` line outside a code fence, or (None, []).
+    for i, line in prose_lines(body):
+        m = TOUCHES_RE.match(line)
+        if m:
+            entries = [clean(e) for e in m.group(1).split(",")]
+            return i, [a for a in entries if a and a.lower() not in NO_AREAS]
+    return None, []
+
 def areas_of(issue):
     body = issue.get("body") or ""
     body = body if isinstance(body, str) else ""
-    for line in prose_lines(body):
+    for _, line in prose_lines(body):
         m = TOUCHES_RE.match(line)
         if m and m.group(1).strip():
             entries = [clean(e) for e in m.group(1).split(",")]
             # `Touches: none` declares no areas; an empty line falls through below.
             return keep([a for a in entries if a and a.lower() not in NO_AREAS])
     areas, in_section = [], False
-    for line in prose_lines(body):
+    for _, line in prose_lines(body):
         h = HEADING_RE.match(line)
         if h:
             in_section = h.group(1).strip().rstrip(":").strip().lower() == "files affected"
@@ -242,6 +259,36 @@ elif cmd == "order":
             print(f"touches: #{num} overlaps in-flight #{hit} ({mode})", file=sys.stderr)
             busy.append(line)
     print("\n".join(clear + (busy if mode == "prefer" else [])))
+elif cmd == "update":
+    # Body on stdin; T_DECLARE (comma-separated areas to add) and T_CHANGED (the
+    # branch's changed files, one per line). Keeps the declared entries, adds the
+    # declared ones and every changed file they do not cover, three or more
+    # changed files in one directory collapsed to that directory. Prints the new
+    # `Touches:` line, then the new body; exits 3 when nothing would change.
+    body = sys.stdin.read()
+    rows = body.splitlines()
+    at, areas = touches_line(body)
+    for e in (clean(x) for x in os.environ.get("T_DECLARE", "").split(",")):
+        if e and e.lower() not in NO_AREAS and e not in areas:
+            areas.append(e)
+    by_dir = {}
+    for f in sorted(set(lines(os.environ.get("T_CHANGED", "")))):
+        if not lists_overlap([f], areas):
+            by_dir.setdefault(f.rsplit("/", 1)[0] + "/" if "/" in f else "", []).append(f)
+    for d in sorted(by_dir):
+        areas += [d] if d and len(by_dir[d]) >= 3 else by_dir[d]
+    areas = [a for a in areas if not is_catch_all(a)]
+    if not areas:
+        sys.exit(3)
+    line = "Touches: " + ", ".join(areas)
+    if at is not None and rows[at].strip() == line:
+        sys.exit(3)
+    if at is not None:
+        rows[at] = line
+    else:
+        rows += ["", line] if rows else [line]
+    print(line)
+    print("\n".join(rows))
 elif cmd == "mode":
     path = os.environ.get("T_CONFIG") or ""
     mode = "off"
@@ -331,6 +378,10 @@ areas_overlap() {
 
 touches_order() {
   T_MODE="$1" T_CANDS="$2" T_OPEN="$3" T_WORKING="$4" T_HOT="${T_HOT:-}" python3 -c "$_TOUCHES_PY" order
+}
+
+touches_update() {
+  printf '%s' "$1" | T_DECLARE="$2" T_CHANGED="$3" python3 -c "$_TOUCHES_PY" update
 }
 
 touches_mode() {
