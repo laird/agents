@@ -75,7 +75,7 @@
 #     file this change edits shows up as that file, not as an unrelated new path.
 #   - Gates on one host share a cap: each gate_cache_run takes one of AUTOCODER_MAX_GATES
 #     slots (default max(1, nproc/4)), flock-held files
-#     ${AUTOCODER_TMP:-/tmp}/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
+#     <tmp-root>/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
 #     on the last. A job that has to wait says so in its log.
 #   - Landings on one host queue (#189): a job takes merge-queue-fns.sh's lock for its
 #     (origin, integration branch) before it fetches the tip, and drops it once the push
@@ -110,7 +110,7 @@
 #     rebase-merges pinned off, so user git config cannot change what lands.
 #
 # SCRATCH:
-#   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
+#   Everything this job writes outside the repo lives under the private temp root (autocoder_tmp_root, #213) and is
 #   keyed by <repo-id>-<issue>, where repo-id is repo-id-fns.sh's autocoder_repo_id (the
 #   main checkout's basename plus a hash of its git common dir), so two repos on one host
 #   never share a worktree, log or state file for the same issue number:
@@ -238,7 +238,7 @@ source "${_MTI_DIR}/feature-ref-fns.sh"
 # shellcheck source=merge-queue-fns.sh
 source "${_MTI_DIR}/merge-queue-fns.sh"
 
-TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
+TMP_ROOT=$(autocoder_tmp_root) || exit 1   # private per-user dir (#213)
 REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
 
 # The global-path list (paths whose change can break any test) is REGATE_GLOBAL_PATHS_DEFAULT

@@ -20,8 +20,8 @@
 #   one repo on the same host share a queue, and two branches of one repo do not. Without
 #   an origin URL it falls back to the repo id (repo-id-fns.sh).
 #
-#   ${AUTOCODER_TMP:-/tmp}/autocoder-land-<key>.lock    flock(1) target
-#   ${AUTOCODER_TMP:-/tmp}/autocoder-land-<key>.holder  "issue #N pid P since T" for logs
+#   <tmp-root>/autocoder-land-<key>.lock    flock(1) target
+#   <tmp-root>/autocoder-land-<key>.holder  "issue #N pid P since T" for logs
 #
 # WHO HOLDS THE LOCK:
 #   Not the job. A small holder subshell opens the lock file, flocks it, and then only
@@ -77,7 +77,11 @@ merge_queue_acquire() {
     echo "⚠️  flock not found; landing without the host queue (a sibling push may still race this one)."
     return 0
   fi
-  root="${AUTOCODER_TMP:-/tmp}"
+  declare -F autocoder_tmp_root >/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/repo-id-fns.sh"
+  if ! root=$(autocoder_tmp_root); then
+    echo "⚠️  No private temp directory; landing without the host queue."
+    return 0
+  fi
   key=$(merge_queue_key "$dir" "$branch")
   MERGE_QUEUE_LOCK="${root}/autocoder-land-${key}.lock"
   wait="${AUTOCODER_MERGE_QUEUE_WAIT:-7200}"

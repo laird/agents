@@ -17,7 +17,7 @@
 #   merge-poll.sh --issue <num> [--wait <seconds, default 60>]
 #
 #   Run it from the checkout the merge was launched in: the state files are keyed
-#   by that repo's id (repo-id-fns.sh) under ${AUTOCODER_TMP:-/tmp}.
+#   by that repo's id (repo-id-fns.sh) under the private temp root (autocoder_tmp_root, #213).
 #
 # Exit codes:
 #   0    merge finished successfully — same meaning as merge-to-integration.sh's own 0
@@ -44,7 +44,8 @@ fi
 
 # shellcheck source=repo-id-fns.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repo-id-fns.sh"
-STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+TMP_ROOT=$(autocoder_tmp_root) || exit 1
+STATE="${TMP_ROOT}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
 LOG="${STATE}.log"
 PIDFILE="${STATE}.pid"
 EXITFILE="${STATE}.exit"

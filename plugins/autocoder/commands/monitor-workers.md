@@ -753,7 +753,7 @@ Serializing the queue around it forever is not the fix.
 ```bash
 # 1. Conflicts: files named in merge-job conflict failures in the last few days
 #    (merge-to-integration.sh exit 1, and the issue comments it posts)
-grep -lE 'CONFLICT|conflict' "${AUTOCODER_TMP:-/tmp}"/autocoder-merge-*.log 2>/dev/null \
+grep -lE 'CONFLICT|conflict' "${AUTOCODER_TMP:-/tmp/autocoder-$(id -u)}"/autocoder-merge-*.log 2>/dev/null \
   | xargs -r grep -hoE 'CONFLICT \(content\): Merge conflict in [^ ]+' | sort | uniq -c | sort -rn
 
 # 2. Churn: files touched by many distinct issue branches recently

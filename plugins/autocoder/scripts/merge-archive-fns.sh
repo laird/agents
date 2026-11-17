@@ -2,7 +2,7 @@
 # merge-archive-fns.sh — keep every merge attempt's log (#184).
 #
 # A merge job's files are <base>.{log,exit,pid,run.sh} with
-# <base> = ${AUTOCODER_TMP:-/tmp}/autocoder-merge-<repo-id>-<issue>. They used to be
+# <base> = <tmp-root>/autocoder-merge-<repo-id>-<issue>. They used to be
 # overwritten by every relaunch and deleted a day after the job finished, so an
 # issue's earlier bounces, retries and conflicts were lost. Instead, a finished
 # attempt's log and exit status are archived as <base>.<n>.log / .<n>.exit:

@@ -51,7 +51,7 @@
 #   --auto moves each auto:true environment of .autocoder.json to it.
 #
 # SCRATCH: a throwaway worktree per tick under
-#   ${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>-<integration>/<pid>, seeded with the
+#   <tmp-root>/autocoder-sentinel-<repo-id>-<integration>/<pid>, seeded with the
 #   node_modules/dist treatment merge-to-integration.sh uses and removed on exit. The same
 #   tmp root holds merge-launch.sh's autocoder-merge-<repo-id>-<issue>.{pid,exit,run.sh}
 #   files (and, for one release, the older autocoder-merge-<issue>.* names), which the
@@ -114,7 +114,7 @@ STATE_FILE="$STATE_DIR/${REPO_ID}-${INTEGRATION}"
 GATE_LOG="$STATE_FILE.gate.log"
 RED_LOG="$STATE_FILE.red.log"
 BISECT_LOG="$STATE_FILE.bisect.log"
-TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
+TMP_ROOT=$(autocoder_tmp_root) || exit 1   # private per-user dir (#213)
 WT_ROOT="$TMP_ROOT/autocoder-sentinel-${REPO_ID}-${INTEGRATION}"
 WT="$WT_ROOT/$$"
 TIPS="refs/autocoder/tips/${INTEGRATION}"

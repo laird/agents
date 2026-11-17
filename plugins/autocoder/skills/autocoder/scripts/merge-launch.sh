@@ -51,7 +51,7 @@
 #   moves on. Nobody has to poll; merge-poll.sh remains for humans and
 #   monitors who want to watch.
 #
-# State files, under ${AUTOCODER_TMP:-/tmp}, keyed by <repo-id>-<issue>: only one
+# State files, under the private temp root (autocoder_tmp_root, #213), keyed by <repo-id>-<issue>: only one
 # worker holds an issue's lock at a time, and repo-id (repo-id-fns.sh: the main
 # checkout's basename plus a hash of its git common dir) keeps two repos on one
 # host from sharing state for the same issue number. The id is computed from
@@ -136,7 +136,10 @@ if [ -z "$TEST_CMD" ]; then
     exit 1
   fi
 fi
-STATE="${AUTOCODER_TMP:-/tmp}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
+# A private per-user directory, not shared /tmp (#213): see autocoder_tmp_root.
+TMP_ROOT=$(autocoder_tmp_root) || { echo "merge-launch.sh: no private temp directory. Not launching." >&2; exit 1; }
+export AUTOCODER_TMP="$TMP_ROOT"   # the job, poll and sentinel all resolve to this same root
+STATE="${TMP_ROOT}/autocoder-merge-$(autocoder_repo_id "$PWD")-${ISSUE_NUM}"
 LOG="${STATE}.log"
 PIDFILE="${STATE}.pid"
 EXITFILE="${STATE}.exit"
@@ -186,6 +189,10 @@ fi
 # string: --test-cmd carries its own quoting-heavy shell (&&, quoted env vars,
 # pipes), and re-quoting that into another layer of quotes is exactly the kind
 # of fragility this fix is trying to remove. printf %q escapes it once, safely.
+# Create it fresh and exclusively (noclobber = O_EXCL): whatever sat at this name
+# before, including a planted symlink, is removed and never written through (#213).
+rm -f "$RUNSCRIPT"
+( set -o noclobber
 {
   printf '#!/bin/bash\n'
   printf 'echo $$ > %q\n' "$PIDFILE"
@@ -197,8 +204,12 @@ fi
   printf ' > %q 2>&1\n' "$LOG"
   printf 'echo $? > %q\n' "$EXITFILE"
   printf 'rm -rf %q\n' "$SNAPSHOT"
-} > "$RUNSCRIPT"
-chmod +x "$RUNSCRIPT"
+} > "$RUNSCRIPT" ) && chmod 700 "$RUNSCRIPT" && [ -O "$RUNSCRIPT" ] && [ ! -L "$RUNSCRIPT" ] || {
+  # Never setsid a run.sh we did not just write ourselves (#213).
+  echo "merge-launch.sh: could not write ${RUNSCRIPT} as this user. Not launching." >&2
+  rm -rf "$SNAPSHOT"
+  exit 1
+}
 
 setsid "$RUNSCRIPT" < /dev/null > /dev/null 2>&1 &
 disown 2>/dev/null || true
