@@ -529,7 +529,7 @@ fi
 if [ "$ISSUE_SOURCE" = "github" ]; then
   EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "needs-review-focus:Larger than the review-fit limit; the digest names every hunk to read:fef2c0"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -833,14 +833,22 @@ echo ""
 #      A sub-task that touches the same file as a sibling sub-task is NOT
 #      independent — it must be sequenced, not parallelized.
 #
-# If this issue FAILS either test → DECOMPOSE IT NOW (before branch creation):
-#   - Decompose into 3-8 sub-tasks, each satisfying both criteria above
+#   3. REVIEW FIT: Can a human review the result? Estimate the change, NOT
+#      counting parity mirrors (.agent/, plugins/*/skills/, codex-plugins/,
+#      .factory/). If it is likely to exceed reviewFit.maxChangedLines (default
+#      400 changed lines) or reviewFit.maxFiles (default 10) in .autocoder.json,
+#      it fails this test. This is the ONLY point where work is split for size:
+#      finished work over the limit is published anyway, labelled
+#      `needs-review-focus` (see "Review Digest" below), never split after the fact.
+#
+# If this issue FAILS any test → DECOMPOSE IT NOW (before branch creation):
+#   - Decompose into 3-8 sub-tasks, each satisfying all three criteria above
 #   - Create each sub-task as a new issue with `subtask` label and a
 #     "Sub-task of #${ISSUE_NUM}" line in the body
 #   - Add the `decomposed` label to this parent issue and release the claim
 #   - Exit; workers will pick up the independent sub-tasks on the next tick
 #
-# If this issue PASSES both tests → proceed to branch creation immediately.
+# If this issue PASSES all three tests → proceed to branch creation immediately.
 #
 # See "Ultra-Complex Issues - Decompose into Sub-Tasks" later in this document
 # for the full decomposition protocol including sub-task body template.
@@ -1103,6 +1111,58 @@ REVIEW
 printf '\nReviewed-HEAD: %s\nVerdict: pass\n' "$(git rev-parse HEAD)" >> "$REVIEW_FILE"
 ```
 
+## Review Digest (MANDATORY)
+
+Every place this command publishes work (a PR body in `pr` mode, the merge
+job's close comment in `merge` mode, a decomposed parent's rollup close) uses
+**one** body, rendered by `render-review-digest.sh` (#196). Write the prose into a
+sections file, then render it. The script computes **Size** itself and exits
+non-zero while any slot is unfilled. Every publish site below stops if it fails,
+so a placeholder body can never ship.
+
+```bash
+DIGEST_SECTIONS="$(git rev-parse --git-common-dir)/autocoder-digest-${REVIEW_ISSUE:-$ISSUE_NUM}.md"
+cat > "$DIGEST_SECTIONS" <<'DIGEST'
+## Intent
+<one sentence: what problem this solves and for whom>
+
+## Where to look
+<the 1-3 hunks (file:line) where a mistake would matter; label everything else
+"mechanical" with a one-line reason, e.g. "mirrors: byte-identical copies">
+
+## Verification
+<the exact commands you ran and their actual result lines, e.g.
+$ bash tests/run-shell-suite.sh
+Tests: 0 failed, 60 passed, 60 total>
+
+## Not verified / confidence
+<what you did not exercise, known risks, and confidence: high|medium|low>
+DIGEST
+# Only when the renderer asks for it (insertions > 3x deletions and > 200 lines):
+#   printf '\n## Why net growth\n<one sentence>\n' >> "$DIGEST_SECTIONS"
+```
+
+Replace every `<...>` line with real content. The renderer leaves your text
+alone (it may contain `Vec<T>` or `<sha>`), so an unreplaced line ships as
+written. Read the rendered body before publishing.
+
+**REVIEW FIT after implementation.** Before publishing, check the size the
+reviewer will face. Over the limit, **always publish anyway**: add
+`needs-review-focus` and make **Where to look** name every non-mechanical hunk.
+Never split finished work. There is no protocol for that, and improvising one
+risks losing verified work or leaving the claim half-released.
+
+```bash
+SIZE_LINE=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --size-only --base "${PARENT_BRANCH}")
+echo "Review size: $SIZE_LINE"
+case "$SIZE_LINE" in
+  *over=yes*) issue_update "${REVIEW_ISSUE:-$ISSUE_NUM}" --add-label "needs-review-focus" 2>/dev/null || true ;;
+esac
+```
+
+`needs-review-focus` is informational. It is not a blocking label and must never
+be added to a claimable-filter list.
+
 ## Fixing Strategy
 
 ### Step 1: Assess Complexity
@@ -1155,6 +1215,12 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
+# Render the close comment NOW, while HEAD is still the feature branch: after the
+# merge below the diff is gone. A body with unfilled slots is never published (#196).
+CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+  --base "$PARENT_BRANCH" --sections "$DIGEST_SECTIONS") \
+  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
 # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -1187,14 +1253,16 @@ Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
 fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
-  # Create a pull request and stop
+  # Create a pull request and stop. The body is the review digest (see
+  # "Review Digest" above); a body with unfilled slots is never published.
+  DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+    --base "$PARENT_BRANCH" --sections "$DIGEST_SECTIONS" --pr) \
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   gh pr create \
     --base "$PARENT_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
     --title "Fix #${ISSUE_NUM}: Brief description" \
-    --body "Closes #${ISSUE_NUM}
-
-[Detailed explanation of fix]
+    --body "${DIGEST}
 
 $(cat "$REVIEW_FILE")
 
@@ -1262,7 +1330,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
     issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
-[Detailed explanation of fix]
+${CLOSE_DIGEST}
 
 $(cat "$REVIEW_FILE")
 
@@ -1446,6 +1514,12 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
+# Render the close comment NOW, while HEAD is still the feature branch: after the
+# merge below the diff is gone. A body with unfilled slots is never published (#196).
+CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+  --base "$PARENT_BRANCH" --sections "$DIGEST_SECTIONS") \
+  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
 # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -1478,24 +1552,16 @@ Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
 fi
 
 if [ "$MERGE_MODE" = "pr" ]; then
-  # Create a pull request and stop
+  # Create a pull request and stop. The body is the review digest (see
+  # "Review Digest" above); a body with unfilled slots is never published.
+  DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+    --base "$PARENT_BRANCH" --sections "$DIGEST_SECTIONS" --pr) \
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
   gh pr create \
     --base "$PARENT_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
     --title "Fix #${ISSUE_NUM}: Brief description" \
-    --body "Closes #${ISSUE_NUM}
-
-## Root Cause
-[Detailed analysis]
-
-## Solution
-[Approach taken]
-
-## Changes Made
-[List of changes]
-
-## Verification
-[Test results and evidence]
+    --body "${DIGEST}
 
 $(cat "$REVIEW_FILE")
 
@@ -1563,17 +1629,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
     issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
-## Root Cause
-[Detailed analysis]
-
-## Solution
-[Approach taken]
-
-## Changes Made
-[List of changes]
-
-## Verification
-[Test results and evidence]
+${CLOSE_DIGEST}
 
 $(cat "$REVIEW_FILE")
 
@@ -1934,15 +1990,27 @@ if [ -n "$PARENT_ISSUE" ]; then
 
   if [ "$ALL_CLOSED" = "true" ]; then
     echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
-    issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+    # The rollup is a review digest too (#196). It has no diff of its own (each
+    # sub-task landed and was digested separately), so it renders against HEAD and
+    # the sub-tasks go in "Where to look".
+    ROLLUP_SECTIONS=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-rollup-${PARENT_ISSUE}.XXXXXX")
+    {
+      printf '## Intent\n%s\n\n' "$(issue_get "$PARENT_ISSUE" | jq -r '.title')"
+      printf '## Where to look\nEach sub-task landed separately with its own digest; review them there:\n'
+      for num in $PARENT_SUBTASKS; do printf -- '- #%s %s\n' "$num" "$(issue_get "$num" | jq -r '.title')"; done
+      printf '\n## Verification\nEvery sub-task listed above is CLOSED (checked with issue_get just now).\n\n'
+      printf '## Not verified / confidence\nThe sub-tasks were gated one at a time; nothing re-tested them together beyond each merge gate. Confidence: medium.\n'
+    } > "$ROLLUP_SECTIONS"
+    if ROLLUP=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$PARENT_ISSUE" --base HEAD --sections "$ROLLUP_SECTIONS"); then
+      issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
 
-All sub-tasks have been completed and verified:
-
-$(for num in $PARENT_SUBTASKS; do echo "- ✅ #$num"; done)
-
-The decomposed approach successfully resolved this complex issue.
+${ROLLUP}
 
 🤖 Auto-closed by autonomous fix workflow"
+    else
+      echo "❌ Rollup digest for #$PARENT_ISSUE did not render — leaving it open"
+    fi
+    rm -f "$ROLLUP_SECTIONS"
   fi
 fi
 ```
@@ -2335,6 +2403,12 @@ Co-Authored-By: Antigravity <noreply@antigravity.ai>"
     exit 1
   fi
 
+  # Render the close comment NOW, while HEAD is still the feature branch: after the
+  # merge below the diff is gone. A body with unfilled slots is never published (#196).
+  CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
+    --base "$PARENT_BRANCH" --sections "$DIGEST_SECTIONS") \
+    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+
   # Push feature branch
   # Publish the branch. `git push` first; if the transport is blocked (e.g. a
   # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -2401,18 +2475,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
   issue_close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
 
-## Summary
-[What was implemented]
-
-## Changes Made
-[List of changes]
-
-## Tests
-- All existing tests pass
-- New tests added: [list new tests]
-
-## Verification
-[Evidence that enhancement works correctly]
+${CLOSE_DIGEST}
 
 $(cat "$REVIEW_FILE")
 
