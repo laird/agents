@@ -644,6 +644,8 @@ tick() {
   prune_stale_worktrees
   resume_pending
   reconcile_handoffs
+  # GitHub Actions CI on the tip (#224): best effort, rate-limited, a no-op off GitHub.
+  [ -f "${_MS_DIR}/ci-watch.sh" ] && bash "${_MS_DIR}/ci-watch.sh" --repo "$REPO" --integration "$INTEGRATION" --state-dir "$STATE_DIR" "$tip" 2>/dev/null | sed 's/^/   /'
   if [ "$tip" = "$last_tested" ]; then
     echo "💤 ${INTEGRATION} idle at ${tip:0:7} (already gated)"
     prune
