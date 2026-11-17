@@ -217,6 +217,7 @@ if [ "$MUX" = "tmux" ]; then
   PANE_INDEX=$(tmux display-message -p -t "$PANE_ID" '#{pane_index}')
 
   tmux send-keys -t "$PANE_ID" "cd '$WORKER_DIR'" C-m
+  tmux send-keys -t "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" "$WORKER_NUM")" C-m
   if [ -n "${ISSUE_SOURCE:-}" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] && tmux send-keys -t "$PANE_ID" "$line" C-m
@@ -277,6 +278,8 @@ elif [ "$MUX" = "cmux" ]; then
   fi
 
   cmux rename-workspace --workspace "$WS_REF" "wt${WORKER_NUM}-${PROJECT_NAME}" >/dev/null || true
+  cmux send --workspace "$WS_REF" "$(worker_marker_export "$SESSION_NAME" "$WORKER_NUM")" >/dev/null
+  cmux send-key --workspace "$WS_REF" enter >/dev/null
 
   if [ "$AGENT" = "claude" ]; then
     if [ -n "${ISSUE_SOURCE:-}" ]; then
@@ -331,6 +334,7 @@ elif [ "$MUX" = "herdr" ]; then
     exit 1
   fi
 
+  send_herdr_command "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" "$WORKER_NUM")"
   if [ -n "${ISSUE_SOURCE:-}" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] && send_herdr_command "$PANE_ID" "$line"

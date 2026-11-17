@@ -586,6 +586,7 @@ if [ "$MUX" = "tmux" ]; then
     WORKER_DIR="$PROJECT_ROOT"
   fi
   send_issue_env_tmux "$PANE_ID"
+  send_tmux_command "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" 1)"
 
   # Set environment variables for Claude Code coordination
   if [ "$AGENT" = "claude" ]; then
@@ -609,6 +610,7 @@ if [ "$MUX" = "tmux" ]; then
       WORKER_DIR="$PROJECT_ROOT"
     fi
     send_issue_env_tmux "$PANE_ID"
+    send_tmux_command "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" "$i")"
 
     if [ "$AGENT" = "claude" ]; then
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
@@ -805,6 +807,7 @@ elif [ "$MUX" = "cmux" ]; then
 
     # Set environment variables for Claude Code coordination
     send_issue_env_cmux "$WS_REF"
+    send_cmux_command "$WS_REF" "$(worker_marker_export "$SESSION_NAME" "$i")"
     if [ "$AGENT" = "claude" ]; then
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
@@ -995,6 +998,7 @@ elif [ "$MUX" = "herdr" ]; then
 
     # Set environment variables for Claude Code coordination
     send_issue_env_herdr "$PANE_ID"
+    send_herdr_command "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" "$i")"
     if [ "$AGENT" = "claude" ]; then
       send_herdr_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"

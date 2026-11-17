@@ -234,6 +234,10 @@ fi
 PROJECT_ROOT=$(pwd)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
+# Worker identity marker (#216), mirrored by hand from worker-launch-lib.sh's
+# worker_marker_export: each worker pane exports AUTOCODER_WORKER=<session>:<N>
+# before its agent starts, as the manager pane exports AUTOCODER_MANAGER.
+worker_marker_line() { printf 'export AUTOCODER_WORKER=%q' "$SESSION_NAME:$1"; }
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Generate shared task list ID for coordination
@@ -401,6 +405,7 @@ if [ "$MUX" = "tmux" ]; then
   else
     tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
   fi
+  tmux send-keys -t "$PANE_ID" "$(worker_marker_line 1)" C-m
 
   # Set environment variables for Antigravity coordination
   if [ "$AGENT" = "claude" ]; then
@@ -421,6 +426,7 @@ if [ "$MUX" = "tmux" ]; then
     else
       tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
     fi
+    tmux send-keys -t "$PANE_ID" "$(worker_marker_line "$i")" C-m
 
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$PANE_ID" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -579,6 +585,7 @@ elif [ "$MUX" = "cmux" ]; then
 
     # Rename workspace: wt<N>-<project>
     cmux rename-workspace --workspace "$WS_REF" "wt${i}-${PROJECT_NAME}" >/dev/null || true
+    cmux_send_cmd "$WS_REF" "$(worker_marker_line "$i")"
 
     # Set environment variables for Antigravity coordination
     if [ "$AGENT" = "claude" ]; then
@@ -719,6 +726,7 @@ elif [ "$MUX" = "herdr" ]; then
     WORKER_PANE_IDS+=("$PANE_ID")
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$LAUNCH_MODE" "$LAUNCH_MODE" false "" "" started "$PANE_ID")")
     sleep 1
+    send_herdr_command "$PANE_ID" "$(worker_marker_line "$i")"
 
     # Set environment variables for Antigravity coordination
     if [ "$AGENT" = "claude" ]; then

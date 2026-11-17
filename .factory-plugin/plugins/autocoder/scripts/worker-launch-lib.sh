@@ -67,6 +67,22 @@ ensure_statusline() {
   bash "$installer" "$@" || true
 }
 
+# Worker identity marker (#216): the export line a launcher sends into a
+# worker pane BEFORE the agent starts, so the worker process carries
+# AUTOCODER_WORKER=<session>:<N> in its environment, the way the manager carries
+# AUTOCODER_MANAGER=<session>. Tools (swarm-register.sh, the sentinel) can then
+# recognise a worker by evidence instead of by pane name or cwd. A worker
+# started by hand has no marker and registers itself instead.
+#   worker_marker_export <session> <worker number>
+worker_marker_export() {
+  local session="$1" number="$2"
+  if [ -z "$session" ] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
+    echo "worker_marker_export: need <session> <number>, got '$session' '$number'" >&2
+    return 1
+  fi
+  printf 'export AUTOCODER_WORKER=%q\n' "$session:$number"
+}
+
 resolve_worker_launch() {
   local agent="$1"
   local repo_root="$2"
