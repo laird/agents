@@ -38,7 +38,7 @@ WORK_JSON="$TMP/work.json"
 # shared `working` label.
 GH_DIR="$TMP/gh-scripts"
 mkdir -p "$GH_DIR"
-cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
+cp "$SCRIPT_DIR"/{fix-loop-gate.sh,claim-owner.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
 cat > "$GH_DIR/issues-gh.sh" <<'EOF'
 #!/bin/bash
 verb="$1"; shift
@@ -143,7 +143,7 @@ assert_eq "uncontested: work plan names #1" \
   '{"phase":"fix","issue":1,"priority":"P1"}' "$(work_plan)"
 assert_eq "uncontested: #1 labelled working" "yes" "$(has_working 1)"
 assert_eq "uncontested: #2 untouched" "no" "$(has_working 2)"
-comments_of 1 | grep -qE '^🔒 claim me [0-9]{13}$'
+comments_of 1 | grep -qE '^🔒 claim me [0-9]{13}( start=[0-9]+)? wt=.+$'
 assert_eq "uncontested: claim comment names the worker id" "0" "$?"
 comments_of 1 | grep -qF '[autocoder-claim]'
 assert_eq "uncontested: comment cannot trip /fix's [autocoder-claim] count" "1" "$?"
@@ -206,6 +206,59 @@ set_unlabelled
 AUTOCODER_WORKER_ID=b AUTOCODER_WORK_JSON="$TMP/b.json" bash "$GH_DIR/fix-loop-gate.sh" 2>/dev/null
 assert_eq "two workers: A keeps #1" '{"phase":"fix","issue":1,"priority":"P1"}' "$(cat "$TMP/a.json")"
 assert_eq "two workers: B moves to #2" '{"phase":"fix","issue":2,"priority":"P1"}' "$(cat "$TMP/b.json")"
+
+# ── 5. New-format markers (#202) compete like old ones ────────────────────
+reset_issues
+add_issue 1 bug P1; add_issue 2 bug P1
+seed_comment 1 "🔒 claim rival-9 $(( $(now_ms) - 1000 )) start=1794870000 wt=/w/rival tree"
+run_gate >/dev/null
+assert_eq "new-format rival: its earlier claim wins #1" \
+  '{"phase":"fix","issue":2,"priority":"P1"}' "$(work_plan)"
+
+# Mixed: an old-format rival and a new-format rival; the earliest wins.
+reset_issues
+add_issue 1 bug P1
+seed_comment 1 "🔒 claim old-w $(( $(now_ms) - 2000 ))"
+seed_comment 1 "🔒 claim new-w $(( $(now_ms) - 1000 )) start=1 wt=/w"
+RC=$(run_gate)
+assert_eq "mixed formats: old-format earliest claim still beats us" "1" "$RC"
+
+# owner_pid_of <issue> — the pid in the last claim comment's <host>-<pid> id.
+owner_pid_of() {
+  comments_of "$1" | grep '^🔒 claim ' | tail -1 | awk '{print $3}' | sed 's/.*-//'
+}
+marker_of() { comments_of "$1" | grep '^🔒 claim ' | tail -1; }
+
+# ── 6. Under a worker loop: the claim names AUTOCODER_OWNER_PID ───────────
+reset_issues
+add_issue 1 bug P1
+AUTOCODER_OWNER_PID=$$ AUTOCODER_WORK_JSON="$WORK_JSON" \
+  bash "$GH_DIR/fix-loop-gate.sh" 2>/dev/null
+assert_eq "worker loop: claim names the loop's pid" "$$" "$(owner_pid_of 1)"
+kill -0 "$(owner_pid_of 1)" 2>/dev/null
+assert_eq "worker loop: owner pid is alive after the gate exits" "0" "$?"
+marker_of 1 | grep -qE "^🔒 claim $(hostname)-$$ [0-9]{13} start=[0-9]+ wt=$REPO$"
+assert_eq "worker loop: marker carries host, start time and worktree" "0" "$?"
+
+# ── 7. Inside an agent session: the claim names the session process ───────
+# A copy of bash named `claude` stands in for the Claude CLI: the gate runs
+# as its child (via a throwaway shell, like the Bash tool's), exits, and the
+# session must still be alive and be the pid the marker names.
+reset_issues
+add_issue 1 bug P1
+mkdir -p "$TMP/bin"
+cp "$(command -v bash)" "$TMP/bin/claude"
+SESSION_PID=$(env -u AUTOCODER_OWNER_PID AUTOCODER_WORK_JSON="$WORK_JSON" \
+  "$TMP/bin/claude" -c 'bash -c "bash \"$1\" 2>/dev/null; true" _ "$1"; echo $$' _ "$GH_DIR/fix-loop-gate.sh")
+assert_eq "agent session: claim names the session pid" "$SESSION_PID" "$(owner_pid_of 1)"
+
+# A stale AUTOCODER_OWNER_PID (dead loop) is ignored in favour of the walk.
+reset_issues
+add_issue 1 bug P1
+bash -c 'exit 0' & DEAD=$!; wait "$DEAD"
+SESSION_PID=$(AUTOCODER_OWNER_PID=$DEAD AUTOCODER_WORK_JSON="$WORK_JSON" \
+  "$TMP/bin/claude" -c 'bash -c "bash \"$1\" 2>/dev/null; true" _ "$1"; echo $$' _ "$GH_DIR/fix-loop-gate.sh")
+assert_eq "dead owner pid: falls back to the session" "$SESSION_PID" "$(owner_pid_of 1)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

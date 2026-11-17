@@ -29,6 +29,7 @@
 #   AUTOCODER_LOG_DIR     Where raw stream-json transcripts land (default: /tmp/autocoder-logs)
 #   AUTOCODER_STREAM      0 to disable streaming output entirely (plain -p text)
 #   AUTOCODER_METRICS     0 to skip posting per-fix cost/time metrics to the issue
+#   AUTOCODER_OWNER_PID   exported as this loop's pid: the owner named in claims
 
 set -euo pipefail
 
@@ -37,6 +38,10 @@ WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
 IDLE_SLEEP_MINUTES="${IDLE_SLEEP_MINUTES:-4}"
 # Unique handoff file per worker process to avoid collisions in parallel swarms
 HANDOFF_FILE="/tmp/autocoder-next-fix-$$.txt"
+# This loop outlives every Claude session it starts, so it owns the claims those
+# sessions make. Without it the gate's `claude -p` would be named, and that
+# exits as soon as the gate hands the issue off (#202, claim-owner.sh).
+export AUTOCODER_OWNER_PID="${AUTOCODER_OWNER_PID:-$$}"
 LOG_DIR="${AUTOCODER_LOG_DIR:-/tmp/autocoder-logs}"
 STREAM="${AUTOCODER_STREAM:-1}"
 

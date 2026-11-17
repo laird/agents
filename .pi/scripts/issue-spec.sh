@@ -27,7 +27,7 @@ usage() { echo "usage: issue-spec.sh <issue-number> | --json <file|->" >&2; exit
 
 # Comments matching this are autocoder bookkeeping, not spec. Keep it narrow:
 # a filtered-out human correction is exactly the failure this script prevents.
-BOOKKEEPING_RE='^🔒 \[autocoder-claim\]|^🔒 claim [^ ]+ [0-9]+$|^🤖 \*\*Automated Fix Started|^🚀 \*\*Enhancement Implementation Started|^🤖 \*\*Implementation Started'
+BOOKKEEPING_RE='^🔒 \[autocoder-claim\]|^🔒 claim [^ ]+ [0-9]+( start=[0-9]+)?( wt=.*)?$|^🤖 \*\*Automated Fix Started|^🚀 \*\*Enhancement Implementation Started|^🤖 \*\*Implementation Started'
 
 format_spec() {
   jq -r --arg re "$BOOKKEEPING_RE" '

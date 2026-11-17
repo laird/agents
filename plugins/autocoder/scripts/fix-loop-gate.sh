@@ -30,7 +30,8 @@
 #   GitHub, Jira, ADO: `issue_claim` is a label-add that always succeeds,
 #                 so every racer "wins" it. The gate settles the race itself,
 #                 before any Claude session starts: after the label-add it
-#                 posts `🔒 claim <worker-id> <epoch-ms>`, reads the comments
+#                 posts `🔒 claim <worker-id> <epoch-ms> [start=<s>] wt=<path>`
+#                 (claim-owner.sh, #202), reads the comments
 #                 back, and keeps the issue only when the earliest live claim
 #                 (smallest epoch-ms, worker-id breaking ties) is its own.
 #                 Every reader sorts the same comments the same way, so one
@@ -49,8 +50,10 @@
 #   AUTOCODER_CLAIM_MAX_TRIES  claim attempts per tick before giving up
 #                              (default 10), so a backend whose claims all fail
 #                              does not scan hundreds of issues per tick.
-#   AUTOCODER_WORKER_ID        worker id in claim comments
-#                              (default <hostname>-<gate pid>)
+#   AUTOCODER_WORKER_ID        worker id in claim comments (default
+#                              <hostname>-<owner pid>; see claim-owner.sh)
+#   AUTOCODER_OWNER_PID        the long-lived process that owns this worker's
+#                              claims, exported by claude-worker-loop.sh
 #   AUTOCODER_CLAIM_WINDOW_S   age in seconds past which a claim comment no
 #                              longer competes (default 120)
 #
@@ -59,13 +62,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_JSON="${AUTOCODER_WORK_JSON:-/tmp/autocoder-work.json}"
 MAX_TRIES="${AUTOCODER_CLAIM_MAX_TRIES:-10}"
-WORKER_ID="${AUTOCODER_WORKER_ID:-$(hostname)-$$}"
-WORKER_ID="${WORKER_ID//[[:space:]]/_}"
 CLAIM_WINDOW_S="${AUTOCODER_CLAIM_WINDOW_S:-120}"
 
 # Source backend dispatch (defines issue_list, issue_update, ...)
 # shellcheck source=issue-fns.sh
 source "${SCRIPT_DIR}/issue-fns.sh"
+
+# The claim names the process that outlives it (the worker loop or the agent
+# session), never this gate's own pid: the gate exits seconds after claiming,
+# and a claim signed by a dead pid cannot be told apart from an orphan (#202).
+# shellcheck source=claim-owner.sh
+source "${SCRIPT_DIR}/claim-owner.sh"
+OWNER_PID="$(claim_owner_pid "$$")"
+WORKER_ID="$(claim_owner_id "$OWNER_PID")"
+OWNER_EXTRA="$(claim_owner_extra "$OWNER_PID")"
 
 if [ -z "${ISSUE_SOURCE:-}" ]; then
   echo "fix-loop-gate: ISSUE_SOURCE not set" >&2
@@ -215,7 +225,7 @@ esac
 claim_comment_wins() {
   local n="$1" now_ms issue_json
   now_ms="$(python3 -c 'import time; print(int(time.time() * 1000))')"
-  issue_comment "$n" --body "🔒 claim $WORKER_ID $now_ms" 2>/dev/null || return 0
+  issue_comment "$n" --body "🔒 claim $WORKER_ID $now_ms $OWNER_EXTRA" 2>/dev/null || return 0
   CLAIM_MS="$now_ms"   # recorded with the claim, so a resume can prove it is still ours (#182)
   issue_json="$(issue_get "$n" 2>/dev/null)" || return 0
   ISSUE_JSON="$issue_json" ME="$WORKER_ID" NOW_MS="$now_ms" \
@@ -230,7 +240,8 @@ now = int(os.environ["NOW_MS"])
 oldest = now - int(os.environ["WINDOW_MS"])
 claims = []
 for c in comments:
-    m = re.match(r"\s*🔒 claim (\S+) (\d+)\s*$", c.get("body") or "")
+    # Old markers end after the epoch-ms; new ones add owner fields (#202).
+    m = re.match(r"\s*🔒 claim (\S+) (\d+)(?:[ \t][^\n]*)?\s*$", c.get("body") or "")
     if m and int(m.group(2)) >= oldest:
         claims.append((int(m.group(2)), m.group(1)))
 sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)

@@ -63,7 +63,7 @@ work_plan() { cat "$WORK_JSON" 2>/dev/null; }
 # That is the real race: the gate saw the issue open, then lost the rename.
 RACE_DIR="$TMP/race-scripts"
 mkdir -p "$RACE_DIR"
-cp "$SCRIPT_DIR"/{fix-loop-gate.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$RACE_DIR/"
+cp "$SCRIPT_DIR"/{fix-loop-gate.sh,claim-owner.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$RACE_DIR/"
 cp "$SCRIPT_DIR/issues-file.py" "$RACE_DIR/issues-file-real.py"
 cat > "$RACE_DIR/issues-file.py" <<'EOF'
 #!/bin/bash
