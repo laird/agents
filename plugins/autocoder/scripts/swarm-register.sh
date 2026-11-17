@@ -16,13 +16,17 @@
 #               manifest that already lists this worktree, else the only one
 #   --pid       the agent's pid; default: the nearest ancestor that is an
 #               agent CLI (claude, codex, gemini, droid, pi, node), else $PPID
-#   --state     worker state to record (default: started)
+#   --state     worker state to record (default: started for a new entry;
+#               an existing entry keeps its state unless this is given)
 #
 # Worker entry fields written: number, worktree, branch, tmuxTarget
 # ($TMUX_PANE), herdrPane ($HERDR_PANE_ID), cmuxWorkspace ($CMUX_WORKSPACE_ID),
 # pid, pid_start_time, state, stateUpdatedAt, registeredAt. A mux field is only
 # overwritten when its variable is set, so registering from a plain shell does
 # not erase a pane recorded at launch.
+#
+# The main checkout is the manager's, so it is only registered as a worker when
+# the manifest already lists it, or --session / AUTOCODER_WORKER says so.
 #
 # No manifest (not a swarm), or no way to tell which manifest: prints a note
 # on stderr and exits 0. Exits 1 only on bad arguments or a failed write.
@@ -36,7 +40,7 @@ source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 ROLE=worker
 SESSION=""
 PID=""
-STATE="started"
+STATE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --manager) ROLE=manager; shift ;;
@@ -69,6 +73,16 @@ elif [ "$ROLE" = worker ] && [ -n "${AUTOCODER_WORKER:-}" ] && [ "${AUTOCODER_WO
   MARKER_NUMBER="${AUTOCODER_WORKER##*:}"
 fi
 case "$MARKER_NUMBER" in *[!0-9]*) MARKER_NUMBER="" ;; esac
+case "$SESSION" in
+  */*|.*) echo "swarm-register: invalid session name '$SESSION'" >&2; exit 1 ;;
+esac
+
+# A worker in the main checkout needs an explicit session (see above).
+ALLOW_NEW=1
+GIT_DIR_ABS=$(cd "$(git rev-parse --git-dir)" && pwd -P)
+if [ "$ROLE" = worker ] && [ "$GIT_DIR_ABS" = "$(cd "$COMMON" && pwd -P)" ] && [ -z "$SESSION" ]; then
+  ALLOW_NEW=0
+fi
 
 SWARM_DIR="$PROJECT_ROOT/$SWARM_STATE_DIR"
 if [ -n "$SESSION" ]; then
@@ -128,11 +142,17 @@ LOCK="${MANIFEST%.json}.lock"
   [ -f "$MANIFEST" ] || exit 3
   python3 - "$MANIFEST" "$ROLE" "$WORKTREE" "$PROJECT_ROOT" "$BRANCH" "$MARKER_NUMBER" \
     "$PID" "$PID_START" "$STATE" "$NOW" "${TMUX_PANE:-}" "${HERDR_PANE_ID:-}" "${CMUX_WORKSPACE_ID:-}" \
-    "${AUTOCODER_MANAGER:+AUTOCODER_MANAGER=${AUTOCODER_MANAGER}}" <<'PY'
+    "${AUTOCODER_MANAGER:+AUTOCODER_MANAGER=${AUTOCODER_MANAGER}}" "$ALLOW_NEW" <<'PY'
 import json, os, re, sys, tempfile
 
 (path, role, worktree, root, branch, marker_number, pid, pid_start, state, now,
- tmux, herdr, cmux, manager_marker) = sys.argv[1:]
+ tmux, herdr, cmux, manager_marker, allow_new) = sys.argv[1:]
+
+def num(w):
+    try:
+        return int(w.get("number", -1))
+    except (TypeError, ValueError):
+        return -1
 with open(path, encoding="utf-8") as f:
     data = json.load(f)
 
@@ -159,8 +179,11 @@ else:
     workers = data.setdefault("workers", [])
     entry = next((w for w in workers
                   if w.get("worktree") and os.path.realpath(w["worktree"]) == real), None)
+    if entry is None and allow_new != "1":
+        print("main checkout is not a listed worker; pass --session to register it", file=sys.stderr)
+        sys.exit(4)
     if entry is None:
-        taken = {int(w.get("number", -1)) for w in workers}
+        taken = {num(w) for w in workers}
         number = None
         if marker_number:
             number = int(marker_number)
@@ -173,7 +196,7 @@ else:
         entry = {"number": number, "launchMode": "manual", "commandMode": "fix-loop",
                  "agentLaunched": True}
         workers.append(entry)
-        workers.sort(key=lambda w: int(w.get("number", 0)))
+        workers.sort(key=num)
         verb = "registered"
     else:
         verb = "updated"
@@ -182,8 +205,9 @@ else:
     mux_fields(entry)
     entry["pid"] = int(pid) if pid else None
     entry["pid_start_time"] = pid_start or None
-    entry["state"] = state
-    entry["stateUpdatedAt"] = now
+    if state or verb == "registered":
+        entry["state"] = state or "started"
+        entry["stateUpdatedAt"] = now
     entry["registeredAt"] = now
     print(f"worker {entry['number']} {verb}")
 
@@ -202,5 +226,6 @@ RC=$?
 case $RC in
   0) exit 0 ;;
   3) note "manifest $MANIFEST disappeared; nothing to register"; exit 0 ;;
+  4) note "not registering $WORKTREE"; exit 0 ;;
   *) note "could not update $MANIFEST (rc=$RC)"; exit 1 ;;
 esac

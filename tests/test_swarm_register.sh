@@ -58,12 +58,45 @@ echo "$OUT" | grep -q "worker 2 updated" && ok "says updated" || bad "output: $O
 OUT=$(cd "$P-wt-3" && AUTOCODER_WORKER=claude-proj:5 bash "$REG" --pid $$ 2>&1)
 eq "AUTOCODER_WORKER number used" "5" "$(J "$M" '[w["number"] for w in m["workers"] if w["worktree"].endswith("-wt-3")][0]')"
 
+# Re-registering keeps a state it was not asked to change.
+python3 - "$M" <<'PY2'
+import json, sys
+p = sys.argv[1]; m = json.load(open(p))
+[w for w in m["workers"] if w["number"] == 2][0]["state"] = "paused"
+json.dump(m, open(p, "w"))
+PY2
+(cd "$P-wt-2" && bash "$REG" --pid $$ >/dev/null 2>&1)
+eq "state kept without --state" "paused" "$(J "$M" '[w["state"] for w in m["workers"] if w["number"] == 2][0]')"
+(cd "$P-wt-2" && bash "$REG" --pid $$ --state started >/dev/null 2>&1)
+eq "--state sets it" "started" "$(J "$M" '[w["state"] for w in m["workers"] if w["number"] == 2][0]')"
+
+# The main checkout is the manager's: not registered as a worker unless listed
+# or named. (Worker 1 is listed at $P here, so use a manifest without it.)
+python3 - "$M" "$P" <<'PY2'
+import json, sys
+p, root = sys.argv[1:]; m = json.load(open(p))
+m["workers"] = [w for w in m["workers"] if w["worktree"] != root]
+json.dump(m, open(p, "w"))
+PY2
+OUT=$(cd "$P" && bash "$REG" --pid $$ 2>&1); RC=$?
+eq "main checkout, unlisted: exit 0" "0" "$RC"
+eq "main checkout, unlisted: not registered" "2" "$(J "$M" 'len(m["workers"])')"
+(cd "$P" && bash "$REG" --session claude-proj --pid $$ >/dev/null 2>&1)
+eq "main checkout with --session: registered" "3" "$(J "$M" 'len(m["workers"])')"
+python3 - "$M" "$P" <<'PY2'
+import json, sys
+p, root = sys.argv[1:]; m = json.load(open(p))
+m["workers"] = [w for w in m["workers"] if w["worktree"] != root]
+json.dump(m, open(p, "w"))
+PY2
+(cd "$P" && bash "$REG" --session ../../x --pid $$ >/dev/null 2>&1); eq "session with a path: exit 1" "1" "$?"
+
 # ── --manager ───────────────────────────────────────────────────────────────
 OUT=$(cd "$P" && HERDR_PANE_ID=h-mgr bash "$REG" --manager --pid $$ 2>&1); RC=$?
 eq "--manager exits 0" "0" "$RC"
 eq "manager pid set" "$$" "$(J "$M" 'm["manager"]["pid"]')"
 eq "manager pane set" "h-mgr" "$(J "$M" 'm["manager"]["herdrPane"]')"
-eq "--manager adds no worker" "3" "$(J "$M" 'len(m["workers"])')"
+eq "--manager adds no worker" "2" "$(J "$M" 'len(m["workers"])')"
 OUT=$(cd "$P" && TMUX_PANE=%1 bash "$REG" --manager --pid $$ 2>&1)
 eq "manager update keeps the herdr pane" "h-mgr %1" "$(J "$M" 'm["manager"]["herdrPane"]+" "+m["manager"]["tmuxTarget"]')"
 
@@ -75,7 +108,7 @@ p = sys.argv[1]; m = json.load(open(p)); m["session"] = "other"; m["workers"] = 
 json.dump(m, open(p, "w"))
 PY
 OUT=$(cd "$P-wt-2" && bash "$REG" --pid $$ 2>&1); RC=$?
-eq "two manifests: the one listing this worktree is used" "0 3 0" "$RC $(J "$M" 'len(m["workers"])') $(J "$P/.autocoder/swarm/other.json" 'len(m["workers"])')"
+eq "two manifests: the one listing this worktree is used" "0 2 0" "$RC $(J "$M" 'len(m["workers"])') $(J "$P/.autocoder/swarm/other.json" 'len(m["workers"])')"
 git -C "$P" worktree add -q -b main-wt-4 "$P-wt-4"
 OUT=$(cd "$P-wt-4" && bash "$REG" --pid $$ 2>&1); RC=$?
 eq "ambiguous: exit 0" "0" "$RC"
