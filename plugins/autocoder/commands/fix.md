@@ -1295,6 +1295,19 @@ Analyze the issue and determine if it's simple or complex:
   by the merge job means rebase again and re-launch. It is not a `needs-clarification` question for the
   human. Escalate only if the same conflict returns twice.
 
+**Rebase early and often (#222).** Do not branch once and integrate only at the end:
+while you work, the integration branch moves, and every sibling landing adds conflict
+risk that surfaces all at once in the merge job. After each commit, and whenever the
+integration branch has moved while you are between steps, rebase and resolve any
+conflict while it is small and the context is fresh:
+
+```bash
+git fetch -q origin "$INTEGRATION_BRANCH" && git rebase "origin/${INTEGRATION_BRANCH}" \
+  || { git diff --name-only --diff-filter=U; echo "resolve, git rebase --continue, re-run the targeted tests"; }
+```
+
+Every landing block below also does a trial rebase right before its review check.
+
 ### Step 2A: Simple Issue - Direct Fix
 
 For simple issues, proceed directly:
@@ -1319,6 +1332,18 @@ Detailed explanation of what was fixed and how.
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
+
+# Trial rebase (#222): land on today's integration tip, not the one this branch
+# started from. It runs BEFORE the review check because a rebase that moves HEAD
+# invalidates the review record: review the rebased HEAD. On a conflict, resolve it
+# now while it is small, keeping both sides' behaviour, re-run the targeted tests,
+# and re-run this block.
+git fetch -q origin "$INTEGRATION_BRANCH"
+if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
+  echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
+  echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
+  exit 2
+fi
 
 # Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
 # now, on the committed branch. Nothing is published until its record for
@@ -1579,6 +1604,18 @@ Detailed multi-line explanation of:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
+
+# Trial rebase (#222): land on today's integration tip, not the one this branch
+# started from. It runs BEFORE the review check because a rebase that moves HEAD
+# invalidates the review record: review the rebased HEAD. On a conflict, resolve it
+# now while it is small, keeping both sides' behaviour, re-run the targeted tests,
+# and re-run this block.
+git fetch -q origin "$INTEGRATION_BRANCH"
+if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
+  echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
+  echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
+  exit 2
+fi
 
 # Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
 # now, on the committed branch. Nothing is published until its record for
@@ -2460,6 +2497,18 @@ Detailed explanation of:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
+
+  # Trial rebase (#222): land on today's integration tip, not the one this branch
+  # started from. It runs BEFORE the review check because a rebase that moves HEAD
+  # invalidates the review record: review the rebased HEAD. On a conflict, resolve it
+  # now while it is small, keeping both sides' behaviour, re-run the targeted tests,
+  # and re-run this block.
+  git fetch -q origin "$INTEGRATION_BRANCH"
+  if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
+    echo "⚠️  Rebase of #${ENHANCE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
+    echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
+    exit 2
+  fi
 
   # Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
   # now, on the committed branch. Nothing is published until its record for
