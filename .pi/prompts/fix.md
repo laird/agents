@@ -2616,7 +2616,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 $(cat "$REVIEW_FILE")
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+      || { echo "❌ gh pr create failed for #${ENHANCE_NUM} — keeping the 'working' label; fix it and re-run"; exit 1; }
     # Hand off 'working' to 'awaiting-integration' so the loop does not redo it.
     issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
     issue_update "$ENHANCE_NUM" --add-label "awaiting-integration" 2>/dev/null || true

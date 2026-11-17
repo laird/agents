@@ -50,8 +50,6 @@ done
 # Already a PR: nothing can make it less reviewed.
 if [ "$MODE" = "pr" ]; then echo pr; exit 0; fi
 
-CHANGED=$(git diff --name-only --no-renames "${BASE}...${HEAD_REF}") || {
-  echo "landing-mode: cannot diff ${BASE}...${HEAD_REF}" >&2; exit 2; }
 # A missing file on <base> means no tiers; any other git failure is an error.
 if git cat-file -e "${BASE}:.autocoder.json" 2>/dev/null; then
   CONFIG=$(git show "${BASE}:.autocoder.json") || {
@@ -60,8 +58,8 @@ else
   CONFIG=""
 fi
 
-CONFIG="$CONFIG" CHANGED="$CHANGED" MODE="$MODE" python3 - <<'PY'
-import json, os, re, sys
+CONFIG="$CONFIG" BASE="$BASE" HEAD_REF="$HEAD_REF" MODE="$MODE" python3 - <<'PY'
+import json, os, re, subprocess, sys
 
 def fail(msg):
     print(f"landing-mode: {msg}", file=sys.stderr)
@@ -87,7 +85,8 @@ def glob_re(pat):
                 body = pat[i + 1:j]
                 if body.startswith("!"):
                     body = "^" + body[1:]
-                out.append("[" + body.replace("\\", "\\\\") + "]"); i = j + 1
+                # A class never matches "/", like * and ?.
+                out.append("(?!/)[" + body.replace("\\", "\\\\") + "]"); i = j + 1
         else:
             out.append(re.escape(c)); i += 1
     return re.compile("".join(out) + r"\Z")
@@ -111,7 +110,16 @@ if globs:
 patterns = [(g, glob_re(g)) for g in globs]
 
 hits = []
-for path in filter(None, os.environ["CHANGED"].splitlines()):
+# NUL-separated and unquoted: by default git prints a non-ASCII, tab, newline
+# or quote in a path as a C-quoted string, which no glob would match.
+spec = f'{os.environ["BASE"]}...{os.environ["HEAD_REF"]}'
+diff = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "--name-only",
+                       "-z", "--no-renames", spec], capture_output=True)
+if diff.returncode != 0:
+    fail(f"cannot diff {spec}")
+changed = [os.fsdecode(b) for b in diff.stdout.split(b"\0") if b]
+
+for path in changed:
     for g, rx in patterns:
         if rx.match(path):
             hits.append((path, g))
@@ -120,7 +128,7 @@ for path in filter(None, os.environ["CHANGED"].splitlines()):
 if hits:
     print("landing-mode: high-risk paths changed, landing as a pull request:", file=sys.stderr)
     for path, g in hits:
-        print(f"  {path}  (risk.high: {g})", file=sys.stderr)
+        print(f"  {path!r}  (risk.high: {g})" if "\n" in path else f"  {path}  (risk.high: {g})", file=sys.stderr)
     print("pr")
 else:
     print(os.environ["MODE"])

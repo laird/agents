@@ -14,6 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP" || exit 1
 git init -q -b main repo && cd repo || exit 1
 git config user.email t@example.invalid; git config user.name t
+git config core.quotePath true   # git's default; a user config may turn it off
 mkdir -p .github/workflows src scripts
 echo a > src/app.py; echo b > README.md; echo c > .github/workflows/ci.yml
 echo d > scripts/install-tools.sh; echo e > install.sh
@@ -74,6 +75,23 @@ echo "$ERR" | grep -q '.github/workflows/ci.yml  (risk.high: .github/workflows/\
 git checkout -q -B topic main
 mkdir -p elsewhere; git mv .github/workflows/ci.yml elsewhere/ci.yml; git commit -qm move
 eq "renaming a file out of a protected dir → pr" pr "$(mode)"
+
+# Unusual filenames: git C-quotes non-ASCII, tab and quote characters by
+# default, and a quoted path matches no glob.
+branch_touching ".github/workflows/é.yml"
+eq "non-ASCII filename in a protected dir → pr" pr "$(mode)"
+branch_touching "$(printf '.github/workflows/tab\there.yml')"
+eq "filename with a tab → pr" pr "$(mode)"
+branch_touching '.github/workflows/q"uote.yml'
+eq "filename with a quote → pr" pr "$(mode)"
+
+# A [class] never matches "/", like * and ?.
+set_config '{"risk":{"high":["src/a[/x]b.py"]}}'
+branch_touching "src/a/b.py"
+eq "[class] does not match a /" merge "$(mode)"
+branch_touching "src/axb.py"
+eq "[class] matches its members" pr "$(mode)"
+set_config "$RISK"
 
 # Only the branch's own changes count, not what landed on the base since.
 git checkout -q -B topic main; echo y >> src/app.py; git commit -qam low

@@ -1308,7 +1308,9 @@ CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM"
 # .autocoder.json lands as a pull request even when the repo merges directly.
 # The diff sets the tier, not the issue's priority or the worker, and an
 # agent's own review never stands in for the human one a PR gets.
-LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$PARENT_BRANCH") \
+git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
+LANDING_BASE=$(git rev-parse --abbrev-ref "${PARENT_BRANCH}@{upstream}" 2>/dev/null || echo "$PARENT_BRANCH")
+LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$LANDING_BASE") \
   || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
 # Push feature branch
@@ -1635,7 +1637,9 @@ CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM"
 # .autocoder.json lands as a pull request even when the repo merges directly.
 # The diff sets the tier, not the issue's priority or the worker, and an
 # agent's own review never stands in for the human one a PR gets.
-LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$PARENT_BRANCH") \
+git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
+LANDING_BASE=$(git rev-parse --abbrev-ref "${PARENT_BRANCH}@{upstream}" 2>/dev/null || echo "$PARENT_BRANCH")
+LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$LANDING_BASE") \
   || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
 # Push feature branch
@@ -2554,7 +2558,9 @@ Co-Authored-By: Antigravity <noreply@antigravity.ai>"
   # .autocoder.json lands as a pull request even when the repo merges directly.
   # The diff sets the tier, not the issue's priority or the worker, and an
   # agent's own review never stands in for the human one a PR gets.
-  LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$PARENT_BRANCH") \
+  git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
+  LANDING_BASE=$(git rev-parse --abbrev-ref "${PARENT_BRANCH}@{upstream}" 2>/dev/null || echo "$PARENT_BRANCH")
+  LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "$LANDING_BASE") \
     || { echo "❌ Cannot choose a landing mode for #${ENHANCE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
   # Push feature branch
@@ -2601,7 +2607,8 @@ Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
 $(cat "$REVIEW_FILE")
 
-🤖 Generated with [Antigravity](https://claude.com/claude-code)"
+🤖 Generated with [Antigravity](https://claude.com/claude-code)" \
+      || { echo "❌ gh pr create failed for #${ENHANCE_NUM} — keeping the 'working' label; fix it and re-run"; exit 1; }
     # Hand off 'working' to 'awaiting-integration' so the loop does not redo it.
     issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
     issue_update "$ENHANCE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
