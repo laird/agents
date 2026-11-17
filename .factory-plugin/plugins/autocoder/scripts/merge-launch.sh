@@ -64,8 +64,11 @@
 #                                               job runs (#212); removed when it finishes
 #
 # Exit codes:
-#   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
-#   1  bad arguments, or no test command resolvable
+#   0  launched (or an equivalent job was already running) — poll with merge-poll.sh;
+#      or, while a revert breaker is open (#252), the branch went to review as a PR and
+#      no job was started, so there is nothing to poll
+#   1  bad arguments, no test command resolvable, or (breaker open) the push, PR or
+#      label change failed
 set -uo pipefail
 
 FEATURE=""
@@ -122,17 +125,6 @@ if [ -z "$FEATURE_SHA" ] && git rev-parse --git-dir >/dev/null 2>&1; then
   exit 1
 fi
 
-# Revert circuit breaker (#252): while an open `revert-breaker` issue exists, the merge
-# mode is `pr`. Push the branch, open a PR and park the issue instead of starting a merge
-# job. An unreadable tracker counts as closed, so a network blip never stalls landing.
-if [ -f "${_MLI_DIR}/revert-breaker.sh" ] && _ml_breaker=$(bash "${_MLI_DIR}/revert-breaker.sh" --active </dev/null 2>/dev/null); then
-  echo "🚨 Revert breaker #${_ml_breaker} is open: landing issue #${ISSUE_NUM} as a pull request instead of merging."
-  _ml_pr=(--land-as-pr --feature "$FEATURE" --feature-sha "$FEATURE_SHA" --issue "$ISSUE_NUM" --integration "$INTEGRATION_BRANCH")
-  [ -n "$SUMMARY_FILE" ] && _ml_pr+=(--summary-file "$SUMMARY_FILE")
-  [ "$OWN_ISSUE" -eq 1 ] && _ml_pr+=(--own-issue)
-  exec bash "${_MLI_DIR}/revert-breaker.sh" "${_ml_pr[@]}"
-fi
-
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
 # shellcheck source=repo-id-fns.sh
@@ -140,13 +132,6 @@ source "${_MLI_DIR}/repo-id-fns.sh"
 # shellcheck source=merge-archive-fns.sh
 source "${_MLI_DIR}/merge-archive-fns.sh"
 
-if [ -z "$TEST_CMD" ]; then
-  TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-  if [ -z "$TEST_CMD" ] && ! is_docs_only_diff "$(pwd)" "${FEATURE_SHA:-$FEATURE}" "$INTEGRATION_BRANCH"; then
-    echo "merge-launch.sh: no test command — pass --test-cmd or add a '### Regression Test Suite' fenced block to AGENTS.md or CLAUDE.md. Not launching an untested merge." >&2
-    exit 1
-  fi
-fi
 # A private per-user directory, not shared /tmp (#213): see autocoder_tmp_root.
 TMP_ROOT=$(autocoder_tmp_root) || { echo "merge-launch.sh: no private temp directory. Not launching." >&2; exit 1; }
 export AUTOCODER_TMP="$TMP_ROOT"   # the job, poll and sentinel all resolve to this same root
@@ -167,6 +152,34 @@ if [ -f "$PIDFILE" ]; then
   # including a snapshot a killed job never got to remove (#212).
   rm -f "$PIDFILE" "$RUNSCRIPT"
   rm -rf "${STATE}".scripts.*
+fi
+
+# Revert circuit breaker (#252): while an open `revert-breaker` issue exists, the merge
+# mode is `pr`. Push the branch, open a PR and park the issue instead of starting a merge
+# job. Checked after the duplicate-job check, so a re-launch never opens a PR for work a
+# running job is already landing. An unreadable tracker counts as closed, so a network
+# blip never stalls landing; a bad setting (exit 2) is reported but does not block either.
+if [ -f "${_MLI_DIR}/revert-breaker.sh" ]; then
+  _ml_err=$(mktemp "${TMP_ROOT}/revert-breaker.err.XXXXXX" 2>/dev/null || echo /dev/null)
+  _ml_breaker=$(bash "${_MLI_DIR}/revert-breaker.sh" --active </dev/null 2>"$_ml_err"); _ml_brc=$?
+  [ "$_ml_brc" -eq 2 ] && { echo "⚠️  Revert breaker check failed; landing as configured:" >&2; cat "$_ml_err" >&2; }
+  [ "$_ml_err" != /dev/null ] && rm -f "$_ml_err"
+  if [ "$_ml_brc" -eq 0 ]; then
+    echo "🚨 Revert breaker #${_ml_breaker} is open: landing issue #${ISSUE_NUM} as a pull request instead of merging."
+    _ml_pr=(--land-as-pr --feature "$FEATURE" --feature-sha "$FEATURE_SHA" --issue "$ISSUE_NUM" --integration "$INTEGRATION_BRANCH")
+    [ -n "$SUMMARY_FILE" ] && _ml_pr+=(--summary-file "$SUMMARY_FILE")
+    [ "$OWN_ISSUE" -eq 1 ] && _ml_pr+=(--own-issue)
+    exec bash "${_MLI_DIR}/revert-breaker.sh" "${_ml_pr[@]}"
+  fi
+fi
+
+# A merge job needs a test command; a PR (above) does not, since a human reviews it.
+if [ -z "$TEST_CMD" ]; then
+  TEST_CMD=$(resolve_test_cmd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+  if [ -z "$TEST_CMD" ] && ! is_docs_only_diff "$(pwd)" "${FEATURE_SHA:-$FEATURE}" "$INTEGRATION_BRANCH"; then
+    echo "merge-launch.sh: no test command — pass --test-cmd or add a '### Regression Test Suite' fenced block to AGENTS.md or CLAUDE.md. Not launching an untested merge." >&2
+    exit 1
+  fi
 fi
 
 # Keep every attempt (#184): archive the previous attempt's log and exit status as

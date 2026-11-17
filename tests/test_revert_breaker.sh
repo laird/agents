@@ -101,6 +101,11 @@ eq  "second trip: exit 0" 0 "$RC"
 has "second trip: points at the open one" "already open as #${B}" "$OUT"
 eq  "second trip: still exactly one" 1 "$(jq length <<<"$(breakers)")"
 
+# With the file backend's approval gate on, the breaker issue (never approved) stays visible.
+OUT=$(AUTOCODER_REQUIRED_LABEL=approved bash "$BREAKER" --ref origin/master)
+has "approval gate: a trip still sees the open breaker" "already open as #${B}" "$OUT"
+eq  "approval gate: --active still finds it" "$B" "$(AUTOCODER_REQUIRED_LABEL=approved bash "$BREAKER" --active)"
+
 A=$(bash "$BREAKER" --active); RC=$?
 eq "--active: exit 0 while open" 0 "$RC"
 eq "--active: prints the issue" "$B" "$A"
@@ -144,6 +149,19 @@ GH_FAIL=1 bash "$SCRIPTS/merge-launch.sh" --feature "feature/issue-$W2" --issue 
 eq "PR failure: exit 1" 1 "$RC"
 eq "PR failure: issue keeps working" '["P2","working"]' "$(issue_get "$W2" | jq -c '[.labels[].name] | sort')"
 
+# No gh: the branch is pushed for review and the issue parked with a note; nothing stalls.
+W3=$(issue_create --title "work3" --body "b" --label P2 | jq -r .number)
+issue_claim "$W3" >/dev/null
+git checkout -q -b "feature/issue-$W3" master; commit "#$W3: third work"
+: > "$GH_LOG"
+OUT=$(AUTOCODER_GH=/nonexistent/gh bash "$SCRIPTS/merge-launch.sh" --feature "feature/issue-$W3" --issue "$W3" \
+        --integration master --own-issue 2>&1); RC=$?
+eq  "no gh: exit 0" 0 "$RC"
+has "no gh: says the branch is pushed for review" "pushed for a human to review" "$OUT"
+eq  "no gh: branch pushed" "$(git rev-parse HEAD)" "$(git ls-remote origin "refs/heads/feature/issue-$W3" | cut -f1)"
+eq  "no gh: issue parked" '["P2","awaiting-integration"]' "$(issue_get "$W3" | jq -c '[.labels[].name] | sort')"
+eq  "no gh: no gh call" "" "$(cat "$GH_LOG")"
+
 # ── closing it restores merge ────────────────────────────────────────────────
 issue_close "$B" --comment "cause understood" >/dev/null
 bash "$BREAKER" --active >/dev/null; eq "closed: --active exits 1" 1 "$?"
@@ -153,6 +171,19 @@ bash "$BREAKER" --active >/dev/null; eq "closed: --active exits 1" 1 "$?"
 OUT=$(bash "$SCRIPTS/merge-launch.sh" --feature "feature/issue-$W2" --issue "$W2" --integration master --own-issue 2>&1)
 has "closed: merge-launch takes the merge path" "no test command" "$OUT"
 eq  "closed: no PR opened" "" "$(grep 'pr create' "$GH_LOG")"
+
+# A bad setting is reported at launch, and landing goes on as configured.
+config '{"threshold": 5}'
+OUT=$(bash "$SCRIPTS/merge-launch.sh" --feature "feature/issue-$W2" --issue "$W2" --integration master --own-issue 2>&1)
+has "bad setting at launch: reported" "Revert breaker check failed" "$OUT"
+has "bad setting at launch: takes the merge path" "no test command" "$OUT"
+config
+
+# An unconfigured repo: no tracker to read, and nothing gets written.
+git init -q "$TMP/bare-repo"
+( cd "$TMP/bare-repo" && unset ISSUE_SOURCE && bash "$BREAKER" --active >/dev/null 2>&1; echo "rc=$?" ) > "$TMP/unconf.out"
+eq "unconfigured: --active says closed" "rc=1" "$(cat "$TMP/unconf.out")"
+[ -e "$TMP/bare-repo/.autocoder.json" ] && bad "unconfigured: no .autocoder.json written" || ok "unconfigured: no .autocoder.json written"
 
 # ── the sentinel runs the breaker after every revert ─────────────────────────
 sed -n '/^finish_revert()/,/^}/p' "$SCRIPTS/main-sentinel.sh" | grep -q 'revert-breaker.sh' \

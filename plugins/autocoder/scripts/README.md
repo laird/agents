@@ -537,10 +537,16 @@ issues. While one is open, a later trip opens no other.
 The open issue is the switch. While it is open, `merge-launch.sh` does not start a merge
 job: it runs `revert-breaker.sh --land-as-pr`, which pushes the branch, opens a PR
 (`gh pr create`, with the summary file as its body) and, with `--own-issue`, parks the
-issue under `awaiting-integration`. If the push or the PR fails it exits 1 and changes no
-label. A human closes the breaker issue to restore `merge`; no commit is needed, and
-every worktree sees the change at its next launch. If the tracker cannot be read, the
-launch treats the breaker as closed rather than stalling.
+issue under `awaiting-integration`. Without `gh` (a repo not on GitHub) the pushed branch is
+the review copy: the issue is parked with a note to merge it by hand. If the push or the
+PR fails it exits 1 and changes no label. No merge job starts, so `merge-poll.sh` has
+nothing to watch, and a PR needs no test command since a human reviews it. The check runs
+after merge-launch's duplicate-job check, so a re-launch never opens a PR for work a
+running job is already landing. A human closes the breaker issue to restore `merge`; no commit is needed, and
+every worktree sees the change at its next launch. The breaker is checked only after a
+revert, so if the window is still bad when it is closed, the next revert trips it again.
+If the tracker cannot be read, the launch treats the breaker as closed rather than
+stalling; a bad setting is reported on stderr and treated the same way.
 
 Settings are in the main checkout's `.autocoder.json`:
 
