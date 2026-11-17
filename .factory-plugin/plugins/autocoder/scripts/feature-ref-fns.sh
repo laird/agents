@@ -37,8 +37,14 @@ resolve_feature_sha() {
 
   if [ "$is_branch" -eq 1 ] && git -C "$dir" remote get-url origin >/dev/null 2>&1; then
     # Bounded (#220): a stalled connection must refuse, not hang the worker.
-    if git_net -C "$dir" fetch -q origin "+refs/heads/${feature}:${tracking}" 2>/dev/null; then
+    local fetch_rc=0
+    git_net -C "$dir" fetch -q origin "+refs/heads/${feature}:${tracking}" 2>/dev/null || fetch_rc=$?
+    if [ "$fetch_rc" -eq 0 ]; then
       remote_sha=$(git -C "$dir" rev-parse --verify -q "${tracking}^{commit}" 2>/dev/null || true)
+    elif git_net_timed_out "$fetch_rc" && [ -n "$local_sha" ]; then
+      # Timed out: origin is not answering, so ls-remote would only stall again.
+      echo "⚠️  Fetching origin/${feature} timed out after ${AUTOCODER_GIT_TIMEOUT:-60}s; not falling back to the local branch." >&2
+      return 1
     else
       # Fall back to the local namespace ONLY when origin answered and has no such
       # branch (ls-remote --exit-code exits 2). Any other failure — origin

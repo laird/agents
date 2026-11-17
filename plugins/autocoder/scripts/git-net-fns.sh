@@ -9,14 +9,17 @@
 # never returned and the issue sat under `working`. A bounded call fails fast and
 # the caller's existing refusal path runs; the worker can retry.
 #
-# Two guards: http.lowSpeedLimit/Time aborts an HTTP transfer that stalls (works
-# without coreutils `timeout`), and `timeout` caps the whole call including SSH and
+# Two guards: http.lowSpeedLimit/Time aborts an HTTP transfer that sends under 1 KB/s
+# for the whole limit (the only guard where coreutils `timeout` is missing), and `timeout` caps the whole call including SSH and
 # connect stalls. A timed-out call exits 124 (or 137 if it had to be killed), which
-# callers treat like any other failure.
+# callers treat like any other failure. git_net_timed_out <rc> says whether that
+# was the cause. Interactive prompts are off: a human running this by hand needs
+# credentials from a helper or agent, not a typed password.
+git_net_timed_out() { [ "${1:-0}" -eq 124 ] || [ "${1:-0}" -eq 137 ]; }
 git_net() {
   local limit="${AUTOCODER_GIT_TIMEOUT:-60}"
   [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=60
-  local -a cmd=(git -c http.lowSpeedLimit=1000 -c "http.lowSpeedTime=$(( limit < 30 ? limit : 30 ))")
+  local -a cmd=(git -c http.lowSpeedLimit=1000 -c "http.lowSpeedTime=${limit}")
   if command -v timeout >/dev/null 2>&1; then
     GIT_TERMINAL_PROMPT=0 timeout -k 5 "$limit" "${cmd[@]}" "$@"
   else

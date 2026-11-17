@@ -41,6 +41,8 @@ ELAPSED=$((SECONDS - START))
 eq "stalled fetch: resolve refuses (exit 1)" "1" "$RC"
 [ "$ELAPSED" -lt 20 ] && ok "returned in ${ELAPSED}s, not hung" || bad "took ${ELAPSED}s"
 echo "$OUT" | grep -q "not falling back to the local branch" && ok "refusal says why" || bad "output: $OUT"
+echo "$OUT" | grep -q "timed out" && ok "a timed-out fetch refuses at once (no second stalled ls-remote)" || bad "no timeout message: $OUT"
+[ "$ELAPSED" -lt 6 ] && ok "one deadline, not two (${ELAPSED}s)" || bad "took ${ELAPSED}s: fetch and ls-remote both waited"
 
 # Healthy remote: unchanged behaviour (fetch succeeds through git_net).
 git push -q origin feature/issue-22001
