@@ -51,6 +51,10 @@
 #                 If the comment or the read-back fails, the gate keeps the
 #                 claim, as it did before the read-back existed.
 #
+# Failure after claiming (#204): an EXIT trap releases a claim the gate took but
+# never handed off (an error or a signal), with a 🔓 comment, and only when this
+# worker's claim is the live one. See release_pending_claim.
+#
 # Environment:
 #   AUTOCODER_WORK_JSON        work-plan path (default /tmp/autocoder-work.json)
 #   AUTOCODER_CLAIM_MAX_TRIES  claim attempts per tick before giving up
@@ -124,8 +128,21 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
 fi
 
 # ── 1. Snapshot all open issues ──────────────────────────────────────────
+GATE_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
 ALL_JSON="$(mktemp)"
-trap 'rm -f "$ALL_JSON"' EXIT
+# A claim taken below and not yet handed off (#204): see release_pending_claim.
+PENDING_CLAIM=""; PENDING_FRESH=1; PENDING_EXCLUDE=""
+on_exit() {
+  local rc=$?
+  set +e
+  trap '' HUP INT TERM   # a second signal must not cut the release short
+  declare -F release_pending_claim >/dev/null && release_pending_claim "$rc"
+  rm -f "$ALL_JSON"
+  exit "$rc"
+}
+trap on_exit EXIT
+# A signal must still run the EXIT trap, so a killed gate releases its claim too.
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 issue_list --state open --limit 500 > "$ALL_JSON"
 
 # ── 1b. Issues with a live remote branch are someone's work in flight ────
@@ -287,12 +304,93 @@ now = int(os.environ["NOW_MS"])
 oldest = now - int(os.environ["WINDOW_MS"])
 claims = []
 for c in comments:
+    # A release (🔓, #204 and /fix's explicit release) ends every claim before it.
+    if (c.get("body") or "").lstrip().startswith("🔓"):
+        claims = []
+        continue
     # Old markers end after the epoch-ms; new ones add owner fields (#202).
     m = re.match(r"\s*🔒 claim (\S+) (\d+)(?: start=\d+)?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
     if m and int(m.group(2)) >= oldest and (int(m.group(2)), m.group(1)) not in excluded:
         claims.append((int(m.group(2)), m.group(1)))
 sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)
 PY
+}
+
+# ── Release a claim the gate cannot hand off (#204) ─────────────────────
+# Between claiming an issue and writing the work plan the gate can hit a backend
+# error or be killed. Nothing would then work the issue, yet its `working` label
+# and claim marker (which names the long-lived owner, not this gate) would keep
+# every other worker off it. The EXIT trap releases such a claim, with a comment,
+# but only when this worker's claim is the live one: on a best-effort backend the
+# label is shared, and removing it after losing the race would strip the winner's
+# lock. "Live" uses the rule claim_comment_wins settles races by: the earliest
+# claim marker inside the window as of this gate's start, with claims being taken
+# over excluded. With no marker at all, a fresh claim is still ours (we added the
+# label); a takeover is not (the label was already there). If the issue cannot be
+# read back, the claim is left for the takeover rules (#203).
+
+# own_claim_is_live <issue-json> → exit 0 when releasing cannot strip a winner.
+own_claim_is_live() {
+  ISSUE_JSON="$1" ME="$WORKER_ID" FRESH="$PENDING_FRESH" EXCLUDE="$PENDING_EXCLUDE" \
+    OLDEST_MS="$((GATE_START_MS - CLAIM_WINDOW_S * 1000))" python3 - <<'PY'
+import json, os, re, sys
+
+excluded = set()
+for line in os.environ.get("EXCLUDE", "").splitlines():
+    f = line.split()
+    if len(f) >= 2 and f[0].isdigit():
+        excluded.add((int(f[0]), f[1]))
+try:
+    comments = json.loads(os.environ["ISSUE_JSON"]).get("comments") or []
+except ValueError:
+    sys.exit(1)
+oldest = int(os.environ["OLDEST_MS"])
+claims = []
+for c in comments:
+    # A release (🔓, #204 and /fix's explicit release) ends every claim before it.
+    if (c.get("body") or "").lstrip().startswith("🔓"):
+        claims = []
+        continue
+    m = re.match(r"\s*🔒 claim (\S+) (\d+)(?: start=\d+)?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
+    if m and int(m.group(2)) >= oldest and (int(m.group(2)), m.group(1)) not in excluded:
+        claims.append((int(m.group(2)), m.group(1)))
+if not claims:
+    sys.exit(0 if os.environ["FRESH"] == "1" else 1)
+sys.exit(0 if min(claims)[1] == os.environ["ME"] else 1)
+PY
+}
+
+# release_pending_claim <exit-status> — called from the EXIT trap.
+release_pending_claim() {
+  local n="$PENDING_CLAIM" rc="$1" json f held
+  [ -n "$n" ] || return 0
+  PENDING_CLAIM=""
+  # The file backend's claim is an atomic rename: if it succeeded, the issue is ours.
+  if [ "$ISSUE_SOURCE" != file ]; then
+    if ! json="$(issue_get "$n" 2>/dev/null)"; then
+      echo "fix-loop-gate: cannot read #${n} back; leaving its claim for the takeover rules" >&2
+      return 0
+    fi
+    own_claim_is_live "$json" || return 0
+  fi
+  echo "fix-loop-gate: exiting (status ${rc}) before handing off #${n}; releasing its claim" >&2
+  # Label first, then the 🔓: a racer that reads the 🔓 and wins re-adds the label,
+  # and that must come after our removal or the issue is handed off unlabelled.
+  issue_release "$n" 2>/dev/null || issue_update "$n" --remove-label working 2>/dev/null || true
+  issue_comment "$n" --body "🔓 **Releasing claim**
+
+**Reason**: the fix-loop gate exited (status ${rc}) after claiming this issue and before handing it to a worker session.
+**Worker**: \`${WORKER_ID}\`
+**State left behind**: nothing; no work was started.
+
+Releasing the \`working\` lock so another agent can pick this up." 2>/dev/null || true
+  # worker_state_set may already have recorded the claim, and a record of a
+  # released issue would make the next tick try to resume it.
+  if declare -F worker_state_file >/dev/null && f="$(worker_state_file 2>/dev/null)" && [ -f "$f" ]; then
+    read -r held _ < "$f" || true
+    [ "$held" != "$n" ] || worker_state_clear
+  fi
+  return 0
 }
 
 # ── Take over an abandoned claim (#203) ──────────────────────────────────
@@ -317,7 +415,10 @@ take_over_abandoned() {
   takeover_checks=$((takeover_checks + 1))
   json="$(issue_get "$n" 2>/dev/null)" || return 1
   abandoned="$(claims_abandoned "$json" "$n")" || return 1
-  CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || return 1
+  # From here our claim marker may be on the issue: release it if the gate fails (#204).
+  PENDING_CLAIM="$n"; PENDING_FRESH=0; PENDING_EXCLUDE="$abandoned"
+  CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || { PENDING_CLAIM=""; return 1; }
+  issue_claim "$n" 2>/dev/null || true   # a released rival may have dropped the label (#204)
   list="$(printf '%s\n' "$abandoned" | sed -E 's/^[0-9]+ ([^ ]+) (.*)$/- `\1`: \2/')"
   issue_comment "$n" --body "♻️ **Taking over an abandoned claim**
 
@@ -347,8 +448,14 @@ while read -r PHASE ISSUE_NUM PRIORITY KIND <&3; do
     [ "$tries" -lt "$MAX_TRIES" ] || break
     tries=$((tries + 1))
     issue_claim "$ISSUE_NUM" 2>/dev/null || continue
+    # Ours until the work plan is written; the EXIT trap releases it if we fail first.
+    PENDING_CLAIM="$ISSUE_NUM"; PENDING_FRESH=1; PENDING_EXCLUDE=""
     if [ "$ISSUE_SOURCE" != file ]; then
-      claim_comment_wins "$ISSUE_NUM" || continue
+      # A lost race moves on WITHOUT releasing: the label is the winner's now.
+      claim_comment_wins "$ISSUE_NUM" || { PENDING_CLAIM=""; continue; }
+      # An earlier claimer that failed and released (#204) may have removed the
+      # shared label after our label-add: make sure the issue we won is labelled.
+      issue_claim "$ISSUE_NUM" 2>/dev/null || true
     fi
   fi
 
@@ -361,6 +468,7 @@ while read -r PHASE ISSUE_NUM PRIORITY KIND <&3; do
   else
     printf '{"phase":"enhance","issue":%s}\n' "$ISSUE_NUM" > "$WORK_JSON"
   fi
+  PENDING_CLAIM=""   # handed off: the work plan names it
   exit 0
 done 3<<< "$CLASSIFICATION"
 
