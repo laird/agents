@@ -9,11 +9,13 @@
 #   tests the integration tip after the fact and repairs it. This is that something.
 #
 # WHY TIP REFS, NOT git bisect:
-#   Workers merge the integration branch INTO their feature and push the feature tip as the
-#   new integration tip, so consecutive tips are joined by second-parent links or by plain
-#   fast-forwards. `git bisect --first-parent` from the tip only ever visits the newest
-#   push's own commits: a break from any earlier push is never a candidate, and the newest
-#   push gets reverted for it. Every verified push now records itself as a tip ref,
+#   One push lands a series of commits (rebased and fast-forwarded since #221; earlier
+#   pushes were merges of the integration branch into the feature), so the unit to blame
+#   and revert is the push, not a single commit. History alone does not mark where one push
+#   ends and the next begins: `git bisect --first-parent` from a merge-built tip only visits
+#   the newest push's own commits, and on linear history it visits every commit of every
+#   push, naming a commit in the middle of a series. Every verified push now records
+#   itself as a tip ref,
 #     refs/autocoder/tips/<integration>/<landed-sha>-<issue>
 #   so the sentinel bisects over the real sequence of pushes, with the issue attached to
 #   each. A push nobody recorded (a human) is a synthetic tip with issue `unknown`.

@@ -154,8 +154,14 @@ integration branch), and it holds that lock through the gate until its push is v
 that has to wait logs `⏳ Queued: issue #N is landing on '<branch>' from this host`, then syncs
 onto the tip only when its turn comes, which by then already carries every earlier landing from
 this host. So two workers on one host that finish at the same moment never reject each other's
-push or write a `Re-sync … (push retry N)` commit. A push from another host can still race; the
-re-sync-and-retry loop handles that as before.
+push. A push from another host can still race; the re-sync-and-retry loop handles that as before.
+
+A job lands by **rebase and fast-forward** (#221): it replays the feature commits onto the
+integration tip, gates that tree, and pushes it as a fast-forward, so the integration branch
+gets one linear series per issue and no merge commits. A lost push race rebases again (and
+re-gates under the usual rules). A rebase conflict is aborted and handed back to the worker
+(`kind=conflict`, with the files), never to a human on the first occurrence. The landed commit
+is the rebased tip; the close comment names it alongside the reviewed pre-rebase HEAD.
 
 | Setting | Default | Effect |
 |---|---|---|

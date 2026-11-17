@@ -3,9 +3,9 @@
 #
 # Two workers (two clones of one origin) finish at the same moment and each starts
 # merge-to-integration.sh. Without the queue both fetch the same tip, gate in parallel,
-# and the second push is rejected and re-synced ("push retry"). With it, the second job
-# waits, syncs onto the first one's landing, and pushes once: no rejected push, no re-sync
-# commit, and its log says it queued. The same pair with AUTOCODER_MERGE_QUEUE=0 does race,
+# and the second push is rejected and re-synced. With it, the second job waits, syncs
+# onto the first one's landing, and pushes once: no rejected push, and its log says it
+# queued. The same pair with AUTOCODER_MERGE_QUEUE=0 does race,
 # which proves the first run measured the queue. Gate slots are set to 2 throughout so the
 # gate-slot semaphore cannot serialise the jobs by itself.
 
@@ -50,7 +50,6 @@ run_pair() {
   (cd "$TMP/w2" && bash "$MTI" --feature feature/b --issue 302 --integration master --test-cmd "$(gate w2)" > "$TMP/w2.log" 2>&1) &
   wait
 }
-resyncs() { git -C "$TMP/origin.git" log --format=%s master | grep -c "push retry" || true; }
 
 # ── queued (default): one after the other, no race ──────────────────────────
 setup; run_pair
@@ -58,7 +57,7 @@ for w in w1 w2; do grep -q "merged into 'master'" "$TMP/$w.log" && ok "$w merged
 git -C "$TMP/origin.git" show master:a.txt >/dev/null 2>&1 && git -C "$TMP/origin.git" show master:b.txt >/dev/null 2>&1 \
   && ok "both changes are on origin/master" || bad "origin/master is missing a change"
 grep -q "rejected" "$TMP/w1.log" "$TMP/w2.log" && bad "a push was rejected: $(grep -h rejected "$TMP"/w*.log)" || ok "no push was rejected"
-[ "$(resyncs)" = "0" ] && ok "no push-retry re-sync commit on master" || bad "$(resyncs) push-retry re-sync commit(s) on master"
+[ -z "$(git -C "$TMP/origin.git" rev-list --merges master)" ] && ok "master stays linear (no merge commits)" || bad "merge commits on master: $(git -C "$TMP/origin.git" log --merges --oneline master)"
 grep -q "⏳ Queued: issue #30[12]" "$TMP/w1.log" "$TMP/w2.log" && ok "the waiting job logged whom it queued behind" || bad "no queued line naming the holder: $(grep -h "Queued\|turn" "$TMP"/w*.log)"
 grep -q "Our turn to land on 'master'" "$TMP/w1.log" "$TMP/w2.log" && ok "the waiting job logged its turn" || bad "no turn line"
 if [ "$(cat "$TMP/w1.start")" \< "$(cat "$TMP/w2.start")" ]; then FIRST_END=$(cat "$TMP/w1.end"); SECOND_START=$(cat "$TMP/w2.start")
@@ -71,7 +70,7 @@ ls "$AUTOCODER_TMP"/autocoder-land-*.holder >/dev/null 2>&1 && bad "a holder fil
 # ── queue off: the same pair races, so the run above measured the queue ─────
 setup; AUTOCODER_MERGE_QUEUE=0 run_pair
 for w in w1 w2; do grep -q "merged into 'master'" "$TMP/$w.log" && ok "queue off: $w merged" || bad "queue off: $w did not merge: $(cat "$TMP/$w.log")"; done
-[ "$(resyncs)" -ge 1 ] && ok "queue off: the pair raced (push-retry re-sync on master)" || bad "queue off: no race, so the queued run proved nothing"
+grep -q "rejected" "$TMP/w1.log" "$TMP/w2.log" && ok "queue off: the pair raced (a push was rejected and re-synced)" || bad "queue off: no race, so the queued run proved nothing"
 grep -q "Landing queue off" "$TMP/w1.log" && ok "queue off is logged" || bad "queue off not logged"
 
 # ── a stuck holder: the job gives up waiting and lands unqueued ─────────────

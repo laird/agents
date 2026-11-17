@@ -12,7 +12,7 @@
 #
 #   This helper instead lands the work on origin/<integration-branch> WITHOUT checking out
 #   that branch locally (so it never contends with other worktrees), re-runs the test suite
-#   on the combined tree, and pushes with a fetch+merge+retry loop to survive sibling workers
+#   on the combined tree, and pushes with a fetch+rebase+retry loop to survive sibling workers
 #   racing to push. Conflicts and red gates go back to the owning worker (#207), and escalate to a human only on a repeat.
 #
 #   #1821: this used to do all of that IN the caller's own worktree — `git checkout
@@ -83,6 +83,26 @@
 #     jobs on one host never race a push or write a "push retry" re-sync commit. The wait
 #     is logged ("⏳ Queued: …"). AUTOCODER_MERGE_QUEUE=0 turns it off;
 #     AUTOCODER_MERGE_QUEUE_WAIT caps the wait (default 7200 s, then it lands unqueued).
+#
+# LANDING BY REBASE (#221):
+#   The feature commits are rebased onto origin/<integration> and pushed as a fast-forward,
+#   so the integration branch gets one linear series per issue and no merge commits (a
+#   merge-based landing wrote a "pre-integration sync" merge and, after every lost push race,
+#   a "Re-sync … push retry N" merge: 39 of 98 commits on one repo in 12 hours). What this
+#   changes:
+#   - The landed commit is the REBASED tip, not FEATURE_SHA. LANDED_SHA, the published tip
+#     ref, verify-shipped.sh and the close comment all name it.
+#   - The Pre-Landing Review record names the pre-rebase HEAD. A clean rebase is
+#     mechanical, so the close comment says so and names both commits; a conflicted rebase
+#     is aborted and bounced to the worker (kind=conflict, #207), who resolves it and has it
+#     re-reviewed.
+#   - A lost push race re-syncs by rebasing again; whether that re-gates follows the same
+#     rules as before (scoped re-gate, documents-only re-sync, strict mode).
+#   - The feature branch is deleted with a lease on FEATURE_SHA, the commit that was on
+#     origin, never on the rebased tip.
+#   - A rebase that leaves nothing to land (every commit is already upstream, e.g. a re-run
+#     after an earlier job landed the same work) is treated like a feature SHA already on
+#     origin/<integration>: nothing is gated or pushed.
 #
 # SCRATCH:
 #   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
@@ -412,22 +432,22 @@ The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTE
 
 _escalate_conflict() {
   local files
-  echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
+  echo "❌ Conflict rebasing ${FEATURE} onto '${INTEGRATION_BRANCH}'."
   files=$(git diff --name-only --diff-filter=U 2>/dev/null)
-  git merge --abort 2>/dev/null || true
+  git rebase --abort 2>/dev/null || git merge --abort 2>/dev/null || true
   MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED="$OWN_ISSUE"   # a successful _bounce clears it
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     if _bounce conflict "$files" ""; then
-      echo "   Aborted the merge; the worker rebases and relaunches."
+      echo "   Aborted the rebase; the worker rebases and relaunches."
       exit 1
     fi
-    echo "   Aborting the merge and escalating issue #${ISSUE_NUM}: second identical conflict."
+    echo "   Aborted the rebase; escalating issue #${ISSUE_NUM}: second identical conflict."
     issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit the same conflict twice** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue.
 
 Conflicting files:
 $(printf '%s\n' "$files" | sed '/^$/d' | sed 's/^/- `/; s/$/`/')" 2>/dev/null || true
   else
-    echo "   Aborting the merge. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
+    echo "   Aborted the rebase. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
   fi
   exit 1
 }
@@ -445,11 +465,18 @@ _close_or_park() {
   # Something landed whatever happens to the issue below: record it before any return.
   MERGE_LANDED="$1" MERGE_OUTCOME=landed
   [ "$OWN_ISSUE" -eq 1 ] || return 0
-  local landed="$1" summary ship_branch
+  local landed="$1" summary ship_branch rebase_note=""
   summary="Merged \`${FEATURE}\` into \`${INTEGRATION_BRANCH}\`."
   if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
     summary=$(cat "$SUMMARY_FILE")
   fi
+  # The review record names the pre-rebase HEAD; say how the landed commit relates to it.
+  if [ "$landed" != "$FEATURE_SHA" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
+    rebase_note="
+
+**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD) was rebased onto \`${INTEGRATION_BRANCH}\` without conflicts and landed as \`${landed}\`. A clean rebase is mechanical; a conflicted one is bounced back to the worker for re-review."
+  fi
+  summary="${summary}${rebase_note}"
   if _issue_is_closed; then
     # Most often GitHub closed it the moment our push landed, because a commit says
     # "Fix #N" (a closing keyword). Returning silently here lost the summary and
@@ -514,8 +541,15 @@ ${summary}
       echo "✅ Issue #${ISSUE_NUM} closed."
       # Sample closed work for later human review (#197). Never gates; never fatal.
       # The change measured is the feature's own (from the integration tip first seen).
-      bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
-        --base "$INT_SEEN_SHA" --head "$FEATURE_SHA" --apply || true
+      # After a rebase the landed series sits directly on REBASE_ONTO, so that pair is
+      # exactly this change; otherwise (already landed) fall back to the feature tip.
+      if [ -n "${REBASE_ONTO:-}" ]; then
+        bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
+          --base "$REBASE_ONTO" --head "$landed" --apply || true
+      else
+        bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
+          --base "$INT_SEEN_SHA" --head "$FEATURE_SHA" --apply || true
+      fi
     else
       MERGE_OUTCOME=parked
       _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
@@ -639,10 +673,11 @@ else
   echo "ℹ️  No origin/${GREEN_REF} yet (no sentinel has proven a green tip): strict mode, every re-sync re-gates and a red base refuses the merge."
 fi
 
-# A previous run (or a human) may already have landed this exact commit; merging, gating
-# and pushing it again would only add an empty merge commit. Go straight to the outcome.
-if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
-  echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
+# A previous run (or a human) may already have landed this work; gating and pushing it
+# again would land nothing. Go straight to the outcome. $1 is the commit on
+# origin/<integration> that carries the work.
+REBASE_ONTO=""
+_already_landed() {
   delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
   if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
     # An earlier run parked it (disjoint, red base, or not shipped); landing nothing new
@@ -653,8 +688,12 @@ if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
     exit 0
   fi
   PUBLISH_BASIS=already-landed
-  _close_or_park "$FEATURE_SHA"
+  _close_or_park "$1"
   exit 0
+}
+if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
+  echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
+  _already_landed "$FEATURE_SHA"
 fi
 
 # The files this change touches, measured against the integration tip as first seen. A
@@ -678,10 +717,22 @@ for _tok in $(printf '%s' "$TEST_CMD" | tr ';&|()<>`"'"'"'=' ' '); do
 done
 unset _tok
 
-if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
-       -m "Merge origin/${INTEGRATION_BRANCH} into ${FEATURE} (pre-integration sync)"; then
-  _escalate_conflict
+# Replay the feature commits onto the integration tip (#221) so the eventual push is a
+# fast-forward and the integration branch stays linear. Never checks out the integration
+# branch -> worktree-safe. A conflict aborts the rebase and bounces to the worker.
+_rebase_onto_integration() {
+  if ! git -c core.hooksPath=/dev/null rebase "origin/${INTEGRATION_BRANCH}"; then
+    _escalate_conflict
+  fi
+  REBASE_ONTO=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+}
+_rebase_onto_integration
+if [ "$(git rev-parse HEAD)" = "$INT_SEEN_SHA" ]; then
+  # Every feature commit was already upstream (same patches under other SHAs).
+  echo "ℹ️  Rebasing ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_BRANCH} left nothing to land: its changes are already there."
+  _already_landed "$INT_SEEN_SHA"
 fi
+echo "ℹ️  Rebased ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_BRANCH} (${INT_SEEN_SHA:0:8}): $(git rev-list --count "${INT_SEEN_SHA}..HEAD") commit(s), tip $(git rev-parse --short=8 HEAD)."
 
 # 2. Gate the COMBINED tree (this fix + everyone else's merged work). This is the step that
 #    catches cross-fix breakage before it lands on the integration branch.
@@ -841,8 +892,8 @@ _note_docs_resync() {
   esac
 }
 
-# 3. Push the feature tip to the integration branch. If a sibling worker pushed in the
-#    meantime the push is rejected; re-sync and retry. A re-sync that brings in work
+# 3. Push the rebased tip to the integration branch (a fast-forward). If a sibling worker
+#    pushed in the meantime the push is rejected; re-sync by rebasing again and retry. A re-sync that brings in work
 #    overlapping this change produces a tree nobody has tested, so it goes back through the
 #    gate before the next push (and before the API fallback below, which publishes whatever
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
@@ -859,9 +910,11 @@ for attempt in 1 2 3 4 5; do
   git fetch origin "$INTEGRATION_BRANCH" || break
   INT_NEW_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   BEFORE_RESYNC=$(git rev-parse HEAD)
-  if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
-         -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
-    _escalate_conflict
+  _rebase_onto_integration
+  if [ "$(git rev-parse HEAD)" = "$INT_NEW_SHA" ]; then
+    # Someone else landed these very changes while we gated. Nothing of ours is left.
+    echo "ℹ️  After the re-sync nothing of ${FEATURE} is left to land: its changes are already on origin/${INTEGRATION_BRANCH}."
+    _already_landed "$INT_NEW_SHA"
   fi
   if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
     if DOCS_COUNT=$(_resync_docs_only "$INT_SEEN_SHA" "$INT_NEW_SHA") && _docs_resync_checks_pass; then
@@ -975,9 +1028,9 @@ else
 fi
 
 # 4. Clean up the feature branch now that its work is on the integration branch. Only
-# while it still points at FEATURE_SHA, the feature tip this job merged (re-sync merges
-# are never pushed to it): a branch that moved since, or that never held this commit,
-# carries work that has not landed (#143).
+# while it still points at FEATURE_SHA, the feature tip this job landed (the rebased
+# commits are never pushed to it, #221): a branch that moved since, or that never held
+# this commit, carries work that has not landed (#143).
 delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
 # The throwaway worktrees are removed by the EXIT trap. Any local $FEATURE branch ref
 # in $CALLER_DIR is untouched by this script; the caller's own cleanup (or the next /fix
