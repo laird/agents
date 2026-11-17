@@ -753,12 +753,14 @@ EOF
   [ "$R" = "wake:duty" ] \
     && ok "a manager showing the 'bypass permissions on' footer counts as started (#256)" \
     || bad "footer wake: last_tick_result=$R, wanted wake:duty (#256)"
-  R=$(consent_wake dialog 'WARNING: Claude Code running in Bypass Permissions mode
-❯ 1. No, exit
-  2. Yes, I accept')
+  R=$(consent_wake dialog 'WARNING: Claude Code running in Bypass Permissions mode')
   [ "$R" = "wake-failed:consent-dialog" ] \
-    && ok "the bypass-permissions consent dialog is still detected (#256)" \
-    || bad "dialog wake: last_tick_result=$R, wanted wake-failed:consent-dialog"
+    && ok "the consent dialog's 'Bypass Permissions' title is detected on its own (#256)" \
+    || bad "dialog title wake: last_tick_result=$R, wanted wake-failed:consent-dialog"
+  R=$(consent_wake choice '❯ 1. No, exit')
+  [ "$R" = "wake-failed:consent-dialog" ] \
+    && ok "the consent dialog's 'No, exit' choice is detected on its own (#256)" \
+    || bad "dialog choice wake: last_tick_result=$R, wanted wake-failed:consent-dialog"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 9. start-parallel-agents.sh --manager-only (U2): manifest shape

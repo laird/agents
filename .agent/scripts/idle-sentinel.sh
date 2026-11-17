@@ -1139,7 +1139,7 @@ validate_target() {
 # an accepted --dangerously-skip-permissions claude shows "bypass permissions on"
 # in its footer the whole time it runs, and a lowercase match would report a
 # healthy manager as stuck on the dialog (#256).
-CONSENT_DIALOG_PATTERN='No, exit|Yes, I accept|Bypass Permissions'
+CONSENT_DIALOG_PATTERN='No, exit|Bypass Permissions'
 
 # Command namespace for the wake prompt. .AGENT ADAPTATION (#36): this
 # distribution's workflows are bare-named for EVERY agent (/manager-resume,
