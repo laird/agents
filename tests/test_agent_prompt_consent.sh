@@ -135,7 +135,8 @@ done
 for agent in claude gemini codex pi droid; do
   for mux in tmux herdr; do
     out=$( (source "$LIB"; source "$ROOT/plugins/autocoder/scripts/worker-launch-lib.sh"
-            resolve_worker_launch "$agent" "$ROOT" "$mux" >/dev/null 2>&1 || exit 0
+            resolve_worker_launch "$agent" "$ROOT" "$mux" >/dev/null 2>&1 \
+              && [ -n "$WORKER_CMD" ] || { echo "no launch prompts resolved"; exit 0; }
             for c in "$WORKER_CMD" "$MANAGER_CMD"; do
               printf '%s\n' "$c" | grep -Eq "$AUTOCODER_CONSENT_PATTERN" && echo "$c"
             done) )
