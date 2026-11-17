@@ -366,3 +366,31 @@ repeat on the same tree is free. With `auto: true` the sentinel calls
 `promote.sh --auto` after every green tick; a refused promotion never changes
 the tick's exit code. Exit 0 moved or already there, 1 config error, 2 refused
 with a one-line reason. Full how-to: [docs/environments.md](../../../docs/environments.md).
+
+## Merge history: per-attempt logs and `merge-events.jsonl` (#184)
+
+Every merge attempt keeps its own log. `merge-launch.sh` archives the previous attempt's
+files as `${AUTOCODER_TMP:-/tmp}/autocoder-merge-<repo-id>-<issue>.<n>.log` and `.<n>.exit`.
+The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merge-poll.sh` reads.
+
+`merge-to-integration.sh` appends one JSON line per event to
+`${AUTOCODER_MERGE_EVENTS:-${XDG_STATE_HOME:-~/.local/state}/autocoder/merge-events.jsonl}`
+(`merge-events-lib.sh`):
+
+```json
+{"ts":"2026-11-17T02:43:44Z","event":"attempt","outcome":"conflict","repo":"agents-5ea0ca80",
+ "issue":184,"branch":"feature/issue-184","attempt":2,"escalated":false,
+ "files":["src/a.sh"],"gate_tests_failed":[],"duration_s":41,"landed":null,
+ "push_retries":0,"exit":1,"reason":null}
+```
+
+- `event`: `attempt` (one per job, its final outcome) or `push-retry` (one per rejected push).
+- `outcome`: `landed`, `parked` (landed but not closed), `conflict`, `gate-failed`, `escalated`
+  (to needs-clarification), `failed` (any other exit), or `push-retry`.
+- `escalated`: true when the attempt went to a human rather than back to the worker (#207).
+- `files`: conflicting files. `gate_tests_failed`: failing suites. Both are sorted and may be empty.
+- `landed`: the commit pushed to the integration branch, when one was.
+
+Lines older than `AUTOCODER_MERGE_EVENTS_DAYS` (default 30) are dropped once the file
+passes 1 MiB. Recording is best effort and never fails a merge. `tests/run-shell-suite.sh`
+points the file at a temp path, so test runs never write to the real one.

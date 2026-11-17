@@ -143,9 +143,30 @@ if [ -f "$PIDFILE" ]; then
   fi
   # Stale pidfile from a finished/dead run — clear state before relaunching,
   # including a snapshot a killed job never got to remove (#212).
-  rm -f "$PIDFILE" "$EXITFILE" "$RUNSCRIPT"
+  rm -f "$PIDFILE" "$RUNSCRIPT"
   rm -rf "${STATE}".scripts.*
 fi
+
+# Keep every attempt (#184). A relaunch used to truncate the log and drop the exit
+# file, so an issue's earlier bounces, retries and conflicts were lost. The previous
+# attempt is archived as <state>.<n>.log / .exit; the current attempt keeps the plain
+# names, which merge-poll.sh reads.
+_last_archived() {
+  local f n max=0
+  for f in "${STATE}".[0-9]*.log; do
+    [ -e "$f" ] || continue
+    n="${f%.log}"; n="${n##*.}"
+    [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt "$max" ] && max="$n"
+  done
+  echo "$max"
+}
+ARCHIVED=$(_last_archived)
+if [ -s "$LOG" ] || [ -f "$EXITFILE" ]; then
+  ARCHIVED=$((ARCHIVED + 1))
+  [ -f "$LOG" ] && mv -f "$LOG" "${STATE}.${ARCHIVED}.log"
+  [ -f "$EXITFILE" ] && mv -f "$EXITFILE" "${STATE}.${ARCHIVED}.exit"
+fi
+ATTEMPT=$((ARCHIVED + 1))
 
 : > "$LOG"
 rm -f "$EXITFILE"
@@ -175,6 +196,7 @@ fi
 {
   printf '#!/bin/bash\n'
   printf 'echo $$ > %q\n' "$PIDFILE"
+  printf 'export AUTOCODER_MERGE_ATTEMPT=%q\n' "$ATTEMPT"
   printf '%q --feature %q --feature-sha %q --issue %q --integration %q --test-cmd %q' \
     "${SNAPSHOT}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD"
   [ -n "$SUMMARY_FILE" ] && printf ' --summary-file %q' "$SUMMARY_FILE"

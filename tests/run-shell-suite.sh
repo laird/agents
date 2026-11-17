@@ -17,6 +17,12 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# Tests drive merge jobs, which append merge-attempt events (#184). Keep those out
+# of the real ~/.local/state/autocoder/merge-events.jsonl.
+SUITE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-merge-events.XXXXXX")
+export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
+trap 'rm -f "$SUITE_EVENTS"' EXIT
+
 passed=0
 failed=0
 failed_names=""

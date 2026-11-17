@@ -196,6 +196,10 @@ source "${_MTI_DIR}/worktree-deps-fns.sh"
 source "${_MTI_DIR}/test-cmd-fns.sh"
 # shellcheck source=gate-cache-fns.sh
 source "${_MTI_DIR}/gate-cache-fns.sh"
+# Merge-attempt events (#184). Optional: a partial script tree loses the record, not the merge.
+merge_event() { :; }
+# shellcheck source=merge-events-lib.sh
+[ -f "${_MTI_DIR}/merge-events-lib.sh" ] && source "${_MTI_DIR}/merge-events-lib.sh"
 # shellcheck source=repo-id-fns.sh
 source "${_MTI_DIR}/repo-id-fns.sh"
 # shellcheck source=feature-ref-fns.sh
@@ -211,7 +215,7 @@ GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
 GATE_LAST="${GATE_LOG}.integrated"   # output of the latest integrated-tree gate only
-trap 'rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 # Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
 # long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
@@ -252,6 +256,24 @@ _issue_has_label() {
 # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
 # not lost work, and the issue is parked instead of escalated.
 PUSHED=0
+
+# One "attempt" event per job (#184), written from the EXIT trap so no path is missed.
+# Decision points below set MERGE_OUTCOME and the lists; an unset outcome falls back to
+# the exit status. merge-launch.sh passes AUTOCODER_MERGE_ATTEMPT.
+MERGE_T0=$SECONDS MERGE_OUTCOME="" MERGE_ESCALATED=0 MERGE_FILES="" MERGE_TESTS=""
+MERGE_REASON="" MERGE_LANDED="" PUSH_RETRIES=0
+_merge_repo_id() {
+  if declare -F autocoder_repo_id >/dev/null; then autocoder_repo_id "${CALLER_DIR:-$PWD}" 2>/dev/null
+  else basename "$(git -C "${CALLER_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)"; fi
+}
+_emit_attempt_event() {
+  local rc="$1" outcome="$MERGE_OUTCOME"
+  [ -n "$outcome" ] || { [ "$rc" -eq 0 ] && outcome=landed || outcome=failed; }
+  merge_event event=attempt outcome="$outcome" repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
+    branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
+    files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
+    landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON"
+}
 # Set only immediately before the one _fail that bounces a gate failure (#207).
 GATE_BOUNCE=0
 
@@ -328,6 +350,9 @@ Nothing from this run landed on \`${INTEGRATION_BRANCH}\`; the work is still on 
   # neither would put an issue with a live branch nowhere.
   issue_update "$ISSUE_NUM" --add-label working 2>/dev/null || true
   issue_update "$ISSUE_NUM" --remove-label merging 2>/dev/null || true
+  MERGE_ESCALATED=0   # bounced to the worker, not escalated
+  if [ "$kind" = conflict ]; then MERGE_OUTCOME=conflict MERGE_FILES="$items"
+  else MERGE_OUTCOME=gate-failed MERGE_TESTS="$items"; fi
   echo "🔁 Issue #${ISSUE_NUM} bounced back to its worker (${kind}, sig ${sig:0:12})."
   return 0
 }
@@ -341,6 +366,10 @@ Nothing from this run landed on \`${INTEGRATION_BRANCH}\`; the work is still on 
 # gate's tail.
 _fail() {
   local code="$1" reason="$2" tail="" repeat=""
+  MERGE_REASON="$reason"
+  if [ "$PUSHED" -eq 1 ]; then MERGE_OUTCOME=parked
+  elif [ "${GATE_BOUNCE:-0}" -eq 1 ]; then MERGE_OUTCOME=gate-failed MERGE_ESCALATED=1 MERGE_TESTS="$(_failing_suites 2>/dev/null)"
+  else MERGE_OUTCOME=escalated MERGE_ESCALATED=1; fi
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     [ -s "$GATE_LOG" ] && tail=$(tail -n 40 "$GATE_LOG")
     tail="${tail:+
@@ -377,6 +406,7 @@ _escalate_conflict() {
   echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
   files=$(git diff --name-only --diff-filter=U 2>/dev/null)
   git merge --abort 2>/dev/null || true
+  MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED=1   # a successful _bounce clears it
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     if _bounce conflict "$files" ""; then
       echo "   Aborted the merge; the worker rebases and relaunches."
@@ -409,6 +439,7 @@ _close_or_park() {
     return 0
   fi
   local landed="$1" summary ship_branch
+  MERGE_LANDED="$landed" MERGE_OUTCOME=landed
   summary="Merged \`${FEATURE}\` into \`${INTEGRATION_BRANCH}\`."
   if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
     summary=$(cat "$SUMMARY_FILE")
@@ -416,6 +447,7 @@ _close_or_park() {
   case "$PUBLISH_BASIS" in
     tested|docs-only|docs-resync|already-landed) ;;
     *)
+      MERGE_OUTCOME=parked
       _park "⏳ **Landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\`, not closed.** ${PARK_NOTE}
 
 ${summary}
@@ -531,7 +563,7 @@ if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; 
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
@@ -768,6 +800,9 @@ for attempt in 1 2 3 4 5; do
     break
   fi
   echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
+  PUSH_RETRIES=$attempt
+  merge_event event=push-retry outcome=push-retry repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
+    branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" push_retries="$attempt"
   git fetch origin "$INTEGRATION_BRANCH" || break
   INT_NEW_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   BEFORE_RESYNC=$(git rev-parse HEAD)
