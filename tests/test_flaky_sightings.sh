@@ -125,10 +125,14 @@ chmod +x "$TMP/suite.sh"
   # 1h. Free-text assertion lines are not test names: a test failing twice with a
   # different message is not flaky.
   : > "$SIGHTINGS"
-  printf '#!/bin/bash\necho "FAIL: $RANDOM ms exceeded"\nexit 1\n' > "$TMP/text.sh"
+  printf '#!/bin/bash\necho "FAIL: $RANDOM ms exceeded"\n[ -f "%s.dot" ] || echo "FAIL: 3.5 != 4"; [ -f "%s.dot" ] || echo "FAIL: config.yaml missing"; : > "%s.dot"\nexit 1\n' \
+    "$TMP/text" "$TMP/text" "$TMP/text" > "$TMP/text.sh"
   gate_cache_run . "bash $TMP/text.sh" >/dev/null
   gate_cache_run . "bash $TMP/text.sh" >/dev/null
   [ -s "$SIGHTINGS" ] && echo "BAD free text read as a test name: $(cat "$SIGHTINGS")"
+  printf 'FAIL: 3.5 != 4\nFAIL: config.yaml missing\nFAIL  tests/test_a.sh\nFAIL: spec/b_spec.rb boom\n' > "$TMP/names.log"
+  [ "$(gate_log_failed_tests "$TMP/names.log" files | paste -sd, -)" = "spec/b_spec.rb,tests/test_a.sh" ] \
+    || echo "BAD file-shaped names: $(gate_log_failed_tests "$TMP/names.log" files | paste -sd, -)"
 
   # 1f. A failing test name that is not safe to put in a command re-runs the whole
   # command; {tests} is never filled with it.

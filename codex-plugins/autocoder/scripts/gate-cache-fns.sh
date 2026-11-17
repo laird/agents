@@ -111,9 +111,12 @@ gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir] [gate-log]
 gate_log_failed_tests() {  # <log> [files]
   local f="$1" names
   [ -s "$f" ] || return 0
-  names=$(sed -n 's/^Failing suites://p' "$f" | tr ' ' '\n')
+  names=$(sed -n 's/^Failing suites://p' "$f" | tr ' \t' '\n\n')
   if [ -z "$names" ] && [ "${2:-}" = files ]; then
-    names=$(sed -nE 's/^FAIL[: ]+([A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z0-9]+)( .*)?$/\1/p' "$f")
+    # A test file: <path>.<ext> whose extension starts with a letter and whose basename
+    # says test or spec. "FAIL: 3.5 != 4" and "FAIL: config.yaml missing" are not tests.
+    names=$(sed -nE 's/^FAIL[: ]+([A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z][A-Za-z0-9]*)( .*)?$/\1/p' "$f" \
+      | awk -F/ 'tolower($NF) ~ /test|spec/')
   elif [ -z "$names" ]; then
     names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
   fi

@@ -491,7 +491,11 @@ names, e.g. `bash tests/run-shell-suite.sh {tests}` (the suite runner takes test
 The narrowed re-run is used only when the first run's `Tests: N failed` summary counts
 exactly the named tests (so no unnamed failure can hide behind a narrowed pass) and every
 name is a plain word: characters in `[A-Za-z0-9._/:+-]`, no leading `-`, no `..`. Otherwise
-the whole command re-runs. At most 50 failing tests are recorded per run.
+the whole command re-runs. The count is read from the last `Tests: N failed` line in the
+gate's output, so set `AUTOCODER_GATE_RERUN_CMD` only for a runner that prints that summary
+last (as `tests/run-shell-suite.sh` does). At most 50 failing tests are recorded per run.
+Without a `Failing suites:` line, only file-shaped names whose basename contains `test` or
+`spec` are read from `FAIL` lines; free-text assertion messages are not test names.
 
 `flaky-report.sh [--days N] [--repo ID] [--json]` lists the tests seen flaky in the last N
 days (default 14), most sightings first, with the issues whose gates saw them.
