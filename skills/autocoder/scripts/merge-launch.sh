@@ -103,6 +103,17 @@ _MLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_MLI_DIR}/feature-ref-fns.sh"
 FEATURE_SHA=$(resolve_feature_sha "$PWD" "$FEATURE" || echo "")
 
+# Inside a checkout, a name that resolves nowhere (not on origin, not local, not a
+# commit) will fail in the detached job too, but only after it has handed the issue
+# off to `merging`, and it then escalates to needs-clarification (#206). Refuse here
+# instead, while nothing has started and no label has changed. resolve_feature_sha
+# has already said why on stderr when the cause is a failed fetch.
+if [ -z "$FEATURE_SHA" ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "merge-launch.sh: could not resolve '${FEATURE}' on origin or locally." >&2
+  echo "   Push it, or check the name, then launch again. Nothing was started; no label changed." >&2
+  exit 1
+fi
+
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
 # shellcheck source=repo-id-fns.sh
