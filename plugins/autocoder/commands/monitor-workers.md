@@ -921,49 +921,19 @@ step down — in this exact order:
    on its next tick.
 
 If the counter is below 2, or the iteration was not quiescent, do none of the
-above and continue to Step 7 (Write Structured Status) below.
+above and continue to Step 8 (Report Summary) below.
 
-### Step 7: Write Structured Status (for agents-tui)
+### Step 7: Status for UIs (nothing to write)
 
-If `/tmp/agents-ui/` exists (indicating agents-tui is running), write a JSON summary file so the TUI can update its display without polling GitHub:
+This command writes no status files for a UI. Scripts publish worker and issue
+state, so it is the same on every run:
 
-```bash
-if [ -d /tmp/agents-ui ]; then
-  SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null || herdr session list 2>/dev/null | jq -r '.result.sessions[0].name' 2>/dev/null || echo "unknown")
+- **Current state**: `autocoder-ctl status --json` lists each worker's
+  worktree, pane, branch, issue and busy/idle activity.
+- **What happened**: `issue-events.jsonl` records each issue's claim, release,
+  gate, landing and escalation; `merge-events.jsonl` records each merge attempt.
 
-  # Build JSON with worker statuses — use the data gathered in Steps 2-5
-  # Each worker entry should include pane, status, issue number, and title
-  # Example:
-  cat > "/tmp/agents-ui/${SESSION_NAME}-monitor.json" << MONITOR_EOF
-  {
-    "timestamp": "$(date -Iseconds)",
-    "session": "${SESSION_NAME}",
-    "workers": [WORKER_ENTRIES_HERE],
-    "open_issues": OPEN_COUNT,
-    "working_issues": WORKING_COUNT,
-    "blocked_issues": BLOCKED_COUNT,
-    "idle_workers": IDLE_COUNT,
-    "actions": [ACTIONS_LIST_HERE]
-  }
-  MONITOR_EOF
-fi
-```
-
-Construct the `workers` array from the status gathered in Steps 2-3. Each entry:
-```json
-{"pane": "claude-agents-ui:2.0", "worktree": "wt-2", "status": "working", "issue": 100, "title": "Issue detail view"}
-```
-
-Also update individual worker status files for each worker discovered:
-```bash
-if [ -d /tmp/agents-ui ]; then
-  # For each worker, write/update its status file
-  # This ensures the TUI sees fresh data even between monitor-workers runs
-  for each worker pane:
-    echo "{\"status\": \"${WORKER_STATUS}\", \"issue\": ${ISSUE_NUM:-null}, \"title\": \"${ISSUE_TITLE:-}\"}" > "/tmp/agents-ui/${PANE_ID}.json"
-  done
-fi
-```
+The scripts README (*Status for UIs*) describes both. Go on to Step 8.
 
 ### Step 8: Report Summary
 

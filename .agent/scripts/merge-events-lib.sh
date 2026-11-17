@@ -4,7 +4,7 @@
 # WHY THIS EXISTS:
 #   Merge job files are per issue (<tmp-root>/autocoder-merge-<repo>-<issue>.{log,exit,pid}, under
 #   autocoder_tmp_root),
-#   and each relaunch overwrote them. On agents-ui 66 job files showed one conflict
+#   and each relaunch overwrote them. On one project 66 job files showed one conflict
 #   while the issues themselves recorded 8 conflicts and 12 escalations: the history
 #   of bounces, retries and conflicting files was gone, so nothing could measure it.
 #
@@ -20,7 +20,7 @@
 #   rejected push. A gate that sees a test fail and then pass on the same tree adds a
 #   "flaky" line (#191): {"ts", "event": "flaky", "outcome": "flaky", "repo", "issue",
 #   "branch", "tree", "test", "first_failure_excerpt"}. flaky-report.sh summarises them.
-#   Documented for readers (agents-ui) in scripts/README.md.
+#   Documented for readers (UIs) in scripts/README.md.
 #
 # ROTATION: lines older than AUTOCODER_MERGE_EVENTS_DAYS (default 30) are dropped when
 #   the file passes 1 MiB. Rotators serialise on a lock file; appenders do not take it, so

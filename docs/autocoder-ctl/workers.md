@@ -123,7 +123,7 @@ last line.
 
 `AUTOCODER_CTL_RESTART_CMD` replaces the script, which the tests use.
 
-## For agents-ui
+## For UIs
 
 | Button | Call |
 |---|---|

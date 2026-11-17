@@ -8,7 +8,7 @@
 #     <!-- autocoder-bounce kind=<conflict|gate> worktree=<top level> sha=<sha> sig=<sig> -->
 #   Nothing then sent that worker back to it. Its loop claimed new work instead,
 #   and the bounced issue sat in `working` with a live branch, which no other
-#   worker may claim either (#140, agents-ui #412). The owner must resolve its own
+#   worker may claim either (#140). The owner must resolve its own
 #   bounce before it claims anything new; this script tells it which one.
 #
 #   The owner is matched by worktree path, not worker id: worker ids are

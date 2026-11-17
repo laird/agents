@@ -718,13 +718,6 @@ else
     echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
     echo "   Use '/review-blocked' to review and approve blocked issues"
 
-    # Write idle status file for agents-ui TUI monitoring
-    mkdir -p /tmp/agents-ui
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
     echo "IDLE_NO_WORK_AVAILABLE"
     exit 0
   fi
@@ -844,12 +837,6 @@ echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
 
-# Write status file for agents-ui TUI monitoring
-mkdir -p /tmp/agents-ui
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"started\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 ```
 
 **Build from the body *and* the comments — a later comment overrides the body.** The specification printed above (`issue-spec.sh`) is the issue body followed by every comment, oldest first, with autocoder's claim and work-started markers filtered out. Review deltas, corrected API contracts, narrowed scope and "that earlier instruction was wrong" all arrive as comments, so the body alone is the stalest spec on the page (#134). Read the whole thread before writing code, and re-read it (`issue-spec.sh "$ISSUE_NUM"`) immediately before launching the merge, in case a correction landed while you worked. In the merge summary or PR body, name the comment you built to (e.g. "built to comment 3 by `<author>`, which supersedes the body's `onConflict` default"), or say "body only — no correcting comments" — so a worker that missed a correction is caught in review, not after merge.
@@ -1382,11 +1369,6 @@ Labelled \`awaiting-integration\` so it is findable rather than silently reopene
     echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
   fi
 
-# Write completion status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -1583,11 +1565,6 @@ Labelled \`awaiting-integration\` so it is findable rather than silently reopene
     echo "⏳ Issue #$ISSUE_NUM left OPEN — merged to $INTEGRATION_BRANCH but not on the shipping branch"
   fi
 
-# Write completion status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -2028,11 +2005,6 @@ $(cat "$REVIEW_FILE")
       --base "$(git rev-parse HEAD)^1" --apply || true
   fi
 
-  # Write completion status file for agents-ui TUI monitoring
-  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-  echo "{\"status\": \"idle\", \"issue\": ${ENHANCE_NUM}, \"title\": \"${ENHANCE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 fi
 ```
 

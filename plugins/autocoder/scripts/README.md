@@ -620,3 +620,19 @@ within version 1; renaming or removing one bumps `v`.
 Lines older than `AUTOCODER_ISSUE_EVENTS_DAYS` (default 30) are dropped once the file
 passes 1 MiB. The file is created 0600. Recording is best effort and never fails the verb.
 `tests/run-shell-suite.sh` points the file at a temp path.
+
+## Status for UIs (#193)
+
+autocoder writes no files laid out for any particular UI. A UI, dashboard or monitor
+reads the state that scripts publish, which comes out the same on every run:
+
+| Question | Read |
+|---|---|
+| Which workers exist, what is each on, is it busy or idle? | `autocoder-ctl.sh status --json` ([docs/autocoder-ctl.md](../../../docs/autocoder-ctl.md#status)) |
+| What happened to an issue, and when? | `issue-events.jsonl` (*Issue lifecycle*, above) |
+| How did each merge attempt go? | `merge-events.jsonl` (*Merge history*, above) |
+| What can the UI do to a worker or issue? | `autocoder-ctl.sh` verbs ([docs/autocoder-ctl.md](../../../docs/autocoder-ctl.md)) |
+
+The commands themselves (`/fix`, `/monitor-workers`) write no status files. They
+used to have the model write per-session JSON files for one UI; nothing updates
+those any more, so a UI that still reads them should move to the sources above.

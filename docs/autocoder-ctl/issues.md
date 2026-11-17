@@ -8,7 +8,7 @@ is called.
 Every verb goes through the configured issue backend (`issue-fns.sh`), so it
 works the same on GitHub, Jira, Azure DevOps and the local `.issues/` store. A UI
 calls these verbs and does not need its own `gh` calls or label rules.
-agents-ui's proposal and new-issue screens, for example, call `gh` directly today.
+A UI's proposal and new-issue screens, for example, may call `gh` directly today.
 
 Each call prints one result object and exits 0 / 1 / 2, as the
 [result contract](../autocoder-ctl.md#result-contract) describes:

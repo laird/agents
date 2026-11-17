@@ -13,7 +13,7 @@
 #   {"v": 1, "ts": "<ISO-8601 UTC>", "repo": "<repo id>", "issue": <n>|null,
 #    "worker": "<id>"|null, "branch": "<branch>"|null, "event": "<event>", "detail": {...}}
 #   Events and their detail keys are listed in scripts/README.md ("Issue lifecycle"), which is
-#   the contract readers (agents-ui) build on. It sits next to merge-events.jsonl (#184),
+#   the contract readers (UIs) build on. It sits next to merge-events.jsonl (#184),
 #   which keeps the per-attempt merge detail; gate-end here carries the same outcome.
 #
 # ROTATION: lines older than AUTOCODER_ISSUE_EVENTS_DAYS (default 30) are dropped when

@@ -150,8 +150,8 @@ when that script is present. The branch itself is the authoritative record:
 
 `promote.sh` moves an environment's branch to a commit that may run there.
 `deploy.sh` installs a commit on a machine and records that it runs there, as a
-GitHub Deployment. Anything that reads Deployments (a dashboard, the agents-ui
-village) then knows what each environment runs. `release.sh` cuts a GitHub
+GitHub Deployment. Anything that reads Deployments (a dashboard or other UI)
+then knows what each environment runs. `release.sh` cuts a GitHub
 Release and records it as a Deployment to the `release` environment.
 
 The two kinds of environment share the `environments` array:

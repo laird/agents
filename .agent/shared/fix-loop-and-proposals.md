@@ -75,12 +75,6 @@ print(len(blocked))
     echo "💤 Nothing to do until proposals/blocked issues are approved or new issues arrive."
     echo ""
 
-    # Write idle status file for agents-ui TUI monitoring
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
     echo "IDLE_NO_WORK_AVAILABLE"
   else
     echo "No pending proposals or blocked issues. Will brainstorm new proposals..."

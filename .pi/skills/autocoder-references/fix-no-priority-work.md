@@ -163,12 +163,6 @@ echo "✅ Created proposal issue #${PROPOSAL_NUM}. Awaiting human approval befor
 echo "💡 Use '/list-proposals' to view all pending proposals"
 echo ""
 
-# Write idle status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
 echo "IDLE_NO_WORK_AVAILABLE"
 ```
 

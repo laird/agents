@@ -771,13 +771,6 @@ else
     echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
     echo "   Use '/review-blocked' to review and approve blocked issues"
 
-    # Write idle status file for agents-ui TUI monitoring
-    mkdir -p /tmp/agents-ui
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
     echo "IDLE_NO_WORK_AVAILABLE"
     exit 0
   fi
@@ -911,12 +904,6 @@ echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
 
-# Write status file for agents-ui TUI monitoring
-mkdir -p /tmp/agents-ui
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"started\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
 ```
 
 **⚠️ The claim sequence above (working label → `feature/issue-<N>` branch → work-started comment) is mandatory and runs FIRST for every issue — bug OR enhancement.** Do not begin triage analysis, brainstorming, or implementation until all three exist. Priority-labeled enhancements (P0–P3) are handled by this standard path, **not** by the "No Priority Issues Found → 5C" flow (that flow only applies when there are no priority issues left). If you ever notice you are editing files while still on the parent branch (`main`, `main-wt-N`, etc.), stop immediately and run the claim sequence — committing on the parent branch strands the `working` lock with no matching branch and makes peers treat it as stale.
@@ -1397,11 +1384,6 @@ else
   # No label write here. The job performed the hand-off ('working' → 'merging')
   # as its first act and retires 'merging' when it closes, parks, or escalates.
 
-  # Write completion status file for agents-ui TUI monitoring
-  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-  echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -1531,11 +1513,6 @@ else
   # No label write here. The job performed the hand-off ('working' → 'merging')
   # as its first act and retires 'merging' when it closes, parks, or escalates.
 
-  # Write completion status file for agents-ui TUI monitoring
-  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-  echo "{\"status\": \"idle\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
@@ -1972,11 +1949,6 @@ $(cat "$REVIEW_FILE")
   # No label write here. The job performed the hand-off ('working' → 'merging')
   # as its first act and retires 'merging' when it closes, parks, or escalates.
 
-  # Write completion status file for agents-ui TUI monitoring
-  SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-  echo "{\"status\": \"idle\", \"issue\": ${ENHANCE_NUM}, \"title\": \"${ENHANCE_TITLE}\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
   # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
     "Fix #${ENHANCE_NUM}: ${ENHANCE_TITLE}" \
