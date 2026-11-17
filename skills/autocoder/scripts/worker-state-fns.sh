@@ -6,7 +6,8 @@
 # The record lives in the worktree's own git dir (per worktree, never committed,
 # survives compaction and restarts):
 #   $(git rev-parse --absolute-git-dir)/autocoder-worker-state  →  "<issue> [<claim-ms>]"
-# <claim-ms> is the timestamp of this worktree's `🔒 claim <id> <ms>` comment, written
+# <claim-ms> is the timestamp of this worktree's `🔒 claim <id> <ms> [start=<s>] wt=<path>`
+# comment (owner fields since #202; older markers end at <ms>), written
 # by the gate on GitHub/Jira/ADO; the file backend's atomic claim leaves no comment.
 #
 # A recorded issue is resumed only when ALL hold:
@@ -53,7 +54,7 @@ _worker_still_ours() {
     and ([.labels[]?.name] | index("working") != null)
     and (env.MS == ""
          or ([.comments[]?.body // ""
-              | capture("^\\s*🔒 claim \\S+ (?<ms>[0-9]+)\\s*$")?.ms | tonumber]
+              | capture("^\\s*🔒 claim \\S+ (?<ms>[0-9]+)( start=[0-9]+)?( wt=[^\\n]*)?\\s*$")?.ms | tonumber]
              | all(. <= ((env.MS | tonumber) + (env.WINDOW_MS | tonumber)))))
   ' >/dev/null 2>&1
 }

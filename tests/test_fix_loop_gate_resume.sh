@@ -128,6 +128,12 @@ RECLAIM='{"state":"OPEN","labels":[{"name":"working"}],"comments":[{"body":"🔒
 _worker_still_ours "$RECLAIM" 1000 && bad "an older claim was treated as ours after a re-claim" \
   || ok "a re-claim after the race window is not ours"
 _worker_still_ours "$RECLAIM" 601000 && ok "the re-claimer's own record is ours" || bad "re-claimer's record rejected"
+# #202 markers carry owner fields after the epoch; a re-claim in that format counts too.
+RECLAIM202='{"state":"OPEN","labels":[{"name":"working"}],"comments":[{"body":"🔒 claim hostA-1 1000 start=900 wt=/src/a"},{"body":"🔒 claim hostB-2 601000 start=600 wt=/src/agents wt-2"}]}'
+_worker_still_ours "$RECLAIM202" 1000 && bad "a new-format (#202) re-claim was invisible to the resume check" \
+  || ok "a new-format (#202) re-claim after the race window is not ours"
+_worker_still_ours "$RECLAIM202" 601000 && ok "a new-format re-claimer's own record is ours" \
+  || bad "new-format re-claimer's record rejected"
 _worker_still_ours '{"state":"OPEN","labels":[{"name":"working"}],"comments":[]}' "" \
   && ok "file backend (no claim comments, none recorded) is ours" || bad "file-backend record rejected"
 _worker_still_ours '{"state":"CLOSED","labels":[{"name":"working"}],"comments":[]}' "" \
