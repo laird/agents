@@ -782,6 +782,29 @@ fi
 # and was reverted matches too), so close only when the feature's whole change applies in
 # reverse to the tip, i.e. the tip already carries it. Otherwise nothing lands and a
 # human decides; the branch is kept.
+# _landed_by_patch_id <tip>: every commit of the feature has a patch-equivalent commit in
+# <tip>'s history, and none of those equivalents was reverted there (#236). The tree check
+# in _nothing_left_to_land reverse-applies the feature diff, which also fails when our
+# landed change was simply edited again by a later sibling commit; patch ids still show it
+# landed. A revert is recognised by git's "This reverts commit <sha>" message.
+_landed_by_patch_id() {
+  local tip="$1" base marks eq sha
+  base=$(git merge-base "$tip" "$FEATURE_SHA" 2>/dev/null) || return 1
+  marks=$(git cherry "$tip" "$FEATURE_SHA" "$base" 2>/dev/null) || return 1
+  [ -n "$marks" ] || return 1
+  printf '%s\n' "$marks" | grep -q '^+' && return 1     # some commit has no upstream copy
+  # The upstream copies: commits on tip's side that git marks patch-equivalent ('=').
+  eq=$(git log --cherry-mark --right-only --no-merges --format='%m %H' "${FEATURE_SHA}...${tip}" 2>/dev/null \
+       | awk '$1 == "=" { print $2 }')
+  [ -n "$eq" ] || return 1
+  for sha in $eq; do
+    if git log --format=%B "${sha}..${tip}" 2>/dev/null | grep -q "This reverts commit ${sha}"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 _nothing_left_to_land() {
   local tip="$1" patch
   patch=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.patch.XXXXXX")
@@ -792,6 +815,10 @@ _nothing_left_to_land() {
     _already_landed "$tip"
   fi
   rm -f "$patch"
+  if _landed_by_patch_id "$tip"; then
+    echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH} as patch-equivalent commits (later edited by others, not reverted); nothing to land."
+    _already_landed "$tip"
+  fi
   echo "❌ Rebasing ${FEATURE} (${FEATURE_SHA:0:8}) dropped every commit as already upstream, but origin/${INTEGRATION_BRANCH} (${tip:0:8}) does not carry its change. NOT closing."
   _fail 1 "rebasing ${FEATURE_SHA:0:8} onto origin/${INTEGRATION_BRANCH} dropped every commit as already applied, but ${tip:0:8} does not contain the change (an earlier copy may have been reverted); nothing landed"
 }
