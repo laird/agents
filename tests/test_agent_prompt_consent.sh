@@ -109,6 +109,125 @@ grep -q '^herdr pane send-text T1 /fix-loop$' "$CALLS" \
 run_stub tmux   # no screens at all: capture prints nothing
 check "tmux: blank capture → sent" "$RC" 0
 
+# ── only the bottom of the pane is a dialog (#260) ───────────────────────────
+# An open dialog is the last thing drawn on the pane. Dialog words higher up (a
+# shell banner, scrollback, a transcript quoting "No, exit") are not a dialog.
+# The fixtures end in blank rows, as a tmux capture of a taller pane does.
+PAD=$'\n\n\n\n\n\n'
+QUOTED="\$ cat notes.md
+claude asks: Do you trust the files in this folder?
+  ❯ 1. Yes, proceed
+    2. No, exit
+\$ claude
+╭───────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                 │
+│   cwd: /home/u/src/project                │
+╰───────────────────────────────────────────╯
+ Tips for getting started:
+ 1. Run /init to create a CLAUDE.md file
+ 2. Use Claude to help with file analysis
+╭───────────────────────────────────────────╮
+│ >                                         │
+╰───────────────────────────────────────────╯
+  ? for shortcuts${PAD}"
+for mux in tmux cmux herdr; do
+  run_stub "$mux" "$QUOTED"
+  check "$mux: dialog text above a ready agent → sent" "$RC" 0
+  check "$mux: dialog text above a ready agent → submitted" "$SENT_ENTER" 1
+done
+
+# Whole dialogs as each agent draws them, wrapped at a narrow width and padded:
+# the lines that identify them must fall inside the checked tail.
+CLAUDE_TRUST=" Do you trust the files in this folder?
+
+ /home/u/src/a-project-with-a-rather-long-directory-name/and/a/subdirectory
+
+ Claude Code may read, write, or execute files contained in
+ this directory. This can pose security risks, so only use
+ files from trusted sources.
+
+ Learn more
+
+ ❯ 1. Yes, proceed
+   2. No, exit
+
+ Enter to confirm · Esc to exit${PAD}"
+CLAUDE_BYPASS="╭──────────────────────────────────────────────────╮
+│                                                  │
+│ WARNING: Claude Code running in Bypass           │
+│ Permissions mode                                 │
+│                                                  │
+│ In Bypass Permissions mode, Claude Code will not │
+│ ask for your approval before running potentially │
+│ dangerous commands.                              │
+│ This mode should only be used in a sandboxed     │
+│ container/VM that has restricted internet access │
+│ and can easily be restored if damaged.           │
+│                                                  │
+│ By proceeding, you accept all responsibility for │
+│ actions taken while running in Bypass            │
+│ Permissions mode.                                │
+│                                                  │
+│ https://docs.anthropic.com/s/claude-code-security│
+│                                                  │
+│ ❯ 1. No, exit                                    │
+│   2. Yes, I accept                               │
+│                                                  │
+╰──────────────────────────────────────────────────╯
+   Enter to confirm · Esc to exit${PAD}"
+CLAUDE_TRUST_NEW=" Accessing workspace:
+
+ /home/u/src/project
+
+ Quick safety check: Is this a project you created or one you
+ trust? (Like your own code, a well-known open source project,
+ or work from your team). If not, take a moment to review
+ what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel${PAD}"
+GEMINI_TRUST="╭──────────────────────────────────────────────────╮
+│ Do you trust this folder?                        │
+│                                                  │
+│ Trusting a folder allows Gemini to execute       │
+│ commands it suggests. This is a security feature │
+│ to prevent accidental execution in untrusted     │
+│ directories.                                     │
+│                                                  │
+│ ● 1. Trust folder (project)                      │
+│   2. Trust parent folder (src)                   │
+│   3. Don't trust (esc)                           │
+╰──────────────────────────────────────────────────╯${PAD}"
+CODEX_TRUST="> You are running Codex in /home/u/src/project
+
+  Since this folder is version controlled, you may wish to allow
+  Codex to work in this folder without asking for approval.
+
+› 1. Yes, allow Codex to work in this folder without asking for
+     approval
+  2. No, ask me to approve edits and commands
+
+  Press enter to continue${PAD}"
+for d in CLAUDE_TRUST CLAUDE_BYPASS CLAUDE_TRUST_NEW GEMINI_TRUST CODEX_TRUST; do
+  run_stub tmux "${!d}"
+  check "tmux: whole $d dialog → rc 3" "$RC" 3
+  check "tmux: whole $d dialog → nothing typed" "$SENT_TEXT" 0
+done
+# The same dialog under quoted dialog text above it is still a dialog.
+run_stub tmux "$QUOTED
+$CLAUDE_BYPASS"
+check "tmux: dialog below quoted dialog text → rc 3" "$RC" 3
+
+# AUTOCODER_CONSENT_TAIL_LINES widens or narrows the checked tail.
+check "AUTOCODER_CONSENT_TAIL_LINES=40 also sees the quoted text" \
+  "$( (export AUTOCODER_CONSENT_TAIL_LINES=40; run_stub tmux "$QUOTED"; echo "$RC") )" 3
+
 # ── the pattern ───────────────────────────────────────────────────────────────
 match() { (source "$LIB"; printf '%s\n' "$1" | grep -Eq "$AUTOCODER_CONSENT_PATTERN") && echo yes || echo no; }
 for dialog in \
