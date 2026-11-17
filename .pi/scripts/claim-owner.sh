@@ -13,8 +13,8 @@
 #   2. AUTOCODER_OWNER_PID  — exported by a worker loop (claude-worker-loop.sh)
 #                             that outlives the agent sessions it starts. Used
 #                             only while that pid is alive.
-#   3. The nearest ancestor whose command is an agent CLI (claude, codex,
-#      droid, gemini, pi) — the interactive session a /loop gate runs inside.
+#   3. The nearest ancestor whose command, or its first two argv words, is an
+#      agent CLI (claude, codex, droid, gemini, pi) — the interactive session a /loop gate runs inside.
 #   4. The claimer's parent (the gate's caller), as a last resort.
 #
 # Usage (sourced, as fix-loop-gate.sh does):
@@ -67,21 +67,40 @@ _co_start() {
   echo $(( now - (10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s) ))
 }
 
+# _co_is_agent <pid> — the process is an agent CLI. Checks the command name and
+# the first two words of its command line, so a CLI hosted by an interpreter
+# (`node /…/bin/gemini`) or installed under a versioned binary name
+# (`/…/versions/2.1.5 …` invoked as `claude`) is still recognised.
+_co_is_agent() {
+  local comm args w agent n=0
+  comm=$(_co_comm "$1") || return 1
+  args=$(ps -o args= -p "$1" 2>/dev/null) || args=""
+  for agent in $CLAIM_OWNER_AGENTS; do
+    [ "$comm" = "$agent" ] && return 0
+  done
+  for w in $args; do
+    w="${w##*/}"
+    for agent in $CLAIM_OWNER_AGENTS; do
+      [ "$w" = "$agent" ] && return 0
+    done
+    n=$((n + 1)); [ "$n" -ge 2 ] && break
+  done
+  return 1
+}
+
 # claim_owner_pid <claimer-pid> — the owner pid, per the order above. The walk
 # starts at the claimer's parent, so the short-lived claimer (the gate's own
 # bash) is never chosen.
 claim_owner_pid() {
-  local claimer="$1" parent pid comm agent hops=0
-  if [ -n "${AUTOCODER_OWNER_PID:-}" ] && kill -0 "$AUTOCODER_OWNER_PID" 2>/dev/null; then
+  local claimer="$1" parent pid hops=0
+  if [[ "${AUTOCODER_OWNER_PID:-}" =~ ^[0-9]+$ ]] && [ "$AUTOCODER_OWNER_PID" -gt 1 ] \
+     && kill -0 "$AUTOCODER_OWNER_PID" 2>/dev/null; then
     echo "$AUTOCODER_OWNER_PID"; return 0
   fi
   parent=$(_co_ppid "$claimer") || parent=""
   pid="$parent"
   while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$hops" -lt 32 ]; do
-    comm=$(_co_comm "$pid") || break
-    for agent in $CLAIM_OWNER_AGENTS; do
-      if [ "$comm" = "$agent" ]; then echo "$pid"; return 0; fi
-    done
+    if _co_is_agent "$pid"; then echo "$pid"; return 0; fi
     pid=$(_co_ppid "$pid") || break
     hops=$((hops + 1))
   done

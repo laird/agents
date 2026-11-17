@@ -241,7 +241,7 @@ oldest = now - int(os.environ["WINDOW_MS"])
 claims = []
 for c in comments:
     # Old markers end after the epoch-ms; new ones add owner fields (#202).
-    m = re.match(r"\s*🔒 claim (\S+) (\d+)(?:[ \t][^\n]*)?\s*$", c.get("body") or "")
+    m = re.match(r"\s*🔒 claim (\S+) (\d+)(?: start=\d+)?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
     if m and int(m.group(2)) >= oldest:
         claims.append((int(m.group(2)), m.group(1)))
 sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)

@@ -260,6 +260,34 @@ SESSION_PID=$(AUTOCODER_OWNER_PID=$DEAD AUTOCODER_WORK_JSON="$WORK_JSON" \
   "$TMP/bin/claude" -c 'bash -c "bash \"$1\" 2>/dev/null; true" _ "$1"; echo $$' _ "$GH_DIR/fix-loop-gate.sh")
 assert_eq "dead owner pid: falls back to the session" "$SESSION_PID" "$(owner_pid_of 1)"
 
+# ── 8. An interpreter-hosted agent (`node …/gemini`) is still the owner ───
+reset_issues
+add_issue 1 bug P1
+cp "$(command -v bash)" "$TMP/bin/node"
+printf '%s\n' 'bash -c "bash \"$1\" 2>/dev/null; true" _ "$1"; echo $$' > "$TMP/bin/gemini"
+SESSION_PID=$(env -u AUTOCODER_OWNER_PID AUTOCODER_WORK_JSON="$WORK_JSON" \
+  "$TMP/bin/node" "$TMP/bin/gemini" "$GH_DIR/fix-loop-gate.sh")
+assert_eq "hosted agent: claim names the interpreter process" "$SESSION_PID" "$(owner_pid_of 1)"
+
+# ── 9. Trailing prose after the epoch is not a claim ──────────────────────
+reset_issues
+add_issue 1 bug P1
+seed_comment 1 "🔒 claim x $(( $(now_ms) - 1000 )) is this ok?"
+run_gate >/dev/null
+assert_eq "prose after epoch: not a competing claim" \
+  '{"phase":"fix","issue":1,"priority":"P1"}' "$(work_plan)"
+
+# ── 10. The worker loop owns its claims even under an inherited owner ─────
+grep -qx 'export AUTOCODER_OWNER_PID=\$\$' "$SCRIPT_DIR/claude-worker-loop.sh"
+assert_eq "worker loop: sets its own pid, never inherits one" "0" "$?"
+
+# A non-numeric or group pid is not taken as the owner.
+reset_issues
+add_issue 1 bug P1
+SESSION_PID=$(AUTOCODER_OWNER_PID=0 AUTOCODER_WORK_JSON="$WORK_JSON" \
+  "$TMP/bin/claude" -c 'bash -c "bash \"$1\" 2>/dev/null; true" _ "$1"; echo $$' _ "$GH_DIR/fix-loop-gate.sh")
+assert_eq "owner pid 0: ignored, falls back to the session" "$SESSION_PID" "$(owner_pid_of 1)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

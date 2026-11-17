@@ -41,7 +41,9 @@ HANDOFF_FILE="/tmp/autocoder-next-fix-$$.txt"
 # This loop outlives every Claude session it starts, so it owns the claims those
 # sessions make. Without it the gate's `claude -p` would be named, and that
 # exits as soon as the gate hands the issue off (#202, claim-owner.sh).
-export AUTOCODER_OWNER_PID="${AUTOCODER_OWNER_PID:-$$}"
+# Unconditional: a value inherited from an enclosing session or loop would make
+# sibling loops claim under one shared id.
+export AUTOCODER_OWNER_PID=$$
 LOG_DIR="${AUTOCODER_LOG_DIR:-/tmp/autocoder-logs}"
 STREAM="${AUTOCODER_STREAM:-1}"
 
