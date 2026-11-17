@@ -643,7 +643,7 @@ Every backend accepts the same 9 verbs:
 | `update` | `<number> [--add-label L] [--remove-label L] [--status S] [--assignee A]` | exit code |
 | `comment` | `<number> --body "..."` | exit code |
 | `close` | `<number> [--comment "..."]` | exit code |
-| `create` | `--title "..." --body "..." [--label L]` | `{"number": N}` |
+| `create` | `--title "..." --body "..." [--label L] [--priority P0-P3]` (unknown flags exit 2) | `{"number": N}` |
 | `claim` | `<number>` | exit code |
 | `release` | `<number>` | exit code |
 | `any-claimable` | — | exit `0` if claimable work exists, `1` if none |
