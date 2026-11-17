@@ -85,6 +85,9 @@ if GOT=$(resolve_feature_sha "$TMP/worker" feature/issue-7 2>/dev/null); then
 else
   ok "unreachable origin refuses rather than using the local branch"
 fi
+GOT=$(resolve_feature_sha "$TMP/worker" "$REAL_SHA" 2>/dev/null)
+[ "$GOT" = "$REAL_SHA" ] && ok "unreachable origin still resolves a raw SHA" \
+  || bad "unreachable origin refused a raw SHA (got '${GOT}')"
 git -C "$TMP/worker" remote set-url origin "$TMP/origin.git"
 
 # ── delete_feature_branch_if_at ─────────────────────────────────────────────

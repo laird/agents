@@ -42,7 +42,9 @@ resolve_feature_sha() {
       # unable to tell the pushed work from a stray, so refuse rather than guess.
       local ls_rc=0
       git -C "$dir" ls-remote --exit-code origin "refs/heads/${feature}" >/dev/null 2>&1 || ls_rc=$?
-      if [ "$ls_rc" -ne 2 ]; then
+      # Only a same-named local branch can be a stray, so only then is refusing
+      # needed; a raw SHA or tag has nothing to shadow and resolves below.
+      if [ "$ls_rc" -ne 2 ] && [ -n "$local_sha" ]; then
         echo "⚠️  Could not fetch origin/${feature} (ls-remote rc=${ls_rc}); not falling back to the local branch." >&2
         return 1
       fi
