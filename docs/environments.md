@@ -145,3 +145,98 @@ environment the sentinel's behavior is unchanged.
 Each move appends a line to `docs/HISTORY.md` through `append-to-history.sh`
 when that script is present. The branch itself is the authoritative record:
 `git log origin/env/prod` is the release history.
+
+## Deploy and release
+
+`promote.sh` moves an environment's branch to a commit that may run there.
+`deploy.sh` installs a commit on a machine and records that it runs there, as a
+GitHub Deployment. Anything that reads Deployments (a dashboard, the agents-ui
+village) then knows what each environment runs. `release.sh` cuts a GitHub
+Release and records it as a Deployment to the `release` environment.
+
+The two kinds of environment share the `environments` array:
+
+- An environment whose `requires` is `green`, or an earlier environment that
+  `promote.sh` moves, has a branch. `deploy.sh` deploys only commits on
+  `origin/<ref>`, so what runs is what was promoted.
+- An environment whose `requires` is `integration` (or an environment that does)
+  has no branch. `deploy.sh` deploys any commit on `origin/<integration>`, and
+  `promote.sh` skips it.
+
+```json
+{
+  "environments": [
+    {"name": "nuc-1", "requires": "integration", "label": "agents-tui",
+     "preflight": "systemctl --user cat agents-tui.service >/dev/null",
+     "deploy": "cargo install --path . --locked",
+     "restart": "systemctl --user restart agents-tui.service",
+     "check": "agents-tui service status --wait",
+     "release": true},
+    {"name": "release", "requires": "nuc-1"}
+  ]
+}
+```
+
+| Key | Meaning | Default |
+|---|---|---|
+| `label` | What is installed, for the Deployment's descriptions (`<label> installed on <host>`). | the repo directory's name |
+| `preflight` | Runs before anything is opened. Exit non-zero to refuse, with nothing recorded, for example when there is no service to deploy to. Also runs in `--dry-run`. | none |
+| `deploy` | Installs the checkout. | none |
+| `restart` | Restarts what serves it. | none |
+| `check` | Passes once the new version serves. Retried each second until it passes or `wait` runs out; `DEPLOY_TIME_LEFT` holds the seconds left. | none |
+| `wait` | Seconds the check may take. `AUTOCODER_DEPLOY_WAIT` overrides it. | `30` |
+| `release` | Release after a successful deploy. A top-level `"releaseOnDeploy": true` does this for every environment. | `false` |
+
+Each command runs with `bash -c` at the top of the checkout, in the order above,
+with `DEPLOY_ENV` and `DEPLOY_SHA` set. Put PATH setup in the command itself (for
+example `. ~/.cargo/env && cargo install ...`). An environment with no commands
+only records the Deployment.
+
+```bash
+plugins/autocoder/scripts/deploy.sh --env nuc-1             # deploy, record, release
+plugins/autocoder/scripts/deploy.sh --env nuc-1 --dry-run   # refusals and preflight only
+plugins/autocoder/scripts/deploy.sh --env nuc-1 --no-restart --no-release
+```
+
+`deploy.sh` refuses (exit 1, nothing recorded) for an environment that is not
+configured, a dirty working tree (`.claude/` aside), a HEAD that has not landed,
+or a failing preflight. Otherwise it opens the Deployment, runs the commands and
+records `success`, or records `failure` and exits 2. A release that fails after
+a successful deploy leaves the deploy at `success` and exits 3, so the next
+deploy retries the release.
+
+### Releases
+
+```bash
+plugins/autocoder/scripts/release.sh                 # tip of origin/<integration>, next tag
+plugins/autocoder/scripts/release.sh --commit <sha> --dry-run
+plugins/autocoder/scripts/release.sh --next-tag      # print the tag only
+plugins/autocoder/scripts/release.sh v2026.11.09.1   # record a release made by hand
+```
+
+Tags are `vYYYY.MM.DD.N` by default, where N counts the day's releases from
+origin's tags. With top-level `"tagScheme": "semver"` they are `vX.Y.Z`, one patch
+past the newest. Only the scheme's own tags count, so `v1.3.0-rc1` is not a
+release. A commit that already is the newest release is not released again. The
+Deployment goes to `release`, or to the environment named by
+`"releaseEnvironment"`. It is described as `Release <tag>`, and its status links
+the Release page.
+
+### Release on push
+
+```bash
+plugins/autocoder/scripts/install-release-hook.sh               # in the repo
+plugins/autocoder/scripts/install-release-hook.sh --uninstall
+```
+
+The hook releases each push of the integration branch made from the main
+checkout. Pushes from worktrees, which includes workers and merge jobs, never
+release. It waits in the background until origin has the pushed commit, then
+runs `release.sh`; the push itself is never delayed or refused. It logs to
+`${XDG_STATE_HOME:-~/.local/state}/autocoder/release.log`.
+`AUTOCODER_NO_RELEASE=1 git push` skips the release, and `AGENTS_UI_NO_RELEASE=1`
+is still honoured. The installer leaves a foreign pre-push hook alone and
+replaces agents-ui's old `tools/install-hooks.sh` hook.
+
+The scripts stay portable to macOS (bash 3.2, BSD `sort`, `date` and `sed`).
+`tests/test_deploy_release.sh` checks the common traps.

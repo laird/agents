@@ -373,6 +373,21 @@ repeat on the same tree is free. With `auto: true` the sentinel calls
 the tick's exit code. Exit 0 moved or already there, 1 config error, 2 refused
 with a one-line reason. Full how-to: [docs/environments.md](../../../docs/environments.md).
 
+## H. `deploy.sh` and `release.sh` — what an environment runs (#200)
+
+`promote.sh` decides which commit an environment *may* run; `deploy.sh` records
+which one it *does*. It installs the checkout with the environment's own
+`deploy`, `restart` and `check` commands from `.autocoder.json`, wrapped in a
+GitHub Deployment (`in_progress`, then `success` or `failure`), after refusing a
+dirty tree, an unlanded HEAD or a failing `preflight`. With `release: true` (or a
+top-level `releaseOnDeploy`) a successful deploy runs `release.sh`, which cuts a
+GitHub Release under the next `vYYYY.MM.DD.N` tag (`"tagScheme": "semver"` for
+`vX.Y.Z`) and records it as a Deployment to `release`. `install-release-hook.sh`
+adds a pre-push hook (`release-pre-push.sh`) that releases each push of the
+integration branch from the main checkout. Exit codes: deploy 0 / 1 refused /
+2 failed (recorded) / 3 deployed but the release failed. Kept portable to macOS
+(bash 3.2, BSD tools). Full how-to: [docs/environments.md](../../../docs/environments.md#deploy-and-release).
+
 ## Hermetic merge gate: `gate.hermetic` (#223)
 
 By default a gate runs the test command in the host environment, so a test that

@@ -19,7 +19,9 @@
 #   ]
 #   name      how operators refer to it
 #   ref       the branch on origin that IS the environment (default env/<name>)
-#   requires  "green" (origin/<green-ref>, the sentinel's proof) or an earlier environment
+#   requires  "green" (origin/<green-ref>, the sentinel's proof) or an earlier environment.
+#             "integration" (or an environment that requires one that does) marks an
+#             environment with no branch, recorded by deploy.sh; promote.sh skips it.
 #   test      optional extra command (an E2E suite) run on the candidate tree in a throwaway
 #             worktree before the move, through gate-cache-fns.sh so a repeat is free
 #   auto      the sentinel promotes it after every green tick (default false)
@@ -106,16 +108,20 @@ except Exception as e:
 envs = data.get("environments") or []
 if not isinstance(envs, list):
     print("!environments must be an array"); sys.exit(0)
-seen = []
+seen, deployed = [], []
 for i, e in enumerate(envs):
     if not isinstance(e, dict) or not e.get("name"):
         print("!environments[%d] needs a name" % i); sys.exit(0)
     name = str(e["name"])
     req = str(e.get("requires") or "")
-    if name in seen or name == "green":
+    if name in seen or name in deployed or name == "green":
         print("!environment name %r is taken" % name); sys.exit(0)
+    # requires "integration" (or an environment that does) has no branch: deploy.sh
+    # records what it runs as GitHub Deployments, and there is nothing to promote.
+    if req == "integration" or req in deployed:
+        deployed.append(name); continue
     if req != "green" and req not in seen:
-        print("!environment %r requires %r; must be 'green' or an environment listed before it" % (name, req)); sys.exit(0)
+        print("!environment %r requires %r; must be 'green', 'integration' or an environment listed before it" % (name, req)); sys.exit(0)
     row = [name, str(e.get("ref") or "env/%s" % name), req, str(e.get("test") or ""), "1" if e.get("auto") else "0"]
     if any(("\x1f" in v or "\n" in v) for v in row):
         print("!environment %r: fields must not contain newlines" % name); sys.exit(0)
