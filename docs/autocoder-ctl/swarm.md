@@ -80,8 +80,8 @@ If that agent is showing a trust dialog by then, the Enter answers it with the
 dialog's default.
 
 Pane targets are read from the manifest. A target that could be taken for an
-option (for example, one starting with `-`) is skipped rather than passed to the
-multiplexer.
+option (one starting with `-`), or that contains control characters, is skipped
+rather than passed to the multiplexer.
 
 The patterns are `$AUTOCODER_CTL_TRUST_PATTERN` and `$AUTOCODER_CTL_CONSENT_PATTERN`
 (extended regular expressions). Trust is checked first, because Claude's trust
@@ -160,7 +160,7 @@ script detects the multiplexer itself. Manifests are left in place, so a UI can
 still show what ran.
 
 `stop-parallel-agents.sh` only knows tmux sessions named `claude-` and `gemini-`.
-So the verb then checks each tmux manifest's session by exact name and kills any
+So, unless `--mux` names another multiplexer, the verb then checks each tmux manifest's session by exact name and kills any
 that is still up, such as `codex-<repo>`. These are listed in
 `sessions_closed`. A session it fails to kill is listed in
 `sessions_still_running`, and the verb then fails (exit 1).

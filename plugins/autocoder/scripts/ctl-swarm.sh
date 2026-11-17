@@ -102,8 +102,9 @@ _ctls_workers() {  # <manifest>
 
 _ctls_capture() {  # <mux> <pane>
   # The pane comes from a manifest in the repo; refuse anything that could be read
-  # as an option or is not a plain multiplexer target.
-  [[ "$2" =~ ^[%@\$A-Za-z0-9_][%@\$A-Za-z0-9_.:-]*$ ]] || return 1
+  # as an option, or that holds control characters. (A session may contain a space:
+  # it is named after the repo directory.)
+  case "$2" in ""|-*|*[[:cntrl:]]*) return 1 ;; esac
   case "$1" in
     tmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux capture-pane -p -t "$2" 2>/dev/null ;;
     cmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux read-screen --workspace "$2" 2>/dev/null ;;
@@ -403,8 +404,9 @@ ctl_verb_stop_swarm() {
 
   # stop-parallel-agents.sh only knows the claude- and gemini- tmux sessions. Close
   # any other tmux session a manifest names (codex-, droid-, pi-) that is still up.
+  # Only when tmux is the multiplexer being stopped: --mux herdr leaves tmux alone.
   local killed=() left=() f sess
-  if command -v tmux >/dev/null 2>&1; then
+  if { [ -z "$mux" ] || [ "$mux" = tmux ]; } && command -v tmux >/dev/null 2>&1; then
     shopt -s nullglob
     for f in "$_S_ROOT/$SWARM_STATE_DIR"/*.json; do
       [ "$(jq -r '.mux // ""' "$f" 2>/dev/null)" = tmux ] || continue

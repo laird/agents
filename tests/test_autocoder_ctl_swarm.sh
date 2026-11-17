@@ -287,7 +287,11 @@ run 0 true "stop-swarm with a codex swarm running"   -- stop-swarm --repo "$REPO
 detail "the session the script cannot stop is closed by name" '.detail.stopped and .detail.sessions_closed == ["codex-repo"] and .detail.sessions_still_running == []'
 has    "it is killed by exact name"                  "tmux kill-session|-t|=codex-repo"
 [ ! -e "$STUB/alive-claude-repo" ] && ok "the claude session is left to the script" || bad "claude session still alive"
-rm -f "$SW/codex-repo.json"; touch "$STUB/stop-fail"
+touch "$STUB/alive-codex-repo"
+run 0 true "stop-swarm --mux herdr"                  -- stop-swarm --repo "$REPO" --mux herdr
+detail "it leaves tmux sessions alone"               '.detail.sessions_closed == []'
+[ -e "$STUB/alive-codex-repo" ] && ok "the tmux codex session survives a herdr stop" || bad "tmux session killed by a herdr stop"
+rm -f "$SW/codex-repo.json" "$STUB/alive-codex-repo"; touch "$STUB/stop-fail"
 run 1 false "stop-parallel-agents failing"           -- stop-swarm --repo "$REPO"
 rm -f "$STUB/stop-fail"
 rm -f "$SW"/*.json
