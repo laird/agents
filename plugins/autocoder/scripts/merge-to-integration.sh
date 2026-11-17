@@ -13,7 +13,7 @@
 #   This helper instead lands the work on origin/<integration-branch> WITHOUT checking out
 #   that branch locally (so it never contends with other worktrees), re-runs the test suite
 #   on the combined tree, and pushes with a fetch+merge+retry loop to survive sibling workers
-#   racing to push. Conflicts escalate to a human label instead of stranding work.
+#   racing to push. Conflicts and red gates go back to the owning worker (#207), and escalate to a human only on a repeat.
 #
 #   #1821: this used to do all of that IN the caller's own worktree — `git checkout
 #   "$FEATURE"` right here, then fetch/merge/test/push in place. merge-launch.sh runs this
@@ -117,7 +117,8 @@
 #        → issue_park: `awaiting-integration` with a comment naming the landed commit
 #          and the gated trees. The post-merge sentinel closes a parked issue once its
 #          landed commit is on a green tip. Only `tested` and `docs-only` may close.
-#     conflict (exit 1) or gate failure (exit 2) before anything was pushed
+#     conflict (exit 1), or a gate failure this change caused (exit 2: integrated tree
+#     red, origin/<integration> alone green), before anything was pushed
 #        → bounced back to the owning worker (#207): `merging` → `working`, with a
 #          comment naming the conflicting files or the failing suites and ending in
 #          `<!-- autocoder-bounce kind=<conflict|gate> worktree=<caller dir>
@@ -125,7 +126,8 @@
 #          (rebase, re-test, relaunch), not questions for a human. Only an identical
 #          repeat (the newest earlier bounce has the same kind and sig) escalates to
 #          needs-clarification.
-#     any other failure before anything was pushed (unresolvable ref, publish failure)
+#     any other failure before anything was pushed (unresolvable ref, publish failure,
+#     red base refused, base worktree could not be created)
 #        → issue_escalate --label needs-clarification, comment with the reason and the
 #          last 40 lines of gate output
 #     internal error AFTER the push succeeded
@@ -257,7 +259,10 @@ PUSHED=0
 # machine-readable marker line; the worktree path identifies the owner because worker
 # ids (hostname-PID) change every tick.
 _sha1() {
-  if command -v sha1sum >/dev/null 2>&1; then sha1sum; else shasum -a 1; fi | cut -c1-40
+  if command -v sha1sum >/dev/null 2>&1; then sha1sum
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 1
+  else python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())'
+  fi | cut -c1-40
 }
 # "<kind> <sig>" of the newest bounce marker already on the issue, or nothing. Reads the
 # body as well as the comments: the file backend folds comments into the body.
@@ -287,10 +292,13 @@ _failing_suites() {
 # _bounce <conflict|gate> <newline-separated items> <detail>. Returns 1, changing
 # nothing, when the newest earlier bounce has the same kind and sig: the caller escalates.
 _bounce() {
-  local kind="$1" items="$2" detail="$3" sig list what fixit
+  local kind="$1" items="$2" detail="$3" sig list what fixit owner
   items=$(printf '%s\n' "$items" | sed '/^$/d' | sort -u)
   sig=$(printf '%s' "$items" | _sha1)
+  [ -n "$sig" ] || return 1   # no signature means no repeat detection: escalate instead
   [ "$(_last_bounce)" = "$kind $sig" ] && return 1
+  # The owner is the worktree's top level: the resume side (#208) matches on it.
+  owner=$(git -C "$CALLER_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$CALLER_DIR")
   if [ -n "$items" ]; then
     list=$(printf '%s\n' "$items" | sed 's/^/- `/; s/$/`/')
   else
@@ -313,7 +321,7 @@ ${list}
 
 Nothing from this run landed on \`${INTEGRATION_BRANCH}\`; the work is still on \`${FEATURE}\` (\`${FEATURE_SHA:0:12}\`). ${fixit} The issue is back in \`working\` for that worker. A second bounce with the same ${kind} signature escalates to \`needs-clarification\`.${detail}
 
-<!-- autocoder-bounce kind=${kind} worktree=${CALLER_DIR} sha=${FEATURE_SHA} sig=${sig} -->" 2>/dev/null || true
+<!-- autocoder-bounce kind=${kind} worktree=${owner} sha=${FEATURE_SHA} sig=${sig} -->" 2>/dev/null || true
   # Add before remove: both labels at once is still out of the claimable pool, while
   # neither would put an issue with a live branch nowhere.
   issue_update "$ISSUE_NUM" --add-label working 2>/dev/null || true
@@ -323,8 +331,10 @@ Nothing from this run landed on \`${INTEGRATION_BRANCH}\`; the work is still on 
 }
 
 # Terminal failure, exits with $1. Under --own-issue an issue someone already closed is
-# left alone. A gate failure (exit 2) before the push is bounced to the worker (#207)
-# unless it repeats identically. Anything else is escalated (nothing landed) or parked
+# left alone. A gate failure this change caused (GATE_BOUNCE=1: the integrated tree is
+# red and origin/<integration> alone is green) is bounced to the worker (#207) unless it
+# repeats identically. A red base or an infrastructure failure is not the worker's to
+# fix, so it escalates like everything else. Anything else is escalated (nothing landed) or parked
 # (the push landed and only this job's bookkeeping failed), with the reason and the
 # gate's tail.
 _fail() {
@@ -337,7 +347,7 @@ Last gate output:
 \`\`\`
 ${tail}
 \`\`\`}"
-    if [ "$PUSHED" -eq 0 ] && [ "$code" -eq 2 ]; then
+    if [ "$PUSHED" -eq 0 ] && [ "${GATE_BOUNCE:-0}" -eq 1 ]; then
       if _bounce gate "$(_failing_suites)" "
 
 Gate verdict: ${reason}${tail}"; then
@@ -635,6 +645,7 @@ _gate_integrated_tree() {
   if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
+    GATE_BOUNCE=1
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
   fi
   _remove_worktree "$BASE_WORKTREE_DIR"

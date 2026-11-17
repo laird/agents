@@ -118,6 +118,14 @@ sibling_clash src/a.sh
 run_own true >/dev/null
 [ "$(issue_labels)" = "bug working" ] && ok "kind is part of the identity: gate then conflict bounces" || bad "kind identity: $(issue_labels)"
 
+# ── 4b. a red base the worker cannot fix escalates, never bounces ──────────
+setup
+export AUTOCODER_MERGE_ON_RED_BASE=0
+OUT=$(run_own 'echo RED-EVERYWHERE; false'); RC=$?
+unset AUTOCODER_MERGE_ON_RED_BASE
+[ "$RC" -eq 2 ] && [ "$(issue_bucket)" = blocked ] && [ "$(issue_labels)" = "bug needs-clarification" ] && ok "red base refused: escalates, not bounced" || bad "red base: rc=$RC $(issue_bucket) $(issue_labels): $OUT"
+[ -z "$(markers)" ] && ok "red base leaves no bounce marker" || bad "marker on red base: $(markers)"
+
 # ── 5. other pre-push failures still escalate ───────────────────────────────
 setup
 OUT=$(FEATURE=feature/does-not-exist run_own true); RC=$?
