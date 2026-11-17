@@ -56,6 +56,10 @@ cat > "$TMP/mention.json" <<'EOF'
 {"body": "b", "comments": [{"body": "Note: the 🔒 claim comment format changed; update the parser."}]}
 EOF
 has "a comment that only mentions a claim is kept" "$("$SPEC" --json "$TMP/mention.json")" "claim comment format changed"
+cat > "$TMP/quote.json" <<'EOF'
+{"body": "b", "comments": [{"body": "The Automated Fix Started comment above was wrong; use v2."}]}
+EOF
+has "a comment quoting a marker phrase mid-text is kept" "$("$SPEC" --json "$TMP/quote.json")" "use v2"
 
 # ── Jira/ADO-shaped: comment bodies only, no author or time ───────────────
 echo '{"body":"spec","comments":[{"body":"narrow scope to X"}]}' > "$TMP/jira.json"

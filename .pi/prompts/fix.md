@@ -1925,7 +1925,7 @@ if [ -n "$PARENT_ISSUE" ]; then
   PARENT_JSON=$(issue_get "$PARENT_ISSUE")
   PARENT_SUBTASKS=$(printf '%s' "$PARENT_JSON" | jq -r '
     ([(.comments // [])[] | (.body // "") | select(test("Issue Decomposed into Sub-Tasks"))] | last)
-      // (.body // "")' | grep -oE '^- \[[ xX]\] #[0-9]+' | grep -oE '[0-9]+$')
+      // (.body // "")' | tr -d '\r' | grep -oE '^- \[[ xX]\] #[0-9]+' | grep -oE '[0-9]+$')
   ALL_CLOSED=true
   if [ -z "$PARENT_SUBTASKS" ]; then
     echo "⚠️  No sub-task checklist found on #$PARENT_ISSUE — not auto-closing it."
