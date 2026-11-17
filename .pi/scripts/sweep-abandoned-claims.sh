@@ -7,7 +7,8 @@
 # A claim is abandoned when ALL of these hold:
 #   1. The issue's current claim carries owner markers (`🔒 claim <id> <ms> …`,
 #      written by fix-loop-gate.sh via claim-owner.sh, #202). Only markers
-#      posted after the last `[autocoder-claim]` or `🔓` release comment count:
+#      posted after the last comment that ends or replaces a claim count (a
+#      `[autocoder-claim]`, a 🔓 release, a 🚫/🎨 block, a "Releasing …" one):
 #      an earlier claim's dead owner says nothing about a later re-claim, and a
 #      re-claim made through /autocoder:fix leaves no owner marker at all.
 #   2. Every such marker names an owner `<host>-<pid>` on THIS host whose
@@ -55,7 +56,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
     --remote)  REMOTE="${2:?--remote needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
     *) echo "sweep-abandoned-claims: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -70,9 +71,9 @@ WORKING=$(issue_list --state working 2>/dev/null) || {
 # Issue numbers with a branch: the remote (claimed-issue-numbers.sh) plus local
 # branches, which every worktree of this clone shares — a worker on this host
 # may not have pushed yet.
-# claimed-issue-numbers.sh fails open (prints [] when the remote is
-# unreachable), which is right for picking candidates and wrong for releasing
-# claims, so the sweep reads the remote itself and stops if it cannot.
+# Read the remote directly rather than through claimed-issue-numbers.sh, which
+# fails open (prints [] when the remote is unreachable): right for picking
+# candidates, wrong for releasing claims. If the remote cannot be read, stop.
 REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null) || {
   echo "sweep-abandoned-claims: cannot read branches from '$REMOTE'; releasing nothing" >&2; exit 1; }
 BRANCH_NUMS=" $( { printf '%s\n' "$REMOTE_REFS" | sed 's#.*refs/heads/##'
@@ -103,13 +104,20 @@ try:
 except Exception:
     sys.exit(3)
 marker = re.compile(r"\s*🔒 claim (\S+) (\d+)(?: start=(\d+))?(?: wt=[^\n]*)?\s*$")
+# Comments that end a claim (fix.md 🔓 releases, add-blocking-label.sh 🚫/🎨,
+# the stale-label release in monitor-workers/manager-resume) or start a new one
+# with no owner marker (/autocoder:fix posts `[autocoder-claim]`).
+def ends_claim(body):
+    b = body.lstrip()
+    return ("[autocoder-claim]" in body or b.startswith(("🔓", "🚫", "🎨"))
+            or b.lower().startswith("releasing"))
 current = []
 for c in issue.get("comments") or []:
     body = c.get("body") or ""
     m = marker.match(body)
     if m:
         current.append(" ".join([m.group(1), m.group(2), m.group(3) or ""]))
-    elif "[autocoder-claim]" in body or body.lstrip().startswith("🔓"):
+    elif ends_claim(body):
         current = []   # a later claim or a release supersedes earlier markers
 print("\n".join(current))
 ') || { echo "kept #$n: could not read its comments"; continue; }

@@ -106,6 +106,12 @@ add_issue 12 "🔒 claim testhost-$DEAD $OLD_MS wt=/w" \
              "🔒 [autocoder-claim] Starting fix for issue #12 — lock established"        # re-claimed via /fix
 add_issue 13 "🔒 claim testhost-$LIVE $OLD_MS wt=/w" "🔓 **Releasing claim** …" \
              "🔒 claim testhost-$DEAD $OLD_MS wt=/w"                                    # only the newest claim counts
+add_issue 15 "🔒 claim testhost-$DEAD $OLD_MS wt=/w" "🚫 **Blocked - Requires Human Input**" \
+             "🔒 claim testhost-$LIVE $OLD_MS wt=/w"                                    # blocked, then live re-claim
+add_issue 16 "🔒 claim testhost-$DEAD $OLD_MS wt=/w" "Releasing stale 'working' label: no commits" \
+             "🔒 [autocoder-claim] Starting fix for issue #16 — lock established"        # stale-released, re-claimed
+add_issue 17 "🔒 claim testhost-$LIVE $OLD_MS wt=/w" "🎨 **Blocked — Needs Design**" \
+             "🔒 claim testhost-$DEAD $OLD_MS wt=/w"                                    # design-blocked, dead re-claim
 
 # ── dry run changes nothing ───────────────────────────────────────────────
 OUT=$(bash "$GH_DIR/sweep-abandoned-claims.sh" --dry-run 2>&1)
@@ -133,6 +139,9 @@ assert_eq "old marker format, dead: released" "no" "$(has_working 10)"
 assert_eq "claim younger than the grace period: kept" "yes" "$(has_working 11)"
 assert_eq "re-claim with no owner marker: kept" "yes" "$(has_working 12)"
 assert_eq "markers before a release are ignored" "no" "$(has_working 13)"
+assert_eq "🚫 block resets markers: live re-claim kept" "yes" "$(has_working 15)"
+assert_eq "stale release resets markers: /fix re-claim kept" "yes" "$(has_working 16)"
+assert_eq "🎨 block resets markers: dead re-claim released" "no" "$(has_working 17)"
 assert_eq "kept lines give a reason" "1" "$(grep -c '^kept #3: owner otherhost-.* is on another host' <<< "$OUT")"
 
 # ── an unreachable remote releases nothing ────────────────────────────────
