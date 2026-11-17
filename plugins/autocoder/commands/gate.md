@@ -67,11 +67,21 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
-A plan with `"resume": true` is **this worktree's own claim** (#182): the gate found an
-open `working` issue recorded for this worktree, or its `feature/issue-N` branch checked
-out here, and resumes it before claiming anything new. Dispatch it the same way. `/fix N`
-recognises the resume and skips its race check. Re-read the issue's comments and the
-branch's commits before continuing, so finished work is not redone.
+**`"in_flight": true` — this session is already working the issue (#130).** In inline
+`/loop` mode a tick can fire while this very session is mid-issue (waiting on a subagent,
+a merge job, or a test run). The gate recognises its own session and does not claim new
+work or touch the checkout. **Do not invoke `/autocoder:fix` again and do not write a
+handoff file.** Emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick; the work already
+under way continues. If you have lost track of the issue (for example after a
+compaction), re-read its comments and `git log origin/<integration>..HEAD` on
+`feature/issue-<issue>` and carry on from there, without re-running `/fix`'s claim steps.
+
+A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
+picked up by a new session** (#182): a restart or a fresh worker process found an open
+`working` issue recorded for this worktree and resumes it before claiming anything new.
+Dispatch it the same way. `/fix N` recognises the resume and skips its race check.
+Re-read the issue's comments and the branch's commits before continuing, so finished
+work is not redone.
 
 Each issue must run in a **fresh Claude process** for a clean context window. The mechanism
 depends on how the gate was invoked:

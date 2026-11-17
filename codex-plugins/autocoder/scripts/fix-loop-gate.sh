@@ -14,8 +14,10 @@
 #   {"phase":"fix",    "issue":42, "priority":"P0"}  # ready priority bug
 #   {"phase":"enhance","issue":17}              # approved enhancement
 #   {"phase":"regression"}                      # queue empty, run tests
-#   {"phase":"fix","issue":42,"priority":"P1","resume":true}
-#                                               # this worktree's own claim (#182)
+#   {"phase":"fix","issue":42,"priority":"P1","resume":true,"in_flight":false}
+#                                               # this worktree's own claim (#182);
+#                                               # in_flight: this very session is
+#                                               # still working it (#130)
 #
 # Exit codes:
 #   0   work claimed (work-plan written)
@@ -267,7 +269,7 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
     claim_comment_wins "$ISSUE_NUM" || continue
   fi
 
-  worker_state_set "$ISSUE_NUM" "$CLAIM_MS"
+  worker_state_set "$ISSUE_NUM" "$CLAIM_MS" "${CLAUDE_CODE_SESSION_ID:-}"
   if [ "$PHASE" = "FIX" ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s"}\n' \
       "$ISSUE_NUM" "$PRIORITY" > "$WORK_JSON"
