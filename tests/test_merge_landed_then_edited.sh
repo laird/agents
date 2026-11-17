@@ -62,6 +62,16 @@ OUT=$(cd "$TMP/reverted/w" && bash "$MTI" --feature feature/x --issue 23602 --in
 echo "$OUT" | grep -q "NOT closing" && ok "says nothing landed" || bad "output: $(tail -6 <<<"$OUT")"
 [ "$(state 23602)" != "CLOSED" ] && ok "reverted: issue left open" || bad "reverted issue was closed"
 
+# ── 3. landed, then undone by hand (no "This reverts commit" message) ──────
+# A manual undo or a squash/PR revert leaves no standard message; the lines are back to
+# their pre-change state, so the change is not on the branch and must not be closed.
+setup undone 23603
+printf 'one\ntwo\nthree\n' > a.txt; git commit -qam "tidy up line 2"; git push -q origin master
+OUT=$(cd "$TMP/undone/w" && bash "$MTI" --feature feature/x --issue 23603 --integration master \
+  --test-cmd true --own-issue 2>&1); RC=$?
+[ "$RC" -ne 0 ] && ok "landed-then-undone-by-hand: refused (rc=$RC)" || bad "manually undone change treated as landed"
+[ "$(state 23603)" != "CLOSED" ] && ok "undone: issue left open" || bad "undone issue was closed"
+
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

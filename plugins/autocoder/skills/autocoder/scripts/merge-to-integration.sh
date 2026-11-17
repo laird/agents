@@ -782,25 +782,35 @@ fi
 # and was reverted matches too), so close only when the feature's whole change applies in
 # reverse to the tip, i.e. the tip already carries it. Otherwise nothing lands and a
 # human decides; the branch is kept.
-# _landed_by_patch_id <tip>: every commit of the feature has a patch-equivalent commit in
-# <tip>'s history, and none of those equivalents was reverted there (#236). The tree check
-# in _nothing_left_to_land reverse-applies the feature diff, which also fails when our
-# landed change was simply edited again by a later sibling commit; patch ids still show it
-# landed. A revert is recognised by git's "This reverts commit <sha>" message.
+# _landed_by_patch_id <tip>: the feature's change landed on <tip> and is still in effect,
+# though later edited by others (#236). The tree check in _nothing_left_to_land
+# reverse-applies the feature diff, which also fails when a later sibling commit edited the
+# same lines. All of these must hold:
+#   - every feature commit has a patch-equivalent commit in tip's history (git cherry);
+#   - the feature diff does NOT apply forward to the tip: if it did, those lines look
+#     exactly as before the change, i.e. it was undone (a manual undo or a squash/PR
+#     revert leaves no standard revert message);
+#   - no equivalent commit is named by a later "This reverts commit <sha>" message.
 _landed_by_patch_id() {
-  local tip="$1" base marks eq sha
+  local tip="$1" base marks eq sha patch log
+  git merge-base --is-ancestor "$FEATURE_SHA" "$tip" 2>/dev/null && return 0
   base=$(git merge-base "$tip" "$FEATURE_SHA" 2>/dev/null) || return 1
   marks=$(git cherry "$tip" "$FEATURE_SHA" "$base" 2>/dev/null) || return 1
   [ -n "$marks" ] || return 1
-  printf '%s\n' "$marks" | grep -q '^+' && return 1     # some commit has no upstream copy
+  case $'\n'"$marks" in *$'\n+'*) return 1 ;; esac      # some commit has no upstream copy
+  patch=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.fwd.XXXXXX")
+  git diff --binary "$base" "$FEATURE_SHA" > "$patch"
+  if [ -s "$patch" ] && git apply --check "$patch" 2>/dev/null; then
+    rm -f "$patch"; return 1                               # undone: the tip is pre-change there
+  fi
+  rm -f "$patch"
   # The upstream copies: commits on tip's side that git marks patch-equivalent ('=').
   eq=$(git log --cherry-mark --right-only --no-merges --format='%m %H' "${FEATURE_SHA}...${tip}" 2>/dev/null \
        | awk '$1 == "=" { print $2 }')
   [ -n "$eq" ] || return 1
   for sha in $eq; do
-    if git log --format=%B "${sha}..${tip}" 2>/dev/null | grep -q "This reverts commit ${sha}"; then
-      return 1
-    fi
+    log=$(git log --format=%B "${sha}..${tip}" 2>/dev/null)   # captured: no SIGPIPE under pipefail
+    case "$log" in *"This reverts commit ${sha}"*) return 1 ;; esac
   done
   return 0
 }
