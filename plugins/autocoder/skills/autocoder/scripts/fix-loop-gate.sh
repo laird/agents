@@ -56,7 +56,7 @@
 # worker's claim is the live one. See release_pending_claim.
 #
 # Environment:
-#   AUTOCODER_WORK_JSON       work-plan path (default /tmp/autocoder-work.json)
+#   AUTOCODER_WORK_JSON        work-plan path (default /tmp/autocoder-work.json)
 #   AUTOCODER_CLAIM_MAX_TRIES  claim attempts per tick before giving up
 #                              (default 10), so a backend whose claims all fail
 #                              does not scan hundreds of issues per tick.
@@ -128,13 +128,14 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
 fi
 
 # ── 1. Snapshot all open issues ──────────────────────────────────────────
-ALL_JSON="$(mktemp)"
 GATE_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+ALL_JSON="$(mktemp)"
 # A claim taken below and not yet handed off (#204): see release_pending_claim.
 PENDING_CLAIM=""; PENDING_FRESH=1; PENDING_EXCLUDE=""
 on_exit() {
   local rc=$?
   set +e
+  trap '' HUP INT TERM   # a second signal must not cut the release short
   declare -F release_pending_claim >/dev/null && release_pending_claim "$rc"
   rm -f "$ALL_JSON"
   exit "$rc"
@@ -415,6 +416,7 @@ take_over_abandoned() {
   # From here our claim marker may be on the issue: release it if the gate fails (#204).
   PENDING_CLAIM="$n"; PENDING_FRESH=0; PENDING_EXCLUDE="$abandoned"
   CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || { PENDING_CLAIM=""; return 1; }
+  issue_claim "$n" 2>/dev/null || true   # a released rival may have dropped the label (#204)
   list="$(printf '%s\n' "$abandoned" | sed -E 's/^[0-9]+ ([^ ]+) (.*)$/- `\1`: \2/')"
   issue_comment "$n" --body "♻️ **Taking over an abandoned claim**
 
@@ -449,6 +451,9 @@ while read -r PHASE ISSUE_NUM PRIORITY KIND <&3; do
     if [ "$ISSUE_SOURCE" != file ]; then
       # A lost race moves on WITHOUT releasing: the label is the winner's now.
       claim_comment_wins "$ISSUE_NUM" || { PENDING_CLAIM=""; continue; }
+      # An earlier claimer that failed and released (#204) may have removed the
+      # shared label after our label-add: make sure the issue we won is labelled.
+      issue_claim "$ISSUE_NUM" 2>/dev/null || true
     fi
   fi
 

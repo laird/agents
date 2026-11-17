@@ -33,7 +33,8 @@ BAD_JSON="$TMP/no-such-dir/work.json"
 
 # Fake GitHub backend: issues as JSON files. FAKE_GET_FAIL=1 makes every `get`
 # fail; FAKE_GET_FAIL_ONCE=<file> fails only the first; FAKE_GET_SLEEP_ONCE=<file> makes the first `get` touch <file> and sleep,
-# so the test can signal the gate while it holds a claim.
+# so the test can signal the gate while it holds a claim; FAKE_GET_UNLABEL_ONCE=<file>
+# removes the working label before the first `get`, as a rival's release would.
 GH_DIR="$TMP/gh-scripts"
 mkdir -p "$GH_DIR"
 cp "$SCRIPT_DIR"/{fix-loop-gate.sh,claim-owner.sh,worker-state-fns.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
@@ -45,6 +46,10 @@ if [ "$verb" = get ]; then
   [ "${FAKE_GET_FAIL:-0}" = 1 ] && exit 1
   if [ -n "${FAKE_GET_FAIL_ONCE:-}" ] && [ ! -e "$FAKE_GET_FAIL_ONCE" ]; then
     touch "$FAKE_GET_FAIL_ONCE"; exit 1
+  fi
+  if [ -n "${FAKE_GET_UNLABEL_ONCE:-}" ] && [ ! -e "$FAKE_GET_UNLABEL_ONCE" ]; then
+    touch "$FAKE_GET_UNLABEL_ONCE"
+    VERB=release "$0" release "$1" >/dev/null 2>&1   # a released rival drops the label
   fi
   if [ -n "${FAKE_GET_SLEEP_ONCE:-}" ] && [ ! -e "$FAKE_GET_SLEEP_ONCE" ]; then
     touch "$FAKE_GET_SLEEP_ONCE"; sleep 2
@@ -94,7 +99,7 @@ chmod +x "$GH_DIR/issues-gh.sh"
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 
 reset_issues() {
-  rm -rf "$FAKE_GH_DIR" "$FAKE_GH_LOG" "$WORK_JSON" "$TMP/slept"
+  rm -rf "$FAKE_GH_DIR" "$FAKE_GH_LOG" "$WORK_JSON" "$TMP/slept" "$TMP/unlabelled" "$TMP/failed-once"
   mkdir -p "$FAKE_GH_DIR"
   rm -f "$REPO/.git/autocoder-worker-state"
 }
@@ -210,6 +215,17 @@ RC=$(run_gate "$WORK_JSON")
 assert_eq "hand-off: exit 0" "0" "$RC"
 assert_eq "hand-off: label kept" "yes" "$(has_working 1)"
 assert_eq "hand-off: no release comment" "0" "$(release_comments 1)"
+
+# ── 6b. A rival released between our label-add and read-back ──────────────
+# Its 🔓 ends its marker, so we win, but its release removed the shared label.
+reset_issues
+add_issue 1 bug P1
+seed_comment 1 "🔒 claim rival $(( $(now_ms) - 1000 ))"
+seed_comment 1 "🔓 **Releasing claim**"
+RC=$(FAKE_GET_UNLABEL_ONCE="$TMP/unlabelled" run_gate "$WORK_JSON")
+assert_eq "rival released mid-race: we win #1" '{"phase":"fix","issue":1,"priority":"P1"}' \
+  "$(cat "$WORK_JSON" 2>/dev/null)"
+assert_eq "rival released mid-race: label re-asserted" "yes" "$(has_working 1)"
 
 # ── 7. File backend: an error after the atomic claim moves it back ────────
 FILE_REPO="$TMP/file-repo"
