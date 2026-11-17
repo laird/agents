@@ -17,9 +17,9 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export ISSUE_SOURCE=file
 
-# run_case <script> <name> <stub suite body>  → sets RC and OUT
+# run_case <script> <name> <stub unit suite body> [<stub E2E suite body>]  → sets RC and OUT
 run_case() {
-  local script="$1" name="$2" body="$3" dir="$TMP/$2"
+  local script="$1" name="$2" body="$3" e2e="${4:-}" dir="$TMP/$2"
   rm -rf "$dir"; mkdir -p "$dir"/.issues/{open,working,blocked,closed}
   cd "$dir" || exit 1
   git init -q .   # issue-fns.sh resolves the repo; outside one it exits 128
@@ -32,6 +32,15 @@ Working directory: `.`
 bash ./suite.sh
 ```
 '
+  if [ -n "$e2e" ]; then
+    printf '#!/bin/bash\n%s\n' "$e2e" > e2e.sh
+    cfg="$cfg"'
+### E2E Tests Only
+```bash
+bash ./e2e.sh
+```
+'
+  fi
   printf '%s' "$cfg" > CLAUDE.md
   printf '%s' "$cfg" > GEMINI.md
   OUT=$(bash "$script" 2>&1 </dev/null); RC=$?
@@ -68,6 +77,16 @@ for script in "$ROOT/plugins/autocoder/scripts/regression-test.sh" \
   echo "$OUT" | grep -q "All tests passed" \
     && bad "$label: empty suite printed 'All tests passed'" \
     || ok "$label: empty suite does not claim success"
+
+  run_case "$script" e2e-failing 'echo "Tests: 0 failed, 3 passed, 3 total"' 'echo "1 failed, 4 passed"; exit 1'
+  [ "$RC" -ne 0 ] && ok "$label: failing E2E suite exits non-zero" \
+    || bad "$label: failing E2E suite exited $RC"
+  echo "$OUT" | grep -q "1 failed (unit: 0, E2E: 1)" && ok "$label: summary attributes the failure to E2E" \
+    || bad "$label: summary missing E2E failure count"
+
+  run_case "$script" e2e-empty 'echo "Tests: 0 failed, 3 passed, 3 total"' 'echo "0 passed"'
+  [ "$RC" -ne 0 ] && ok "$label: E2E suite that ran nothing exits non-zero" \
+    || bad "$label: empty E2E suite exited $RC"
 
   run_case "$script" passing 'echo "Tests: 0 failed, 3 passed, 3 total"; exit 0'
   [ "$RC" -eq 0 ] && ok "$label: passing suite exits 0" \
