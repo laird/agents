@@ -795,11 +795,13 @@ other branches on that file:
    line, so it builds on the new structure.
 3. Keep the rest of the queue parallel. Only the hotspot's work waits.
 
-Wording matters here. The dependency parser treats **any** line containing
-"depends on" or "blocked by" as declaring dependencies on every `#N` it
-mentions. In the split issue, describe the queued issues without those words
-(for example "the queued issues list this one as a prerequisite"). Otherwise
-the split ends up depending on its own dependents, and nothing can be claimed.
+Wording matters here. The dependency parser reads a line that **starts** with
+"Depends on" or "Blocked by" (after any list marker or bold) as declaring
+dependencies on every `#N` it mentions; the words mid-sentence are prose. In
+the split issue, don't start a line listing the queued issues with those words
+(for example write "the queued issues list this one as a prerequisite").
+Otherwise the split ends up depending on its own dependents, and nothing can be
+claimed: `issue_list --state open` then prints `⚠ cycle: #<split> ↔ #<queued>`.
 After editing, check that `issue_list --state open` shows the split as
 claimable and the queued issues as `⏳ waits on #<split>`.
 

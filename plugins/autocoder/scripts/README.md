@@ -146,16 +146,24 @@ in `issue-deps.sh`, sourced by `issue-fns.sh`, so it holds for every backend
 and every caller: the fix-loop gate, `/fix`, the manager's dispatch and
 scaling, and `issue_any_claimable` (which the idle sentinel relies on).
 
-- **Declared in the body**: every `#N` on a line that says `Depends on` or
-  `Blocked by` (the decomposition template's `## Dependencies` section writes
-  these). `Sub-task of #N` is the parent, not a dependency.
+- **Declared in the body**: every `#N` on a line that **starts** with
+  `Depends on` or `Blocked by`, after any list marker, checkbox, `[`, quote or
+  bold (`Depends on: #N, #M`, `- **Blocked by #N**`; the decomposition
+  template's `## Dependencies` section writes these). The words mid-sentence
+  are prose and declare nothing (#181).
+- **Never self-gating**: an issue never waits on itself, its parent
+  (`Sub-task of #N`) or its own sub-tasks (issues whose body names it as their
+  parent).
 - **Native on GitHub**: open "blocked by" relationships, read for all open
   issues in one GraphQL query; skipped when there is no `origin` or the server
   has no issue dependencies.
 - **Met** means the dependency's state is closed (`closed`, `done`, `resolved`,
   `completed`, `removed`). A dependency that can't be read counts as met, so a
   typo never wedges the queue.
-- Waiting issues are named on stderr (`⏳ #350 waits on #347, #348`).
+- Waiting issues are named on stderr (`⏳ #350 waits on #347, #348`), and so
+  are issues that wait on each other (`⚠ cycle: #367 ↔ #387`, or
+  `⚠ cycle: #1 → #2 → #3 → #1`). They stay gated until a human breaks the
+  cycle; prefer native "blocked by" links, which no wording can create.
   `issue_unmet_dependencies <n>` prints what one issue waits on; `/fix <n>`
   refuses an issue that still waits, before claiming it.
 - `AUTOCODER_IGNORE_DEPENDENCIES=1` turns the filter off.

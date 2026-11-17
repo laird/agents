@@ -95,6 +95,42 @@ issue open 21 "Free one" "No dependencies."
 run "issue_any_claimable"; RC=$?
 check "any-claimable is true once one is free" "$RC" "0"
 
+# #181: only a line that STARTS with the declaration counts. Prose that uses the
+# words mid-sentence declares nothing; an issue never waits on itself, its
+# parent or its own sub-tasks; issues that wait on each other are reported.
+rm -f "$ISSUES_DIR"/open/*.md
+issue open    30 "Prose"         "Whether this depends on #31 is unclear.\nIt was blocked by #32 last week, per the thread."
+issue open    31 "Forms"         "Depends on: #40\n- **Blocked by #41**\n  1. depends on #42\n> - [Depends on: #43 — needs it]\n- [ ] Blocked by #44"
+issue open    32 "Self"          "Depends on: #32"
+issue open    33 "Parent"        "## Sub-task of #34\n- Sub-task of #34\n- Depends on: #34"
+issue open    34 "Parent issue"  "Sub-tasks, in order:\nDepends on: #33, #35"
+issue working 35 "Child at work" "## Sub-task of #34\nBeing worked."
+issue open    36 "Cycle A"       "Depends on: #37"
+issue open    37 "Cycle B"       "Blocked by #36"
+issue open    38 "Ring A"        "Depends on: #39"
+issue open    39 "Ring B"        "Depends on: #45"
+issue open    45 "Ring C"        "Depends on: #38"
+for n in 40 41 42 43 44; do issue open "$n" "Dep $n" "Nothing."; done
+
+OUT=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
+check "prose, self, parent and children don't gate; declared lines do" "$OUT" "[30,32,33,34,40,41,42,43,44]"
+DEPS=$(run "issue_list --state all | _ideps_body_deps | jq -c '{\"30\": .[\"30\"], \"31\": .[\"31\"], \"32\": .[\"32\"], \"33\": .[\"33\"]}'")
+check "declared forms parsed; prose, self and parent dropped" "$DEPS" '{"30":[],"31":[40,41,42,43,44],"32":[],"33":[]}'
+WAITS=$(run_err "issue_list --state open")
+case "$WAITS" in *"#31 waits on #40, #41, #42, #43, #44"*) ok "#31 waits on every declared line" ;; *) bad "#31's waits — got: $WAITS" ;; esac
+case "$WAITS" in *"⚠ cycle: #36 ↔ #37"*) ok "a two-issue cycle is reported" ;; *) bad "two-issue cycle not reported — got: $WAITS" ;; esac
+case "$WAITS" in *"⚠ cycle: #38 → #39 → #45 → #38"*) ok "a longer cycle is reported once" ;; *) bad "ring not reported — got: $WAITS" ;; esac
+N=$(printf '%s\n' "$WAITS" | grep -c '⚠ cycle')
+check "each cycle reported exactly once" "$N" "2"
+case "$WAITS" in *"#34 waits"*|*"#33 waits"*) bad "parent/child gated — got: $WAITS" ;; *) ok "parent and child don't gate each other" ;; esac
+
+OUT=$(run "issue_unmet_dependencies 34; echo rc=\$?")
+check "a parent doesn't wait on its own sub-tasks (open or being worked)" "$OUT" "rc=0"
+OUT=$(run "issue_unmet_dependencies 30; echo rc=\$?")
+check "prose mentions are not dependencies" "$OUT" "rc=0"
+ERR=$(run_err "issue_unmet_dependencies 36")
+check "explicit dispatch reports a cycle" "$ERR" "⚠ cycle: #36 ↔ #37"
+
 # Native GitHub blocked-by: the GraphQL answer becomes open blockers per issue.
 NATIVE=$(bash -c "
   gh() { case \"\$1\" in

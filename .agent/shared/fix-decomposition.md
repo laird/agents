@@ -13,7 +13,7 @@ For issues too large for autonomous resolution (>100 test failures, major archit
 **Decomposition rules — each sub-task MUST satisfy ALL of these:**
 
 1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
-2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body. Each sub-task's `Touches:` line (in the template below) names its areas; two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`, never run in parallel.
+2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body, on a line that **starts** with `Depends on: #<n>` (a list marker or bold before it is fine; the words mid-sentence are prose and declare nothing). On GitHub, prefer a native "blocked by" relationship where you can. Each sub-task's `Touches:` line (in the template below) names its areas; two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`, never run in parallel.
 3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
 4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
 
