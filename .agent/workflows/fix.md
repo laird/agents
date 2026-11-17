@@ -889,6 +889,16 @@ if git checkout -b "$FIX_BRANCH" 2>/dev/null; then
 elif git checkout "$FIX_BRANCH" 2>/dev/null; then
   echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${PARENT_BRANCH}..."
   git pull --rebase origin "$PARENT_BRANCH" || {
+    if [ "${RESUMING:-false}" = "true" ]; then
+      # A resumed claim keeps its lock through a conflict. After a merge job bounced
+      # it back (#207/#208) the conflict IS the work: resolve it here, keeping both
+      # sides' behaviour, `git rebase --continue`, re-run the tests, and carry on to
+      # the review gate and relaunch. Releasing would strand the live branch.
+      echo "⚠️  Rebase of $FIX_BRANCH conflicts (resumed claim #${ISSUE_NUM}). Conflicting files:"
+      git diff --name-only --diff-filter=U
+      echo "   Resolve them keeping both sides' behaviour, run 'git rebase --continue', then continue this issue. Keeping 'working'."
+      exit 2
+    fi
     echo "❌ Rebase of $FIX_BRANCH onto origin/${PARENT_BRANCH} failed — resolve conflicts manually."
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
     exit 1

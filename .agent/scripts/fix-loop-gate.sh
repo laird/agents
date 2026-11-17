@@ -96,6 +96,19 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
   if [ "${AUTOCODER_RESUME_OWN_CLAIM:-1}" = 1 ]; then
     RESUME_RC=0
     RESUME_PLAN="$(worker_resume_plan)" || RESUME_RC=$?
+    # A merge job that bounced this worktree's issue back to `working` (#207) is
+    # still ours, but the record above was cleared when the issue went to `merging`,
+    # and its live branch keeps every other worker off it. Re-record it and resume
+    # it through the same path (#208). Runs before the snapshot and classify(), which
+    # drop issues with a live branch (#210). bounce-resume.sh fails toward "none".
+    if [ "$RESUME_RC" -eq 1 ] && [ -f "${SCRIPT_DIR}/bounce-resume.sh" ] \
+       && BOUNCED="$(bash "${SCRIPT_DIR}/bounce-resume.sh" find 2>/dev/null)"; then
+      read -r BOUNCED_NUM BOUNCED_KIND <<< "$BOUNCED"
+      echo "fix-loop-gate: #${BOUNCED_NUM} was bounced back to this worktree (${BOUNCED_KIND}); resuming it" >&2
+      worker_state_set "$BOUNCED_NUM"
+      RESUME_RC=0
+      RESUME_PLAN="$(worker_resume_plan)" || RESUME_RC=$?
+    fi
     case "$RESUME_RC" in
       0) printf '%s\n' "$RESUME_PLAN" > "$WORK_JSON"; exit 0 ;;
       2) exit 1 ;;   # holding an issue that cannot resume this tick: never claim over it

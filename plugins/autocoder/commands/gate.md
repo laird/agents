@@ -99,6 +99,10 @@ case applies by checking, not by recollection:
 A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
 picked up by a new session** (#182): a restart or a fresh worker process found an open
 `working` issue recorded for this worktree and resumes it before claiming anything new.
+That includes an issue a merge job bounced back to this worktree (#208): a conflict or a
+red gate its change caused, named in a `<!-- autocoder-bounce ... worktree=<this worktree> -->`
+comment. For a bounce, rebase onto the integration branch, resolve the conflicts or
+failing tests, re-test, re-review and relaunch the merge.
 Dispatch it the same way. `/fix N` recognises the resume and skips its race check.
 Re-read the issue's comments and the branch's commits before continuing, so finished
 work is not redone.
