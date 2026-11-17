@@ -15,7 +15,14 @@
 # would be overwritten; the files are small and live in the temp directory. A
 # test that needs to inspect its events still sets its own path after sourcing.
 
-[ -n "${AUTOCODER_ISSUE_EVENTS:-}" ] \
-  || export AUTOCODER_ISSUE_EVENTS="$(mktemp "${TMPDIR:-/tmp}/test-issue-events.XXXXXX")"
-[ -n "${AUTOCODER_MERGE_EVENTS:-}" ] \
-  || export AUTOCODER_MERGE_EVENTS="$(mktemp "${TMPDIR:-/tmp}/test-merge-events.XXXXXX")"
+# A failed mktemp (TMPDIR naming a missing directory) would export an empty path,
+# and an empty path falls back to the real log; retry in /tmp, then give up loudly.
+_pel_mk() { mktemp "${TMPDIR:-/tmp}/$1.XXXXXX" 2>/dev/null || mktemp "/tmp/$1.XXXXXX"; }
+[ -n "${AUTOCODER_ISSUE_EVENTS:-}" ] || AUTOCODER_ISSUE_EVENTS=$(_pel_mk test-issue-events)
+[ -n "${AUTOCODER_MERGE_EVENTS:-}" ] || AUTOCODER_MERGE_EVENTS=$(_pel_mk test-merge-events)
+unset -f _pel_mk
+if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ]; then
+  echo "private-event-logs.sh: cannot create a private event log; refusing to run against the real one" >&2
+  exit 1
+fi
+export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS

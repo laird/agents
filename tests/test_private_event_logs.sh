@@ -14,10 +14,10 @@ PASS=0; FAIL=0
 ok()  { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-echo "=== every tests/test_*.sh sources the prelude ==="
+echo "=== every tests/test_*.sh sources the prelude on line 2 ==="
 missing=""
 for t in "$ROOT"/tests/test_*.sh; do
-  grep -q 'lib/private-event-logs\.sh' "$t" || missing="$missing $(basename "$t")"
+  sed -n 2p "$t" | grep -q '^source .*/lib/private-event-logs\.sh"' || missing="$missing $(basename "$t")"
 done
 if [ -z "$missing" ]; then
   ok "all tests source tests/lib/private-event-logs.sh"
@@ -48,6 +48,11 @@ if [ -z "$(find "$FAKE_HOME" -name '*events.jsonl' 2>/dev/null)" ]; then
 else
   bad "event log written under HOME: $(find "$FAKE_HOME" -name '*events.jsonl')"
 fi
+
+echo "=== a failed mktemp falls back to /tmp, never an empty path ==="
+got=$(env -u AUTOCODER_ISSUE_EVENTS -u AUTOCODER_MERGE_EVENTS TMPDIR="$TMP/no-such-dir" bash -c '
+  source "$1"; printf "%s" "$AUTOCODER_ISSUE_EVENTS"' _ "$PRELUDE")
+case "$got" in /tmp/test-issue-events.*) ok "fell back to /tmp"; rm -f -- "$got" ;; *) bad "issue log is '$got'" ;; esac
 
 echo "=== a log the caller exported is kept ==="
 got=$(AUTOCODER_ISSUE_EVENTS="$TMP/mine.jsonl" AUTOCODER_MERGE_EVENTS="$TMP/m.jsonl" bash -c '
