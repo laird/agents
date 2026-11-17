@@ -75,7 +75,8 @@ ctl_verb_status() {
     case "$1" in
       --json)    shift ;;
       --session) [ $# -ge 2 ] || { ctl_usage "status: --session needs a value"; return; }
-                 session="$2"; shift 2 ;;
+                 session="$2"; shift 2
+                 case "$session" in */*|.*|"") ctl_usage "status: '$session' is not a session name"; return ;; esac ;;
       *)         ctl_usage "status: unknown argument '$1'"; return ;;
     esac
   done
@@ -106,7 +107,10 @@ ctl_verb_status() {
   # empty field (a worker with no pane) would shift every field after it.
   local i=0 nread=0 mux number worktree pane mstate
   for m in "${manifests[@]}"; do
-    jq -e 'type == "object"' "$m" >/dev/null 2>&1 || { echo "autocoder-ctl: skipping unreadable manifest $m" >&2; continue; }
+    if ! jq -e 'type == "object" and ((.workers // []) | type == "array")' "$m" >/dev/null 2>&1; then
+      [ -n "$session" ] && { rm -rf "$tmp"; ctl_fail "$root" "the manifest for session '$session' is unreadable"; return; }
+      echo "autocoder-ctl: skipping unreadable manifest $m" >&2; continue
+    fi
     nread=$((nread + 1))
     mux=$(jq -r '.mux // ""' "$m")
     while IFS=$'\x1f' read -r number worktree pane mstate; do
@@ -120,13 +124,15 @@ ctl_verb_status() {
   local j branch issue act workers=()
   for ((j = 1; j <= i; j++)); do
     IFS=$'\x1f' read -r m number worktree pane mstate < "$tmp/$j.row"
-    branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || true)
-    issue=$(printf '%s' "$branch" | sed -nE 's#^(feature|enhancement)/issue-([0-9]+)([^0-9].*)?$#\2#p')
+    # An empty worktree would make `git -C ""` read the caller's own checkout.
+    branch=""
+    [ -n "$worktree" ] && branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || true)
+    issue=$(printf '%s' "$branch" | sed -nE 's#^(feature|enhancement|fix)/issue-([0-9]+)([^0-9].*)?$#\2#p')
     act=$(cat "$tmp/$j.act" 2>/dev/null)
     printf '%s' "$act" | jq -e . >/dev/null 2>&1 || act='{"activity":"unknown","reason":"probe failed"}'
-    workers+=("$(jq -cn --arg session "$(basename "$m" .json)" --argjson number "$number" --arg worktree "$worktree" \
+    workers+=("$(jq -cn --arg session "$(basename "$m" .json)" --arg number "$number" --arg worktree "$worktree" \
       --arg pane "$pane" --arg state "$mstate" --arg branch "$branch" --arg issue "$issue" --argjson act "$act" \
-      '{session: $session, number: $number, worktree: $worktree, pane: (if $pane == "" then null else $pane end),
+      '{session: $session, number: ($number | tonumber? // null), worktree: $worktree, pane: (if $pane == "" then null else $pane end),
         state: $state, branch: (if $branch == "" then null else $branch end),
         issue: (if $issue == "" then null else ($issue | tonumber) end)} + $act')")
   done

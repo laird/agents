@@ -90,7 +90,7 @@ autocoder-ctl.sh status [--json] [--session <name>]
 Lists the workers of every swarm whose manifest is in the main worktree
 (`.autocoder/swarm/<session>.json`, see [swarm-manifest.md](swarm-manifest.md)),
 or of one session with `--session`. Output is always JSON; `--json` is accepted
-for callers that pass it. A named session with no manifest fails with exit 1.
+for callers that pass it. A named session with no manifest, or an unreadable one, fails with exit 1 (a name with `/` or a leading `.` is a usage error); when listing every session, an unreadable manifest is skipped with a note on stderr.
 No swarm at all is not an error: `{"swarms": 0, "workers": []}`.
 
 Each worker:
@@ -104,7 +104,7 @@ Each worker:
 | Key | Meaning |
 |---|---|
 | `state` | The worker's state in the manifest (`running`, `paused`, ...). |
-| `branch`, `issue` | The worktree's current branch, and the issue it works on when the branch is `feature/issue-N` or `enhancement/issue-N-auto`; `null` otherwise. |
+| `branch`, `issue` | The worktree's current branch, and the issue it works on when the branch is `feature/issue-N`, `fix/issue-N` or `enhancement/issue-N-auto`; `null` otherwise. |
 | `activity` | `busy`, `idle` or `unknown`, from `worker-idle.sh --pane` (a double sample of the pane, so a call takes its settle window, about 4 s; panes are probed in parallel). `unknown` when the manifest has no pane for the worker or the mux is one worker-idle cannot read. |
 | `reason` | worker-idle's reason for the verdict. An idle verdict with no explicit idle sentinel is the weaker inference: read the pane before acting on it. |
 

@@ -133,6 +133,17 @@ jq -e '.detail.workers[1] | .issue == 42 and .activity == "idle"' <<<"$OUT" >/de
   && ok "an enhancement branch is read as its issue, and idle" || bad "worker 2: $OUT"
 jq -e '.detail.workers[2] | .issue == null and .activity == "unknown" and .pane == null and .state == "paused"' <<<"$OUT" >/dev/null \
   && ok "a worker with no pane and no issue branch is unknown" || bad "worker 3: $OUT"
+run 2 false "a session name that walks out of the swarm dir" -- "$CTL" status --session ../../x
+run 2 false "a session name starting with a dot"             -- "$CTL" status --session .hidden
+run 1 false "a named session whose manifest is unreadable"   -- "$CTL" status --session broken
+jq -n '{session: "s2", mux: "tmux", workers: [{number: "x y", worktree: "", tmuxTarget: null, state: "paused"}]}' \
+  > .autocoder/swarm/s2.json
+git checkout -q -b fix/issue-77
+run 0 true "a worker with no worktree" -- "$CTL" status --session s2
+jq -e '.detail.workers[0] | .branch == null and .issue == null and .number == null' <<<"$OUT" >/dev/null \
+  && ok "no worktree is not read as the caller's checkout, and a bad number is null" || bad "s2: $OUT"
+git checkout -q master 2>/dev/null || git checkout -q main
+rm .autocoder/swarm/s2.json
 run 0 true "status --session picks one manifest" -- "$CTL" status --session s1
 jq -e '.detail.swarms == 1' <<<"$OUT" >/dev/null && ok "--session reads that session" || bad "--session: $OUT"
 
