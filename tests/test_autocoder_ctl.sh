@@ -136,6 +136,9 @@ jq -e '.detail.workers[2] | .issue == null and .activity == "unknown" and .pane 
 run 2 false "a session name that walks out of the swarm dir" -- "$CTL" status --session ../../x
 run 2 false "a session name starting with a dot"             -- "$CTL" status --session .hidden
 run 1 false "a named session whose manifest is unreadable"   -- "$CTL" status --session broken
+echo '{"workers": [1, {"number": 3}]}' > .autocoder/swarm/odd.json
+run 1 false "a manifest with a non-object worker is unreadable" -- "$CTL" status --session odd
+rm .autocoder/swarm/odd.json
 jq -n '{session: "s2", mux: "tmux", workers: [{number: "x y", worktree: "", tmuxTarget: null, state: "paused"}]}' \
   > .autocoder/swarm/s2.json
 git checkout -q -b fix/issue-77

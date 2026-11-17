@@ -107,7 +107,7 @@ ctl_verb_status() {
   # empty field (a worker with no pane) would shift every field after it.
   local i=0 nread=0 mux number worktree pane mstate
   for m in "${manifests[@]}"; do
-    if ! jq -e 'type == "object" and ((.workers // []) | type == "array")' "$m" >/dev/null 2>&1; then
+    if ! jq -e 'type == "object" and ((.workers // []) | type == "array" and all(.[]; type == "object"))' "$m" >/dev/null 2>&1; then
       [ -n "$session" ] && { rm -rf "$tmp"; ctl_fail "$root" "the manifest for session '$session' is unreadable"; return; }
       echo "autocoder-ctl: skipping unreadable manifest $m" >&2; continue
     fi
