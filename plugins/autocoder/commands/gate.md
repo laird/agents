@@ -67,6 +67,12 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
+A plan with `"resume": true` is **this worktree's own claim** (#182): the gate found an
+open `working` issue recorded for this worktree, or its `feature/issue-N` branch checked
+out here, and resumes it before claiming anything new. Dispatch it the same way. `/fix N`
+recognises the resume and skips its race check. Re-read the issue's comments and the
+branch's commits before continuing, so finished work is not redone.
+
 Each issue must run in a **fresh Claude process** for a clean context window. The mechanism
 depends on how the gate was invoked:
 
