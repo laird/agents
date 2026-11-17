@@ -246,6 +246,12 @@ For the file backend specifically, also exercise:
 
 ## F. `main-sentinel.sh` — post-merge gate for the integration branch
 
+> **`<tmp-root>`** below is where the merge job, sentinel and landing queue keep
+> their host-local state: `$AUTOCODER_TMP` if set, else a private per-user
+> `/tmp/autocoder-<uid>` (0700), else `~/.local/state/autocoder/tmp`
+> (`autocoder_tmp_root` in `repo-id-fns.sh`, #213). If you set `AUTOCODER_TMP`,
+> point it at a directory only you can write: anything there may be executed.
+
 `merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
 push onto an integration branch that is already red. The sentinel is what makes
 both safe: it tests the integration tip after merges land, and when the tip is
@@ -290,7 +296,7 @@ Each tick:
    (`pending_revert` in the state file), drops one that never reached origin.
 2. Reconciles hand-offs (below). An unmoved tip is then an idle tick.
 3. Gates the tip in a throwaway worktree
-   (`${AUTOCODER_TMP:-/tmp}/autocoder-sentinel-<repo-id>-<integration>/<pid>`,
+   (`<tmp-root>/autocoder-sentinel-<repo-id>-<integration>/<pid>`,
    seeded with `node_modules`/`dist` by `worktree-deps-fns.sh`, removed on exit)
    through `gate-cache-fns.sh`, so a tree a worker already gated costs nothing.
 4. Green: fast-forwards `origin/<green-ref>` to the tip, closes the red P0 if one
@@ -323,7 +329,7 @@ Each tick:
    its `run.sh` once (`setsid`, idempotent: a landed sha is not merged twice) or,
    failing that, is re-queued. Job files are
    `autocoder-merge-<repo-id>-<issue>.{pid,exit,run.sh,log}` under
-   `${AUTOCODER_TMP:-/tmp}` (the older `autocoder-merge-<issue>.*` names are read
+   `<tmp-root>` (the older `autocoder-merge-<issue>.*` names are read
    for one release); finished sets older than a day are reaped.
 8. Prunes tip refs more than 200 commits behind the green tip (keeping those a
    parked issue still needs) and gate-cache records older than 30 days.
@@ -370,7 +376,7 @@ with a one-line reason. Full how-to: [docs/environments.md](../../../docs/enviro
 ## Merge history: per-attempt logs and `merge-events.jsonl` (#184)
 
 Every merge attempt keeps its own log. `merge-launch.sh` archives the previous attempt's
-files as `${AUTOCODER_TMP:-/tmp}/autocoder-merge-<repo-id>-<issue>.<n>.log` and `.<n>.exit`.
+files as `<tmp-root>/autocoder-merge-<repo-id>-<issue>.<n>.log` and `.<n>.exit`.
 The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merge-poll.sh` reads.
 
 `merge-to-integration.sh` appends one JSON line per event to

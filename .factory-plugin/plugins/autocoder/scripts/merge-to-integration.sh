@@ -73,7 +73,7 @@
 #         refs/heads/<green-ref> exists on origin. The mode is logged once per run.
 #   - Overlap is measured with `git diff --name-only --no-renames`, so a sibling renaming a
 #     file this change edits shows up as that file, not as an unrelated new path.
-#   - Gates on one host share a cap: each gate_cache_run takes one of AUTOCODER_MAX_GATES
+#   - Gates on one host share a cap (per user: the slots live in the per-user temp root, #213): each gate_cache_run takes one of AUTOCODER_MAX_GATES
 #     slots (default max(1, nproc/4)), flock-held files
 #     <tmp-root>/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
 #     on the last. A job that has to wait says so in its log.

@@ -2,7 +2,8 @@
 # merge-events-lib.sh — an append-only record of every merge attempt (#184).
 #
 # WHY THIS EXISTS:
-#   Merge job files are per issue (/tmp/autocoder-merge-<repo>-<issue>.{log,exit,pid}),
+#   Merge job files are per issue (<tmp-root>/autocoder-merge-<repo>-<issue>.{log,exit,pid}, under
+#   autocoder_tmp_root),
 #   and each relaunch overwrote them. On agents-ui 66 job files showed one conflict
 #   while the issues themselves recorded 8 conflicts and 12 escalations: the history
 #   of bounces, retries and conflicting files was gone, so nothing could measure it.

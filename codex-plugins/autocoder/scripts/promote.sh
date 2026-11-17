@@ -78,7 +78,9 @@ cd "$REPO" || exit 1
 [ -z "$TEST_CMD" ] && TEST_CMD=$(resolve_test_cmd "$REPO")
 MAIN_WT=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
 CONFIG="${MAIN_WT:-$REPO}/.autocoder.json"
-TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
+# shellcheck source=repo-id-fns.sh
+source "${_PR_DIR}/repo-id-fns.sh"
+TMP_ROOT=$(autocoder_tmp_root) || exit 1   # private per-user dir (#213)
 
 # The pipeline as parallel arrays indexed by position. Every rule below is a function over
 # one index, so adding an environment is a config edit and never a new branch here.

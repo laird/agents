@@ -560,7 +560,9 @@ reconcile_handoffs() {
     fi
     [ -n "$base" ] && [ -f "$base.pid" ] && [ ! -f "$base.exit" ] || continue
     pid=$(cat "$base.pid" 2>/dev/null)
-    if [ -f "$base.run.sh" ] && [ ! -f "$base.rerun" ]; then
+    # Re-run only our own regular file (#213): an explicit shared AUTOCODER_TMP gets no
+    # private-directory protection, so never execute a run.sh someone else planted.
+    if [ -f "$base.run.sh" ] && [ ! -L "$base.run.sh" ] && [ -O "$base.run.sh" ] && [ ! -f "$base.rerun" ]; then
       : > "$base.rerun"
       rm -f "$base.pid"
       setsid bash "$base.run.sh" < /dev/null > /dev/null 2>&1 &

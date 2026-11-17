@@ -47,7 +47,7 @@ mkdir -p "$TMP/base4" "$TMP/xdg4/autocoder"
 eq "no safe directory: exit 1" "1" "$?"
 
 # ── every state writer/reader resolves through the helper ──────────────────
-for f in merge-launch.sh merge-poll.sh merge-queue-fns.sh main-sentinel.sh merge-to-integration.sh; do
+for f in merge-launch.sh merge-poll.sh merge-queue-fns.sh main-sentinel.sh merge-to-integration.sh promote.sh; do
   if grep -v '^\s*#' "$S/$f" | grep -q 'AUTOCODER_TMP:-/tmp'; then
     bad "$f still defaults to shared /tmp"
   else
@@ -93,6 +93,10 @@ eq "unwritable run.sh: launch refused (exit 1)" "1" "$RC"
 echo "$OUT" | grep -q "could not write" && ok "refusal names the problem" || bad "refusal output: $OUT"
 [ ! -e "$BASE2.pid" ] && ok "nothing was started" || bad "a job started anyway"
 [ -z "$(ls -d "$BASE2".scripts.* 2>/dev/null)" ] && ok "the snapshot was cleaned up" || bad "snapshot left behind"
+
+# The sentinel re-runs a dead job's run.sh only if it is our own regular file.
+grep -q '\[ -f "\$base.run.sh" \] && \[ ! -L "\$base.run.sh" \] && \[ -O "\$base.run.sh" \]' "$S/main-sentinel.sh" \
+  && ok "sentinel re-run checks run.sh ownership" || bad "sentinel re-runs run.sh without an ownership check"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"

@@ -17,7 +17,8 @@
 #
 # KEY:
 #   The lock is per (origin URL, integration branch), not per checkout, so two clones of
-#   one repo on the same host share a queue, and two branches of one repo do not. Without
+#   one repo for the same user on a host share a queue (the lock lives in the per-user
+#   temp root, autocoder_tmp_root, #213), and two branches of one repo do not. Without
 #   an origin URL it falls back to the repo id (repo-id-fns.sh).
 #
 #   <tmp-root>/autocoder-land-<key>.lock    flock(1) target
