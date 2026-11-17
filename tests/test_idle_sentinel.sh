@@ -729,6 +729,37 @@ EOF
   env -i HOME="$FAKEHOME" PATH="$BASEPATH" TMUX_TMPDIR="$TMUX_TMPDIR" TERM=xterm \
     tmux kill-session -t "$SESSION" 2>/dev/null
 
+  # #256: the consent check must tell claude's bypass-mode footer, shown the
+  # whole time an accepted --dangerously-skip-permissions manager runs, from
+  # the consent dialog itself. Each wake uses a stub claude that prints one.
+  consent_wake() {  # consent_wake <label> <screen text> → last_tick_result
+    local bin="$TMP/shim-$1" p sess
+    mkdir -p "$bin"
+    printf '#!/bin/bash\nprintf "%%s\\n" %q\nsleep 120\n' "$2" > "$bin/claude"
+    cp "$SHIM/crontab" "$bin/crontab"; chmod +x "$bin/claude"
+    p=$(new_project "$1" file); sess="claude-$(basename "$p")"
+    seed_state "$p" '{"version":1,"last_duty_wake_at":"2020-01-01T00:00:00Z"}'
+    env -i HOME="$FAKEHOME" PATH="$bin:$PATH" TMUX_TMPDIR="$TMUX_TMPDIR" TERM=xterm \
+      tmux new-session -d -s "$sess" -n review -x 200 -y 50
+    run_sentinel "$bin:$PATH" AUTOCODER_MUX=tmux AUTOCODER_SENTINEL_ACTIVITY_TIMEOUT=25 \
+      -- --once --project "$p" >/dev/null 2>&1
+    state_get_t "$p" last_tick_result
+    WPID=$(manifest_manager_field "$(manifest_path_for_session "$p" "$sess")" pid)
+    [ -n "$WPID" ] && CLEANUP_PIDS+=("$WPID")
+    env -i HOME="$FAKEHOME" PATH="$bin:$PATH" TMUX_TMPDIR="$TMUX_TMPDIR" TERM=xterm \
+      tmux kill-session -t "$sess" 2>/dev/null
+  }
+  R=$(consent_wake footer '⏵⏵ bypass permissions on (shift+tab to cycle)')
+  [ "$R" = "wake:duty" ] \
+    && ok "a manager showing the 'bypass permissions on' footer counts as started (#256)" \
+    || bad "footer wake: last_tick_result=$R, wanted wake:duty (#256)"
+  R=$(consent_wake dialog 'WARNING: Claude Code running in Bypass Permissions mode
+❯ 1. No, exit
+  2. Yes, I accept')
+  [ "$R" = "wake-failed:consent-dialog" ] \
+    && ok "the bypass-permissions consent dialog is still detected (#256)" \
+    || bad "dialog wake: last_tick_result=$R, wanted wake-failed:consent-dialog"
+
   # ═══════════════════════════════════════════════════════════════════════════
   # 9. start-parallel-agents.sh --manager-only (U2): manifest shape
   # ═══════════════════════════════════════════════════════════════════════════
