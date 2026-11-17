@@ -20,6 +20,7 @@ echo base > README.md && git add README.md && git commit -q -m base
 git branch -M master
 
 export ISSUE_SOURCE=file
+unset CLAUDE_CODE_SESSION_ID   # cases opt in explicitly; never inherit the runner's
 # Outside the repo, so the issue files never make the worktree look dirty.
 export ISSUE_DIR_PATH="$TMP/issues"
 WORK_JSON="$TMP/work.json"
@@ -138,6 +139,60 @@ _worker_still_ours '{"state":"OPEN","labels":[{"name":"working"}],"comments":[]}
   && ok "file backend (no claim comments, none recorded) is ours" || bad "file-backend record rejected"
 _worker_still_ours '{"state":"CLOSED","labels":[{"name":"working"}],"comments":[]}' "" \
   && bad "a closed issue was treated as held" || ok "a closed issue is not held"
+
+# ── 10. In-flight (#130): a /loop tick in the SAME session must not re-dispatch ─
+reset
+add_issue 20 "P2"
+CLAUDE_CODE_SESSION_ID=sess-A gate >/dev/null          # session A claims #20
+git branch -q feature/issue-20
+add_issue 21 "P0"
+CLAUDE_CODE_SESSION_ID=sess-A gate >/dev/null          # next tick, same session, still on master
+assert_eq "same session: the plan is #20" "20" "$(plan .issue)"
+assert_eq "same session: marked in_flight" "true" "$(plan .in_flight)"
+assert_eq "same session: the checkout is left alone" "master" "$(git branch --show-current)"
+[ -f "$ISSUE_DIR_PATH/open/021.md" ] && ok "same session: #21 was not claimed" || bad "same session: #21 was claimed mid-issue"
+echo wip >> README.md
+CLAUDE_CODE_SESSION_ID=sess-A gate >/dev/null
+assert_eq "same session, dirty tree: still reported in_flight (not idled)" "true" "$(plan .in_flight)"
+git checkout -q -- README.md
+
+CLAUDE_CODE_SESSION_ID=sess-B gate >/dev/null          # a restart: new session
+assert_eq "new session: resumes #20" "20" "$(plan .issue)"
+assert_eq "new session: not in_flight, so /fix is dispatched" "false" "$(plan .in_flight)"
+assert_eq "new session: switched to feature/issue-20" "feature/issue-20" "$(git branch --show-current)"
+CLAUDE_CODE_SESSION_ID=sess-B gate >/dev/null
+assert_eq "the resuming session now owns it: its next tick is in_flight" "true" "$(plan .in_flight)"
+(unset CLAUDE_CODE_SESSION_ID; gate >/dev/null)        # shell-loop: no session
+assert_eq "outside a session: never in_flight" "false" "$(plan .in_flight)"
+git checkout -q master
+
+# Shell-loop mode: a session id inherited by the wrapper must never mark in_flight.
+CLAUDE_CODE_SESSION_ID=sess-B AUTOCODER_NEXT_FIX_FILE="$TMP/handoff" gate >/dev/null
+assert_eq "shell-loop mode ignores an inherited session id" "false" "$(plan .in_flight)"
+assert_eq "...and records none" "-" "$(cut -d' ' -f3 "$STATE" 2>/dev/null)"
+# Shell-loop mode on a FRESH claim (fix-loop-gate.sh's own recording, not a resume).
+reset
+add_issue 30 "P1"
+CLAUDE_CODE_SESSION_ID=sess-B AUTOCODER_NEXT_FIX_FILE="$TMP/handoff" gate >/dev/null
+assert_eq "shell-loop fresh claim: #30 claimed" "30" "$(plan .issue)"
+assert_eq "shell-loop fresh claim: no session recorded" "-" "$(cut -d' ' -f3 "$STATE" 2>/dev/null)"
+CLAUDE_CODE_SESSION_ID=sess-B gate >/dev/null
+assert_eq "...so a later tick with that inherited id is not in_flight" "false" "$(plan .in_flight)"
+add_issue 20 "P2"; backend issue_claim 20
+git branch -q -f feature/issue-20 master 2>/dev/null || true
+# A two-field record written before session ids existed still resumes.
+git checkout -q master
+printf '20 %s\n' "$(cut -d' ' -f2 "$STATE")" > "$STATE"
+CLAUDE_CODE_SESSION_ID=sess-C gate >/dev/null
+assert_eq "an old two-field record resumes #20" "20" "$(plan .issue)"
+assert_eq "...as a new session, not in_flight" "false" "$(plan .in_flight)"
+git checkout -q master
+
+GATE_MD="$SCRIPT_DIR/../commands/gate.md"
+grep -q '"in_flight": true' "$GATE_MD" && grep -q 'Never invoke' "$GATE_MD" \
+  && grep -q 'If none is running' "$GATE_MD" \
+  && ok "gate.md documents the in_flight rule (no re-dispatch; a pick-up branch)" \
+  || bad "gate.md does not document the in_flight rule"
 
 # ── 9. AUTOCODER_RESUME_OWN_CLAIM=0 turns resume off ────────────────────────
 reset

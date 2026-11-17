@@ -67,11 +67,41 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
-A plan with `"resume": true` is **this worktree's own claim** (#182): the gate found an
-open `working` issue recorded for this worktree, or its `feature/issue-N` branch checked
-out here, and resumes it before claiming anything new. Dispatch it the same way. `/fix N`
-recognises the resume and skips its race check. Re-read the issue's comments and the
-branch's commits before continuing, so finished work is not redone.
+**`"in_flight": true`: this session already holds the issue (#130).** In inline `/loop`
+mode a tick can fire while this very session is mid-issue. The gate recognises its own
+session and does not claim new work or touch the checkout. **Never invoke
+`/autocoder:fix` and never write a handoff file for an in-flight issue**: `/fix`'s claim
+steps are already done, and re-running them can race the work in progress. Decide which
+case applies by checking, not by recollection:
+
+1. **Is anything for this issue still running?** Check each of these:
+   - a merge job: run `merge-poll.sh --issue <issue>` from this checkout (it waits about
+     60 s). Exit **75** means a job is running. Any other exit means none is running
+     here;
+   - a background agent or task you started for it that has not reported back;
+   - a test or build you started in the background.
+
+   **If any is running:** emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick. The
+   next tick checks again.
+2. **If none is running:** the work was interrupted, abandoned or forgotten, perhaps
+   after a compaction. The gate reports `in_flight` only while the issue is open and
+   still `working`; a merge job's hand-off swaps that label away, so a handed-off issue
+   never reaches this step. Before touching anything, confirm it is still open and
+   `working` (`issue_get <issue>`). If it is not, stop. Then pick it up in this session:
+   - if the tree is not on `feature/issue-<issue>`, switch only when `git status` shows no
+     tracked changes; otherwise stop and report the dirty tree instead;
+   - re-read the issue's comments and `git log origin/<integration>..HEAD`;
+   - carry on with the remaining steps (implement, test, review, land) as `/fix`
+     describes them, without re-running its claim sequence.
+
+   A held issue must not sit idle, or it stays `working` with nobody on it.
+
+A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
+picked up by a new session** (#182): a restart or a fresh worker process found an open
+`working` issue recorded for this worktree and resumes it before claiming anything new.
+Dispatch it the same way. `/fix N` recognises the resume and skips its race check.
+Re-read the issue's comments and the branch's commits before continuing, so finished
+work is not redone.
 
 Each issue must run in a **fresh Claude process** for a clean context window. The mechanism
 depends on how the gate was invoked:
