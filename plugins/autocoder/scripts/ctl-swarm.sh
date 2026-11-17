@@ -86,7 +86,13 @@ _ctls_pick() {  # <session-or-empty>
 _ctls_run() {  # <dir> <cmd> [args...]
   local dir="$1" log; shift
   log=$(mktemp "${TMPDIR:-/tmp}/autocoder-ctl-swarm.XXXXXX") || { _S_RC=1; _S_LAST="cannot create a temp file"; return; }
-  (cd "$dir" && "$@") </dev/null >"$log" 2>&1; _S_RC=$?
+  # The wrapped launchers hold their first prompt back from an agent showing a
+  # dialog that matches AUTOCODER_CONSENT_PATTERN (send_agent_prompt in
+  # mux-send-lib.sh, #253). Widen it with this file's own patterns, so a prompt
+  # these verbs would report is one the launcher never answered.
+  (cd "$dir" && source "${_ctls_DIR}/mux-send-lib.sh" \
+     && export AUTOCODER_CONSENT_PATTERN="$AUTOCODER_CONSENT_PATTERN|$AUTOCODER_CTL_TRUST_PATTERN|$AUTOCODER_CTL_CONSENT_PATTERN" \
+     && "$@") </dev/null >"$log" 2>&1; _S_RC=$?
   cat "$log" >&2
   _S_LAST=$(grep -v '^[[:space:]]*$' "$log" | tail -n 1 | sed 's/\x1b\[[0-9;]*m//g')
   _S_OUT=$(sed 's/\x1b\[[0-9;]*m//g' "$log")

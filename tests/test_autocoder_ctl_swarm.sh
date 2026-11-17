@@ -48,6 +48,7 @@ SH
 cat > "$STUB/start" <<'SH'
 #!/bin/bash
 printf 'start %s cwd=%s stdin_tty=%s\n' "$(IFS='|'; echo "$*")" "$(pwd -P)" "$([ -t 0 ] && echo y || echo n)" >> "$AUTOCODER_TEST_STUB/calls.log"
+printf '%s\n' "${AUTOCODER_CONSENT_PATTERN:-}" > "$AUTOCODER_TEST_STUB/consent-pattern"
 [ -f "$AUTOCODER_TEST_STUB/start-fail" ] && { echo "❌ Error: cmux is not running" >&2; exit 1; }
 # Already running: writes nothing, though another swarm's manifest changes meanwhile.
 [ -f "$AUTOCODER_TEST_STUB/start-exists" ] && { touch .autocoder/swarm/*.json 2>/dev/null; echo "⚠️  Session 'claude-repo' already exists"; exit 0; }
@@ -178,6 +179,14 @@ hasnt  "start-parallel-agents is not run"   "^start "
 rm -f "$STUB/plugin-install-fail"
 
 run 0 true "start installs a missing plugin, then starts" -- start "$REPO" --agent claude --workers 2 --mux tmux --route manager
+# The launcher's own first-prompt guard (#253) holds back from everything start
+# reports: the lib's default dialogs and ctl's trust/consent patterns.
+pat=$(cat "$STUB/consent-pattern")
+for screen in "Do you trust this folder?" "Trust this workspace?" "Yes, I accept"; do
+  grep -Eq "$pat" <<<"$screen" && ok "launcher guard covers: $screen" || bad "launcher guard misses: $screen (pattern: $pat)"
+done
+grep -Eq "$pat" <<<"  ⏵⏵ bypass permissions on (shift+tab to cycle)" \
+  && bad "launcher guard matches claude's bypass footer" || ok "launcher guard ignores claude's bypass footer"
 has    "the plugin is installed for the agent" "claude plugin|install|autocoder@plugin-marketplace"
 has    "start-parallel-agents gets the options, --no-attach and no terminal" \
        "start 2|--agent|claude|--no-attach|--mux|tmux|--route|manager cwd=$REPO stdin_tty=n"
