@@ -57,7 +57,9 @@
 #       among the last `claims.hot_window` attempts for this repo. The window is
 #       a number of attempts (default 50) or a number of days, written "7d".
 #       Events recorded for another repo id are ignored. No events file means no
-#       hot files, silently.
+#       hot files, silently. At most 200 files, from the most recent conflicts;
+#       glob characters in a file name are printed escaped (`[[]id]`), so the
+#       name matches only itself.
 #
 # Run directly, `touches-fns.sh hot` lists the hot files for the repo in the
 # current directory, using its main worktree's .autocoder.json (for the manager).
@@ -127,6 +129,7 @@ WILD = re.compile(r"[*?\[]")
 
 MAX_SEGS = 32     # an area deeper than this is cut to its first segments
 MAX_AREAS = 32    # areas read per issue
+MAX_HOT = 200     # hot files read from the merge history
 
 def segs(area):
     out = []
@@ -297,13 +300,19 @@ elif cmd == "hot":
         window = [ev for ev in attempts if recent(ev)]
     else:
         window = attempts[-count:]
-    hot = set()
-    for ev in window:
+    # Most recent conflicts first, capped: one mass conflict (a rename) must not
+    # make the gate compare thousands of files with every in-flight claim.
+    hot = []
+    for ev in reversed(window):
         if ev.get("outcome") != "conflict" or not isinstance(ev.get("files"), list):
             continue
-        hot.update(clean(f) for f in ev["files"] if isinstance(f, str) and clean(f))
+        for f in ev["files"]:
+            f = clean(f) if isinstance(f, str) else ""
+            if f and f not in hot and len(hot) < MAX_HOT:
+                hot.append(f)
+    # Hot entries are real file names, not globs: `app/[id]/page.tsx` is literal.
     for h in sorted(hot):
-        print(h)
+        print(re.sub(r"[\[*?]", lambda m: "[" + m.group(0) + "]", h))
 PY
 )
 

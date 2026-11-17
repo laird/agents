@@ -270,6 +270,22 @@ assert_eq "bad window: warns" yes "$(grep -q "unknown claims.hot_window 'soon'" 
 assert_eq "touches-fns.sh hot lists the hot files" "$(printf 'src/ancient.rs\nsrc/fresh.rs')" \
   "$(bash "$SCRIPT_DIR/touches-fns.sh" hot 2>/dev/null)"
 
+# 13b. Hot names are literal (escaped globs), and at most 200 are read.
+rm -f "$EVENTS"; hot_cfg prefer
+ev conflict 'app/[id]/page.tsx'
+assert_eq "hot names: glob characters escaped" 'app/[[]id]/page.tsx' \
+  "$(touches_hot_files .autocoder.json "$REPO_ID")"
+assert_eq "hot names: an escaped name does not match a sibling" no \
+  "$(areas_overlap 'app/[[]id]/page.tsx' 'app/x/page.tsx' && echo yes || echo no)"
+assert_eq "hot names: an escaped name matches its directory" yes \
+  "$(areas_overlap 'app/[[]id]/page.tsx' 'app/' && echo yes || echo no)"
+rm -f "$EVENTS"
+ev conflict "$(seq -s, -f 'old/f%g.rs' 1 300)"
+ev conflict src/newest.rs
+assert_eq "hot cap: at most 200 files" 200 "$(touches_hot_files .autocoder.json "$REPO_ID" | wc -l | tr -d ' ')"
+assert_eq "hot cap: the most recent conflict is kept" yes \
+  "$(touches_hot_files .autocoder.json "$REPO_ID" | grep -qx src/newest.rs && echo yes)"
+
 # 14. Gate, prefer: two candidates on one hot file are never in flight at once.
 rm -f "$EVENTS"; ev conflict src/web/server.rs
 hot_cfg prefer; reset_issues
