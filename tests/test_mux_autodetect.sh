@@ -53,8 +53,13 @@ grep -q 'cmux_is_running()' "$LIB" || fail "mux-send-lib.sh does not define cmux
 source "$LIB"
 make_cmux_stub
 
-# 3a. cmux not installed at all -> probe must fail (and not error out)
-PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash -c "
+# 3a. cmux not installed at all -> probe must fail (and not error out).
+# PATH is an empty directory, not the system dirs, which may hold a real cmux
+# (same flaw as #194's herdr case). bash is run by absolute path.
+NO_TOOLS_DIR="$STUB_DIR/no-tools"
+mkdir -p "$NO_TOOLS_DIR"
+BASH_BIN=$(command -v bash)
+PATH="$NO_TOOLS_DIR" "$BASH_BIN" -c "
   source '$LIB'
   cmux_is_running && exit 1 || exit 0
 " || fail "probe should fail when cmux is not installed"

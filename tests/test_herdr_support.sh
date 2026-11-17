@@ -87,8 +87,14 @@ for fn in herdr_is_running send_herdr_command validate_herdr_target; do
 done
 
 # ── 2. Liveness probe semantics (installed ≠ running) ────────────────────────
-# 2a. herdr not installed at all -> probe fails without erroring out
-if PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash -c "source '$LIB'; herdr_is_running" 2>/dev/null; then
+# 2a. herdr not installed at all -> probe fails without erroring out.
+# PATH is an empty directory, not the system dirs: swarm hosts install herdr in
+# /usr/bin, so "/usr/bin:/bin" still finds it (#194). bash is run by absolute
+# path; the probe's `command -v herdr` is a builtin and needs nothing on PATH.
+NO_TOOLS_DIR="$STUB_DIR/no-tools"
+mkdir -p "$NO_TOOLS_DIR"
+BASH_BIN=$(command -v bash)
+if PATH="$NO_TOOLS_DIR" "$BASH_BIN" -c "source '$LIB'; herdr_is_running" 2>/dev/null; then
   fail "probe should fail when herdr is not installed"
 else
   pass "probe fails when herdr is not installed"
