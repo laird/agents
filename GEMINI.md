@@ -60,6 +60,12 @@ Each backend is a self-contained script implementing the same 9-verb contract (l
 | `approve-blocked-issue.sh` | `.agent/scripts/approve-blocked-issue.sh` | `plugins/autocoder/scripts/approve-blocked-issue.sh` |
 | `reject-blocked-issue.sh` | `.agent/scripts/reject-blocked-issue.sh` | `plugins/autocoder/scripts/reject-blocked-issue.sh` |
 
+`.agent/scripts/` is a **generated mirror** (#153): `scripts/package-plugin-scripts.py`
+fills it, and `tests/test_script_packaging.sh` fails on drift. Edit the plugin copy
+and re-run the packager. The exceptions are the scripts listed as `local` for the
+`antigravity` platform (`start-parallel-agents.sh`, `end-parallel-agents.sh`,
+`regression-test.sh`), which carry Antigravity adaptations and are still synced by hand.
+
 ## Workflows
 
 Available workflows in `.agent/workflows/`:

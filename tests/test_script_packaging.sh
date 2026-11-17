@@ -76,6 +76,35 @@ else
   ok "worker-launch-lib.sh resolves loop drivers relative to itself"
 fi
 
+# ── Antigravity's .agent/scripts is a managed mirror, not a hand copy (#153) ──
+# Every consumer's SCRIPT_DIR resolver tries .agent/scripts FIRST, so a stale
+# issue backend there shadows the current one. The backend layer must be byte
+# identical to the plugin's; the declared hand-maintained adaptations must not
+# be overwritten by the packager.
+for f in issue-fns.sh issues-gh.sh issues-file.py issues-jira.sh issues-ado.sh issue-config.sh issue-deps.sh fix-loop-gate.sh; do
+  if cmp -s "plugins/autocoder/scripts/$f" ".agent/scripts/$f"; then
+    ok ".agent/scripts/$f matches the plugin copy"
+  else
+    bad ".agent/scripts/$f missing or differs from plugins/autocoder/scripts/$f"
+  fi
+done
+for f in start-parallel-agents.sh end-parallel-agents.sh regression-test.sh; do
+  if grep -qiE 'antigravity|GEMINI\.md' ".agent/scripts/$f" 2>/dev/null; then
+    ok ".agent/scripts/$f keeps its Antigravity adaptation"
+  else
+    bad ".agent/scripts/$f lost its Antigravity adaptation (packager overwrote a 'local' script?)"
+  fi
+done
+if python3 - <<'PYCHK'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pk", "scripts/package-plugin-scripts.py")
+pk = importlib.util.module_from_spec(spec); spec.loader.exec_module(pk)
+ag = pk.PLATFORMS["antigravity"]
+sys.exit(0 if ag["package"] == ".agent/scripts" and ag.get("adopt") else 1)
+PYCHK
+then ok "antigravity is a packager platform that adopts its existing scripts"
+else bad "antigravity platform missing from the packager, or not adopting"; fi
+
 echo ""
 echo "$PASS passed / $FAIL failed / $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

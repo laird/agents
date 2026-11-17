@@ -30,6 +30,7 @@
 #   worker-idle.sh --all --json
 #
 # Options:
+#   --mux tmux|herdr     multiplexer (default: auto-detect; tmux wins when both host panes)
 #   --settle-seconds N   gap between the two samples (default 4)
 #   --json               machine-readable output
 #
@@ -38,6 +39,12 @@
 #   --all  : 0 if at least one pane is IDLE, 1 if none are, 2 on error
 #
 # Env: AUTOCODER_IDLE_SETTLE_SECONDS overrides --settle-seconds.
+#
+# herdr: the same double-sample logic runs over `herdr agent read`, with one
+# extra fast path — herdr tracks agent state natively, so `agent_status ==
+# "working"` proves BUSY before any capture. Native status is never allowed to
+# prove IDLE on its own (a worker parked at a permission prompt reads "idle"
+# too); the settle-window comparison stays the load-bearing check.
 
 set -e
 
@@ -46,14 +53,16 @@ CAPTURE_LINES="${AUTOCODER_IDLE_CAPTURE_LINES:-40}"
 TARGET_PANE=""
 ALL=false
 JSON=false
+MUX="${AUTOCODER_MUX:-}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --pane) TARGET_PANE="$2"; shift 2 ;;
     --all) ALL=true; shift ;;
     --json) JSON=true; shift ;;
+    --mux) MUX="$2"; shift 2 ;;
     --settle-seconds) SETTLE_SECONDS="$2"; shift 2 ;;
-    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "worker-idle: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -63,7 +72,36 @@ if [ -z "$TARGET_PANE" ] && [ "$ALL" = false ]; then
   exit 2
 fi
 
-command -v tmux >/dev/null 2>&1 || { echo "worker-idle: tmux not found" >&2; exit 2; }
+herdr_is_running() {
+  command -v herdr >/dev/null 2>&1 && herdr agent list >/dev/null 2>&1
+}
+
+# Auto-detect. The test harness pins tmux via AUTOCODER_TMUX_SOCKET; a live tmux
+# server with panes wins next (matches start-parallel-agents.sh precedence when
+# not launched from inside herdr); herdr is chosen when it is the only
+# multiplexer actually hosting anything.
+if [ -z "$MUX" ]; then
+  if [ -n "${AUTOCODER_TMUX_SOCKET:-}" ]; then
+    MUX="tmux"
+  elif [ "${HERDR_ENV:-}" = "1" ] && herdr_is_running; then
+    MUX="herdr"
+  elif command -v tmux >/dev/null 2>&1 && tmux list-panes -a >/dev/null 2>&1; then
+    MUX="tmux"
+  elif herdr_is_running; then
+    MUX="herdr"
+  else
+    MUX="tmux"
+  fi
+fi
+
+case "$MUX" in
+  tmux)
+    command -v tmux >/dev/null 2>&1 || { echo "worker-idle: tmux not found" >&2; exit 2; } ;;
+  herdr)
+    herdr_is_running || { echo "worker-idle: herdr not running" >&2; exit 2; }
+    command -v jq >/dev/null 2>&1 || { echo "worker-idle: herdr mode needs jq" >&2; exit 2; } ;;
+  *) echo "worker-idle: unsupported --mux '$MUX' (tmux|herdr)" >&2; exit 2 ;;
+esac
 
 # All tmux access goes through this one wrapper so the test suite can point the
 # script at a throwaway server (`-L <socket>`) instead of the developer's live
@@ -85,7 +123,11 @@ tmux_cmd() {
 # which the script would then refuse to classify as "your own pane": a busy
 # worker silently exempted from monitoring, which is the same family of bug
 # this script exists to kill. No $TMUX means no self pane, so classify all.
-if [ -n "${TMUX_PANE:-}" ]; then
+if [ "$MUX" = "herdr" ]; then
+  # Inside a herdr pane, `herdr pane current` answers for the calling pane.
+  # Outside one it errors, which correctly leaves no self pane to exclude.
+  SELF_PANE="$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null || true)"
+elif [ -n "${TMUX_PANE:-}" ]; then
   SELF_PANE="$TMUX_PANE"
 elif [ -n "${TMUX:-}" ]; then
   SELF_PANE="$(tmux_cmd display-message -p '#{pane_id}' 2>/dev/null || true)"
@@ -106,15 +148,35 @@ BUSY_PATTERNS='\([0-9]+m [0-9]+s( |·)|\([0-9]+s( |·)|↓ *[0-9.]+k? tokens|esc
 IDLE_PATTERNS='IDLE_NO_WORK_AVAILABLE|Brewed for [0-9]+m'
 
 pane_snapshot() {
+  if [ "$MUX" = "herdr" ]; then
+    # Screen content plus the terminal title (carries the spinner) — same
+    # composition as the tmux snapshot.
+    herdr agent read "$1" --lines "$CAPTURE_LINES" --format text 2>/dev/null
+    herdr agent list 2>/dev/null | jq -r --arg p "$1" \
+      '.result.agents[] | select(.pane_id==$p) | (.terminal_title // "")' 2>/dev/null
+    return
+  fi
   # Pane content AND title: the title carries the spinner even when the
   # status line has scrolled out of the captured window.
   tmux_cmd capture-pane -t "$1" -p 2>/dev/null | tail -n "$CAPTURE_LINES"
   tmux_cmd display-message -p -t "$1" '#{pane_title}|#{pane_current_command}' 2>/dev/null
 }
 
+herdr_agent_status() {
+  herdr agent list 2>/dev/null | jq -r --arg p "$1" \
+    '.result.agents[] | select(.pane_id==$p) | .agent_status // "unknown"' 2>/dev/null
+}
+
 # Prints IDLE or BUSY plus the reason, tab-separated.
 classify_pane() {
   local pane="$1" first second
+
+  # herdr fast path: native state can prove BUSY early (never IDLE — a worker
+  # parked at a permission prompt also reports "idle"/"blocked").
+  if [ "$MUX" = "herdr" ] && [ "$(herdr_agent_status "$pane")" = "working" ]; then
+    printf 'BUSY\therdr agent_status=working\n'
+    return
+  fi
 
   first="$(pane_snapshot "$pane")"
   if [ -z "$first" ]; then
@@ -175,9 +237,13 @@ if [ -n "$TARGET_PANE" ]; then
 fi
 
 # --all
-panes="$(tmux_cmd list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+if [ "$MUX" = "herdr" ]; then
+  panes="$(herdr agent list 2>/dev/null | jq -r '.result.agents[].pane_id' 2>/dev/null || true)"
+else
+  panes="$(tmux_cmd list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+fi
 if [ -z "$panes" ]; then
-  echo "worker-idle: no tmux panes found" >&2
+  echo "worker-idle: no $MUX panes found" >&2
   exit 2
 fi
 

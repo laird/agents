@@ -104,6 +104,39 @@ PLATFORMS = {
             "pi-manage-workers-loop.sh",
         ],
     },
+    # Antigravity reads .agent/ (workflows + rules, no marketplace), so
+    # .agent/scripts IS its package. It used to be hand-synced and drifted badly
+    # (#153): its issue-fns.sh predated issue_claim/issue_any_claimable, its
+    # issues-file.py the bucket layout, and issues-gh.sh did not exist -- while
+    # every consumer's SCRIPT_DIR resolver tries .agent/scripts FIRST, so the
+    # stale copy shadowed the current one in this repo.
+    #
+    # Every script already in the tree is a seed too ("adopt"), so no copy that
+    # also exists upstream can go stale unnoticed. The "local" scripts carry
+    # deliberate Antigravity adaptations (workspace windows, GEMINI.md config)
+    # and stay hand-maintained: they are their own source, never overwritten,
+    # and the closure follows THEIR references, not the plugin copies'.
+    "antigravity": {
+        "package": ".agent/scripts",
+        "content": [".agent/workflows", ".agent/rules", ".agent/shared", ".agent/protocols"],
+        "adopt": True,
+        "local": [
+            "start-parallel-agents.sh",
+            "end-parallel-agents.sh",
+            "regression-test.sh",
+        ],
+        "entry_points": [
+            "start-parallel-agents.sh",
+            "join-parallel-agents.sh",
+            "end-parallel-agents.sh",
+            "fetch-blocked-issues.sh",
+            "add-blocking-label.sh",
+            "approve-blocked-issue.sh",
+            "reject-blocked-issue.sh",
+            "append-to-history.sh",
+            "issue-fns.sh",
+        ],
+    },
     # Gemini loads this repo's skills as a CLI extension, so skills/autocoder/
     # IS the Gemini package. Its scripts land inside it for that reason, and
     # they are mirrored into plugins/autocoder/skills/autocoder/scripts/ by the
@@ -213,10 +246,31 @@ def closure(platform: str, seeds: set[str], index: dict[str, Path]) -> set[str]:
     return seen
 
 
+def platform_index(platform: str, index: dict[str, Path]) -> dict[str, Path]:
+    """The index as one platform sees it: its hand-maintained ("local")
+    scripts resolve to the package's own copy, so they are never overwritten
+    and the closure follows what that copy actually references."""
+    spec = PLATFORMS[platform]
+    local = spec.get("local", [])
+    if not local:
+        return index
+    view = dict(index)
+    package = ROOT / spec["package"]
+    for name in local:
+        if (package / name).is_file():
+            view[name] = package / name
+    return view
+
+
 def wanted(platform: str, index: dict[str, Path]) -> set[str]:
     spec = PLATFORMS[platform]
     seeds = set(spec["entry_points"]) | mentioned_scripts(spec["content"])
-    return closure(platform, seeds, index)
+    if spec.get("adopt"):
+        package = ROOT / spec["package"]
+        if package.is_dir():
+            seeds |= {p.name for p in package.iterdir()
+                      if p.is_file() and p.suffix in SCRIPT_SUFFIXES}
+    return closure(platform, seeds, platform_index(platform, index))
 
 
 def targets(spec: dict) -> list[Path]:
@@ -379,11 +433,12 @@ def sync() -> int:
     index = build_index()
     for platform, spec in PLATFORMS.items():
         names = sorted(wanted(platform, index))
+        view = platform_index(platform, index)
         for directory in targets(spec):
             directory.mkdir(parents=True, exist_ok=True)
             copied = 0
             for name in names:
-                src = index[name]
+                src = view[name]
                 dst = directory / name
                 # Never copy a file onto itself (claude's package IS a source).
                 if src.resolve() == dst.resolve():
@@ -400,10 +455,11 @@ def check() -> int:
     problems = 0
     for platform, spec in PLATFORMS.items():
         names = sorted(wanted(platform, index))
+        view = platform_index(platform, index)
         for directory in targets(spec):
             rel = directory.relative_to(ROOT)
             for name in names:
-                src = index[name]
+                src = view[name]
                 dst = directory / name
                 if src.resolve() == dst.resolve():
                     continue

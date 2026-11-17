@@ -206,6 +206,12 @@ Located in `scripts/` directory:
 - `approve-blocked-issue.sh`: `plugins/autocoder/scripts/approve-blocked-issue.sh` ↔ `.agent/scripts/approve-blocked-issue.sh`
 - `reject-blocked-issue.sh`: `plugins/autocoder/scripts/reject-blocked-issue.sh` ↔ `.agent/scripts/reject-blocked-issue.sh`
 
+`.agent/scripts/` is a **generated mirror** (#153): `scripts/package-plugin-scripts.py`
+fills it, and `tests/test_script_packaging.sh` fails on drift. Edit the plugin copy
+and re-run the packager. The exceptions are the scripts listed as `local` for the
+`antigravity` platform (`start-parallel-agents.sh`, `end-parallel-agents.sh`,
+`regression-test.sh`), which carry Antigravity adaptations and are still synced by hand.
+
 ### Skill Packaging
 
 `skills/` at the repo root is the source of truth, but a skill that lives only

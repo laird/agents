@@ -1,0 +1,772 @@
+#!/bin/bash
+# merge-to-integration.sh — land a completed feature/enhancement branch on the shared
+# integration branch (default: main) in a way that is safe for parallel git worktrees.
+#
+# WHY THIS EXISTS:
+#   The /fix auto-merge step used to do `git checkout "$PARENT_BRANCH"; git merge; git push`,
+#   where PARENT_BRANCH = the branch the worktree was currently on. In a parallel-worktree
+#   swarm each worktree sits on its own `main-wt-N` branch (git forbids checking out `main`
+#   in two worktrees at once), so fixes got merged into and pushed to per-worktree branches
+#   and NEVER reached `main`. Work fragmented across main-wt-1/2/3 and was never integration-
+#   tested together.
+#
+#   This helper instead lands the work on origin/<integration-branch> WITHOUT checking out
+#   that branch locally (so it never contends with other worktrees), re-runs the test suite
+#   on the combined tree, and pushes with a fetch+merge+retry loop to survive sibling workers
+#   racing to push. Conflicts escalate to a human label instead of stranding work.
+#
+#   #1821: this used to do all of that IN the caller's own worktree — `git checkout
+#   "$FEATURE"` right here, then fetch/merge/test/push in place. merge-launch.sh runs this
+#   detached (#1693) so the caller can move on immediately; in practice the /fix loop reused
+#   that same worktree for the NEXT issue's branch before this finished, so N gates ended up
+#   sharing one working tree, each `git checkout`-ing a different branch into it mid-flight.
+#   One gate's test run and push could observe (and push) a DIFFERENT branch's tree than the
+#   one it was asked to verify — exactly the failure PUSH & MERGE CONTRACT exists to prevent.
+#   The fix is isolation, not serialization: do all of this in a throwaway `git worktree add`
+#   keyed to $ISSUE_NUM, so nothing another /fix iteration does to the caller's own checkout
+#   can touch it. The throwaway worktree is removed unconditionally on exit — it exists only
+#   to get this fix's tree tested and pushed, never to persist.
+#
+# GATE COST:
+#   In 938 measured runs 41% of pushes lost the race to a sibling, and every lost race used
+#   to re-run the full gate (8-30 minutes) on the re-synced tree. Three things cut that:
+#
+#   - Every gate run goes through gate-cache-fns.sh, keyed by <tree, command>. A tree this
+#     host already recorded as passing (this worker earlier, or a sibling) is not run again.
+#   - A rejected push re-gates only when the incoming commits overlap this change: a file
+#     this fix touched, a global path (lockfiles, manifests, build config, CI), or a path
+#     the gate command itself runs. A disjoint re-sync is pushed as-is; the success line
+#     then names the gated tree and the published tree separately instead of claiming the
+#     published tree was verified, and under --own-issue the issue is parked, not closed.
+#       AUTOCODER_GATE_GLOBAL_PATHS  space-separated bash globs, matched against each
+#         incoming path and its basename. The default is REGATE_GLOBAL_PATHS_DEFAULT in regate-fns.sh,
+#         the one place the list lives: JS/TS, .NET, Go, Rust, Python and Ruby manifests
+#         and lockfiles, Makefile, Dockerfile*, CI, the agent doctrine files, conftest.py.
+#       Gate-command paths: every whitespace token of the gate command that names a file
+#         or directory in the tree (e.g. tests/run-shell-suite.sh, scripts/) is global too,
+#         a directory covering everything under it. The gate's own code changing is a
+#         reason to re-run it, whatever this change touched.
+#       AUTOCODER_SCOPED_REGATE  default 1; 0 re-gates every re-sync that brought in work,
+#         for a repo that wants the integration branch itself kept strictly green.
+#   - A re-sync whose incoming files are ALL documents (test-cmd-fns.sh's is_docs_path:
+#     Markdown, reStructuredText, AsciiDoc, docs/, plus AUTOCODER_DOCS_PATHS, minus
+#     AUTOCODER_DOCS_CODE_PATHS), none of them a file this change touched or a path the
+#     gate command runs, never re-runs the test stages, whatever the green ref or
+#     AUTOCODER_SCOPED_REGATE say: documents are not an input to a test suite, so a second
+#     run proves nothing new (a design spec pushed every few minutes once put one gate
+#     through five full passes with no code change under it). The published tree is
+#     recorded as basis `docs-resync`, which closes the issue like `tested`; the success
+#     line names the tested tree, the document count and the published tree.
+#       AUTOCODER_DOCS_RESYNC_CMD  optional; a repo's cheap document checks, run on the
+#         re-synced tree before it is pushed on that basis. When it fails the delta is
+#         treated as code and the ordinary re-gate rule decides.
+#   - When the gate fails on the integrated tree, origin/<integration> is gated ALONE in a
+#     second throwaway worktree. If the base passes, this change broke it: exit 2. If the
+#     base fails too, the integration branch is red independent of this change, so the work
+#     is pushed anyway and the issue is told so (the post-merge sentinel owns red main).
+#       AUTOCODER_MERGE_ON_RED_BASE  default 1; 0 restores exit 2 on a red base.
+#   - Both relaxations exist because a sentinel re-gates the integration tip after the
+#     fact. Until one has proven a green tip at least once, there is nobody to catch what
+#     a skipped re-gate or a red-base landing lets through, so both are OFF: every re-sync
+#     re-gates and a red base refuses the merge. The proof is the green ref:
+#       AUTOCODER_GREEN_REF  default <integration>-green; the relaxations apply only when
+#         refs/heads/<green-ref> exists on origin. The mode is logged once per run.
+#   - Overlap is measured with `git diff --name-only --no-renames`, so a sibling renaming a
+#     file this change edits shows up as that file, not as an unrelated new path.
+#   - Gates on one host share a cap: each gate_cache_run takes one of AUTOCODER_MAX_GATES
+#     slots (default max(1, nproc/4)), flock-held files
+#     ${AUTOCODER_TMP:-/tmp}/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
+#     on the last. A job that has to wait says so in its log.
+#
+# SCRATCH:
+#   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
+#   keyed by <repo-id>-<issue>, where repo-id is repo-id-fns.sh's autocoder_repo_id (the
+#   main checkout's basename plus a hash of its git common dir), so two repos on one host
+#   never share a worktree, log or state file for the same issue number:
+#     autocoder-merge-<repo-id>-<issue>.gate.XXXXXX   gate output, for the failure comment
+#     autocoder-merge-worktree-<repo-id>-<issue>[-base]  the throwaway worktrees
+#   merge-launch.sh keys its .pid/.log/.exit/.run.sh files the same way.
+#
+# USAGE:
+#   merge-to-integration.sh --feature <branch> --issue <num> \
+#     [--feature-sha <sha>] [--integration <branch>] [--test-cmd "<cmd>"] \
+#     [--summary-file <path>] [--own-issue]
+#
+#   --test-cmd is the gate. When omitted it is resolved from the repo's AGENTS.md (falling
+#   back to CLAUDE.md), '### Regression Test Suite' fenced block. If that yields nothing the
+#   merge is refused before any fetch/merge/push, unless the change is documents-only.
+#
+#   --feature-sha pins the exact commit to test/push, resolved by the caller before anything
+#   could move the branch out from under it (merge-launch.sh does this). When omitted, this
+#   script resolves $FEATURE itself in the directory it was started from — sufficient for
+#   direct/manual invocations, but exactly the lazy resolution #1821 exists to avoid, so
+#   every caller in this repo passes --feature-sha.
+#
+# OWNING THE ISSUE:
+#   --own-issue makes this job the owner of the issue from the moment it starts, so the
+#   worker that launched it can move on instead of polling for 8-30 minutes. The worker
+#   owns open → working (claim); this job owns everything after, through the backend's
+#   lifecycle verbs (issue-fns.sh: handoff, park, escalate, requeue), never raw labels:
+#     first act, before anything that can fail
+#        → issue_handoff: `working` → `merging`. The worker writes NO label after the
+#          launch returns; its late writes used to overwrite this job's fast-path outcome.
+#     landed, gate passed on the published tree (or docs-only), and verify-shipped.sh
+#     says the commit is on the ship branch
+#        → issue_close with "✅ Issue Resolved" and the --summary-file contents
+#     landed on any other basis (disjoint re-sync, red base) or not on the ship branch
+#        → issue_park: `awaiting-integration` with a comment naming the landed commit
+#          and the gated trees. The post-merge sentinel closes a parked issue once its
+#          landed commit is on a green tip. Only `tested` and `docs-only` may close.
+#     exit 1 / exit 2 before anything was pushed (conflict, gate failure, publish failure)
+#        → issue_escalate --label needs-clarification, comment with the reason and the
+#          last 40 lines of gate output
+#     internal error AFTER the push succeeded
+#        → issue_park (the work is on the branch; nothing is lost), never an escalation
+#   Every transition converges: an issue that is already closed is left alone (the whole
+#   run is skipped and a stale `merging` is retired), a feature SHA already on
+#   origin/<integration> is not merged or gated again, and an issue someone already
+#   parked stays parked. Without --own-issue none of this runs and the exit codes below
+#   are the only outcome.
+#
+# PUBLISHED TIPS:
+#   After a verified push the landed commit is also published as
+#   refs/autocoder/tips/<integration>/<landed-sha>-<issue>, so the sentinel can map a
+#   green tip back to the issues it proves. Failure to publish the ref is logged, never
+#   fatal.
+#
+# Returns:
+#   0  merged + pushed to <integration>
+#   1  conflict, push failure, setup failure, or no test command
+#   2  tests failed on the integrated tree and origin/<integration> passes alone
+
+set -uo pipefail
+
+FEATURE=""
+FEATURE_SHA=""
+ISSUE_NUM=""
+INTEGRATION_BRANCH="main"
+TEST_CMD=""
+SUMMARY_FILE=""
+OWN_ISSUE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --feature)      FEATURE="$2"; shift 2 ;;
+    --feature-sha)  FEATURE_SHA="$2"; shift 2 ;;
+    --issue)        ISSUE_NUM="$2"; shift 2 ;;
+    --integration)  INTEGRATION_BRANCH="${2:-main}"; shift 2 ;;
+    --test-cmd)     TEST_CMD="$2"; shift 2 ;;
+    --summary-file) SUMMARY_FILE="$2"; shift 2 ;;
+    --own-issue)    OWN_ISSUE=1; shift ;;
+    *) echo "merge-to-integration.sh: unknown arg '$1'" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$FEATURE" ] || [ -z "$ISSUE_NUM" ]; then
+  echo "merge-to-integration.sh: --feature and --issue are required" >&2
+  exit 1
+fi
+: "${INTEGRATION_BRANCH:=main}"
+
+# Capture the directory we were started in BEFORE doing anything else. This is the caller's
+# worktree — the source of truth for "where is $FEATURE's work" when no --feature-sha was
+# given, and the source of node_modules et al. we hardlink into the throwaway worktree below.
+# It is deliberately not assumed to still be checked out to $FEATURE by the time we act on it.
+CALLER_DIR="$(pwd)"
+
+# issue_update / issue_comment live in the shared issue backend layer next to this script.
+_MTI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=issue-fns.sh
+source "${_MTI_DIR}/issue-fns.sh"
+# shellcheck source=regate-fns.sh
+source "${_MTI_DIR}/regate-fns.sh"
+# shellcheck source=worktree-deps-fns.sh
+source "${_MTI_DIR}/worktree-deps-fns.sh"
+# shellcheck source=test-cmd-fns.sh
+source "${_MTI_DIR}/test-cmd-fns.sh"
+# shellcheck source=gate-cache-fns.sh
+source "${_MTI_DIR}/gate-cache-fns.sh"
+# shellcheck source=repo-id-fns.sh
+source "${_MTI_DIR}/repo-id-fns.sh"
+
+TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
+REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
+
+# The global-path list (paths whose change can break any test) is REGATE_GLOBAL_PATHS_DEFAULT
+# in regate-fns.sh, shared with main-sentinel.sh; AUTOCODER_GATE_GLOBAL_PATHS overrides it.
+GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
+
+# Gate output is kept so a failure comment can quote it.
+GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
+trap 'rm -f "$GATE_LOG"' EXIT
+
+# Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
+# long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
+MAX_GATES="${AUTOCODER_MAX_GATES:-}"
+if ! [ "$MAX_GATES" -ge 1 ] 2>/dev/null; then
+  MAX_GATES=$(( $(nproc 2>/dev/null || echo 4) / 4 ))
+  [ "$MAX_GATES" -ge 1 ] || MAX_GATES=1
+fi
+_gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is the gate's
+  local dir="$1" cmd="$2" k lock rc
+  for k in $(seq 1 "$MAX_GATES"); do
+    lock="${TMP_ROOT}/autocoder-gate-slot-${k}.lock"
+    if [ "$k" -lt "$MAX_GATES" ]; then
+      ( flock -n 9 || exit 75; gate_cache_run "$dir" "$cmd" ) 9>>"$lock"
+      rc=$?
+      [ "$rc" -eq 75 ] && continue
+      return "$rc"
+    fi
+    (
+      if ! flock -n 9; then
+        echo "⏳ All ${MAX_GATES} gate slot(s) on this host are busy; waiting for slot ${k} ($(date +%H:%M:%S))"
+        flock 9
+        echo "▶️  Gate slot ${k} acquired ($(date +%H:%M:%S))"
+      fi
+      gate_cache_run "$dir" "$cmd"
+    ) 9>>"$lock"
+    return $?
+  done
+}
+
+_issue_is_closed() {
+  issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq '"state": *"CLOSED"'
+}
+_issue_has_label() {
+  issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq "\"name\": *\"$1\""
+}
+
+# Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+# not lost work, and the issue is parked instead of escalated.
+PUSHED=0
+
+# Terminal failure, exits with $1. Under --own-issue an issue someone already closed is
+# left alone; otherwise it is escalated (nothing landed) or parked (the push landed and
+# only this job's bookkeeping failed), with the reason and the gate's tail.
+_fail() {
+  local code="$1" reason="$2" tail=""
+  if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
+    [ -s "$GATE_LOG" ] && tail=$(tail -n 40 "$GATE_LOG")
+    tail="${tail:+
+
+Last gate output:
+\`\`\`
+${tail}
+\`\`\`}"
+    if [ "$PUSHED" -eq 1 ]; then
+      issue_park "$ISSUE_NUM" --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` pushed, then hit an internal error** (exit ${code}): ${reason}
+
+The work from \`${FEATURE}\` is on \`${INTEGRATION_BRANCH}\`; what failed was this job's bookkeeping after the push. Parked under \`awaiting-integration\` for the post-merge sentinel (or a human) to confirm and close.${tail}" 2>/dev/null || true
+    else
+      issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "❌ **Auto-merge to \`${INTEGRATION_BRANCH}\` failed** (exit ${code}): ${reason}
+
+The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${tail}" 2>/dev/null || true
+    fi
+  fi
+  exit "$code"
+}
+
+_escalate_conflict() {
+  echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
+  git merge --abort 2>/dev/null || true
+  if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
+    echo "   Aborting the merge and escalating issue #${ISSUE_NUM} for human resolution."
+    issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue." 2>/dev/null || true
+  else
+    echo "   Aborting the merge. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
+  fi
+  exit 1
+}
+
+# Terminal success under --own-issue. $1 is the landed commit. Only a tree the gate
+# passed (tested) or that needs no gate (docs-only) may close the issue, and only when
+# verify-shipped.sh says the commit is on the ship branch. Every other landing is parked
+# under `awaiting-integration` with PARK_NOTE (set by the publish-basis case below); the
+# post-merge sentinel closes a parked issue once its landed commit is on a green tip.
+PARK_NOTE=""
+_park() {
+  issue_park "$ISSUE_NUM" --comment "$1" 2>/dev/null || true
+}
+_close_or_park() {
+  [ "$OWN_ISSUE" -eq 1 ] || return 0
+  if _issue_is_closed; then
+    echo "ℹ️  Issue #${ISSUE_NUM} is already closed; leaving it alone."
+    return 0
+  fi
+  local landed="$1" summary ship_branch
+  summary="Merged \`${FEATURE}\` into \`${INTEGRATION_BRANCH}\`."
+  if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
+    summary=$(cat "$SUMMARY_FILE")
+  fi
+  case "$PUBLISH_BASIS" in
+    tested|docs-only|docs-resync|already-landed) ;;
+    *)
+      _park "⏳ **Landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\`, not closed.** ${PARK_NOTE}
+
+${summary}
+
+Labelled \`awaiting-integration\`; the post-merge sentinel closes this issue once \`${landed}\` is on a green \`${INTEGRATION_BRANCH}\` tip.
+
+🤖 Auto-merge (publish basis: ${PUBLISH_BASIS})"
+      echo "⏳ Issue #${ISSUE_NUM} parked under awaiting-integration (${PUBLISH_BASIS}); the sentinel closes it once ${landed:0:8} is on a green tip."
+      return 0 ;;
+  esac
+  if "${_MTI_DIR}/verify-shipped.sh" "$landed"; then
+    if issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+
+${summary}
+
+**Branch**: \`${FEATURE}\` (merged and deleted)
+
+🤖 Auto-resolved by autonomous fix workflow"; then
+      issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+      echo "✅ Issue #${ISSUE_NUM} closed."
+    else
+      _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
+      echo "⚠️  Issue #${ISSUE_NUM} could not be closed; parked under 'awaiting-integration' with the work landed on '${INTEGRATION_BRANCH}'."
+    fi
+    return 0
+  fi
+  ship_branch="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
+  _park "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
+
+The work is done, committed, and merged to \`${INTEGRATION_BRANCH}\` as \`${landed}\`. It has **not** reached \`${ship_branch}\`, so closing would assert something false.
+
+**To ship**: \`${INTEGRATION_BRANCH}\` must merge to \`${ship_branch}\`.
+
+Labelled \`awaiting-integration\` so it is findable rather than silently reopened as new work.
+
+🤖 Ship gate (issue #35)"
+  echo "⏳ Issue #${ISSUE_NUM} left OPEN — merged to ${INTEGRATION_BRANCH} but not on the shipping branch ${ship_branch}"
+}
+
+if [ "$OWN_ISSUE" -eq 1 ]; then
+  if _issue_is_closed; then
+    echo "ℹ️  Issue #${ISSUE_NUM} is already closed; nothing to merge."
+    issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    exit 0
+  fi
+  # The hand-off is this job's first act, before anything that can fail, so a fast
+  # failure path still finds the issue under `merging` and escalates it from there.
+  if issue_handoff "$ISSUE_NUM" 2>/dev/null; then
+    echo "ℹ️  Issue #${ISSUE_NUM} handed off: working → merging."
+  else
+    echo "⚠️  Could not hand issue #${ISSUE_NUM} off to this job (backend refused); continuing with the merge."
+  fi
+fi
+
+# Resolve the exact commit to test/push. Prefer the SHA the caller pinned before we started;
+# fall back to resolving $FEATURE in CALLER_DIR for direct invocations that skip --feature-sha.
+if [ -z "$FEATURE_SHA" ]; then
+  FEATURE_SHA=$(git -C "$CALLER_DIR" rev-parse "$FEATURE" 2>/dev/null || echo "")
+fi
+if [ -z "$FEATURE_SHA" ]; then
+  echo "❌ Could not resolve '${FEATURE}' to a commit (no --feature-sha given and the branch is not in ${CALLER_DIR})." >&2
+  _fail 1 "could not resolve '${FEATURE}' to a commit"
+fi
+
+# Resolve the gate BEFORE touching anything: an ungated push to the integration branch is
+# never acceptable, so a missing command must stop us while the branch is still unmoved.
+if [ -z "$TEST_CMD" ]; then
+  _REPO_TOP=$(git -C "$CALLER_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$CALLER_DIR")
+  TEST_CMD=$(resolve_test_cmd "$_REPO_TOP")
+  [ -n "$TEST_CMD" ] && echo "ℹ️  No --test-cmd given; using the Regression Test Suite command from the repo doctrine: $TEST_CMD"
+fi
+DOCS_ONLY=0
+if [ -z "$TEST_CMD" ]; then
+  if is_docs_only_diff "$CALLER_DIR" "$FEATURE_SHA" "$INTEGRATION_BRANCH"; then
+    DOCS_ONLY=1
+    echo "ℹ️  No test command, but ${FEATURE} changes documentation only; merging without a test run."
+  else
+    echo "❌ No test command: pass --test-cmd or add a '### Regression Test Suite' fenced block to AGENTS.md or CLAUDE.md." >&2
+    echo "   Refusing to merge '${FEATURE}' into '${INTEGRATION_BRANCH}' untested. Nothing was fetched, merged, or pushed." >&2
+    _fail 1 "no test command resolvable (pass --test-cmd or add a '### Regression Test Suite' block to AGENTS.md or CLAUDE.md)"
+  fi
+fi
+
+# Isolated throwaway worktrees (#1821) — keyed by <repo-id>-<issue> like merge-launch.sh's
+# state files (only one worker holds an issue's lock at a time, so this is unique per
+# in-flight merge). Never persist past this run. The -base worktree exists only while
+# the integration tip is gated alone.
+WORKTREE_DIR="${TMP_ROOT}/autocoder-merge-worktree-${REPO_ID}-${ISSUE_NUM}"
+BASE_WORKTREE_DIR="${WORKTREE_DIR}-base"
+
+_remove_worktree() {
+  git -C "$CALLER_DIR" worktree remove --force "$1" 2>/dev/null || rm -rf "$1" 2>/dev/null || true
+}
+_cleanup_worktrees() {
+  _remove_worktree "$WORKTREE_DIR"
+  _remove_worktree "$BASE_WORKTREE_DIR"
+  git -C "$CALLER_DIR" worktree prune 2>/dev/null || true
+}
+_cleanup_worktrees
+
+# node_modules/dist seeding for throwaway worktrees lives in worktree-deps-fns.sh, shared
+# with main-sentinel.sh (and it carries the #1967 cross-device and dist/mtime notes).
+
+# --detach on the raw SHA (not the branch name) is required: $FEATURE is very likely still
+# checked out in $CALLER_DIR, and git refuses to check out the same branch in two worktrees.
+# A detached checkout of its tip commit carries the identical tree without that restriction.
+if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; then
+  echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
+  _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
+fi
+trap '_cleanup_worktrees; rm -f "$GATE_LOG"' EXIT
+
+cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
+seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
+
+# 1. Bring the latest integration state INTO the feature branch so the eventual push
+#    is a fast-forward. Never checks out the integration branch -> worktree-safe.
+git fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"; }
+INT_SEEN_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+
+# The relaxations (scoped re-gate, merge on a red base) are safe only once a sentinel
+# re-gates the integration tip; its green ref is the proof that one exists.
+if git ls-remote --exit-code origin "refs/heads/${GREEN_REF}" >/dev/null 2>&1; then
+  SCOPED_REGATE="${AUTOCODER_SCOPED_REGATE:-1}"
+  MERGE_ON_RED_BASE="${AUTOCODER_MERGE_ON_RED_BASE:-1}"
+  RED_BASE_REFUSAL="AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base"
+  echo "ℹ️  origin/${GREEN_REF} exists (a sentinel has proven a green tip): scoped re-gate ${SCOPED_REGATE}, merge on a red base ${MERGE_ON_RED_BASE}."
+else
+  SCOPED_REGATE=0
+  MERGE_ON_RED_BASE=0
+  RED_BASE_REFUSAL="no sentinel has proven a green ${INTEGRATION_BRANCH} yet (origin/${GREEN_REF} missing), so landing on a red base is not allowed"
+  echo "ℹ️  No origin/${GREEN_REF} yet (no sentinel has proven a green tip): strict mode, every re-sync re-gates and a red base refuses the merge."
+fi
+
+# A previous run (or a human) may already have landed this exact commit; merging, gating
+# and pushing it again would only add an empty merge commit. Go straight to the outcome.
+if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
+  echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
+  git push origin --delete "$FEATURE" 2>/dev/null || true
+  if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
+    # An earlier run parked it (disjoint, red base, or not shipped); landing nothing new
+    # proves nothing new, so the sentinel keeps ownership.
+    echo "ℹ️  Issue #${ISSUE_NUM} is parked under awaiting-integration from an earlier landing; leaving it to the sentinel."
+    issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    exit 0
+  fi
+  PUBLISH_BASIS=already-landed
+  _close_or_park "$FEATURE_SHA"
+  exit 0
+fi
+
+# The files this change touches, measured against the integration tip as first seen. A
+# later re-sync is re-gated only when its incoming files meet this set or a global path.
+# No merge base (unrelated histories) means the set is unknown, so every re-sync re-gates.
+FEATURE_BASE=$(git merge-base "$INT_SEEN_SHA" "$FEATURE_SHA" 2>/dev/null || echo "")
+declare -A FEATURE_FILE_SET=()
+if [ -n "$FEATURE_BASE" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] && FEATURE_FILE_SET["$f"]=1
+  done < <(git diff --name-only --no-renames "$FEATURE_BASE" "$FEATURE_SHA")
+fi
+
+# Paths the gate command itself runs: each whitespace token that names something in the
+# tree. A directory token covers its whole subtree.
+declare -A TEST_CMD_PATHS=()
+for _tok in $(printf '%s' "$TEST_CMD" | tr ';&|()<>`"'"'"'=' ' '); do
+  _tok="${_tok#./}"; _tok="${_tok%/}"
+  case "$_tok" in ""|-*|/*|'$'*) continue ;; esac
+  [ -e "$WORKTREE_DIR/$_tok" ] && TEST_CMD_PATHS["$_tok"]=1
+done
+unset _tok
+
+if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
+       -m "Merge origin/${INTEGRATION_BRANCH} into ${FEATURE} (pre-integration sync)"; then
+  _escalate_conflict
+fi
+
+# 2. Gate the COMBINED tree (this fix + everyone else's merged work). This is the step that
+#    catches cross-fix breakage before it lands on the integration branch.
+#
+#    PUBLISH_BASIS is the one record of why the tree we push is allowed to land, and the
+#    final success line is a case over it:
+#      tested     the gate passed on exactly the tree we publish (TESTED_TREE)
+#      docs-only  nothing for a test suite to verify
+#      docs-resync
+#                 the gate passed on TESTED_TREE; a later re-sync brought in documents
+#                 only, which no test stage reads, so the published tree differs from
+#                 the tested one in documents alone (DOCS_RESYNC_FILES of them)
+#      disjoint   the gate passed on TESTED_TREE; a later re-sync brought in files that
+#                 touch neither this change nor a global path, so the published tree is
+#                 by construction not the tested one
+#      red-base   the gate failed on the integrated tree AND on origin/<integration> alone
+#      red-base-disjoint
+#                 red-base, then a disjoint re-sync: the published tree is neither tree
+#                 the gate ran on
+#    Only tested and docs-only let _close_or_park close the issue; the rest park it.
+TESTED_TREE=""
+PUBLISH_BASIS=""
+RED_INTEGRATED_TREE=""
+RED_BASE_TREE=""
+DOCS_RESYNC_FILES=0
+
+_gate_integrated_tree() {
+  if [ "$DOCS_ONLY" -eq 1 ]; then
+    PUBLISH_BASIS=docs-only
+    return 0
+  fi
+  local tree base_sha base_tree
+  tree=$(git rev-parse "HEAD^{tree}")
+  echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
+  if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+    TESTED_TREE="$tree"
+    PUBLISH_BASIS=tested
+    return 0
+  fi
+
+  base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+  base_tree=$(git rev-parse "${base_sha}^{tree}")
+  echo "❌ Tests fail on the integrated tree ${tree:0:8}."
+  echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+  _remove_worktree "$BASE_WORKTREE_DIR"
+  if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+  fi
+  seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+  if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+    echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
+    echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
+  fi
+  _remove_worktree "$BASE_WORKTREE_DIR"
+  if [ "$MERGE_ON_RED_BASE" != "1" ]; then
+    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}), and ${RED_BASE_REFUSAL}. NOT pushing."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}); ${RED_BASE_REFUSAL}"
+  fi
+  echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}): the integration branch is red independent of this change."
+  echo "   Pushing anyway; the post-merge sentinel owns red ${INTEGRATION_BRANCH}."
+  RED_INTEGRATED_TREE="$tree"
+  RED_BASE_TREE="$base_tree"
+  PUBLISH_BASIS=red-base
+}
+_gate_integrated_tree
+
+# rc 0 when $1 is a path the gate command runs, or lies under a directory it runs.
+_path_is_gate_cmd() {
+  local path="$1" k
+  for k in "${!TEST_CMD_PATHS[@]}"; do
+    if [[ "$path" == "$k" || "$path" == "$k"/* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints why $1 obliges a re-gate whatever this change touched (rc 0), or nothing (rc 1).
+_path_is_global() {
+  local path="$1"
+  if regate_path_is_global "$path"; then
+    echo "a global path"
+    return 0
+  fi
+  if _path_is_gate_cmd "$path"; then
+    echo "a path the gate command runs"
+    return 0
+  fi
+  return 1
+}
+
+# Prints the first incoming path that obliges a re-gate (rc 0), or nothing (rc 1) when the
+# incoming files are disjoint from this change and from every global path.
+_resync_overlap() {
+  local old="$1" new="$2" f why
+  if [ -z "$FEATURE_BASE" ]; then
+    echo "every incoming file (no merge base with origin/${INTEGRATION_BRANCH})"
+    return 0
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -n "${FEATURE_FILE_SET[$f]+x}" ]; then
+      echo "$f (a file this change touched)"
+      return 0
+    fi
+    if why=$(_path_is_global "$f"); then
+      echo "$f ($why)"
+      return 0
+    fi
+  done < <(git diff --name-only --no-renames "$old" "$new")
+  return 1
+}
+
+# A re-sync whose incoming files are all documents, none a file this change touched or a
+# path the gate command runs: prints the incoming file count (rc 0), or nothing (rc 1).
+# Needs a merge base, like the overlap test: an unknown file set is never documents-only.
+_resync_docs_only() {
+  local old="$1" new="$2" f n=0
+  [ -n "$FEATURE_BASE" ] || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -z "${FEATURE_FILE_SET[$f]+x}" ] || return 1
+    _path_is_gate_cmd "$f" && return 1
+    is_docs_path "$f" || return 1
+    n=$((n + 1))
+  done < <(git diff --name-only --no-renames "$old" "$new")
+  echo "$n"
+}
+
+# AUTOCODER_DOCS_RESYNC_CMD on the re-synced tree (a repo's cheap document checks): rc 0
+# when unset or passing; on failure says so and returns 1, so the delta is re-gated as code.
+_docs_resync_checks_pass() {
+  [ -n "${AUTOCODER_DOCS_RESYNC_CMD:-}" ] || return 0
+  echo "🧪 Documents-only re-sync: running the document checks on the re-synced tree: ${AUTOCODER_DOCS_RESYNC_CMD}"
+  (cd "$WORKTREE_DIR" && bash -c "$AUTOCODER_DOCS_RESYNC_CMD") 2>&1 | tee -a "$GATE_LOG"
+  if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+    return 0
+  fi
+  echo "⚠️  The document checks failed on the re-synced tree; treating the delta as code, so the ordinary re-gate rule decides"
+  return 1
+}
+
+# Records a documents-only re-sync of $1 files in the publish basis. A tested tree that the
+# documents left byte-identical stays tested; otherwise tested becomes docs-resync. A red
+# base stays parked, as after any re-sync.
+_note_docs_resync() {
+  local tree
+  tree=$(git rev-parse "HEAD^{tree}")
+  DOCS_RESYNC_FILES=$((DOCS_RESYNC_FILES + $1))
+  case "$PUBLISH_BASIS" in
+    tested)   [ "$tree" = "$TESTED_TREE" ] || PUBLISH_BASIS=docs-resync ;;
+    red-base) PUBLISH_BASIS=red-base-disjoint ;;
+  esac
+}
+
+# 3. Push the feature tip to the integration branch. If a sibling worker pushed in the
+#    meantime the push is rejected; re-sync and retry. A re-sync that brings in work
+#    overlapping this change produces a tree nobody has tested, so it goes back through the
+#    gate before the next push (and before the API fallback below, which publishes whatever
+#    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
+PUSH_VIA=""
+for attempt in 1 2 3 4 5; do
+  if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
+    PUSHED=1; PUSH_VIA=git
+    break
+  fi
+  echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
+  git fetch origin "$INTEGRATION_BRANCH" || break
+  INT_NEW_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+  BEFORE_RESYNC=$(git rev-parse HEAD)
+  if ! git merge --no-ff "origin/${INTEGRATION_BRANCH}" \
+         -m "Re-sync origin/${INTEGRATION_BRANCH} into ${FEATURE} (push retry ${attempt})"; then
+    _escalate_conflict
+  fi
+  if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
+    if DOCS_COUNT=$(_resync_docs_only "$INT_SEEN_SHA" "$INT_NEW_SHA") && _docs_resync_checks_pass; then
+      echo "ℹ️  Documents-only re-sync (${DOCS_COUNT} incoming files, all documents, none this change touched): test stages not re-run; pushing the gated work"
+      _note_docs_resync "$DOCS_COUNT"
+    elif [ "$SCOPED_REGATE" != "1" ]; then
+      echo "ℹ️  Re-sync brought in new work and the scoped re-gate is off; re-gating the merged tree"
+      _gate_integrated_tree
+    elif OVERLAP=$(_resync_overlap "$INT_SEEN_SHA" "$INT_NEW_SHA"); then
+      echo "ℹ️  Re-sync brings in ${OVERLAP}; re-gating the merged tree"
+      _gate_integrated_tree
+    else
+      INCOMING_COUNT=$(git diff --name-only --no-renames "$INT_SEEN_SHA" "$INT_NEW_SHA" | wc -l | tr -d ' ')
+      echo "ℹ️  Disjoint re-sync (${INCOMING_COUNT} incoming files, none overlap this change); pushing the already-gated work"
+      case "$PUBLISH_BASIS" in
+        tested|docs-resync) PUBLISH_BASIS=disjoint ;;
+        red-base)           PUBLISH_BASIS=red-base-disjoint ;;
+      esac
+    fi
+  fi
+  INT_SEEN_SHA="$INT_NEW_SHA"
+done
+
+# 3b. If the git transport itself is blocked (e.g. a proxy rejecting
+#     git-receive-pack with HTTP 403), retrying cannot help — fall back to
+#     publishing through the GitHub API, which reaches api.github.com instead.
+if [ "$PUSHED" -ne 1 ]; then
+  echo "⚠️  git push failed after 5 attempts — trying the GitHub API fallback…"
+  if python3 "${_MTI_DIR}/api-push.py" HEAD \
+       --target "$INTEGRATION_BRANCH" \
+       --base "origin/${INTEGRATION_BRANCH}" \
+       --message "Merge issue #${ISSUE_NUM} (${FEATURE}) into ${INTEGRATION_BRANCH}
+
+Published via the GitHub API because the git transport is blocked."; then
+    PUSHED=1; PUSH_VIA=api
+  fi
+fi
+
+if [ "$PUSHED" -ne 1 ]; then
+  echo "❌ Could not publish to '${INTEGRATION_BRANCH}' (git push and API fallback both failed)."
+  echo "   The fix is safe on '${FEATURE}'. NOT closing the issue — nothing landed."
+  _fail 1 "could not publish to '${INTEGRATION_BRANCH}' (git push and the API fallback both failed)"
+fi
+
+# 3c. Trust nothing: confirm the integration ref actually contains this work.
+#     A zero exit status is not proof, and `git push --dry-run` is worse than
+#     useless here — it succeeds against a blocked transport because it never
+#     sends the pack. Compare the trees.
+git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
+LOCAL_TREE=$(git rev-parse "HEAD^{tree}")
+REMOTE_TREE=$(git rev-parse "origin/${INTEGRATION_BRANCH}^{tree}" 2>/dev/null || echo "")
+if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
+  echo "❌ Publication could not be verified for '${INTEGRATION_BRANCH}'."
+  echo "   local tree  ${LOCAL_TREE}"
+  echo "   remote tree ${REMOTE_TREE:-<none>}"
+  echo "   NOT closing the issue — the tracker must never claim work landed when it did not."
+  _fail 1 "publication could not be verified: local tree ${LOCAL_TREE:0:8}, remote tree ${REMOTE_TREE:-<none>}"
+fi
+
+# The commit that is now on origin/<integration> carrying this work. A git push landed
+# HEAD itself; the API fallback minted a new commit, so the fetched remote tip is it.
+if [ "$PUSH_VIA" = git ]; then
+  LANDED_SHA=$(git rev-parse HEAD)
+else
+  LANDED_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+fi
+
+# The word "verified" is reserved for the one case where the gate passed on the very tree
+# that is now on the integration branch. PARK_NOTE explains every other basis to the
+# issue when _close_or_park parks it.
+RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
+case "$PUBLISH_BASIS" in
+  docs-only)
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (documentation-only change; no tests run; tree ${LOCAL_TREE:0:8})." ;;
+  tested)
+    if [ -n "$TESTED_TREE" ] && [ "$TESTED_TREE" = "$LOCAL_TREE" ]; then
+      echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' and verified: tests passed on the published tree ${LOCAL_TREE:0:8}."
+    else
+      echo "❌ Internal error: published tree ${LOCAL_TREE:0:8} is not the tree the tests passed on (${TESTED_TREE:0:8})." >&2
+      _fail 1 "internal error: published tree ${LOCAL_TREE:0:8} is not the tested tree ${TESTED_TREE:0:8}"
+    fi ;;
+  docs-resync)
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}': tests passed on tree ${TESTED_TREE:0:8}; a documents-only re-sync (${DOCS_RESYNC_FILES} document files) then published tree ${LOCAL_TREE:0:8} without re-running the test stages." ;;
+  disjoint)
+    PARK_NOTE="The gate passed on tree \`${TESTED_TREE}\`; a disjoint push-race re-sync then changed the published tree to \`${LOCAL_TREE}\`, which no gate has run on."
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (disjoint re-sync; gated tree ${TESTED_TREE:0:8}, published tree ${LOCAL_TREE:0:8})." ;;
+  red-base)
+    PARK_NOTE="**Merged onto a red \`${INTEGRATION_BRANCH}\`.** ${RED_BASE_NOTE} (published tree \`${LOCAL_TREE}\`); the post-merge sentinel owns red \`${INTEGRATION_BRANCH}\`."
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' on a red base (gate failed on integrated tree ${RED_INTEGRATED_TREE:0:8} and on origin/${INTEGRATION_BRANCH} alone, tree ${RED_BASE_TREE:0:8}; published tree ${LOCAL_TREE:0:8}, which the gate did not pass)." ;;
+  red-base-disjoint)
+    PARK_NOTE="**Merged onto a red \`${INTEGRATION_BRANCH}\`, then re-synced.** ${RED_BASE_NOTE}, and a disjoint push-race re-sync then changed the published tree to \`${LOCAL_TREE}\`, which is neither tree the gate ran on; the post-merge sentinel owns red \`${INTEGRATION_BRANCH}\`."
+    echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' on a red base followed by a disjoint re-sync (gate failed on integrated tree ${RED_INTEGRATED_TREE:0:8} and on origin/${INTEGRATION_BRANCH} alone, tree ${RED_BASE_TREE:0:8}; published tree ${LOCAL_TREE:0:8} is neither gated tree)." ;;
+  *)
+    echo "❌ Internal error: no publish basis recorded for tree ${LOCAL_TREE:0:8}." >&2
+    _fail 1 "internal error: no publish basis recorded for tree ${LOCAL_TREE:0:8}" ;;
+esac
+# Without --own-issue nobody parks the issue, so a red-base landing still tells it.
+case "$PUBLISH_BASIS" in
+  red-base|red-base-disjoint)
+    [ "$OWN_ISSUE" -eq 1 ] || issue_comment "$ISSUE_NUM" --body "⚠️ ${PARK_NOTE}" 2>/dev/null || true ;;
+esac
+
+# 3d. Publish the landed commit as a tip ref for the sentinel. Never fatal.
+TIP_REF="refs/autocoder/tips/${INTEGRATION_BRANCH}/${LANDED_SHA}-${ISSUE_NUM}"
+if git push origin "${LANDED_SHA}:${TIP_REF}" >/dev/null 2>&1; then
+  echo "ℹ️  Published ${LANDED_SHA:0:8} as ${TIP_REF}."
+else
+  echo "⚠️  Could not publish ${TIP_REF} (not fatal; the sentinel will see the branch tip)."
+fi
+
+# 4. Clean up the feature branch now that its work is on the integration branch.
+git push origin --delete "$FEATURE" 2>/dev/null || true
+# The throwaway worktrees are removed by the EXIT trap. Any local $FEATURE branch ref
+# in $CALLER_DIR is untouched by this script; the caller's own cleanup (or the next /fix
+# run branching fresh from origin/<integration-branch>) handles it.
+
+_close_or_park "$LANDED_SHA"
+exit 0

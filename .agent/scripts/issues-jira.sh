@@ -42,9 +42,19 @@
 #                     email+token basic auth when set.                — env only
 #
 # Notes:
-#   - Uses REST API v2 so `description` is a plain string on both read and
-#     write. API v3 would require Atlassian Document Format (ADF) for every
-#     body, which buys nothing here and complicates round-tripping.
+#   - Issue lifecycle (create/get/update/comment/transitions/assignee) uses
+#     REST API v2 so `description` is a plain string on both read and write.
+#     API v3 would require Atlassian Document Format (ADF) for every body,
+#     which buys nothing here and complicates round-tripping. Those v2
+#     endpoints are NOT removed.
+#   - Search uses POST /rest/api/3/search/jql: Atlassian REMOVED
+#     POST /rest/api/2/search from Jira Cloud (HTTP 410, CHANGE-2046). The new
+#     endpoint requires an explicit `fields` list to return field data,
+#     paginates via `nextPageToken` (no startAt), and returns NO `total` —
+#     so any-claimable checks for a non-empty first page (maxResults=1)
+#     instead of reading a count. v3 also returns `description` as an ADF
+#     document object; the list reshape flattens it back to the plain string
+#     consumers of `body` have always received.
 #   - claim is BEST-EFFORT (like the github backend): Jira label edits are not
 #     atomic single-writer operations, so concurrent claims can both succeed.
 #   - The claimable JQL excludes blocking labels AND includes label-less issues
@@ -58,11 +68,12 @@
 
 # ── blocking labels ─────────────────────────────────────────────────────────
 # Same set as issues-gh.sh. `working` = claimed; the rest gate on a human
-# decision. `awaiting-integration` = finished, waiting to merge — excluded from
-# the claimable queue but NOT surfaced by `list --state blocked` (it is not a
+# decision. `merging` = a detached merge job owns it; `awaiting-integration` =
+# landed, waiting for a green tip or a human merge. Both are excluded from the
+# claimable queue but NOT surfaced by `list --state blocked` (neither is a
 # human-decision gate). Jira labels cannot contain spaces, which every label
 # here already satisfies.
-JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration'
+JIRA_BLOCKING_LABELS='working needs-design needs-clarification needs-feedback needs-approval too-complex future proposal awaiting-integration merging'
 JIRA_BLOCKED_LABELS='needs-design needs-clarification needs-feedback needs-approval too-complex future proposal'
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -85,6 +96,13 @@ except Exception:
     print("")
 PY
 }
+
+# The approved-work gate: when a required label is configured, only issues
+# carrying it are claimable. See issue-approval-lib.sh.
+_ijira_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=issue-approval-lib.sh
+source "${_ijira_DIR}/issue-approval-lib.sh"
+REQUIRED_LABEL="$(required_issue_label)"
 
 JIRA_BASE_URL="${JIRA_BASE_URL:-$(_jira_cfg baseUrl)}"
 JIRA_PROJECT="${JIRA_PROJECT:-$(_jira_cfg project)}"
@@ -169,9 +187,18 @@ _jira_label_tuple() {
 # still returns issues that carry NO labels at all via the explicit
 # `labels is EMPTY` disjunct. Without it, `labels not in (...)` silently drops
 # unlabeled issues and the autocoder loop idles forever (cf. GitHub #57).
+# Gated here rather than at each call site: this is the single definition of
+# "claimable" that both `list --state open` and any-claimable share. Note the
+# required label also cancels the `labels is EMPTY` disjunct -- an unlabeled
+# issue cannot carry the approval label, so it must not slip through.
 _jira_open_jql() {
   local tuple
   tuple=$(_jira_label_tuple "$JIRA_BLOCKING_LABELS")
+  if [ -n "$REQUIRED_LABEL" ]; then
+    printf 'project = "%s" AND statusCategory != Done AND labels = "%s" AND labels not in %s' \
+      "$JIRA_PROJECT" "$REQUIRED_LABEL" "$tuple"
+    return 0
+  fi
   printf 'project = "%s" AND statusCategory != Done AND (labels is EMPTY OR labels not in %s)' \
     "$JIRA_PROJECT" "$tuple"
 }
@@ -203,46 +230,106 @@ cmd_list() {
   jql=$(_jira_state_jql "$state")
   [ -n "$label" ] && jql="$jql AND labels = \"$label\""
 
-  local payload
-  payload=$(JQL="$jql" LIMIT="$limit" python3 - <<'PY'
+  # POST /rest/api/3/search/jql (v2 search is removed, HTTP 410). The new
+  # contract: `fields` must be listed explicitly to get field data back, and
+  # pagination is a nextPageToken loop — no startAt, no total. Pages are
+  # accumulated (one JSON array per line) in a temp file until either the
+  # requested limit is reached or the server stops returning a token.
+  local pages token="" fetched=0 page_meta page_count
+  pages=$(mktemp)
+  while :; do
+    local payload
+    payload=$(JQL="$jql" LIMIT="$limit" FETCHED="$fetched" TOKEN="$token" python3 - <<'PY'
 import json, os
-print(json.dumps({
+remaining = int(os.environ["LIMIT"]) - int(os.environ["FETCHED"])
+req = {
     "jql": os.environ["JQL"],
-    "maxResults": int(os.environ["LIMIT"]),
+    "maxResults": min(remaining, 100),
     "fields": ["summary", "description", "labels", "status"],
-}))
+}
+if os.environ.get("TOKEN"):
+    req["nextPageToken"] = os.environ["TOKEN"]
+print(json.dumps(req))
 PY
 )
-  _jira_request_ok POST "/rest/api/2/search" "$payload"
-  # Reshape Jira's search response into the gh-compatible array. The response is
-  # passed via an env var, NOT stdin: a `python3 - <<'PY'` heredoc already binds
-  # stdin to the script source, so a piped body would be swallowed.
-  RESP="$_JIRA_BODY" python3 - <<'PY' || exit 3
-import json, os
+    _jira_request_ok POST "/rest/api/3/search/jql" "$payload"
+    # Append this page's issues to the accumulator and read back
+    # "<count> <nextPageToken>". The response is passed via an env var, NOT
+    # stdin: a `python3 - <<'PY'` heredoc already binds stdin to the script
+    # source, so a piped body would be swallowed.
+    page_meta=$(RESP="$_JIRA_BODY" python3 - "$pages" <<'PY'
+import json, os, sys
 try:
     data = json.loads(os.environ["RESP"])
 except Exception:
     print("issues-jira.sh: could not parse Jira search response", file=sys.stderr)
     raise SystemExit(3)
-out = []
-for it in data.get("issues", []):
-    f = it.get("fields", {}) or {}
-    key = it.get("key", "")
-    num = key.rsplit("-", 1)[-1]
-    try:
-        num = int(num)
-    except ValueError:
-        pass
-    cat = (((f.get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
-    out.append({
-        "number": num,
-        "title": f.get("summary") or "",
-        "body": f.get("description") or "",
-        "labels": [{"name": l} for l in (f.get("labels") or [])],
-        "state": "CLOSED" if cat == "done" else "OPEN",
-    })
-print(json.dumps(out))
+issues = data.get("issues", []) or []
+with open(sys.argv[1], "a") as fh:
+    fh.write(json.dumps(issues) + "\n")
+print(len(issues), data.get("nextPageToken") or "")
 PY
+) || { rm -f "$pages"; exit 3; }
+    page_count="${page_meta%% *}"
+    token="${page_meta#* }"
+    [ "$token" = "$page_meta" ] && token=""
+    fetched=$((fetched + page_count))
+    # Stop on: limit reached, no further page, or an empty page (safety net
+    # against a server that keeps handing back tokens).
+    if [ "$fetched" -ge "$limit" ] || [ -z "$token" ] || [ "$page_count" -eq 0 ]; then
+      break
+    fi
+  done
+
+  # Reshape the accumulated pages into the gh-compatible array.
+  LIMIT="$limit" python3 - "$pages" <<'PY' || { rm -f "$pages"; exit 3; }
+import json, os, sys
+
+def flatten_adf(desc):
+    # v3 search returns `description` as an ADF document object; consumers of
+    # `body` expect the plain string that v2 (and the v2 CRUD paths, which are
+    # unchanged) always delivered. Walk the node tree collecting text values;
+    # top-level blocks (paragraphs) are joined with newlines. Tolerates None,
+    # plain strings, and malformed nodes.
+    if desc is None:
+        return ""
+    if isinstance(desc, str):
+        return desc
+    if not isinstance(desc, dict):
+        return ""
+    def text_of(node):
+        if not isinstance(node, dict):
+            return ""
+        if node.get("type") == "text":
+            return node.get("text") or ""
+        return "".join(text_of(c) for c in (node.get("content") or []))
+    return "\n".join(text_of(b) for b in (desc.get("content") or []))
+
+out = []
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        for it in json.loads(line):
+            f = it.get("fields", {}) or {}
+            key = it.get("key", "")
+            num = key.rsplit("-", 1)[-1]
+            try:
+                num = int(num)
+            except ValueError:
+                pass
+            cat = (((f.get("status") or {}).get("statusCategory") or {}).get("key") or "").lower()
+            out.append({
+                "number": num,
+                "title": f.get("summary") or "",
+                "body": flatten_adf(f.get("description")),
+                "labels": [{"name": l} for l in (f.get("labels") or [])],
+                "state": "CLOSED" if cat == "done" else "OPEN",
+            })
+print(json.dumps(out[:int(os.environ["LIMIT"])]))
+PY
+  rm -f "$pages"
 }
 
 # ── get ──────────────────────────────────────────────────────────────────────
@@ -448,6 +535,19 @@ PY
 cmd_claim() {
   local key
   key=$(_jira_key "$1")
+  # Gate the claim itself, not just the queue: issues reach a worker by number
+  # from paths the queue never filters (manager dispatch, /fix N, a resumed
+  # loop). Exit 1 is the clean negative callers already handle.
+  if [ -n "$REQUIRED_LABEL" ]; then
+    _jira_request_ok GET "/rest/api/2/issue/${key}?fields=labels"
+    local labels
+    labels=$(printf '%s' "$_JIRA_BODY" | python3 -c \
+      'import json,sys; print(" ".join(json.load(sys.stdin).get("fields",{}).get("labels") or []))' 2>/dev/null) || exit 3
+    if ! issue_labels_approved "$labels"; then
+      issue_approval_refusal "$1" "$REQUIRED_LABEL"
+      exit 1
+    fi
+  fi
   _jira_edit_labels "$key" "add:working"
   # Best-effort: Jira has no atomic single-writer label edit. See header note.
 }
@@ -459,25 +559,76 @@ cmd_release() {
   _jira_edit_labels "$key" "remove:working"
 }
 
+# ── lifecycle verbs (see issues-file.py's docstring for the state machine) ───
+# Jira accepts a label removal for a label the issue lacks, so each verb is one
+# PUT that converges, followed by the comment when one was given.
+_jira_lifecycle_args() {
+  LC_LABEL=""; LC_COMMENT=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --label)   LC_LABEL="$2";   shift 2 ;;
+      --comment) LC_COMMENT="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+}
+
+cmd_handoff() {
+  local key
+  key=$(_jira_key "$1")
+  _jira_edit_labels "$key" "add:merging remove:working"
+}
+
+cmd_park() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  _jira_edit_labels "$key" "add:awaiting-integration remove:working remove:merging"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_escalate() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  [ -n "$LC_LABEL" ] || { echo "escalate: --label <blocking-label> is required" >&2; exit 2; }
+  _jira_edit_labels "$key" "add:${LC_LABEL} remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
+cmd_requeue() {
+  local n="$1" key; shift
+  key=$(_jira_key "$n")
+  _jira_lifecycle_args "$@"
+  _jira_edit_labels "$key" "remove:working remove:merging remove:awaiting-integration"
+  [ -n "$LC_COMMENT" ] && cmd_comment "$n" --body "$LC_COMMENT"
+  return 0
+}
+
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
+  # The v3 search/jql response has no `total` (removed with the old API), and
+  # this verb never needed a count — only existence. Ask for a single result
+  # with the cheapest field set and test whether the first page is non-empty.
   local payload
   payload=$(JQL="$(_jira_open_jql)" python3 - <<'PY'
 import json, os
-print(json.dumps({"jql": os.environ["JQL"], "maxResults": 1, "fields": ["key"]}))
+print(json.dumps({"jql": os.environ["JQL"], "maxResults": 1, "fields": ["id"]}))
 PY
 )
-  _jira_request_ok POST "/rest/api/2/search" "$payload"
-  local total
-  total=$(printf '%s' "$_JIRA_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total", 0))' 2>/dev/null) || exit 3
-  [ "${total:-0}" -gt 0 ] 2>/dev/null
+  _jira_request_ok POST "/rest/api/3/search/jql" "$payload"
+  local count
+  count=$(printf '%s' "$_JIRA_BODY" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("issues") or []))' 2>/dev/null) || exit 3
+  [ "${count:-0}" -gt 0 ] 2>/dev/null
 }
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-jira.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|any-claimable) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -492,5 +643,9 @@ case "$verb" in
   create)        shift; cmd_create "$@" ;;
   claim)         shift; cmd_claim "$@" ;;
   release)       shift; cmd_release "$@" ;;
+  handoff)       shift; cmd_handoff "$@" ;;
+  park)          shift; cmd_park "$@" ;;
+  escalate)      shift; cmd_escalate "$@" ;;
+  requeue)       shift; cmd_requeue "$@" ;;
   any-claimable) cmd_any_claimable ;;
 esac
