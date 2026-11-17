@@ -139,6 +139,19 @@ echo "✅ Issue source switched to: $NEW_SOURCE"
 
 6. Confirm the switch is complete.
 
+## Other `.autocoder.json` settings
+
+`/set-issue-source` only writes `issueSource` (and `issueDir`), and leaves other
+keys alone. To land changes to sensitive paths as pull requests even when Merge
+Mode is `merge`, add high-risk globs (#165):
+
+```json
+{ "risk": { "high": [".github/workflows/**", "**/hooks/**", "**/install*.sh"] } }
+```
+
+`/fix` lands any diff that touches one of them as a PR. See "Risk tiers" in
+`/fix` for the matching rules.
+
 ## See Also
 
 - `/list-issues` - List issues in the current backend

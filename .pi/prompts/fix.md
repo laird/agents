@@ -1130,6 +1130,17 @@ stale the moment another commit lands on the branch.
 review still writes a record saying so, so the trail shows it was skipped and
 not forgotten.
 
+**Risk tiers (#165).** `.autocoder.json` may list high-risk path globs:
+`"risk": {"high": [".github/workflows/**", "**/install*.sh"]}`. Each landing
+block asks `landing-mode.sh` how to land: a diff that touches any of those paths
+lands as a pull request (and parks under `awaiting-integration`) even when Merge
+Mode is `merge`; every other diff lands as configured. The globs are read from
+the integration branch, not the working tree, so a branch cannot lower its own
+tier, and `.autocoder.json` itself counts as high-risk while any are set. `*`
+stays within one path segment and `**` spans directories. With no `risk` key,
+nothing changes. This review never counts as the human approval a high-risk
+change needs.
+
 ```bash
 # The issue being landed: ISSUE_NUM, or ENHANCE_NUM in the enhancement flow.
 REVIEW_ISSUE="${REVIEW_ISSUE:?set REVIEW_ISSUE to the issue being landed (ISSUE_NUM, or ENHANCE_NUM for an enhancement)}"
@@ -1375,6 +1386,13 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
+# Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
+# .autocoder.json lands as a pull request even when the repo merges directly.
+# The diff sets the tier, not the issue's priority or the worker, and an
+# agent's own review never stands in for the human one a PR gets.
+LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
+  || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
+
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
 # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -1406,7 +1424,7 @@ Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
   exit 1
 fi
 
-if [ "$MERGE_MODE" = "pr" ]; then
+if [ "$LANDING_MODE" = "pr" ]; then
   # Create a pull request and stop. The body is the review digest (see
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
@@ -1647,6 +1665,13 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
+# Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
+# .autocoder.json lands as a pull request even when the repo merges directly.
+# The diff sets the tier, not the issue's priority or the worker, and an
+# agent's own review never stands in for the human one a PR gets.
+LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
+  || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
+
 # Push feature branch
 # Publish the branch. `git push` first; if the transport is blocked (e.g. a
 # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -1678,7 +1703,7 @@ Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
   exit 1
 fi
 
-if [ "$MERGE_MODE" = "pr" ]; then
+if [ "$LANDING_MODE" = "pr" ]; then
   # Create a pull request and stop. The body is the review digest (see
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
@@ -2540,6 +2565,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     exit 1
   fi
 
+  # Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
+  # .autocoder.json lands as a pull request even when the repo merges directly.
+  # The diff sets the tier, not the issue's priority or the worker, and an
+  # agent's own review never stands in for the human one a PR gets.
+  LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
+    || { echo "❌ Cannot choose a landing mode for #${ENHANCE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
+
   # Push feature branch
   # Publish the branch. `git push` first; if the transport is blocked (e.g. a
   # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
@@ -2569,6 +2601,27 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   Local branch: \`enhancement/issue-${ENHANCE_NUM}-auto\`" 2>/dev/null || true
     echo "❌ Could not publish enhancement/issue-${ENHANCE_NUM}-auto — issue $ENHANCE_NUM left OPEN (nothing was closed)"
     exit 1
+  fi
+
+  if [ "$LANDING_MODE" = "pr" ]; then
+    # High-risk diff (#165): open a pull request instead of merging, and stop.
+    DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
+      --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
+      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    gh pr create \
+      --base "${INTEGRATION_BRANCH}" \
+      --head "enhancement/issue-${ENHANCE_NUM}-auto" \
+      --title "#${ENHANCE_NUM}: ${ENHANCE_TITLE}" \
+      --body "${DIGEST}
+
+$(cat "$REVIEW_FILE")
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    # Hand off 'working' to 'awaiting-integration' so the loop does not redo it.
+    issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
+    issue_update "$ENHANCE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+    echo "✅ High-risk enhancement #$ENHANCE_NUM opened as a PR — awaiting human review"
+    exit 0
   fi
 
   # Auto-merge to the shared integration branch (worktree-safe: never checks out the

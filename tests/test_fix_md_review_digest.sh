@@ -22,7 +22,7 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   PRS=$(grep -c '^ *gh pr create' "$P")
   PR_RENDERS=$(grep -c 'render-review-digest.sh" --issue "\$ISSUE_NUM"' "$P")
   PR_FROM_DIGEST=$(grep -c -- '--body "\${DIGEST}' "$P")
-  eq "$F: both gh pr create sites exist" 2 "$PRS"
+  eq "$F: all 3 gh pr create sites exist (two fix paths + the high-risk enhancement, #165)" 3 "$PRS"
   eq "$F: every gh pr create body is \${DIGEST}" "$PRS" "$PR_FROM_DIGEST"
   [ "$(grep -c -- '--sections "\${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \\' "$P")" -eq "$PRS" ] \
     && ok "$F: every PR digest is rendered with --pr" || bad "$F: a PR digest is not rendered with --pr"
