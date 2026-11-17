@@ -373,6 +373,35 @@ repeat on the same tree is free. With `auto: true` the sentinel calls
 the tick's exit code. Exit 0 moved or already there, 1 config error, 2 refused
 with a one-line reason. Full how-to: [docs/environments.md](../../../docs/environments.md).
 
+## Hermetic merge gate: `gate.hermetic` (#223)
+
+By default a gate runs the test command in the host environment, so a test that
+quietly depends on the host (a tool on `PATH`, a file under `~/.config`, a newer
+runtime) passes the gate and fails CI. A project opts in through its committed
+`.autocoder.json`:
+
+```json
+"gate": {"hermetic": true,
+         "path": ["~/.cargo/bin", "/usr/local/bin"],
+         "env":  ["RUSTUP_HOME", "CARGO_HOME"]}
+```
+
+Every gate (merge job, sentinel, `promote.sh`) then runs the command under
+`env -i` (`gate-env-fns.sh`): `PATH` is the declared `path` dirs (`~` is the
+host home) plus `/usr/bin:/bin`; `HOME` is a fresh temporary directory, with
+`XDG_*` under it, removed afterwards; `LANG=C.UTF-8`; and the variables named in
+`env` are passed through. `PATH`, `HOME`, `XDG_*` and `LANG` cannot be overridden
+by a declared name. Host tools (`omarchy`, `hyprctl`, user systemd) are absent
+unless their directory is declared. The gate log prints `gate-env: hermetic …`
+or `gate-env: host environment`.
+
+The mode is read from the `.autocoder.json` committed in the tree being gated,
+not from a working copy, so an uncommitted config does not switch it on. The
+gate cache key includes a hash of the hermetic config, so a host-mode pass never
+satisfies a hermetic gate, and changing `path` or `env` re-runs the gate. Off by
+default: projects without `gate.hermetic: true` keep the same behaviour and
+cache keys.
+
 ## Merge history: per-attempt logs and `merge-events.jsonl` (#184)
 
 Every merge attempt keeps its own log. `merge-launch.sh` archives the previous attempt's

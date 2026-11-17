@@ -20,30 +20,48 @@
 # may be flake). It prints one line saying whether it hit or ran, for logs.
 #
 # Location: ${AUTOCODER_GATE_CACHE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/gate-cache}
+#
+# The key also carries the tree's gate environment (gate-env-fns.sh, #223): a tree whose
+# committed .autocoder.json sets gate.hermetic gets a key suffixed with a hash of that
+# config, so a host-environment pass never satisfies a hermetic gate. get/put read the
+# tree from the repository in the current directory, or from [git-dir] when given; a
+# tree that repository does not have gets a key no run ever writes (a miss, never a
+# borrowed verdict). Host-mode keys are unchanged.
+
+# shellcheck source=gate-env-fns.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gate-env-fns.sh"
 
 gate_cache_dir() {
   printf '%s' "${AUTOCODER_GATE_CACHE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/gate-cache}"
 }
 
-_gate_cache_key() {
-  local tree="$1" cmd="$2" cmd_hash
+_gate_cache_key() {  # <tree> "<cmd>" [git-dir]
+  local tree="$1" cmd="$2" cmd_hash env_cfg rc suffix=""
   cmd_hash=$(printf '%s' "$cmd" | git hash-object --stdin 2>/dev/null || printf '%s' "$cmd" | sha1sum | cut -c1-40)
-  printf '%s-%s' "$tree" "${cmd_hash:0:12}"
+  env_cfg=$(gate_env_config "$tree" "${3:-.}"); rc=$?
+  if [ "$rc" -eq 2 ]; then
+    suffix="-envunknown"
+  elif [ -n "$env_cfg" ]; then
+    suffix="-h$(printf '%s' "$env_cfg" | sha1sum | cut -c1-12)"
+  fi
+  printf '%s-%s%s' "$tree" "${cmd_hash:0:12}" "$suffix"
 }
 
-gate_cache_get() {
+gate_cache_get() {  # <tree> "<cmd>" [git-dir]
   local f
-  f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2")"
+  f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2" "${3:-.}")"
+  case "$f" in *-envunknown) return 1 ;; esac
   [ -f "$f" ] || return 1
   awk 'NR==1 {print $1}' "$f"
 }
 
-gate_cache_put() {
+gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir]
   local tree="$1" cmd="$2" verdict="$3" dir f tmp
   case "$verdict" in pass|fail) ;; *) echo "gate_cache_put: verdict must be pass|fail" >&2; return 2 ;; esac
   dir="$(gate_cache_dir)"
   mkdir -p "$dir" || return 1
-  f="$dir/$(_gate_cache_key "$tree" "$cmd")"
+  f="$dir/$(_gate_cache_key "$tree" "$cmd" "${4:-.}")"
+  case "$f" in *-envunknown) return 1 ;; esac
   tmp=$(mktemp "$dir/.tmp.XXXXXX") || return 1
   printf '%s %s\n' "$verdict" "$(date +%s)" > "$tmp" && mv -f "$tmp" "$f"
 }
@@ -51,19 +69,19 @@ gate_cache_put() {
 gate_cache_run() {
   local dir="$1" cmd="$2" tree recorded
   tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
-  if recorded=$(gate_cache_get "$tree" "$cmd"); then
+  if recorded=$(gate_cache_get "$tree" "$cmd" "$dir"); then
     if [ "$recorded" = pass ] || [ "${GATE_CACHE_REUSE_FAIL:-0}" = 1 ]; then
-      echo "gate-cache: ${recorded} recorded for tree ${tree:0:8}; not re-running"
+      echo "gate-cache: ${recorded} recorded for tree ${tree:0:8}$([ -n "$(gate_env_config "$tree" "$dir")" ] && echo ' (hermetic)'); not re-running"
       [ "$recorded" = pass ]
       return
     fi
   fi
   echo "gate-cache: no usable record for tree ${tree:0:8}; running gate"
-  if (cd "$dir" && bash -c "$cmd"); then
-    gate_cache_put "$tree" "$cmd" pass
+  if gate_env_run "$dir" "$cmd"; then
+    gate_cache_put "$tree" "$cmd" pass "$dir"
     return 0
   fi
-  gate_cache_put "$tree" "$cmd" fail
+  gate_cache_put "$tree" "$cmd" fail "$dir"
   return 1
 }
 
