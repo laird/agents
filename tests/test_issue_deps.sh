@@ -16,6 +16,10 @@ ok()   { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad()  { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected '$3', got '$2'"; fi; }
 
+# The tracker comes from the throwaway repo's .autocoder.json alone. An inherited
+# ISSUE_SOURCE (a worker or merge job exports github) would make issue-config.sh
+# warn on stderr, and the stderr checks below compare it exactly.
+unset ISSUE_SOURCE ISSUE_BACKEND ISSUE_DIR
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 ISSUES_DIR="$TMP/.issues"
