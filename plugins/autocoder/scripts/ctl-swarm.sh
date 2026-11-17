@@ -52,6 +52,10 @@ _ctls_root() {  # <repo-or-empty>
   local r="${1:-${AUTOCODER_CTL_PROJECT_ROOT:-}}"
   [ -n "$r" ] || r=$(resolve_main_worktree)
   [ -d "$r" ] || { ctl_fail "$r" "no such directory: $r"; return 1; }
+  # A linked worktree's swarm lives in its main worktree.
+  local main
+  main=$(git -C "$r" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10); exit}')
+  [ -n "$main" ] && [ -d "$main" ] && r="$main"
   _S_ROOT=$(cd "$r" && pwd -P)
 }
 
@@ -97,6 +101,9 @@ _ctls_workers() {  # <manifest>
 }
 
 _ctls_capture() {  # <mux> <pane>
+  # The pane comes from a manifest in the repo; refuse anything that could be read
+  # as an option or is not a plain multiplexer target.
+  [[ "$2" =~ ^[%@\$A-Za-z0-9_][%@\$A-Za-z0-9_.:-]*$ ]] || return 1
   case "$1" in
     tmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux capture-pane -p -t "$2" 2>/dev/null ;;
     cmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux read-screen --workspace "$2" 2>/dev/null ;;
@@ -129,8 +136,8 @@ _ctls_prompts() {  # <mux> <wait-seconds>
 # ── Plugin install (start) ────────────────────────────────────────────────────
 # Prints {agent, status, ...}; returns 1 when an install was needed and failed.
 # status: present | installed | failed | skipped.
-_ctls_plugin() {  # <agent>
-  local agent="$1" listing out rc
+_ctls_plugin() {  # <agent> <repo>
+  local agent="$1" repo="$2" listing out rc
   case "$agent" in
     claude|droid) ;;
     gemini) jq -cn --arg a "$agent" '{agent: $a, status: "skipped", reason: "gemini loads the workflows from the repo; nothing to install"}'; return 0 ;;
@@ -140,11 +147,12 @@ _ctls_plugin() {  # <agent>
   if ! command -v "$agent" >/dev/null 2>&1; then
     jq -cn --arg a "$agent" '{agent: $a, status: "failed", reason: ($a + " is not on PATH")}'; return 1
   fi
-  listing=$("$agent" plugin list </dev/null 2>&1) || listing=""
-  if printf '%s\n' "$listing" | grep -qF "${AUTOCODER_CTL_PLUGIN_REF%%@*}@"; then
+  # From the repo, so a project-scoped install counts.
+  listing=$(cd "$repo" && "$agent" plugin list </dev/null 2>&1) || listing=""
+  if printf '%s\n' "$listing" | grep -Eq "(^|[^A-Za-z0-9_.-])$(printf '%s' "$AUTOCODER_CTL_PLUGIN_REF" | sed 's/[.[\*^$()+?{|]/\\&/g')([^A-Za-z0-9_.-]|$)"; then
     jq -cn --arg a "$agent" --arg ref "$AUTOCODER_CTL_PLUGIN_REF" '{agent: $a, status: "present", plugin: $ref}'; return 0
   fi
-  out=$("$agent" plugin install "$AUTOCODER_CTL_PLUGIN_REF" </dev/null 2>&1); rc=$?
+  out=$(cd "$repo" && "$agent" plugin install "$AUTOCODER_CTL_PLUGIN_REF" </dev/null 2>&1); rc=$?
   printf '%s\n' "$out" >&2
   out=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1)
   if [ "$rc" -ne 0 ]; then
@@ -203,15 +211,19 @@ ctl_verb_start() {
 
   local plugin_json='{"status": "skipped", "reason": "--no-plugin-install"}'
   if $plugin; then
-    if ! plugin_json=$(_ctls_plugin "$agent"); then
+    if ! plugin_json=$(_ctls_plugin "$agent" "$repo"); then
       ctl_fail "$repo" "$(jq -cn --arg repo "$repo" --argjson p "$plugin_json" \
         '{repo: $repo, started: false, plugin: $p, reason: "the autocoder plugin is not installed and could not be"}')" --json
       return
     fi
   fi
 
-  # Which manifest start writes: the newest one in the repo once it has run.
-  local swarm_dir="$repo/$SWARM_STATE_DIR" marker
+  # start-parallel-agents.sh names the session <agent>-<repo dir>, and every launch
+  # writes a new taskListId. A manifest that is merely newer proves nothing: workers
+  # and the sentinel rewrite manifests while a swarm runs.
+  local swarm_dir="$repo/$SWARM_STATE_DIR" marker expect before_id=""
+  expect=$(manifest_path_for_session "$repo" "${agent}-$(basename "$repo")")
+  [ -f "$expect" ] && before_id=$(jq -r '.taskListId // ""' "$expect" 2>/dev/null)
   mkdir -p "$swarm_dir" 2>/dev/null
   marker=$(mktemp "${TMPDIR:-/tmp}/autocoder-ctl-start.XXXXXX") || { ctl_fail "$repo" "cannot create a temp file"; return; }
 
@@ -223,10 +235,11 @@ ctl_verb_start() {
   $paused && args+=(--paused)
   _ctls_run "$repo" "$cmd" "${args[@]}"
 
-  local m="" f
-  shopt -s nullglob
-  for f in "$swarm_dir"/*.json; do [ "$f" -nt "$marker" ] && { [ -z "$m" ] || [ "$f" -nt "$m" ]; } && m="$f"; done
-  shopt -u nullglob
+  local m="" after_id
+  if [ -f "$expect" ] && [ "$expect" -nt "$marker" ]; then
+    after_id=$(jq -r '.taskListId // ""' "$expect" 2>/dev/null)
+    { [ -z "$before_id" ] || [ "$after_id" != "$before_id" ]; } && m="$expect"
+  fi
   rm -f "$marker"
 
   if [ "$_S_RC" -ne 0 ] || [ -z "$m" ]; then
@@ -387,9 +400,30 @@ ctl_verb_stop_swarm() {
 
   local stopped=true
   printf '%s\n' "$_S_OUT" | grep -q 'No parallel agent \(sessions\|workspaces\) found' && stopped=false
+
+  # stop-parallel-agents.sh only knows the claude- and gemini- tmux sessions. Close
+  # any other tmux session a manifest names (codex-, droid-, pi-) that is still up.
+  local killed=() left=() f sess
+  if command -v tmux >/dev/null 2>&1; then
+    shopt -s nullglob
+    for f in "$_S_ROOT/$SWARM_STATE_DIR"/*.json; do
+      [ "$(jq -r '.mux // ""' "$f" 2>/dev/null)" = tmux ] || continue
+      sess=$(basename "$f" .json)
+      run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux has-session -t "=$sess" 2>/dev/null || continue
+      if run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux kill-session -t "=$sess" 2>/dev/null; then
+        killed+=("$sess"); stopped=true
+      else
+        left+=("$sess")
+      fi
+    done
+    shopt -u nullglob
+  fi
   local detail
   detail=$(jq -cn --arg repo "$_S_ROOT" --arg mux "$mux" --argjson stopped "$stopped" --argjson rc "$_S_RC" --arg out "$_S_LAST" \
-    '{repo: $repo, mux: (if $mux == "" then null else $mux end), stopped: $stopped, exit: $rc, output: $out}')
-  if [ "$_S_RC" -ne 0 ]; then ctl_fail "$_S_ROOT" "$detail" --json; return; fi
+    --argjson killed "$(printf '%s\n' "${killed[@]+"${killed[@]}"}" | jq -R . | jq -cs 'map(select(. != ""))')" \
+    --argjson left "$(printf '%s\n' "${left[@]+"${left[@]}"}" | jq -R . | jq -cs 'map(select(. != ""))')" \
+    '{repo: $repo, mux: (if $mux == "" then null else $mux end), stopped: $stopped,
+      sessions_closed: $killed, sessions_still_running: $left, exit: $rc, output: $out}')
+  if [ "$_S_RC" -ne 0 ] || [ "${#left[@]}" -gt 0 ]; then ctl_fail "$_S_ROOT" "$detail" --json; return; fi
   ctl_ok "$_S_ROOT" "$detail" --json
 }

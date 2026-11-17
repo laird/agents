@@ -32,7 +32,8 @@ UI has no terminal to attach.
 ## Which repo and which swarm
 
 `start` takes the repo as its argument. The other verbs act on `--repo`, else
-`$AUTOCODER_CTL_PROJECT_ROOT`, else the main worktree of the current directory.
+`$AUTOCODER_CTL_PROJECT_ROOT`, else the current directory. Either way they use that
+repo's main worktree, where the swarm manifests live, so a linked worktree works too.
 
 `add-worker` and `remove-worker` act on one swarm, found from its manifest
 (`.autocoder/swarm/<session>.json`, see [swarm-manifest.md](../swarm-manifest.md)).
@@ -65,10 +66,22 @@ A prompt they find comes back in `detail.prompts`. `detail.prompts_pending` is
 "prompts_pending": true
 ```
 
-`kind` is `trust` or `consent`, and `text` is the matching line of the screen. The UI
+`kind` is `trust` or `consent`, and `text` is the matching line of the screen. The
+text is untrusted: an agent that prints a README line reading "Do you trust this
+folder?" produces an entry too, so a UI should display it, never act on it. The UI
 should show this to the user and let them answer it in that pane, for example
 through the multiplexer or with `nudge`. The verb still succeeds (exit 0): the
 swarm started, and it is waiting on the user.
+
+autocoder-ctl itself never answers. Some launch paths in the wrapped scripts do
+type a prompt and Enter a few seconds after starting the agent (a manager whose
+command mode is not `argv`, and gemini or codex workers in `agent-input` mode).
+If that agent is showing a trust dialog by then, the Enter answers it with the
+dialog's default.
+
+Pane targets are read from the manifest. A target that could be taken for an
+option (for example, one starting with `-`) is skipped rather than passed to the
+multiplexer.
 
 The patterns are `$AUTOCODER_CTL_TRUST_PATTERN` and `$AUTOCODER_CTL_CONSENT_PATTERN`
 (extended regular expressions). Trust is checked first, because Claude's trust
@@ -77,8 +90,9 @@ dialog also offers "No, exit". A prompt that shows up after the wait is not caug
 
 ## start
 
-1. **Plugin install.** For `claude` and `droid`, if `<agent> plugin list` does
-   not show the autocoder plugin, `start` runs `<agent> plugin install
+1. **Plugin install.** For `claude` and `droid`, if `<agent> plugin list` (run in
+   the repo, so project-scoped installs count) does not show
+   `autocoder@plugin-marketplace`, `start` runs `<agent> plugin install
    autocoder@plugin-marketplace` (set `$AUTOCODER_CTL_PLUGIN_REF` to install another
    ref). Gemini reads the workflows from the repo and needs no install. Codex skills
    come from `scripts/install-codex.sh`, which is not per swarm. Both report
@@ -95,8 +109,12 @@ dialog also offers "No, exit". A prompt that shows up after the wait is not caug
 - the repo does not exist or is not a git repository;
 - the plugin install fails (`detail.plugin.status` is `failed`);
 - `start-parallel-agents.sh` exits non-zero;
-- it exits 0 without writing a manifest. If the swarm's session is already running
-  (tmux), the reason says so: use `add-worker` instead, or `stop-swarm` first.
+- it exits 0 without starting a swarm. `start` looks for the manifest of the
+  session it asked for, `<agent>-<repo directory>`, and checks that its
+  `taskListId` is new, since every launch writes a fresh one. Another swarm's
+  manifest changing in the meantime does not count. If that session is already
+  running (tmux), the reason says so: use `add-worker` instead, or `stop-swarm`
+  first.
 
 ```json
 {"ok": true, "action": "start", "target": "/src/agents",
@@ -141,11 +159,18 @@ repo's manifests agree on. If there is no manifest, or the manifests disagree, t
 script detects the multiplexer itself. Manifests are left in place, so a UI can
 still show what ran.
 
+`stop-parallel-agents.sh` only knows tmux sessions named `claude-` and `gemini-`.
+So the verb then checks each tmux manifest's session by exact name and kills any
+that is still up, such as `codex-<repo>`. These are listed in
+`sessions_closed`. A session it fails to kill is listed in
+`sessions_still_running`, and the verb then fails (exit 1).
+
 Nothing to stop is not a failure: the result is `ok` with `"stopped": false`.
 
 ```json
 {"ok": true, "action": "stop-swarm", "target": "/src/agents",
- "detail": {"repo": "/src/agents", "mux": "tmux", "stopped": true, "exit": 0, "output": "✅ Done"}}
+ "detail": {"repo": "/src/agents", "mux": "tmux", "stopped": true, "sessions_closed": [],
+            "sessions_still_running": [], "exit": 0, "output": "✅ Done"}}
 ```
 
 ## Testing

@@ -23,10 +23,12 @@ LOG="$STUB/calls.log"
 cat > "$STUB/bin/tmux" <<'SH'
 #!/bin/bash
 printf 'tmux %s\n' "$(IFS='|'; echo "$*")" >> "$AUTOCODER_TEST_STUB/calls.log"
-if [ "$1" = capture-pane ]; then
-  f="$AUTOCODER_TEST_STUB/screen-$(printf '%s' "$4" | tr ':.' '__')"
-  [ -f "$f" ] && cat "$f"
-fi
+case "$1" in
+  capture-pane) f="$AUTOCODER_TEST_STUB/screen-$(printf '%s' "$4" | tr ':.' '__')"; [ -f "$f" ] && cat "$f" ;;
+  # A session is up while $STUB/alive-<name> exists ("-t =name").
+  has-session)  [ -f "$AUTOCODER_TEST_STUB/alive-${3#=}" ] || exit 1 ;;
+  kill-session) rm -f "$AUTOCODER_TEST_STUB/alive-${3#=}" ;;
+esac
 exit 0
 SH
 # claude: "plugin list" shows the plugin when $STUB/plugin-present exists; "plugin
@@ -47,7 +49,8 @@ cat > "$STUB/start" <<'SH'
 #!/bin/bash
 printf 'start %s cwd=%s stdin_tty=%s\n' "$(IFS='|'; echo "$*")" "$(pwd -P)" "$([ -t 0 ] && echo y || echo n)" >> "$AUTOCODER_TEST_STUB/calls.log"
 [ -f "$AUTOCODER_TEST_STUB/start-fail" ] && { echo "❌ Error: cmux is not running" >&2; exit 1; }
-[ -f "$AUTOCODER_TEST_STUB/start-exists" ] && { echo "⚠️  Session 'claude-repo' already exists"; exit 0; }
+# Already running: writes nothing, though another swarm's manifest changes meanwhile.
+[ -f "$AUTOCODER_TEST_STUB/start-exists" ] && { touch .autocoder/swarm/*.json 2>/dev/null; echo "⚠️  Session 'claude-repo' already exists"; exit 0; }
 n=3 agent=claude mux=tmux
 while [ $# -gt 0 ]; do
   case "$1" in --agent) agent=$2; shift 2 ;; --mux) mux=$2; shift 2 ;; [0-9]*) n=$1; shift ;; *) shift ;; esac
@@ -56,7 +59,8 @@ s="$agent-$(basename "$PWD")"; mkdir -p .autocoder/swarm
 python3 - "$s" "$agent" "$mux" "$n" > ".autocoder/swarm/$s.json" <<'PY'
 import json, sys
 s, agent, mux, n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-print(json.dumps({"session": s, "agent": agent, "mux": mux, "state": "running",
+import time
+print(json.dumps({"session": s, "agent": agent, "mux": mux, "state": "running", "taskListId": f"parallel-{time.time_ns()}",
   "workers": [{"number": i, "worktree": f"/wt-{i}", "tmuxTarget": f"{s}:1.{i}", "state": "started"} for i in range(1, n + 1)],
   "manager": {"tmuxTarget": f"{s}:2.1"}}))
 PY
@@ -104,6 +108,7 @@ cat > "$STUB/stop" <<'SH'
 printf 'stop %s cwd=%s\n' "$(IFS='|'; echo "$*")" "$(pwd -P)" >> "$AUTOCODER_TEST_STUB/calls.log"
 [ -f "$AUTOCODER_TEST_STUB/stop-fail" ] && { echo "❌ No herdr server is running"; exit 1; }
 [ -f "$AUTOCODER_TEST_STUB/stop-none" ] && { echo "No parallel agent sessions found for $(basename "$PWD")"; exit 0; }
+rm -f "$AUTOCODER_TEST_STUB"/alive-claude-* "$AUTOCODER_TEST_STUB"/alive-gemini-*
 echo "🛑 Killing tmux session: claude-$(basename "$PWD")"; echo "✅ Done"
 SH
 chmod +x "$STUB/bin/"* "$STUB/start" "$STUB/add" "$STUB/remove" "$STUB/stop"
@@ -112,10 +117,13 @@ export PATH="$STUB/bin:$PATH" AUTOCODER_TEST_STUB="$STUB"
 export AUTOCODER_CTL_START_CMD="$STUB/start" AUTOCODER_CTL_ADD_WORKER_CMD="$STUB/add"
 export AUTOCODER_CTL_REMOVE_WORKER_CMD="$STUB/remove" AUTOCODER_CTL_STOP_SWARM_CMD="$STUB/stop"
 export AUTOCODER_CTL_PROMPT_WAIT=0
+# Every verb records a lifecycle event (#247): keep them out of the real log.
+export AUTOCODER_ISSUE_EVENTS="$TMP/events.jsonl"
 unset AUTOCODER_CTL_PROJECT_ROOT
 
 REPO="$TMP/repo"
 git init -q "$REPO"
+git -C "$REPO" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m base
 SW="$REPO/.autocoder/swarm"
 
 # run <expected-rc> <expected-ok> <name> -- <args...>: exit code, exactly one JSON
@@ -180,9 +188,13 @@ jq -e --arg repo "$REPO" '.target == $repo and .detail.started and .detail.sessi
   && ok "start reports session, manifest, workers and plugin" || bad "start detail: $OUT"
 
 touch "$STUB/plugin-present" "$STUB/start-exists"
+echo '{"agent": "codex", "mux": "tmux", "workers": []}' > "$SW/codex-repo.json"
 run 1 false "start when the swarm is already running"  -- start "$REPO" --agent claude
+rm -f "$SW/codex-repo.json"
 detail "it says a session is already running"         '.detail.started == false and (.detail.reason | test("already running"))'
 hasnt  "a present plugin is not reinstalled"          "claude plugin|install"
+has    "the plugin is looked up from the repo"        "claude plugin|list"
+detail "another swarm's manifest changing is not taken for this start" '.detail.started == false'
 rm -f "$STUB/start-exists"
 
 touch "$STUB/start-fail"
@@ -206,6 +218,23 @@ hasnt  "--no-plugin-install runs no plugin command"   "^claude plugin"
 hasnt  "no prompt is answered: nothing is typed"      "send-keys"
 has    "every pane is read"                           "tmux capture-pane|-p|-t|claude-repo:2.1"
 
+# A similarly named plugin is not the autocoder plugin.
+rm -f "$STUB/plugin-present" "$SW"/*.json
+cp "$STUB/bin/claude" "$STUB/claude.orig"
+printf '#!/bin/bash\nprintf "claude %%s\\n" "$(IFS="|"; echo "$*")" >> "$AUTOCODER_TEST_STUB/calls.log"\n[ "$2" = list ] && echo "  ❯ foo-autocoder@plugin-marketplace"\nexit 0\n' > "$STUB/bin/claude"
+run 0 true "start with only a look-alike plugin installed" -- start "$REPO" --agent claude --workers 1
+has    "the real plugin is installed"                  "claude plugin|install|autocoder@plugin-marketplace"
+touch "$STUB/plugin-present"
+# A pane target that could be read as an option is never passed to the multiplexer.
+python3 - "$SW/claude-repo.json" <<'PY2'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["workers"][0]["state"] = "paused"; d["workers"][0]["tmuxTarget"] = "-t evil"; json.dump(d, open(p, "w"))
+PY2
+run 0 true "add-worker with a manifest pane that looks like an option" -- add-worker --repo "$REPO"
+hasnt  "the bad pane target is not read"               "capture-pane|-p|-t|-t evil"
+rm -f "$SW"/*.json; cp "$STUB/claude.orig" "$STUB/bin/claude"
+run 0 true "a fresh swarm for the rest"                -- start "$REPO" --agent claude --workers 2 --no-plugin-install
+
 # ── add-worker ────────────────────────────────────────────────────────────────
 run 0 true "add-worker uses the swarm's agent and mux" -- add-worker --repo "$REPO"
 has    "add-worker.sh gets --no-attach and the manifest's agent and mux" "add --no-attach|--agent|claude|--mux|tmux cwd=$REPO"
@@ -220,6 +249,9 @@ detail "a woken paused worker and a new one are told apart" '.detail.started == 
 ( cd "$REPO" && "$CTL" add-worker >"$TMP/out" 2>/dev/null ); OUT=$(cat "$TMP/out")
 detail "without --repo it acts on the current repo"  '.ok and .detail.added == [4]'
 detail "the new worker's pending trust prompt is reported" '.detail.prompts_pending and .detail.prompts[0].worker == 4 and .detail.prompts[0].kind == "trust"'
+git -C "$REPO" worktree add -q "$TMP/linked" -b linked
+run 0 true "add-worker --repo a linked worktree"     -- add-worker --repo "$TMP/linked"
+has    "it acts on the main worktree's swarm"        "add --no-attach|--agent|claude|--mux|tmux cwd=$REPO"
 cp "$SW/claude-repo.json" "$SW/codex-repo.json"
 run 1 false "add-worker with two swarms and no --session" -- add-worker --repo "$REPO"
 detail "it asks for --session"                       '.detail | test("--session")'
@@ -248,7 +280,14 @@ detail "it reports the swarm stopped"                '.detail.stopped == true an
 touch "$STUB/stop-none"
 run 0 true "stop-swarm with nothing running"         -- stop-swarm --repo "$REPO" --mux herdr
 detail "nothing running is ok, stopped false"        '.detail.stopped == false and .detail.mux == "herdr"'
-rm -f "$STUB/stop-none"; touch "$STUB/stop-fail"
+rm -f "$STUB/stop-none"
+echo '{"agent": "codex", "mux": "tmux", "workers": []}' > "$SW/codex-repo.json"
+touch "$STUB/alive-codex-repo" "$STUB/alive-claude-repo"
+run 0 true "stop-swarm with a codex swarm running"   -- stop-swarm --repo "$REPO"
+detail "the session the script cannot stop is closed by name" '.detail.stopped and .detail.sessions_closed == ["codex-repo"] and .detail.sessions_still_running == []'
+has    "it is killed by exact name"                  "tmux kill-session|-t|=codex-repo"
+[ ! -e "$STUB/alive-claude-repo" ] && ok "the claude session is left to the script" || bad "claude session still alive"
+rm -f "$SW/codex-repo.json"; touch "$STUB/stop-fail"
 run 1 false "stop-parallel-agents failing"           -- stop-swarm --repo "$REPO"
 rm -f "$STUB/stop-fail"
 rm -f "$SW"/*.json
