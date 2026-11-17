@@ -59,7 +59,7 @@ git -C "$TMP/origin.git" show master:a.txt >/dev/null 2>&1 && git -C "$TMP/origi
   && ok "both changes are on origin/master" || bad "origin/master is missing a change"
 grep -q "rejected" "$TMP/w1.log" "$TMP/w2.log" && bad "a push was rejected: $(grep -h rejected "$TMP"/w*.log)" || ok "no push was rejected"
 [ "$(resyncs)" = "0" ] && ok "no push-retry re-sync commit on master" || bad "$(resyncs) push-retry re-sync commit(s) on master"
-grep -q "⏳ Queued: issue #30[12]" "$TMP/w1.log" "$TMP/w2.log" && ok "the waiting job logged whom it queued behind" || bad "no queued line naming the holder"
+grep -q "⏳ Queued: issue #30[12]" "$TMP/w1.log" "$TMP/w2.log" && ok "the waiting job logged whom it queued behind" || bad "no queued line naming the holder: $(grep -h "Queued\|turn" "$TMP"/w*.log)"
 grep -q "Our turn to land on 'master'" "$TMP/w1.log" "$TMP/w2.log" && ok "the waiting job logged its turn" || bad "no turn line"
 if [ "$(cat "$TMP/w1.start")" \< "$(cat "$TMP/w2.start")" ]; then FIRST_END=$(cat "$TMP/w1.end"); SECOND_START=$(cat "$TMP/w2.start")
 else FIRST_END=$(cat "$TMP/w2.end"); SECOND_START=$(cat "$TMP/w1.start"); fi
@@ -100,6 +100,35 @@ git init -q "$TMP/noremote"
 ( merge_queue_acquire "$TMP/w1" master 1 >/dev/null; merge_queue_release; merge_queue_release
   flock -n "$AUTOCODER_TMP/autocoder-land-${K1}.lock" true ) \
   && ok "release frees the lock and can be called twice" || bad "lock still held after release"
+
+# ── the job never holds the lock itself, so nothing it spawns can inherit it ─
+( merge_queue_acquire "$TMP/w1" master 5 >/dev/null
+  LEAK=$(ls -l /proc/$BASHPID/fd 2>/dev/null | grep -c "autocoder-land-${K1}.lock")
+  merge_queue_release; [ "$LEAK" = "0" ] ) \
+  && ok "the acquiring shell has no descriptor on the lock" || bad "the job itself holds the lock fd (children would inherit it)"
+
+# ── a job killed with SIGKILL gives up its place within a couple of seconds ─
+( merge_queue_acquire "$TMP/w1" master 6 >/dev/null; sleep 30 ) &
+VICTIM=$!; sleep 1
+flock -n "$AUTOCODER_TMP/autocoder-land-${K1}.lock" true && bad "lock was not held by the live job" || ok "the live job holds its place"
+kill -9 "$VICTIM"; wait "$VICTIM" 2>/dev/null
+flock -w 4 "$AUTOCODER_TMP/autocoder-land-${K1}.lock" true && ok "a SIGKILLed job's place is released" || bad "a dead job kept the queue blocked"
+rm -f "$AUTOCODER_TMP/autocoder-land-${K1}.holder"
+
+# ── a symlink planted at the holder path is replaced, never written through ─
+echo precious > "$TMP/victim"
+ln -sf "$TMP/victim" "$AUTOCODER_TMP/autocoder-land-${K1}.holder"
+( merge_queue_acquire "$TMP/w1" master 7 >/dev/null; merge_queue_release )
+[ "$(cat "$TMP/victim")" = "precious" ] && ok "a planted holder symlink is not followed" || bad "holder write followed a symlink: $(cat "$TMP/victim")"
+
+# ── a hostile holder file cannot inject control sequences into the log ──────
+printf 'evil\033[2Jline\nsecond line\n' > "$AUTOCODER_TMP/autocoder-land-${K1}.holder"
+flock "$AUTOCODER_TMP/autocoder-land-${K1}.lock" sleep 3 &
+H2=$!; sleep 0.3
+OUT=$(AUTOCODER_MERGE_QUEUE_WAIT=1 merge_queue_acquire "$TMP/w1" master 8)
+kill "$H2" 2>/dev/null; wait "$H2" 2>/dev/null
+printf '%s' "$OUT" | grep -q $'\033' && bad "escape sequence from the holder file reached the log" || ok "holder text is sanitised"
+printf '%s' "$OUT" | grep -q "second line" && bad "multi-line holder text reached the log" || ok "holder text is one line"
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"

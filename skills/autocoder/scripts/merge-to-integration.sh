@@ -223,7 +223,7 @@ GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
 GATE_LAST="${GATE_LOG}.integrated"   # output of the latest integrated-tree gate only
-trap '_rc=$?; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 # Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
 # long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
@@ -237,7 +237,7 @@ _gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is t
   for k in $(seq 1 "$MAX_GATES"); do
     lock="${TMP_ROOT}/autocoder-gate-slot-${k}.lock"
     if [ "$k" -lt "$MAX_GATES" ]; then
-      ( flock -n 9 || exit 75; gate_cache_run "$dir" "$cmd" 8>&- ) 9>>"$lock"
+      ( flock -n 9 || exit 75; gate_cache_run "$dir" "$cmd" ) 9>>"$lock"
       rc=$?
       [ "$rc" -eq 75 ] && continue
       return "$rc"
@@ -248,7 +248,7 @@ _gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is t
         flock 9
         echo "▶️  Gate slot ${k} acquired ($(date +%H:%M:%S))"
       fi
-      gate_cache_run "$dir" "$cmd" 8>&-
+      gate_cache_run "$dir" "$cmd"
     ) 9>>"$lock"
     return $?
   done
@@ -576,7 +576,7 @@ if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; 
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_rc=$?; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
@@ -786,7 +786,7 @@ _resync_docs_only() {
 _docs_resync_checks_pass() {
   [ -n "${AUTOCODER_DOCS_RESYNC_CMD:-}" ] || return 0
   echo "🧪 Documents-only re-sync: running the document checks on the re-synced tree: ${AUTOCODER_DOCS_RESYNC_CMD}"
-  (cd "$WORKTREE_DIR" && bash -c "$AUTOCODER_DOCS_RESYNC_CMD" 8>&-) 2>&1 | tee -a "$GATE_LOG"
+  (cd "$WORKTREE_DIR" && bash -c "$AUTOCODER_DOCS_RESYNC_CMD") 2>&1 | tee -a "$GATE_LOG"
   if [ "${PIPESTATUS[0]}" -eq 0 ]; then
     return 0
   fi
