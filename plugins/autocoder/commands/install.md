@@ -439,7 +439,11 @@ elif [ -d ".claude-plugin/plugins/autocoder/scripts" ]; then
   SCRIPT_DIR="$(pwd)/.claude-plugin/plugins/autocoder/scripts"
 else
   # Search plugin cache - same logic as stop hook detection above
-  CACHE_SCRIPTS=$(find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1)
+  # Same rules as the SCRIPT_DIR resolver (#142, #201): a complete <ver>/scripts tree
+  # only (not skills/autocoder/scripts, not an empty dir), ranked by <ver> alone.
+  CACHE_SCRIPTS=$(find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | while read -r d; do if [ -f "$d/issue-fns.sh" ] && [ -f "$d/fix-loop-gate.sh" ]; then echo "$d"; fi; done \
+    | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-)
   if [ -n "$CACHE_SCRIPTS" ]; then
     SCRIPT_DIR="$CACHE_SCRIPTS"
   else

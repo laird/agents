@@ -78,6 +78,14 @@ for rel in "${FILES[@]}"; do
     want="$C/4.10.0/scripts"
     if [ "$got" = "$want" ]; then pass; else fail "$rel: cache fallback picked '${got#$H/}', want '${want#$H/}'"; fi
 
+    # ── Case 3: two marketplaces — the newest <ver> wins, not the last path (#201)
+    rm -rf "$H"
+    full "$H/$CACHE_ROOT/plugins/cache/zzz-mkt/autocoder/4.9.0/scripts"
+    full "$H/$CACHE_ROOT/plugins/cache/aaa-mkt/autocoder/4.12.0/scripts"
+    got=$(run_block "$b" "$P" "$H")
+    want="$H/$CACHE_ROOT/plugins/cache/aaa-mkt/autocoder/4.12.0/scripts"
+    if [ "$got" = "$want" ]; then pass; else fail "$rel: two marketplaces picked '${got#$H/}', want '${want#$H/}'"; fi
+
     # ── Case 2: a project-local tree ──────────────────────────────────────────
     rm -rf "$P"; mkdir -p "$P"
     agent_tree "$P/.agent/scripts"
@@ -89,8 +97,31 @@ for rel in "${FILES[@]}"; do
       want="$P/.agent/scripts"              # Antigravity's own tree
     fi
     if [ "$got" = "$want" ]; then pass; else fail "$rel: local resolution picked '${got#$P/}', want '${want#$P/}'"; fi
+
+    # ── Case 4: a generated pi prompt prefers the project's .pi/scripts (#201) ──
+    case "$rel" in
+      .pi/prompts/*)
+        full "$P/.pi/scripts"
+        got=$(run_block "$b" "$P" "$H")
+        if [ "$got" = "$P/.pi/scripts" ]; then pass; else fail "$rel: pi prompt picked '${got#$P/}', want .pi/scripts"; fi ;;
+    esac
   done
 done
+
+# ── install.md's CACHE_SCRIPTS follows the same rules (#201 item 1) ──────────
+python3 - "$ROOT/plugins/autocoder/commands/install.md" "$WORK/cache_scripts.sh" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+m = re.search(r'^(\s*CACHE_SCRIPTS=\$\(find .*?\))\s*$', text, re.M | re.S)
+open(sys.argv[2], "w").write((m.group(1) if m else "false") + '\necho "$CACHE_SCRIPTS"\n')
+PY
+H="$WORK/home-install"; rm -rf "$H"; C="$H/.claude/plugins/cache"
+full    "$C/zzz-mkt/autocoder/4.9.0/scripts"
+full    "$C/aaa-mkt/autocoder/4.12.0/scripts"
+partial "$C/aaa-mkt/autocoder/4.12.0/skills/autocoder/scripts"
+mkdir -p "$C/aaa-mkt/autocoder/4.13.0/scripts"
+got=$(HOME="$H" bash "$WORK/cache_scripts.sh" 2>/dev/null)
+if [ "$got" = "$C/aaa-mkt/autocoder/4.12.0/scripts" ]; then pass; else fail "install.md CACHE_SCRIPTS picked '${got#$H/}'"; fi
 
 echo "$PASS passed / $FAIL failed / $((PASS+FAIL)) total"
 [ "$FAIL" -eq 0 ]

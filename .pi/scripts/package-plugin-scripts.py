@@ -318,6 +318,10 @@ def rendered_prompt(source: Path, hint: str | None) -> str:
     if hint:
         front.append(f'argument-hint: "{hint}"')
     generated = f"<!-- Generated from {source.relative_to(ROOT)} by scripts/package-plugin-scripts.py. Edit the source. -->"
+    # Pi runs from the project and ships its scripts in .pi/scripts; the resolver
+    # copied from the Claude command never looked there (#201).
+    body = body.replace('  for d in "$(pwd)/.agent/scripts" \\\n',
+                        '  for d in "$(pwd)/.pi/scripts" \\\n           "$(pwd)/.agent/scripts" \\\n')
     rendered = "---\n" + "\n".join(front) + "\n---\n" + generated + "\n\n" + body
     if hint:
         # Pi drops trailing words unless the template consumes them: `/fix 42`

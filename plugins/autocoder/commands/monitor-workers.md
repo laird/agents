@@ -201,9 +201,11 @@ SCRIPT_DIR=$(
   done
   # Fallback: the installed plugin. Only <ver>/scripts is a complete tree;
   # <ver>/skills/autocoder/scripts is a subset that sorts after it (#142).
+  # Rank by the <ver> directory alone, not the whole path: with two marketplaces
+  # in the cache, a whole-path sort lets the marketplace name decide (#201).
   find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
     | while read -r d; do if [ -f "$d/issue-fns.sh" ] && [ -f "$d/fix-loop-gate.sh" ]; then echo "$d"; fi; done \
-    | sort -V | tail -1
+    | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
   echo "autocoder: cannot locate issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
