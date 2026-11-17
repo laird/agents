@@ -98,7 +98,19 @@ merge_queue_acquire() {
     exec 8>>"$MERGE_QUEUE_LOCK" || exit 3
     if ! flock -n 8; then
       : > "$MERGE_QUEUE_DIR/waiting"
-      if [ "$wait" -eq 0 ]; then flock 8 || exit 1; else flock -w "$wait" 8 || exit 1; fi
+      # Wait in a background flock on the same fd (the lock belongs to the open file
+      # description, so it stays ours after flock exits) and watch it, so a stopped or
+      # killed owner never leaves an orphaned `flock -w` waiter holding a place in the
+      # queue (#226). A TERM to this holder (merge_queue_release) stops the waiter too.
+      if [ "$wait" -eq 0 ]; then flock 8 & else flock -w "$wait" 8 & fi
+      fpid=$!
+      trap 'kill "$fpid" 2>/dev/null; exit 1' TERM
+      while kill -0 "$fpid" 2>/dev/null; do
+        kill -0 "$owner" 2>/dev/null || { kill "$fpid" 2>/dev/null; exit 1; }
+        sleep 0.5 8>&-
+      done
+      wait "$fpid" || exit 1
+      trap - TERM
     fi
     # Name ourselves before anything else, so a waiter that arrives now can say whom it waits on.
     if tmp=$(mktemp "${MERGE_QUEUE_LOCK%.lock}.holder.XXXXXX" 2>/dev/null); then
@@ -141,13 +153,17 @@ merge_queue_acquire() {
 # merge_queue_release: lets the next job on this host land. Safe to call more than once,
 # and from an EXIT trap.
 merge_queue_release() {
-  [ "$MERGE_QUEUE_HELD" = "1" ] || return 0
+  # Held: drop our name. Still waiting (a job stopped mid-queue, #226): stop the holder,
+  # whose TERM trap also stops its flock waiter, so nothing keeps our place in the queue.
+  if [ "${MERGE_QUEUE_HELD:-0}" = "1" ]; then
+    rm -f "${MERGE_QUEUE_LOCK%.lock}.holder" 2>/dev/null || true
+  fi
   MERGE_QUEUE_HELD=0
-  rm -f "${MERGE_QUEUE_LOCK%.lock}.holder" 2>/dev/null || true
-  if [ -n "$MERGE_QUEUE_PID" ]; then
+  if [ -n "${MERGE_QUEUE_PID:-}" ]; then
     kill "$MERGE_QUEUE_PID" 2>/dev/null || true
     wait "$MERGE_QUEUE_PID" 2>/dev/null || true
   fi
-  [ -n "$MERGE_QUEUE_DIR" ] && rm -rf "$MERGE_QUEUE_DIR"
+  if [ -n "${MERGE_QUEUE_DIR:-}" ]; then rm -rf "$MERGE_QUEUE_DIR"; fi
   MERGE_QUEUE_PID=""; MERGE_QUEUE_DIR=""
+  return 0
 }
