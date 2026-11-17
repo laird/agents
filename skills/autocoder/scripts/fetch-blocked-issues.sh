@@ -44,8 +44,22 @@ if [ "$ISSUE_SOURCE" = "github" ]; then
   done
 fi
 
-# Fetch all open issues
-issue_list --state open --limit 200 > /tmp/all-issues.json
+# Fetch blocked issues. `--state open` is the CLAIMABLE queue: every backend
+# leaves out issues carrying a blocking label, so filtering it for blocking
+# labels always found none and /review-blocked reported "No blocked issues
+# found!" on repos with dozens (#145). `--state blocked` is the backend's own
+# listing of exactly those issues.
+#
+# A private temp file, not a shared /tmp path: concurrent sessions on one host
+# overwrote each other's candidate list.
+ISSUES_JSON=$(mktemp "${TMPDIR:-/tmp}/fetch-blocked-issues.XXXXXX")
+trap 'rm -f "$ISSUES_JSON"' EXIT
+issue_list --state blocked --limit 200 > "$ISSUES_JSON"
+
+# The Python below reads these from its environment, so they must be exported
+# BEFORE it runs. They used to be exported after it, so --label, --priority and
+# an issue number were silently ignored.
+export FILTER_LABEL FILTER_PRIORITY ISSUE_NUMBER ISSUES_JSON
 
 # Filter and process blocked issues
 python3 << 'PYTHON_SCRIPT'
@@ -53,10 +67,10 @@ import json
 import sys
 import os
 
-with open('/tmp/all-issues.json') as f:
+with open(os.environ['ISSUES_JSON']) as f:
     issues = json.load(f)
 
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'proposal']
+blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'needs-feedback', 'too-complex', 'future', 'proposal']
 priorities = ['P0', 'P1', 'P2', 'P3']
 
 # Filter to blocked issues only
@@ -111,8 +125,3 @@ result = {
 
 print(json.dumps(result, indent=2))
 PYTHON_SCRIPT
-
-# Export environment variables for Python script
-export FILTER_LABEL
-export FILTER_PRIORITY
-export ISSUE_NUMBER
