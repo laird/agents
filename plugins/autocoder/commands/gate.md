@@ -67,14 +67,19 @@ Keep terse. Do not load `/autocoder:fix`. Stop after all triaged.
 
 ### phase = `fix` or `enhance`
 
-**`"in_flight": true` — this session is already working the issue (#130).** In inline
-`/loop` mode a tick can fire while this very session is mid-issue (waiting on a subagent,
-a merge job, or a test run). The gate recognises its own session and does not claim new
-work or touch the checkout. **Do not invoke `/autocoder:fix` again and do not write a
-handoff file.** Emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick; the work already
-under way continues. If you have lost track of the issue (for example after a
-compaction), re-read its comments and `git log origin/<integration>..HEAD` on
-`feature/issue-<issue>` and carry on from there, without re-running `/fix`'s claim steps.
+**`"in_flight": true`: this session already holds the issue (#130).** In inline `/loop`
+mode a tick can fire while this very session is mid-issue (waiting on a subagent, a merge
+job, or a test run). The gate recognises its own session and does not claim new work or
+touch the checkout. **Do not invoke `/autocoder:fix` again and do not write a handoff
+file**: its claim steps are already done. Then:
+
+- **Work on the issue is under way in this session** (a subagent, merge job or test run
+  you started is still going): emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick.
+- **Nothing is under way** (the work was interrupted or abandoned, or you have lost track
+  after a compaction): pick it back up now. Re-read its comments and
+  `git log origin/<integration>..HEAD` on `feature/issue-<issue>`, then continue the
+  `/fix` workflow from where the branch stands. Do not leave a held issue idle, or it
+  stays `working` with nobody on it.
 
 A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
 picked up by a new session** (#182): a restart or a fresh worker process found an open

@@ -11,14 +11,17 @@
 # comment (owner fields since #202; older markers end at <ms>), written
 # by the gate on GitHub/Jira/ADO; the file backend's atomic claim leaves no comment.
 # <session-id> is $CLAUDE_CODE_SESSION_ID when the gate runs inside a Claude Code
-# session (inline /loop dispatch). The shell-loop wrapper runs the gate outside any
-# session, so it is empty there.
+# session for inline /loop dispatch. It is never recorded in shell-loop mode
+# (AUTOCODER_NEXT_FIX_FILE set): there every tick is a fresh process that cannot be
+# mid-issue, even if it inherited a session id from whatever launched the wrapper.
 #
-# In-flight (#130): when the recorded session is the session running this tick,
-# the issue is not just ours but being worked RIGHT NOW in this very session (a
-# /loop tick fired mid-issue). The plan is marked "in_flight": true and the
-# checkout is left alone; the caller must not re-dispatch /fix. A compaction keeps
-# the session id, so it continues as in-flight; a restart gets a new id and resumes.
+# In-flight (#130): when the recorded session is the session running this tick, the
+# issue is held by THIS session, so the plan is marked "in_flight": true, the
+# checkout is left alone, and the caller must not re-run /fix's claim steps. It is a
+# statement about who holds the claim, not proof that work is running: the caller
+# carries on if work is under way, and picks the issue back up if not. So an id that
+# changes on compaction degrades to the #182 resume, and one that survives a restart
+# makes the restarted session pick the work up; neither stalls the issue.
 #
 # A recorded issue is resumed only when ALL hold:
 #   - it is OPEN and still carries `working`;
@@ -51,6 +54,12 @@ worker_state_clear() {
   local f
   f=$(worker_state_file) || return 0
   rm -f "$f"
+}
+
+# _worker_session_id → this tick's Claude Code session, or nothing in shell-loop mode.
+_worker_session_id() {
+  [ -n "${AUTOCODER_NEXT_FIX_FILE:-}" ] && return 0
+  printf '%s' "${CLAUDE_CODE_SESSION_ID:-}"
 }
 
 # _worker_still_ours <issue-json> <recorded-ms> → exit 0 when the issue is open,
@@ -89,8 +98,8 @@ worker_resume_plan() {
     return 1
   fi
 
-  # This very session is mid-issue: report it, and never switch its checkout.
-  if [ -n "$sess" ] && [ "$sess" = "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  # This very session holds it: report that, and never switch its checkout.
+  if [ -n "$sess" ] && [ "$sess" = "$(_worker_session_id)" ]; then
     in_flight=true
   fi
 
@@ -122,7 +131,7 @@ worker_resume_plan() {
   fi
   prio=$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(test("^P[0-3]$"))] | sort | .[0] // "P2"' 2>/dev/null || echo P2)
   # Whoever resumes it now is working it: record this session (empty outside one).
-  worker_state_set "$n" "$ms" "${CLAUDE_CODE_SESSION_ID:-}"
+  worker_state_set "$n" "$ms" "$(_worker_session_id)"
   if [ "$phase" = fix ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s","resume":true,"in_flight":%s}\n' "$n" "$prio" "$in_flight"
   else

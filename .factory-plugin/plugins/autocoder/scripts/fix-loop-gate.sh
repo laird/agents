@@ -269,7 +269,9 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
     claim_comment_wins "$ISSUE_NUM" || continue
   fi
 
-  worker_state_set "$ISSUE_NUM" "$CLAIM_MS" "${CLAUDE_CODE_SESSION_ID:-}"
+  SESSION_ID=""
+  [ -z "${AUTOCODER_NEXT_FIX_FILE:-}" ] && SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+  worker_state_set "$ISSUE_NUM" "$CLAIM_MS" "$SESSION_ID"
   if [ "$PHASE" = "FIX" ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s"}\n' \
       "$ISSUE_NUM" "$PRIORITY" > "$WORK_JSON"

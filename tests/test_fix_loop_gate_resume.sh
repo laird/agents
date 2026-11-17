@@ -166,9 +166,22 @@ assert_eq "the resuming session now owns it: its next tick is in_flight" "true" 
 assert_eq "outside a session: never in_flight" "false" "$(plan .in_flight)"
 git checkout -q master
 
+# Shell-loop mode: a session id inherited by the wrapper must never mark in_flight.
+CLAUDE_CODE_SESSION_ID=sess-B AUTOCODER_NEXT_FIX_FILE="$TMP/handoff" gate >/dev/null
+assert_eq "shell-loop mode ignores an inherited session id" "false" "$(plan .in_flight)"
+assert_eq "...and records none" "-" "$(cut -d' ' -f3 "$STATE" 2>/dev/null)"
+# A two-field record written before session ids existed still resumes.
+git checkout -q master
+printf '20 %s\n' "$(cut -d' ' -f2 "$STATE")" > "$STATE"
+CLAUDE_CODE_SESSION_ID=sess-C gate >/dev/null
+assert_eq "an old two-field record resumes #20" "20" "$(plan .issue)"
+assert_eq "...as a new session, not in_flight" "false" "$(plan .in_flight)"
+git checkout -q master
+
 GATE_MD="$SCRIPT_DIR/../commands/gate.md"
 grep -q '"in_flight": true' "$GATE_MD" && grep -q 'Do not invoke `/autocoder:fix` again' "$GATE_MD" \
-  && ok "gate.md tells an in-flight session not to re-dispatch /fix" \
+  && grep -q 'pick it back up now' "$GATE_MD" \
+  && ok "gate.md: an in-flight session does not re-dispatch /fix, and picks idle work back up" \
   || bad "gate.md does not document the in_flight rule"
 
 # ── 9. AUTOCODER_RESUME_OWN_CLAIM=0 turns resume off ────────────────────────
