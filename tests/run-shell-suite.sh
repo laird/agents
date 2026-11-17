@@ -20,6 +20,13 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# Tests build throwaway repos and expect git to find them from the current
+# directory. An inherited GIT_DIR or GIT_WORK_TREE (from a git hook or a wrapper)
+# overrides that, and issue-config.sh would then read the real repo's
+# .autocoder.json and send a test's issue calls to the real tracker (#257).
+# Drop every variable git itself clears when it changes repository.
+unset $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE
+
 # Tests drive merge jobs, which append merge-attempt events (#184). Keep those out
 # of the real ~/.local/state/autocoder/merge-events.jsonl.
 SUITE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-merge-events.XXXXXX")
