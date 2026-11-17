@@ -233,6 +233,11 @@ merge_event() { :; }
 [ -f "${_MTI_DIR}/merge-events-lib.sh" ] && source "${_MTI_DIR}/merge-events-lib.sh"
 # shellcheck source=repo-id-fns.sh
 source "${_MTI_DIR}/repo-id-fns.sh"
+# Lifecycle events (#190), sourced by issue-fns.sh. This job runs in a throwaway worktree,
+# so name the worker and branch it acts for (shell variables, not exported).
+declare -F issue_event >/dev/null || issue_event() { :; }
+AUTOCODER_WORKER="${AUTOCODER_WORKER:-$(basename "$CALLER_DIR")}"
+AUTOCODER_EVENT_BRANCH="$FEATURE"
 # shellcheck source=feature-ref-fns.sh
 source "${_MTI_DIR}/feature-ref-fns.sh"
 # shellcheck source=merge-queue-fns.sh
@@ -306,6 +311,11 @@ _emit_attempt_event() {
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
     files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
     landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON"
+  issue_event gate-end "${ISSUE_NUM:-}" repo="$(_merge_repo_id)" outcome="$outcome" \
+    attempt="${AUTOCODER_MERGE_ATTEMPT:-}" duration_s="$((SECONDS - MERGE_T0))" exit="$rc" \
+    reason="$MERGE_REASON"
+  [ -z "$MERGE_LANDED" ] || issue_event landed "${ISSUE_NUM:-}" repo="$(_merge_repo_id)" \
+    sha="$MERGE_LANDED" integration="${INTEGRATION_BRANCH:-}"
 }
 # A test that failed on a tree and then passed on the same tree (#191): gate-cache-fns.sh
 # calls this from gate_cache_run, and it becomes a "flaky" line in merge-events.jsonl.
@@ -665,6 +675,7 @@ seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
 #    fetch until the push is verified, so the tip we sync onto is still the tip when we
 #    push. Jobs behind us sync only once we have landed. See merge-queue-fns.sh.
 merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
+issue_event gate-start "$ISSUE_NUM" repo="$(_merge_repo_id)" attempt="${AUTOCODER_MERGE_ATTEMPT:-}"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.

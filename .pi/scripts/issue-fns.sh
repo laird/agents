@@ -44,6 +44,16 @@ else
   _ideps_filter() { cat; }
   issue_unmet_dependencies() { return 0; }
 fi
+# Lifecycle events (#190): claim, release, escalate and the label edits that are
+# lifecycle steps append to issue-events.jsonl. Optional, like issue-deps.sh.
+if [ -f "${_ifns_DIR}/issue-events-lib.sh" ]; then
+  # shellcheck source=issue-events-lib.sh
+  source "${_ifns_DIR}/issue-events-lib.sh"
+else
+  issue_event() { :; }
+  _issue_events_after_update() { :; }
+  _issue_events_flag_value() { :; }
+fi
 
 # The claimable queue is `list` with no --state, or --state open.
 _ifns_is_open_list() {
@@ -67,12 +77,21 @@ issue_list() {
   fi
 }
 issue_get()           { "$_ifns_BACKEND_BIN" get           "$@"; }
-issue_update()        { "$_ifns_BACKEND_BIN" update        "$@"; }
+issue_update() {
+  "$_ifns_BACKEND_BIN" update "$@" || return $?
+  _issue_events_after_update "$@"
+}
 issue_comment()       { "$_ifns_BACKEND_BIN" comment       "$@"; }
 issue_close()         { "$_ifns_BACKEND_BIN" close         "$@"; }
 issue_create()        { "$_ifns_BACKEND_BIN" create        "$@"; }
-issue_claim()         { "$_ifns_BACKEND_BIN" claim         "$@"; }
-issue_release()       { "$_ifns_BACKEND_BIN" release       "$@"; }
+issue_claim() {
+  "$_ifns_BACKEND_BIN" claim "$@" || return $?
+  issue_event claimed "${1:-}"
+}
+issue_release() {
+  "$_ifns_BACKEND_BIN" release "$@" || return $?
+  issue_event released "${1:-}"
+}
 # The backend answers cheaply when nothing is open; when something is, check
 # that at least one open issue is free of unmet dependencies.
 issue_any_claimable() {
@@ -83,5 +102,10 @@ issue_any_claimable() {
 }
 issue_handoff()       { "$_ifns_BACKEND_BIN" handoff       "$@"; }
 issue_park()          { "$_ifns_BACKEND_BIN" park          "$@"; }
-issue_escalate()      { "$_ifns_BACKEND_BIN" escalate      "$@"; }
+issue_escalate() {
+  "$_ifns_BACKEND_BIN" escalate "$@" || return $?
+  local reason
+  reason=$(_issue_events_flag_value --comment "$@" | head -1 | cut -c1-200)
+  issue_event escalated "${1:-}" label="$(_issue_events_flag_value --label "$@")" reason="$reason"
+}
 issue_requeue()       { "$_ifns_BACKEND_BIN" requeue       "$@"; }

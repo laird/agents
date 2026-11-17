@@ -2050,7 +2050,8 @@ $(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
 🤖 Auto-decomposed by autonomous fix workflow"
 
   # Add label to indicate decomposition
-  issue_update "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
+  # The children go into the lifecycle event log (#190).
+  AUTOCODER_EVENT_CHILDREN="${SUBTASK_NUMBERS[*]}" issue_update "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
 
   echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
   echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"

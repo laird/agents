@@ -36,7 +36,7 @@ if echo "$BLOCKING_REASON" | grep -qE '\[[a-z][^]]*\]'; then
 fi
 
 # Add blocking label
-issue_update "$ISSUE_NUM" --add-label "$BLOCKING_LABEL"
+AUTOCODER_EVENT_REASON="${BLOCKING_REASON:0:200}" issue_update "$ISSUE_NUM" --add-label "$BLOCKING_LABEL"
 
 # Build the comment body. needs-design gets a specialized template that
 # explicitly captures *what* needs designing.

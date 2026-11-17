@@ -197,3 +197,10 @@ gh api "repos/{owner}/{repo}/deployments/$ID/statuses" \
   -f state=success -f description="Release $TAG" ${URL:+-f log_url="$URL"} >/dev/null \
   || refuse "deployment $ID was created but could not be marked success"
 say "released $TAG (${SHA:0:12}) and recorded deployment $ID to $RELEASE_ENV"
+# Lifecycle event (#190): repo-wide, like deployed.
+_RL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_RL_DIR/issue-events-lib.sh" ]; then
+  # shellcheck source=issue-events-lib.sh
+  source "$_RL_DIR/issue-events-lib.sh"
+  issue_event released-tag - tag="$TAG" sha="$SHA" environment="$RELEASE_ENV" || true
+fi

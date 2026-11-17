@@ -499,3 +499,54 @@ Without a `Failing suites:` line, only file-shaped names whose basename contains
 
 `flaky-report.sh [--days N] [--repo ID] [--json]` lists the tests seen flaky in the last N
 days (default 14), most sightings first, with the issues whose gates saw them.
+
+## Issue lifecycle: `issue-events.jsonl` (#190)
+
+The verbs that move an issue through its life append one JSON line each, at the moment
+they act, to
+`${AUTOCODER_ISSUE_EVENTS:-${XDG_STATE_HOME:-~/.local/state}/autocoder/issue-events.jsonl}`
+(`issue-events-lib.sh`). It sits next to `merge-events.jsonl`, which keeps each merge
+attempt's detail (conflicting files, failing suites, push retries). A UI builds an
+issue's timeline from this file and the time between its events, without scraping
+comments, labels or the merge job's temp files.
+
+```json
+{"v":1,"ts":"2026-11-17T03:10:02Z","repo":"agents-5ea0ca80","issue":190,"worker":"agents-wt-1",
+ "branch":"feature/issue-190","event":"gate-end","detail":{"outcome":"conflict","attempt":1,
+ "duration_s":41,"exit":1,"reason":"..."}}
+```
+
+This is a contract. Field set **version 1**:
+
+- `v`: the field-set version. A reader skips lines whose `v` it does not know.
+- `ts`: ISO-8601 UTC, when the event happened. Order a timeline by `ts`, not by line:
+  `first-commit` is written when the work first goes to the gate but stamped with the
+  commit's own time.
+- `repo`: the repo id (`autocoder_repo_id`, shared by every worktree of a checkout).
+- `issue`: the issue number, or `null` for the repo-wide `deployed` and `released-tag`.
+- `worker`: `AUTOCODER_WORKER` (`<session>:<n>` in a swarm), else the worktree's dir name.
+- `branch`: the issue branch, else the current branch.
+- `event` and its `detail` keys:
+
+| `event` | written by | `detail` |
+|---|---|---|
+| `claimed` | `issue_claim` | — |
+| `released` | `issue_release`, or `issue_update --remove-label working` without a hand-off label | — |
+| `first-commit` | `merge-launch.sh`, once per issue | `sha` |
+| `gate-queued` | `merge-launch.sh` | `attempt`, `sha` (the commit sent to the gate) |
+| `gate-start` | `merge-to-integration.sh`, once it holds the landing queue | `attempt` |
+| `gate-end` | `merge-to-integration.sh`, on every exit | `outcome` (as `merge-events.jsonl`), `attempt`, `duration_s`, `exit`, `reason` |
+| `landed` | `merge-to-integration.sh` | `sha`, `integration` |
+| `escalated` | `issue_escalate`, or `issue_update --add-label` of a blocking label (`add-blocking-label.sh`) | `label`, `reason` (first 200 characters) |
+| `decomposed` | `issue_update --add-label decomposed` | `children` (from `AUTOCODER_EVENT_CHILDREN`) |
+| `deployed` | `deploy.sh`, after the check passes | `environment`, `sha`, `deployment` |
+| `released-tag` | `release.sh` | `tag`, `sha`, `environment` |
+
+An issue counts as deployed or released once its `landed` sha is an ancestor of the
+event's `sha`. A step can be recorded twice (a release by label and by `issue_release`);
+a reader takes the first after each `claimed`. New events or detail keys may be added
+within version 1; renaming or removing one bumps `v`.
+
+Lines older than `AUTOCODER_ISSUE_EVENTS_DAYS` (default 30) are dropped once the file
+passes 1 MiB. The file is created 0600. Recording is best effort and never fails the verb.
+`tests/run-shell-suite.sh` points the file at a temp path.

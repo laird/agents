@@ -248,6 +248,13 @@ fi
 
 status success "$LABEL ${SHA:0:12} installed on $HOST"
 say "deployed ${SHA:0:12} to $ENVIRONMENT"
+# Lifecycle event (#190): repo-wide, so no issue; an issue is deployed once its landed
+# commit is an ancestor of this one.
+if [ -f "$_DP_DIR/issue-events-lib.sh" ]; then
+  # shellcheck source=issue-events-lib.sh
+  source "$_DP_DIR/issue-events-lib.sh"
+  issue_event deployed - environment="$ENVIRONMENT" sha="$SHA" deployment="$DEPLOYMENT_ID" || true
+fi
 
 if [ "$RELEASE" = false ]; then
   if [ "$CONFIGURED_RELEASE" = 1 ]; then say "not releasing (--no-release)"; fi

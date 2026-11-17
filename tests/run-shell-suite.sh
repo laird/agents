@@ -24,7 +24,10 @@ cd "$ROOT" || exit 1
 # of the real ~/.local/state/autocoder/merge-events.jsonl.
 SUITE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-merge-events.XXXXXX")
 export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
-trap 'rm -f "$SUITE_EVENTS"' EXIT
+# Likewise the issue lifecycle events (#190), which the issue verbs append.
+SUITE_ISSUE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-issue-events.XXXXXX")
+export AUTOCODER_ISSUE_EVENTS="$SUITE_ISSUE_EVENTS"
+trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS"' EXIT
 # #197's random spot-check sampling makes exact-label assertions flaky (#225). Off by
 # default for the suite; tests that exercise spot checks set or unset it themselves.
 export AUTOCODER_SPOT_CHECK_RATE="${AUTOCODER_SPOT_CHECK_RATE:-0}"

@@ -211,6 +211,24 @@ rm -f "$RUNSCRIPT"
   exit 1
 }
 
+# Lifecycle events (#190). first-commit is written once per issue, on its first trip to
+# the gate, stamped with the time of the branch's first commit past the integration tip.
+# Written before the job starts, so gate-queued always precedes its gate-start.
+# Best effort, and optional for a partial script tree.
+if [ -f "${_MLI_DIR}/issue-events-lib.sh" ]; then
+  # shellcheck source=issue-events-lib.sh
+  source "${_MLI_DIR}/issue-events-lib.sh"
+  _ml_repo=$(autocoder_repo_id "$PWD")
+  if [ -n "$FEATURE_SHA" ] && ! issue_event_seen first-commit "$ISSUE_NUM" "$_ml_repo"; then
+    _ml_first=$(git rev-list --reverse "origin/${INTEGRATION_BRANCH}..${FEATURE_SHA}" 2>/dev/null | head -1)
+    if [ -n "$_ml_first" ]; then
+      issue_event first-commit "$ISSUE_NUM" repo="$_ml_repo" branch="$FEATURE" sha="$_ml_first" \
+        ts="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd "$_ml_first" 2>/dev/null)"
+    fi
+  fi
+  issue_event gate-queued "$ISSUE_NUM" repo="$_ml_repo" branch="$FEATURE" attempt="$ATTEMPT" sha="$FEATURE_SHA"
+fi
+
 setsid "$RUNSCRIPT" < /dev/null > /dev/null 2>&1 &
 disown 2>/dev/null || true
 
