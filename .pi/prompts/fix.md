@@ -643,13 +643,7 @@ else
   # No specific issue - get highest priority issue (using labels only)
   issue_list --state open --limit 100 > /tmp/all-issues.json
 
-  # ── Branch-evidence exclusion (issue #48) ──────────────────────────────────
-  # Filtering on labels alone re-exposes in-flight issues whenever a `working`
-  # label is dropped (issue #14 — still live in workers on older code). The
-  # post-selection arbitration below catches it, but only after a claim/back-off
-  # cycle, and the gap between the two is where a second worker also claims.
-  # A pushed branch is evidence that survives a lost label. ONE ls-remote per
-  # pass, not one API call per candidate. Fails open on a network blip.
+  # Branch-evidence exclusion (#48): a pushed branch is a claim that survives a lost label.
   CLAIMED_BY_BRANCH=$("${SCRIPT_DIR}/claimed-issue-numbers.sh" origin)
   [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
   echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
@@ -803,9 +797,7 @@ echo "Issue: #$ISSUE_NUM"
 echo "Priority: P$ISSUE_PRIORITY"
 echo "Title: $ISSUE_TITLE"
 echo ""
-# The spec is the body PLUS the comment thread (issue #134). Corrections,
-# narrowed scope and review deltas arrive as comments; the body is the oldest
-# text on the page. Print all of it — no `head` truncation.
+# The spec is the body plus the comment thread (#134); print all of it.
 ISSUE_SPEC=$("${SCRIPT_DIR}/issue-spec.sh" "$ISSUE_NUM") || {
   echo "⚠️  Could not read the comment thread for #$ISSUE_NUM — showing the body only. Read the comments yourself before writing code."
   ISSUE_SPEC="$ISSUE_BODY"
@@ -1284,9 +1276,7 @@ For simple issues, proceed directly:
 ```bash
 # After fixing simple issue:
 git add -A
-# Title "#N: ...", not "Fix #N: ...": "Fix #N" is a GitHub closing keyword, so GitHub
-# would close the issue the moment the merge job pushes, before the job posts its
-# summary and settles the labels (#209). The job closes (or parks) it itself.
+# Title "#N: ...", never "Fix #N": a closing keyword closes the issue before the merge job reports (#209).
 git commit -m "#${ISSUE_NUM}: Brief description
 
 Detailed explanation of what was fixed and how.
@@ -1295,11 +1285,7 @@ Detailed explanation of what was fixed and how.
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# Trial rebase (#222): land on today's integration tip, not the one this branch
-# started from. It runs BEFORE the review check because a rebase that moves HEAD
-# invalidates the review record: review the rebased HEAD. On a conflict, resolve it
-# now while it is small, keeping both sides' behaviour, re-run the targeted tests,
-# and re-run this block.
+# Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
 git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
 if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
@@ -1307,9 +1293,7 @@ if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   exit 2
 fi
 
-# Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
-# now, on the committed branch. Nothing is published until its record for
-# this exact HEAD says pass.
+# Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
 REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ISSUE_NUM}.md"
 if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
    || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
@@ -1317,19 +1301,11 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
-# Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
-# .autocoder.json lands as a pull request even when the repo merges directly.
-# The diff sets the tier, not the issue's priority or the worker, and an
-# agent's own review never stands in for the human one a PR gets.
+# Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
 LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
   || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
-# Push feature branch
-# Publish the branch. `git push` first; if the transport is blocked (e.g. a
-# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
-# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
-# command's exit status alone, and never from `git push --dry-run`, which
-# succeeds against a blocked transport because it never sends the pack.
+# Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
 PUSH_OK=false
 if git push -u origin "feature/issue-${ISSUE_NUM}"; then
   PUSH_OK=true
@@ -1341,9 +1317,7 @@ else
 fi
 
 if [ "$PUSH_OK" != true ]; then
-  # The code did not land. Closing now would make the tracker claim something
-  # false, and would strand the work (see #26). Leave the issue open, KEEP the
-  # 'working' label, and say so.
+  # Not published: leave the issue open and keep 'working' (#26).
   issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
 
 Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
@@ -1384,23 +1358,7 @@ $(cat "$REVIEW_FILE")
     "${ISSUE_BODY:0:150}" \
     "Awaiting code review."
 else
-  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
-  # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
-  # Launch the merge DETACHED (#1693): the gate run takes 8-30 minutes and a
-  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
-  # failure, not a flake, if merge-to-integration.sh runs inline. This only
-  # STARTS the job (setsid, fully detached) and returns almost immediately.
-  #
-  # The job OWNS the issue (--own-issue) from its first act to its last: it
-  # swaps `working` for `merging` itself before anything that can fail, gates
-  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
-  # landed commit, and then closes the issue with the summary written below,
-  # parks it under `awaiting-integration` (landed but not provably green or
-  # not shipped), or escalates it to needs-clarification with the gate output.
-  # This worker does NOT poll, does NOT close the issue, and writes NO label
-  # after the launch returns: its late label writes used to overwrite the
-  # job's fast-path outcome. It hands off and moves on to the next issue.
+  # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
   SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
@@ -1448,9 +1406,7 @@ After verification passes:
 ```bash
 # Commit changes
 git add -A
-# Title "#N: ...", not "Fix #N: ...": "Fix #N" is a GitHub closing keyword, so GitHub
-# would close the issue the moment the merge job pushes, before the job posts its
-# summary and settles the labels (#209). The job closes (or parks) it itself.
+# Title "#N: ...", never "Fix #N": a closing keyword closes the issue before the merge job reports (#209).
 git commit -m "#${ISSUE_NUM}: Brief description
 
 Detailed multi-line explanation of:
@@ -1463,11 +1419,7 @@ Detailed multi-line explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# Trial rebase (#222): land on today's integration tip, not the one this branch
-# started from. It runs BEFORE the review check because a rebase that moves HEAD
-# invalidates the review record: review the rebased HEAD. On a conflict, resolve it
-# now while it is small, keeping both sides' behaviour, re-run the targeted tests,
-# and re-run this block.
+# Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
 git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
 if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
@@ -1475,9 +1427,7 @@ if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   exit 2
 fi
 
-# Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
-# now, on the committed branch. Nothing is published until its record for
-# this exact HEAD says pass.
+# Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
 REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ISSUE_NUM}.md"
 if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
    || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
@@ -1485,19 +1435,11 @@ if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null 
   exit 1
 fi
 
-# Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
-# .autocoder.json lands as a pull request even when the repo merges directly.
-# The diff sets the tier, not the issue's priority or the worker, and an
-# agent's own review never stands in for the human one a PR gets.
+# Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
 LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
   || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
-# Push feature branch
-# Publish the branch. `git push` first; if the transport is blocked (e.g. a
-# proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
-# PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
-# command's exit status alone, and never from `git push --dry-run`, which
-# succeeds against a blocked transport because it never sends the pack.
+# Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
 PUSH_OK=false
 if git push -u origin "feature/issue-${ISSUE_NUM}"; then
   PUSH_OK=true
@@ -1509,9 +1451,7 @@ else
 fi
 
 if [ "$PUSH_OK" != true ]; then
-  # The code did not land. Closing now would make the tracker claim something
-  # false, and would strand the work (see #26). Leave the issue open, KEEP the
-  # 'working' label, and say so.
+  # Not published: leave the issue open and keep 'working' (#26).
   issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
 
 Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
@@ -1552,23 +1492,7 @@ $(cat "$REVIEW_FILE")
     "${ISSUE_BODY:0:150}" \
     "Awaiting code review."
 else
-  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
-  # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
-  # Launch the merge DETACHED (#1693): the gate run takes 8-30 minutes and a
-  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
-  # failure, not a flake, if merge-to-integration.sh runs inline. This only
-  # STARTS the job (setsid, fully detached) and returns almost immediately.
-  #
-  # The job OWNS the issue (--own-issue) from its first act to its last: it
-  # swaps `working` for `merging` itself before anything that can fail, gates
-  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
-  # landed commit, and then closes the issue with the summary written below,
-  # parks it under `awaiting-integration` (landed but not provably green or
-  # not shipped), or escalates it to needs-clarification with the gate output.
-  # This worker does NOT poll, does NOT close the issue, and writes NO label
-  # after the launch returns: its late label writes used to overwrite the
-  # job's fast-path outcome. It hands off and moves on to the next issue.
+  # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
   SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
@@ -1943,11 +1867,7 @@ Detailed explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-  # Trial rebase (#222): land on today's integration tip, not the one this branch
-  # started from. It runs BEFORE the review check because a rebase that moves HEAD
-  # invalidates the review record: review the rebased HEAD. On a conflict, resolve it
-  # now while it is small, keeping both sides' behaviour, re-run the targeted tests,
-  # and re-run this block.
+  # Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
   git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
   if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
     echo "⚠️  Rebase of #${ENHANCE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
@@ -1955,9 +1875,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     exit 2
   fi
 
-  # Pre-landing review gate (#147, #166): run "Pre-Landing Review Gate" above
-  # now, on the committed branch. Nothing is published until its record for
-  # this exact HEAD says pass.
+  # Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
   REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ENHANCE_NUM}.md"
   if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
      || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
@@ -1965,19 +1883,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     exit 1
   fi
 
-  # Landing mode by diff risk (#165): a diff that touches a `risk.high` glob in
-  # .autocoder.json lands as a pull request even when the repo merges directly.
-  # The diff sets the tier, not the issue's priority or the worker, and an
-  # agent's own review never stands in for the human one a PR gets.
+  # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
   LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
     || { echo "❌ Cannot choose a landing mode for #${ENHANCE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
-  # Push feature branch
-  # Publish the branch. `git push` first; if the transport is blocked (e.g. a
-  # proxy rejecting git-receive-pack with HTTP 403), fall back to the GitHub API.
-  # PUSH_OK records whether the work ACTUALLY LANDED — never infer it from a
-  # command's exit status alone, and never from `git push --dry-run`, which
-  # succeeds against a blocked transport because it never sends the pack.
+  # Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
   PUSH_OK=false
   if git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"; then
     PUSH_OK=true
@@ -1989,9 +1899,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   fi
 
   if [ "$PUSH_OK" != true ]; then
-    # The code did not land. Closing now would make the tracker claim something
-    # false, and would strand the work (see #26). Leave the issue open, KEEP the
-    # 'working' label, and say so.
+    # Not published: leave the issue open and keep 'working' (#26).
     issue_comment "$ENHANCE_NUM" --body "⚠️ **Publication failed — issue left open**
 
   Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
@@ -2025,23 +1933,7 @@ $(cat "$REVIEW_FILE")
     exit 0
   fi
 
-  # Auto-merge to the shared integration branch (worktree-safe: never checks out the
-  # integration branch, re-tests the combined tree, retries push on sibling races, and
-  # escalates conflicts to a label instead of stranding work on main-wt-N).
-  # Launch the merge DETACHED (#1693): the gate run takes 8-30 minutes and a
-  # single foreground Bash-tool call is killed at ~2 minutes — a guaranteed
-  # failure, not a flake, if merge-to-integration.sh runs inline. This only
-  # STARTS the job (setsid, fully detached) and returns almost immediately.
-  #
-  # The job OWNS the issue (--own-issue) from its first act to its last: it
-  # swaps `working` for `merging` itself before anything that can fail, gates
-  # the integrated tree, pushes, runs verify-shipped.sh (issue #35) on the
-  # landed commit, and then closes the issue with the summary written below,
-  # parks it under `awaiting-integration` (landed but not provably green or
-  # not shipped), or escalates it to needs-clarification with the gate output.
-  # This worker does NOT poll, does NOT close the issue, and writes NO label
-  # after the launch returns: its late label writes used to overwrite the
-  # job's fast-path outcome. It hands off and moves on to the next issue.
+  # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
   SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ENHANCE_NUM}.summary.XXXXXX")
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
