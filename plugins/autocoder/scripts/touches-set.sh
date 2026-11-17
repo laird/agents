@@ -35,8 +35,10 @@ source "${_ts_DIR}/touches-fns.sh"
 ISSUE="" DECLARE="" BASE="" DRY=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --declare) DECLARE="${2-}"; shift 2 ;;
-    --base)    BASE="${2-}"; shift 2 ;;
+    --declare|--base)
+               [ $# -ge 2 ] || { echo "touches-set: $1 needs a value" >&2; exit 2; }
+               if [ "$1" = --declare ]; then DECLARE="$2"; else BASE="$2"; fi
+               shift 2 ;;
     --dry-run) DRY=true; shift ;;
     -h|--help) sed -n '3,25p' "$0"; exit 0 ;;
     -*)        echo "touches-set: unknown option '$1'" >&2; exit 2 ;;

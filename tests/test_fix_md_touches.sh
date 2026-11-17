@@ -46,7 +46,7 @@ cat > "$TMP/bin/gh" <<'SH'
 #!/bin/bash
 # issue view N --json ... | issue edit N --body-file -
 case "$1 $2" in
-  "issue view") python3 -c 'import json,sys; print(json.dumps({"number": int(sys.argv[1]), "title": "t", "body": open(sys.argv[2]).read(), "labels": [], "state": "OPEN", "comments": []}))' "$3" "$GH_BODY" ;;
+  "issue view") python3 -c 'import json,sys; print(json.dumps({"number": int(sys.argv[1]), "title": "t", "body": open(sys.argv[2], newline="").read(), "labels": [], "state": "OPEN", "comments": []}))' "$3" "$GH_BODY" ;;
   "issue edit") [ "$4" = --body-file ] && [ "$5" = - ] || exit 9; cat > "$GH_BODY"; echo edit >> "$GH_BODY.edits" ;;
   *) exit 9 ;;
 esac
@@ -100,6 +100,28 @@ SET --base origin/nonexistent >/dev/null 2>&1 && bad "an unknown base succeeded"
 printf '## Files Affected\n- `lib/x.py`\n' > "$GH_BODY"
 SET --declare "lib/x.py" >/dev/null 2>&1
 tail -n 1 "$GH_BODY" | grep -q '^Touches: lib/x.py, ' && ok "with no Touches: line, one is appended" || bad "append: $(cat "$GH_BODY")"
+
+# A body that leaves a code fence open (a pasted, truncated log): the fence is
+# closed first, so the gate reads the line and the next run finds it (review, #229).
+printf 'intro\n```\nlog line' > "$GH_BODY"
+SET --declare "a/" >/dev/null 2>&1; SET --declare "a/" >/dev/null 2>&1
+gate_reads | grep -q '^a/ ' && [ "$(grep -c '^Touches: ' "$GH_BODY")" -eq 1 ] \
+  && ok "an open fence is closed before the line, and a second run does not duplicate it" \
+  || bad "open fence: gate '$(gate_reads)', body: $(cat "$GH_BODY")"
+
+# A directory that gains one file per run still collapses once it holds three.
+printf 'Touches: src/core/1.rs, src/core/2.rs' > "$GH_BODY"
+(source "$SCRIPTS/touches-fns.sh"; touches_update "$(cat "$GH_BODY")" "" "src/core/3.rs") | head -n 1 \
+  | grep -qx 'Touches: src/core/' && ok "files listed by earlier runs count towards collapsing" || bad "no collapse across runs"
+
+# CRLF bodies keep their line endings.
+printf 'x\r\nTouches: a/\r\nend' > "$GH_BODY"
+SET --declare "b/" >/dev/null 2>&1
+[ "$(grep -c $'\r$' "$GH_BODY")" -eq 2 ] && grep -q $'^Touches: a/, b/, .*\r$' "$GH_BODY" && ok "a CRLF body is rewritten only on its Touches: line" \
+  || bad "CRLF body: $(cat -A "$GH_BODY")"
+
+timeout 10 "$SCRIPTS/touches-set.sh" 7 --declare >/dev/null 2>&1; [ $? -eq 2 ] && ok "an option with no value is a usage error, not a hang" \
+  || bad "--declare without a value did not exit 2"
 
 # A backend that cannot edit a body: the line is printed, nothing is written.
 cd "$TMP" && git init -q filerepo && cd filerepo || exit 1

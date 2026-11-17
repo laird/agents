@@ -89,22 +89,43 @@ def clean(entry):
 def looks_like_path(s):
     return bool(s) and not re.search(r"\s", s) and ("/" in s or "." in s or "*" in s)
 
-def prose_lines(body):
-    # (index, line) for lines outside fenced code blocks: a fence that quotes the
-    # format, or a `# comment` in a shell snippet, is not a declaration or a
-    # heading. A fence closes only on a bare run of its own character at least as
-    # long (CommonMark).
+def closes(m, opener):
+    # A fence closes only on a bare run of its own character at least as long
+    # (CommonMark).
+    return bool(m) and m.group(1)[0] == opener[0] and len(m.group(1)) >= len(opener) \
+        and not m.group(2).strip()
+
+def fence_scan(body):
+    # (index, line, opener) for every line; opener is the fence the line belongs
+    # to (a fence line itself included), None outside one.
     opener = None
     for i, line in enumerate(body.splitlines()):
         m = FENCE_RE.match(line)
         if opener is None:
-            if m:
-                opener = m.group(1)
-                continue
-            yield i, line
-        elif m and m.group(1)[0] == opener[0] and len(m.group(1)) >= len(opener) \
-                and not m.group(2).strip():
+            yield i, line, (m.group(1) if m else None)
+            opener = m.group(1) if m else None
+        else:
+            yield i, line, opener
+            if closes(m, opener):
+                opener = None
+
+def open_fence_at_end(body):
+    # The fence a body leaves open (a pasted, truncated log), or None.
+    opener = None
+    for line in body.splitlines():
+        m = FENCE_RE.match(line)
+        if opener is None:
+            opener = m.group(1) if m else None
+        elif closes(m, opener):
             opener = None
+    return opener
+
+def prose_lines(body):
+    # (index, line) for lines outside fenced code blocks: a fence that quotes the
+    # format, or a `# comment` in a shell snippet, is not a declaration or a heading.
+    for i, line, opener in fence_scan(body):
+        if opener is None:
+            yield i, line
 
 def touches_line(body):
     # (index, entries) of the first `Touches:` line outside a code fence, or (None, []).
@@ -266,17 +287,26 @@ elif cmd == "update":
     # changed files in one directory collapsed to that directory. Prints the new
     # `Touches:` line, then the new body; exits 3 when nothing would change.
     body = sys.stdin.read()
-    rows = body.splitlines()
+    # keepends: the rows split where splitlines() does (so prose_lines indices
+    # match) and every other byte of the body is written back unchanged.
+    rows = body.splitlines(keepends=True)
     at, areas = touches_line(body)
     for e in (clean(x) for x in os.environ.get("T_DECLARE", "").split(",")):
         if e and e.lower() not in NO_AREAS and e not in areas:
             areas.append(e)
+    dir_of = lambda f: f.rsplit("/", 1)[0] + "/" if "/" in f else ""
     by_dir = {}
     for f in sorted(set(lines(os.environ.get("T_CHANGED", "")))):
         if not lists_overlap([f], areas):
-            by_dir.setdefault(f.rsplit("/", 1)[0] + "/" if "/" in f else "", []).append(f)
+            by_dir.setdefault(dir_of(f), []).append(f)
     for d in sorted(by_dir):
-        areas += [d] if d and len(by_dir[d]) >= 3 else by_dir[d]
+        # Files listed by earlier runs count too, so a directory that gains a
+        # file per commit still collapses once it holds three.
+        listed = [a for a in areas if d and dir_of(a) == d and is_leaf(a) and not WILD.search(a)]
+        if d and len(by_dir[d]) + len(listed) >= 3:
+            areas = [a for a in areas if a not in listed] + [d]
+        else:
+            areas += by_dir[d]
     areas = [a for a in areas if not is_catch_all(a)]
     if not areas:
         sys.exit(3)
@@ -284,11 +314,19 @@ elif cmd == "update":
     if at is not None and rows[at].strip() == line:
         sys.exit(3)
     if at is not None:
-        rows[at] = line
+        row = rows[at]
+        rows[at] = line + row[len(row.rstrip("\r\n")):]
+        out = "".join(rows)
     else:
-        rows += ["", line] if rows else [line]
+        out = body
+        if out and not out.endswith(("\n", "\r")):
+            out += "\n"
+        fence = open_fence_at_end(body)
+        if fence:
+            out += fence + "\n"   # close it, or the line would be read as code
+        out += ("\n" if out else "") + line + "\n"
     print(line)
-    print("\n".join(rows))
+    sys.stdout.write(out)
 elif cmd == "mode":
     path = os.environ.get("T_CONFIG") or ""
     mode = "off"
