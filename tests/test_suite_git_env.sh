@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_suite_git_env.sh — run-shell-suite.sh drops an inherited GIT_DIR /
 # GIT_WORK_TREE, so a test's throwaway repo, not the repo those point at, decides
 # which issue backend issue-config.sh picks (#257).
