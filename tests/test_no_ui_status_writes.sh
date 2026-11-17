@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_no_ui_status_writes.sh — autocoder publishes UI-neutral status and writes
 # no files laid out for one UI (#193).
 #
