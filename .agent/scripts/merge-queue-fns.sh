@@ -102,6 +102,8 @@ merge_queue_acquire() {
     fi
     : > "$MERGE_QUEUE_DIR/held"
     while kill -0 "$owner" 2>/dev/null; do sleep 1 8>&-; done
+    # The owner died without releasing (SIGKILL): tidy what it would have removed.
+    rm -f "${MERGE_QUEUE_LOCK%.lock}.holder"; rm -rf "$MERGE_QUEUE_DIR"
   ) </dev/null >/dev/null 2>&1 &
   MERGE_QUEUE_PID=$!
 
@@ -134,9 +136,11 @@ merge_queue_acquire() {
 # merge_queue_release: lets the next job on this host land. Safe to call more than once,
 # and from an EXIT trap.
 merge_queue_release() {
-  [ "$MERGE_QUEUE_HELD" = "1" ] || return 0
+  # A job stopped while still waiting has a holder but no lock: kill it too, or it keeps
+  # queuing for a dead job and briefly takes the lock when its turn comes.
+  [ "$MERGE_QUEUE_HELD" = "1" ] || [ -n "$MERGE_QUEUE_PID" ] || return 0
+  [ "$MERGE_QUEUE_HELD" = "1" ] && rm -f "${MERGE_QUEUE_LOCK%.lock}.holder" 2>/dev/null
   MERGE_QUEUE_HELD=0
-  rm -f "${MERGE_QUEUE_LOCK%.lock}.holder" 2>/dev/null || true
   if [ -n "$MERGE_QUEUE_PID" ]; then
     kill "$MERGE_QUEUE_PID" 2>/dev/null || true
     wait "$MERGE_QUEUE_PID" 2>/dev/null || true
