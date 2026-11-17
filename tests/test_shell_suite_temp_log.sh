@@ -36,20 +36,25 @@ left=$(find "$SCRATCH" -name 'shell-suite.*')
 
 echo "=== an interrupted run removes the log ==="
 printf '#!/bin/bash\necho started > "%s/started"\nsleep 5\n' "$TMP" > "$SANDBOX/tests/test_c_slow.sh"
+# Job control gives each run its own process group with SIGINT not ignored (a plain
+# background job in a script starts with SIGINT ignored, so INT would interrupt
+# nothing), and lets the kill reach the slow test's sleep too, so nothing outlives us.
+set -m
 for sig in INT TERM; do
   rm -f "$TMP/started"
   TMPDIR="$SCRATCH" bash "$SANDBOX/tests/run-shell-suite.sh" test_c_slow.sh >/dev/null 2>&1 &
   pid=$!
   for _ in $(seq 50); do [ -f "$TMP/started" ] && break; sleep 0.1; done
   during=$(find "$SCRATCH" -name 'shell-suite.*')
-  kill -"$sig" "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  kill -"$sig" -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rc=$?
   left=$(find "$SCRATCH" -name 'shell-suite.*')
-  if [ -n "$during" ] && [ -z "$left" ]; then
-    ok "SIG$sig: log existed during the run and was removed"
+  if [ -n "$during" ] && [ -z "$left" ] && [ "$rc" -gt 128 ]; then
+    ok "SIG$sig: interrupted (rc $rc); the log existed during the run and was removed"
   else
-    bad "SIG$sig: during='$during' left='$left'"
+    bad "SIG$sig: rc=$rc during='$during' left='$left'"
   fi
 done
+set +m
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
