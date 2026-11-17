@@ -618,11 +618,26 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  # #182: this worktree's own claim, resumed after compaction or a restart. The gate
+  # resumes only an issue it recorded for this worktree, still `working` and still
+  # ours, and switches to its branch first (or finds none locally or on origin: compacted
+  # before the branch was made). Its pushed branch, start comment and claim marker are then ours,
+  # so none of the lock checks below may read them as a rival's.
+  RESUMING=false
+  if { [ "$(git branch --show-current 2>/dev/null)" = "feature/issue-${ISSUE_NUM}" ] || \
+       { ! git show-ref --verify -q "refs/heads/feature/issue-${ISSUE_NUM}" && \
+         [ -z "$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null)" ]; }; } && \
+     [ "$(cut -d' ' -f1 "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ] && \
+     jq -e '[.labels[]?.name] | index("working") != null' /tmp/top-issue.json >/dev/null 2>&1; then
+    RESUMING=true
+    echo "🔁 Resuming this worktree's own claim on #$ISSUE_NUM. Re-read the issue's comments and the branch (git log origin/<integration>..HEAD) before continuing; do not redo finished work."
+  fi
+
   # Remote branch is the strongest lock — check it before the working label.
   # A peer may have pushed the branch before the label propagated, or a manager
   # may have cleared a stale label without realising work was still in flight.
   REMOTE_BRANCH_SPEC=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
+  if [ "$RESUMING" != "true" ] && [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
     echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — another agent owns this issue."
     echo "    To take over an abandoned branch, delete it from origin first."
     exit 1
@@ -634,7 +649,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
     START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
-    if [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+    if [ "$RESUMING" != "true" ] && [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
       echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
       echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
       exit 1
@@ -661,8 +676,11 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
 
   # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
   # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
-  # for competing workers to surface before proceeding.
-  if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+  # for competing workers to surface before proceeding. A resumed own claim (#182) has
+  # no race to settle: its earlier start comment is its own.
+  if [ "$RESUMING" = "true" ]; then
+    :
+  elif [ "${ISSUE_SOURCE:-}" = "github" ]; then
     issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
     sleep 3
     CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
