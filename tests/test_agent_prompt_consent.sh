@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_agent_prompt_consent.sh — a launcher must not answer an agent's
 # consent or trust dialog with the first prompt's Enter (#253).
 #
