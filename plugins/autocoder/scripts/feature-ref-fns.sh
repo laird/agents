@@ -18,6 +18,9 @@
 #     stderr: a warning when local and remote disagree, or the fetch failed
 #     exit:   0 when a SHA was printed, 1 otherwise
 
+# shellcheck source=git-net-fns.sh
+source "$(dirname "${BASH_SOURCE[0]}")/git-net-fns.sh"
+
 resolve_feature_sha() {
   local dir="$1" feature="$2" local_sha="" remote_sha="" tracking
   tracking="refs/remotes/origin/${feature}"
@@ -33,7 +36,8 @@ resolve_feature_sha() {
     local_sha=$(git -C "$dir" rev-parse --verify -q "refs/heads/${feature}^{commit}" 2>/dev/null || true)
 
   if [ "$is_branch" -eq 1 ] && git -C "$dir" remote get-url origin >/dev/null 2>&1; then
-    if git -C "$dir" fetch -q origin "+refs/heads/${feature}:${tracking}" 2>/dev/null; then
+    # Bounded (#220): a stalled connection must refuse, not hang the worker.
+    if git_net -C "$dir" fetch -q origin "+refs/heads/${feature}:${tracking}" 2>/dev/null; then
       remote_sha=$(git -C "$dir" rev-parse --verify -q "${tracking}^{commit}" 2>/dev/null || true)
     else
       # Fall back to the local namespace ONLY when origin answered and has no such
@@ -41,7 +45,7 @@ resolve_feature_sha() {
       # unreachable, auth, or the branch exists but would not fetch — leaves us
       # unable to tell the pushed work from a stray, so refuse rather than guess.
       local ls_rc=0
-      git -C "$dir" ls-remote --exit-code origin "refs/heads/${feature}" >/dev/null 2>&1 || ls_rc=$?
+      git_net -C "$dir" ls-remote --exit-code origin "refs/heads/${feature}" >/dev/null 2>&1 || ls_rc=$?
       # Only a same-named local branch can be a stray, so only then is refusing
       # needed; a raw SHA or tag has nothing to shadow and resolves below.
       if [ "$ls_rc" -ne 2 ] && [ -n "$local_sha" ]; then

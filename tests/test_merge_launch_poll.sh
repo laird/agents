@@ -46,7 +46,7 @@ STATE="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP")"
 mkdir -p "$TMP/fakebin"
 cp "$SCRIPT_DIR/merge-launch.sh" "$TMP/fakebin/"
 cp "$SCRIPT_DIR/merge-poll.sh" "$TMP/fakebin/"
-cp "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" "$SCRIPT_DIR/feature-ref-fns.sh" "$SCRIPT_DIR/merge-archive-fns.sh" "$TMP/fakebin/"
+cp "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" "$SCRIPT_DIR/feature-ref-fns.sh" "$SCRIPT_DIR/git-net-fns.sh" "$SCRIPT_DIR/merge-archive-fns.sh" "$TMP/fakebin/"
 
 # ── Fixture 1: a slow, successful fake merge (issue #19001) ─────────────────
 cat > "$TMP/fakebin/merge-to-integration.sh" <<'FAKE'

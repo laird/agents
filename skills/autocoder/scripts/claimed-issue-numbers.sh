@@ -32,8 +32,10 @@
 set -uo pipefail
 
 REMOTE="${1:-origin}"
+# shellcheck source=git-net-fns.sh
+source "$(dirname "${BASH_SOURCE[0]}")/git-net-fns.sh"   # bounded: a stall fails open (#220)
 
-BRANCHES=$(git ls-remote --heads "$REMOTE" 2>/dev/null | sed 's#.*refs/heads/##')
+BRANCHES=$(git_net ls-remote --heads "$REMOTE" 2>/dev/null | sed 's#.*refs/heads/##')
 if [ -z "$BRANCHES" ]; then
     echo "claimed-issue-numbers: no branches from '$REMOTE' (unreachable?) — failing open" >&2
     echo "[]"

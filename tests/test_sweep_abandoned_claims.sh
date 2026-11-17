@@ -25,7 +25,7 @@ export AUTOCODER_SWEEP_HOST=testhost
 # working` returns the ones labelled working; `release` drops that label.
 GH_DIR="$TMP/gh-scripts"
 mkdir -p "$GH_DIR"
-cp "$SCRIPT_DIR"/{sweep-abandoned-claims.sh,claim-owner.sh,claimed-issue-numbers.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
+cp "$SCRIPT_DIR"/{sweep-abandoned-claims.sh,claim-owner.sh,claimed-issue-numbers.sh,git-net-fns.sh,issue-fns.sh,issue-deps.sh,issue-config.sh} "$GH_DIR/"
 cat > "$GH_DIR/issues-gh.sh" <<'EOF'
 #!/bin/bash
 verb="$1"; shift

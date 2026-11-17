@@ -24,7 +24,7 @@ export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
 
 mkdir -p "$TMP/bin"
 cp "$SCRIPT_DIR/merge-launch.sh" "$SCRIPT_DIR/test-cmd-fns.sh" "$SCRIPT_DIR/repo-id-fns.sh" \
-   "$SCRIPT_DIR/feature-ref-fns.sh" "$SCRIPT_DIR/merge-archive-fns.sh" "$TMP/bin/"
+   "$SCRIPT_DIR/feature-ref-fns.sh" "$SCRIPT_DIR/git-net-fns.sh" "$SCRIPT_DIR/merge-archive-fns.sh" "$TMP/bin/"
 cat > "$TMP/bin/merge-to-integration.sh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$@" > "$TMP/mti-args"
