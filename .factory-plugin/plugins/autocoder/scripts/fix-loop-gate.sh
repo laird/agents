@@ -14,6 +14,8 @@
 #   {"phase":"fix",    "issue":42, "priority":"P0"}  # ready priority bug
 #   {"phase":"enhance","issue":17}              # approved enhancement
 #   {"phase":"regression"}                      # queue empty, run tests
+#   {"phase":"fix","issue":42,"priority":"P1","resume":true}
+#                                               # this worktree's own claim (#182)
 #
 # Exit codes:
 #   0   work claimed (work-plan written)
@@ -68,6 +70,21 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 if [ -z "${ISSUE_SOURCE:-}" ]; then
   echo "fix-loop-gate: ISSUE_SOURCE not set" >&2
   exit 2
+fi
+
+# ── 0. Resume this worktree's own claim before claiming anything new (#182) ──
+# A worker compacted, cleared or restarted mid-issue would otherwise claim fresh
+# work and strand its own `working` issue. AUTOCODER_RESUME_OWN_CLAIM=0 disables.
+# Sourced only when present: a partial script tree (#142) then loses resume rather
+# than the whole gate dying under `set -e`.
+worker_state_set() { :; }
+if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
+  # shellcheck source=worker-state-fns.sh
+  source "${SCRIPT_DIR}/worker-state-fns.sh"
+  if [ "${AUTOCODER_RESUME_OWN_CLAIM:-1}" = 1 ] && RESUME_PLAN="$(worker_resume_plan)"; then
+    printf '%s\n' "$RESUME_PLAN" > "$WORK_JSON"
+    exit 0
+  fi
 fi
 
 # ── 1. Snapshot all open issues ──────────────────────────────────────────
@@ -215,6 +232,7 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
     claim_comment_wins "$ISSUE_NUM" || continue
   fi
 
+  worker_state_set "$ISSUE_NUM"
   if [ "$PHASE" = "FIX" ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s"}\n' \
       "$ISSUE_NUM" "$PRIORITY" > "$WORK_JSON"

@@ -22,6 +22,10 @@ REPO="$TMP/repo"
 mkdir -p "$REPO"
 cd "$REPO" || exit 1
 git init --quiet
+# Every "worker" here runs from this one worktree, so resuming this worktree's own
+# claim (#182, tests/test_fix_loop_gate_resume.sh) would make later workers resume
+# the first one's issue. These tests are about claim races, so resume is off.
+export AUTOCODER_RESUME_OWN_CLAIM=0
 export ISSUE_SOURCE=file
 export ISSUE_DIR_PATH="$REPO/.issues"
 WORK_JSON="$TMP/work.json"

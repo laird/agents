@@ -592,6 +592,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   fi
 
   # Check if issue already has 'working' label (being worked on by another agent)
+  RESUMING=false
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
     TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
@@ -603,6 +604,14 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
       exit 1
     fi
     echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
+    # #182: this worktree's own claim, resumed after compaction or a restart. The gate
+    # recorded it in the worktree's git dir; the earlier start comment is ours, so the
+    # race check below must not read it as a rival's and release the lock.
+    if [ "$CURRENT_BRANCH" = "$TARGET_BRANCH" ] && \
+       [ "$(cat "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ]; then
+      RESUMING=true
+      echo "🔁 Resuming this worktree's own claim on #$ISSUE_NUM. Re-read the issue's comments and the branch (git log origin/<integration>..HEAD) before continuing; do not redo finished work."
+    fi
   else
     issue_claim "$ISSUE_NUM" 2>/dev/null || {
       echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
@@ -624,8 +633,11 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
 
   # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
   # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
-  # for competing workers to surface before proceeding.
-  if [ "${ISSUE_SOURCE:-}" = "github" ]; then
+  # for competing workers to surface before proceeding. A resumed own claim (#182) has
+  # no race to settle: its earlier start comment is its own.
+  if [ "$RESUMING" = "true" ]; then
+    :
+  elif [ "${ISSUE_SOURCE:-}" = "github" ]; then
     issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
     sleep 3
     CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
