@@ -7,7 +7,7 @@
 #   <backend> update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]
 #   <backend> comment <number> --body "..."
 #   <backend> close <number> [--comment "..."]
-#   <backend> create --title "..." --body "..." [--label L ...]
+#   <backend> create --title "..." --body "..." [--label L ...] [--priority P0-P3]   (unknown flags exit 2)
 #   <backend> claim <number>
 #   <backend> release <number>
 #   <backend> any-claimable
@@ -199,7 +199,12 @@ cmd_create() {
       --title) title="$2"; shift 2 ;;
       --body)  body="$2"; shift 2 ;;
       --label) labels+=("$2"); shift 2 ;;
-      *)       shift ;;
+      --priority)
+        # #199: --priority was silently dropped. It is a priority label; only P0-P3.
+        case "${2:-}" in P[0-3]) labels+=("$2") ;;
+          *) echo "create: --priority must be P0, P1, P2 or P3 (got '${2:-}')" >&2; exit 2 ;; esac
+        shift 2 ;;
+      *) echo "create: unknown argument '$1' (expected --title, --body, --label, --priority)" >&2; exit 2 ;;
     esac
   done
   local create_args=(--title "$title" --body "$body")

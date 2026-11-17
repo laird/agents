@@ -19,7 +19,7 @@ Usage:
   issues-file.py update <number> [--add-label L] [--remove-label L] [--status S] [--assignee A]
   issues-file.py comment <number> --body "..."
   issues-file.py close <number> [--comment "..."]
-  issues-file.py create --title "..." --body "..." [--label L]
+  issues-file.py create --title "..." --body "..." [--label L] [--priority P0-P3]
   issues-file.py claim <number>
   issues-file.py release <number>
   issues-file.py any-claimable
@@ -442,7 +442,8 @@ def cmd_create(args):
     data = {
         "number": number,
         "title": args.title,
-        "labels": args.label or [],
+        "labels": (args.label or []) + ([args.priority] if getattr(args, "priority", None)
+                                         and args.priority not in (args.label or []) else []),
         "status": "open",
         "body": args.body or "",
     }
@@ -771,6 +772,8 @@ def main():
     p_create.add_argument("--title", required=True)
     p_create.add_argument("--body", default="")
     p_create.add_argument("--label", action="append", default=[])
+    # #199: --priority was silently dropped. It is a priority label; only P0-P3.
+    p_create.add_argument("--priority", choices=["P0", "P1", "P2", "P3"])
 
     p_claim = sub.add_parser("claim")
     p_claim.add_argument("number", type=int)

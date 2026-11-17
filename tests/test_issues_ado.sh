@@ -126,6 +126,16 @@ CREATE_BODY=$(awk -F'\t' '$1=="POST" && $2 ~ /workitems\/%24/ {print $3}' "$CURL
 assert_contains "create sets System.Title via json-patch" '"path": "/fields/System.Title"' "$CREATE_BODY"
 assert_contains "create sets System.Tags"                 '"path": "/fields/System.Tags"' "$CREATE_BODY"
 
+# ── create --priority becomes a P-tag; bad input exits 2 (#199) ─────────────
+run create --title "Prio" --body "x" --priority P1 --label bug
+CREATE_BODY=$(awk -F'\t' '$1=="POST" && $2 ~ /workitems\/%24/ {print $3}' "$CURL_CAPTURE" | tail -1)
+assert_contains "create --priority P1 tags the work item P1" 'P1' "$CREATE_BODY"
+assert_contains "create --priority keeps other tags" 'bug' "$CREATE_BODY"
+run create --title "Prio" --priority P7
+assert_eq "create --priority P7 exits 2" "2" "$RC"
+run create --title "Prio" --assignee me
+assert_eq "create with an unknown flag exits 2" "2" "$RC"
+
 # ── claim / release edit System.Tags (read-modify-write PATCH) ──────────────
 run claim 7
 PATCH=$(data_for_method PATCH)
