@@ -75,15 +75,21 @@ steps are already done, and re-running them can race the work in progress. Decid
 case applies by checking, not by recollection:
 
 1. **Is anything for this issue still running?** Check each of these:
-   - a merge job: `merge-poll.sh --issue <issue>` reports it running;
+   - a merge job: run `merge-poll.sh --issue <issue>` from this checkout (it waits about
+     60 s). Exit **75** means a job is running. Any other exit means none is running
+     here;
    - a background agent or task you started for it that has not reported back;
    - a test or build you started in the background.
 
    **If any is running:** emit `IN_FLIGHT_CONTINUING #<issue>` and stop the tick. The
    next tick checks again.
 2. **If none is running:** the work was interrupted, abandoned or forgotten, perhaps
-   after a compaction. Pick it up in this session:
-   - check out `feature/issue-<issue>` if the tree is not on it;
+   after a compaction. The gate reports `in_flight` only while the issue is open and
+   still `working`; a merge job's hand-off swaps that label away, so a handed-off issue
+   never reaches this step. Before touching anything, confirm it is still open and
+   `working` (`issue_get <issue>`). If it is not, stop. Then pick it up in this session:
+   - if the tree is not on `feature/issue-<issue>`, switch only when `git status` shows no
+     tracked changes; otherwise stop and report the dirty tree instead;
    - re-read the issue's comments and `git log origin/<integration>..HEAD`;
    - carry on with the remaining steps (implement, test, review, land) as `/fix`
      describes them, without re-running its claim sequence.
