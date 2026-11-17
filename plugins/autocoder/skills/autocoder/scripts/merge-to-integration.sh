@@ -445,14 +445,36 @@ _close_or_park() {
   # Something landed whatever happens to the issue below: record it before any return.
   MERGE_LANDED="$1" MERGE_OUTCOME=landed
   [ "$OWN_ISSUE" -eq 1 ] || return 0
-  if _issue_is_closed; then
-    echo "ℹ️  Issue #${ISSUE_NUM} is already closed; leaving it alone."
-    return 0
-  fi
   local landed="$1" summary ship_branch
   summary="Merged \`${FEATURE}\` into \`${INTEGRATION_BRANCH}\`."
   if [ -n "$SUMMARY_FILE" ] && [ -s "$SUMMARY_FILE" ]; then
     summary=$(cat "$SUMMARY_FILE")
+  fi
+  if _issue_is_closed; then
+    # Most often GitHub closed it the moment our push landed, because a commit says
+    # "Fix #N" (a closing keyword). Returning silently here lost the summary and
+    # review record and left `merging` on a closed issue (#209, seen on #145 and
+    # #195). If this job pushed, post the record anyway and retire the label; never
+    # reopen or re-close.
+    if [ "$PUSHED" -eq 1 ]; then
+      local basis_note=""
+      case "$PUBLISH_BASIS" in
+        tested|docs-only|docs-resync|already-landed) ;;
+        *) basis_note="
+
+⚠️ It was closed before this job could decide: it landed on basis \`${PUBLISH_BASIS}\`, which would normally park it under \`awaiting-integration\` until a green tip. ${PARK_NOTE}" ;;
+      esac
+      issue_comment "$ISSUE_NUM" --body "✅ **Landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\`** (the issue was already closed, probably by a closing keyword in a commit message).
+
+${summary}${basis_note}
+
+🤖 Auto-merge" 2>/dev/null || true
+      echo "ℹ️  Issue #${ISSUE_NUM} was already closed; posted the landing summary anyway."
+    else
+      echo "ℹ️  Issue #${ISSUE_NUM} is already closed; leaving it alone."
+    fi
+    issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    return 0
   fi
   case "$PUBLISH_BASIS" in
     tested|docs-only|docs-resync|already-landed) ;;

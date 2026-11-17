@@ -1225,7 +1225,10 @@ For simple issues, proceed directly:
 ```bash
 # After fixing simple issue:
 git add -A
-git commit -m "Fix #${ISSUE_NUM}: Brief description
+# Title "#N: ...", not "Fix #N: ...": "Fix #N" is a GitHub closing keyword, so GitHub
+# would close the issue the moment the merge job pushes, before the job posts its
+# summary and settles the labels (#209). The job closes (or parks) it itself.
+git commit -m "#${ISSUE_NUM}: Brief description
 
 Detailed explanation of what was fixed and how.
 
@@ -1525,7 +1528,10 @@ After verification passes:
 ```bash
 # Commit changes
 git add -A
-git commit -m "Fix #${ISSUE_NUM}: Brief description
+# Title "#N: ...", not "Fix #N: ...": "Fix #N" is a GitHub closing keyword, so GitHub
+# would close the issue the moment the merge job pushes, before the job posts its
+# summary and settles the labels (#209). The job closes (or parks) it itself.
+git commit -m "#${ISSUE_NUM}: Brief description
 
 Detailed multi-line explanation of:
 - Root cause analysis
