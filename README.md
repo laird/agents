@@ -699,6 +699,18 @@ markdown, so on Azure DevOps, whose descriptions are HTML, nothing is declared
 yet. `strict` treats every `working` issue as in flight, so an abandoned claim
 on the file backend keeps blocking until it is released.
 
+Files that conflicted recently are **hot**: the `files` of merge attempts with
+`outcome: conflict` in `merge-events.jsonl` among the last
+`claims.hot_window` attempts for this repo (default `50`; write `"7d"` for a
+number of days). Under `prefer` and `strict` alike, at most one in-flight claim
+may touch a hot file: a candidate touching a hot file that a `working` issue
+also touches is skipped. With no merge-events file there are no hot files. List
+them with `plugins/autocoder/scripts/touches-fns.sh hot`.
+
+```json
+{ "claims": { "avoid_overlap": "prefer", "hot_window": "7d" } }
+```
+
 ### Registering a Custom Backend
 
 The built-in sources (`file`, `github`, `jira`, `ado`) need only `issueSource`. A custom backend additionally points `issueBackend` at an executable:

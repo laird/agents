@@ -288,7 +288,8 @@ esac
 # (the default) changes nothing and makes no backend call. The config is the main
 # worktree's, as for issueSource (issue-config.sh). Runs after the resume step
 # and on the branch-filtered list. Fails open: if the in-flight issues cannot be
-# listed, candidates keep their order.
+# listed, candidates keep their order. Hot files (#228) are skipped as described
+# in touches-fns.sh.
 if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
   # shellcheck source=touches-fns.sh
   source "${SCRIPT_DIR}/touches-fns.sh"
@@ -296,13 +297,19 @@ if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
   OVERLAP_MODE="$(touches_mode "${MAIN_WT:-.}/.autocoder.json")"
   if [ "$OVERLAP_MODE" != off ]; then
     WORKING_JSON="$(mktemp)"
+    # Hot files (#228): conflicted recently (merge-events.jsonl); at most one
+    # in-flight claim may touch each, under prefer and strict alike.
+    # shellcheck source=repo-id-fns.sh
+    [ -f "${SCRIPT_DIR}/repo-id-fns.sh" ] && source "${SCRIPT_DIR}/repo-id-fns.sh"
+    REPO_ID="$(autocoder_repo_id "$PWD" 2>/dev/null)" || REPO_ID=""
+    HOT_FILES="$(touches_hot_files "${MAIN_WT:-.}/.autocoder.json" "$REPO_ID")" || HOT_FILES=""
     if issue_list --state working --limit 500 > "$WORKING_JSON" 2>/dev/null \
-       && ORDERED="$(touches_order "$OVERLAP_MODE" "$CLASSIFICATION" "$ALL_JSON" "$WORKING_JSON")"; then
+       && ORDERED="$(T_HOT="$HOT_FILES" touches_order "$OVERLAP_MODE" "$CLASSIFICATION" "$ALL_JSON" "$WORKING_JSON")"; then
       CLASSIFICATION="$ORDERED"
     else
       echo "fix-loop-gate: cannot check in-flight areas; claiming without claims.avoid_overlap" >&2
     fi
-    # strict skipped every candidate: idle, nothing claimed.
+    # strict, or the hot-file rule, skipped every candidate: idle, nothing claimed.
     [ -n "$CLASSIFICATION" ] || exit 1
   fi
 fi

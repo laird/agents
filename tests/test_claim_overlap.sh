@@ -6,10 +6,17 @@
 # the fix-loop gate tries candidates that overlap an in-flight `working` issue
 # last (`prefer`) or not at all (`strict`); `off`, the default, is unchanged.
 #
+# Hot files (#228): files that conflicted in the last `claims.hot_window` merge
+# attempts (merge-events.jsonl, #184) may be held by one in-flight claim at a
+# time, under prefer and strict alike.
+#
 # Runs in a private temp repo with its own .autocoder.json (file backend), so it
-# never touches the real tracker.
+# never touches the real tracker, and with a fixture merge-events file, so it
+# never reads the real one.
 
 PASS=0; FAIL=0
+# Never the real merge history: hot files would depend on this host's merges.
+export AUTOCODER_MERGE_EVENTS=/nonexistent/autocoder-test/merge-events.jsonl
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts"
 
 assert_eq() {
@@ -211,6 +218,96 @@ add_issue working 9 "bug, P1, working" "Touches: src/"
 add_issue open 1 "bug" "Touches: src/"
 run_gate >/dev/null
 assert_eq "triage is unaffected" '{"phase":"triage","issues":[1]}' "$(plan)"
+
+# ── Hot files (#228) ────────────────────────────────────────────────────────
+# shellcheck source=../plugins/autocoder/scripts/repo-id-fns.sh
+source "$SCRIPT_DIR/repo-id-fns.sh"
+REPO_ID="$(autocoder_repo_id "$PWD")"
+EVENTS="$TMP/merge-events.jsonl"
+ev() {  # ev <outcome> <files,comma-separated> [repo] [ts] [event]
+  python3 -c 'import json,sys
+o,f,r,t,e=sys.argv[1:6]
+print(json.dumps({"ts":t,"repo":r,"issue":1,"event":e,"outcome":o,"files":[x for x in f.split(",") if x]}))' \
+    "$1" "$2" "${3:-$REPO_ID}" "${4:-2026-11-17T00:00:00Z}" "${5:-attempt}" >> "$EVENTS"
+}
+hot_cfg() {  # hot_cfg <mode> [hot_window JSON value]
+  printf '{"issueSource":"file","issueDir":"%s","claims":{"avoid_overlap":"%s"%s}}\n' \
+    "$ISSUE_DIR_PATH" "$1" "${2:+,\"hot_window\":$2}" > .autocoder.json
+}
+
+# 10. No events file: no hot files, silently.
+export AUTOCODER_MERGE_EVENTS="$EVENTS"
+rm -f "$EVENTS"; hot_cfg prefer
+assert_eq "no events file: no hot files" "" "$(touches_hot_files .autocoder.json "$REPO_ID" 2>"$TMP/hot.err")"
+assert_eq "no events file: no warning" "" "$(cat "$TMP/hot.err")"
+
+# 11. Window of attempts: a conflict older than the last 50 attempts is not hot.
+ev conflict src/old.rs
+for _ in $(seq 1 49); do ev landed src/x.rs; done
+ev conflict "src/hot.rs,src/also.rs"
+ev push-retry src/retry.rs "$REPO_ID" 2026-11-17T00:00:00Z push-retry   # not an attempt
+ev conflict src/other.rs other-repo-0000000                               # another repo
+echo 'not json' >> "$EVENTS"
+assert_eq "window: recent conflicts are hot, older ones and other repos are not" \
+  "$(printf 'src/also.rs\nsrc/hot.rs')" "$(touches_hot_files .autocoder.json "$REPO_ID")"
+hot_cfg prefer 51
+assert_eq "window: a larger window reaches the older conflict" \
+  "$(printf 'src/also.rs\nsrc/hot.rs\nsrc/old.rs')" "$(touches_hot_files .autocoder.json "$REPO_ID")"
+
+# 12. Window in days.
+rm -f "$EVENTS"
+ev conflict src/ancient.rs "$REPO_ID" 2020-01-01T00:00:00Z
+ev conflict src/fresh.rs "$REPO_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+hot_cfg prefer '"7d"'
+assert_eq "days window: only conflicts within the days" "src/fresh.rs" \
+  "$(touches_hot_files .autocoder.json "$REPO_ID")"
+hot_cfg prefer '"soon"'
+assert_eq "bad window: falls back to 50 attempts" "$(printf 'src/ancient.rs\nsrc/fresh.rs')" \
+  "$(touches_hot_files .autocoder.json "$REPO_ID" 2>"$TMP/hot.err")"
+assert_eq "bad window: warns" yes "$(grep -q "unknown claims.hot_window 'soon'" "$TMP/hot.err" && echo yes)"
+
+# 13. Manager listing: `touches-fns.sh hot` run directly in the repo.
+assert_eq "touches-fns.sh hot lists the hot files" "$(printf 'src/ancient.rs\nsrc/fresh.rs')" \
+  "$(bash "$SCRIPT_DIR/touches-fns.sh" hot 2>/dev/null)"
+
+# 14. Gate, prefer: two candidates on one hot file are never in flight at once.
+rm -f "$EVENTS"; ev conflict src/web/server.rs
+hot_cfg prefer; reset_issues
+add_issue open 1 "bug, P0" "Touches: src/web/"
+add_issue open 2 "bug, P1" "Touches: src/web/server.rs"
+run_gate >/dev/null
+assert_eq "hot, prefer: the first claim on a hot file goes ahead" "$(fix_plan 1 P0)" "$(plan)"
+rm -f "$WORK_JSON"
+run_gate >/dev/null; rc=$?
+assert_eq "hot, prefer: a second claim on the same hot file is skipped" "" "$(plan)"
+assert_eq "hot, prefer: says why" yes \
+  "$(grep -q 'hot file src/web/server.rs is held by in-flight #1' "$TMP/gate.err" && echo yes)"
+assert_eq "hot, prefer: #2 is left open" yes "$([ -f "$ISSUE_DIR_PATH/open/002.md" ] && echo yes)"
+
+# 15. prefer: a held hot file skips the candidate; one nobody holds does not.
+reset_issues
+add_issue working 9 "bug, P1, working" "Touches: src/web/server.rs"
+add_issue open 1 "bug, P0" "Touches: src/web/"
+add_issue open 3 "bug, P2" "Touches: docs/"
+run_gate >/dev/null
+assert_eq "hot, prefer: clear work is claimed instead" "$(fix_plan 3 P2)" "$(plan)"
+rm -f "$EVENTS"; ev conflict src/web/other.rs; reset_issues
+add_issue working 9 "bug, P1, working" "Touches: src/web/server.rs"
+add_issue open 1 "bug, P0" "Touches: src/web/"
+run_gate >/dev/null
+assert_eq "prefer: a hot file nobody holds does not skip the overlap" "$(fix_plan 1 P0)" "$(plan)"
+
+# 16. strict skips hot conflicts the same way; off ignores hot files.
+rm -f "$EVENTS"; ev conflict src/web/server.rs
+hot_cfg strict; reset_issues
+add_issue working 9 "bug, P1, working" "Touches: src/web/server.rs"
+add_issue open 1 "bug, P0" "Touches: src/web/server.rs"
+assert_eq "hot, strict: idle" 1 "$(run_gate)"
+hot_cfg off; reset_issues
+add_issue working 9 "bug, P1, working" "Touches: src/web/server.rs"
+add_issue open 1 "bug, P0" "Touches: src/web/server.rs"
+run_gate >/dev/null
+assert_eq "hot, off: unchanged" "$(fix_plan 1 P0)" "$(plan)"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"

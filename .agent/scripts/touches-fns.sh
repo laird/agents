@@ -44,9 +44,23 @@
 #         strict  candidates that overlap an in-flight claim are dropped
 #       An issue with no declared areas never overlaps anything. A candidate is
 #       never compared with itself (a takeover candidate is also `working`).
+#       A candidate is dropped under prefer and strict alike when it touches a
+#       hot file (below) that an in-flight claim also touches: at most one
+#       in-flight claim may hold a hot file. Hot files come from T_HOT
+#       (newline-separated; the gate fills it from touches_hot_files).
 #   touches_mode [<config-file>]          print the configured mode: off, prefer
 #                                        or strict (default off; an unknown value
 #                                        warns on stderr and reads as off)
+#   touches_hot_files [<config-file>] [<repo-id>]
+#       Print the hot files, one per line (#228): the `files` of merge attempts
+#       with `outcome: conflict` in merge-events.jsonl (#184, merge-events-lib.sh)
+#       among the last `claims.hot_window` attempts for this repo. The window is
+#       a number of attempts (default 50) or a number of days, written "7d".
+#       Events recorded for another repo id are ignored. No events file means no
+#       hot files, silently.
+#
+# Run directly, `touches-fns.sh hot` lists the hot files for the repo in the
+# current directory, using its main worktree's .autocoder.json (for the manager).
 
 _TOUCHES_PY=$(cat <<'PY'
 import fnmatch, functools, json, os, re, sys
@@ -204,11 +218,20 @@ elif cmd == "order":
     by_num = {i.get("number"): i for i in working + load(os.environ["T_OPEN"])}
     inflight = [(i.get("number"), areas_of(i)) for i in working]
     inflight = [(n, a) for n, a in inflight if a]
+    hot = [h for h in lines(os.environ.get("T_HOT", "")) if not is_catch_all(h)]
     clear, busy = [], []
     for line in cands:
         f = line.split()
         num = int(f[1]) if len(f) > 1 and f[1].isdigit() else None
         mine = areas_of(by_num.get(num) or {})
+        # Hot files (#228): one in-flight claim at a time, whatever the mode.
+        mine_hot = [h for h in hot if mine and lists_overlap(mine, [h])]
+        held = next(((n, h) for h in mine_hot for n, a in inflight
+                     if n != num and lists_overlap(a, [h])), None)
+        if held is not None:
+            print(f"touches: #{num} skipped: hot file {held[1]} is held by in-flight #{held[0]} ({mode})",
+                  file=sys.stderr)
+            continue
         hit = next((n for n, a in inflight if n != num and mine and lists_overlap(mine, a)), None)
         if hit is None:
             clear.append(line)
@@ -230,6 +253,57 @@ elif cmd == "mode":
         print(f"touches: unknown claims.avoid_overlap '{mode}' in {path}; using off", file=sys.stderr)
         mode = "off"
     print(mode)
+elif cmd == "hot":
+    import datetime, time
+    raw = "50"
+    try:
+        with open(os.environ.get("T_CONFIG") or "") as fh:
+            cfg = json.load(fh)
+        w = (cfg.get("claims") or {}).get("hot_window")
+        if w is not None:
+            raw = str(w)
+    except (OSError, ValueError, AttributeError):
+        pass
+    raw = raw.strip().lower()
+    m = re.fullmatch(r"(\d+)\s*(d|days?)?", raw)
+    if not m or int(m.group(1)) <= 0:
+        print(f"touches: unknown claims.hot_window '{raw}'; using 50", file=sys.stderr)
+        m = re.fullmatch(r"(\d+)()", "50")
+    count, days = int(m.group(1)), bool(m.group(2))
+    repo = os.environ.get("T_REPO") or ""
+    attempts = []
+    try:
+        with open(os.environ.get("T_EVENTS") or "", errors="replace") as fh:
+            for l in fh:
+                try:
+                    ev = json.loads(l)
+                except ValueError:
+                    continue
+                if not isinstance(ev, dict) or ev.get("event") != "attempt":
+                    continue
+                if repo and ev.get("repo") not in (None, "", repo):
+                    continue
+                attempts.append(ev)
+    except OSError:
+        sys.exit(0)
+    if days:
+        cutoff = time.time() - count * 86400
+        def recent(ev):
+            try:
+                t = datetime.datetime.strptime(str(ev.get("ts")), "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                return False
+            return t.replace(tzinfo=datetime.timezone.utc).timestamp() >= cutoff
+        window = [ev for ev in attempts if recent(ev)]
+    else:
+        window = attempts[-count:]
+    hot = set()
+    for ev in window:
+        if ev.get("outcome") != "conflict" or not isinstance(ev.get("files"), list):
+            continue
+        hot.update(clean(f) for f in ev["files"] if isinstance(f, str) and clean(f))
+    for h in sorted(hot):
+        print(h)
 PY
 )
 
@@ -247,9 +321,29 @@ areas_overlap() {
 }
 
 touches_order() {
-  T_MODE="$1" T_CANDS="$2" T_OPEN="$3" T_WORKING="$4" python3 -c "$_TOUCHES_PY" order
+  T_MODE="$1" T_CANDS="$2" T_OPEN="$3" T_WORKING="$4" T_HOT="${T_HOT:-}" python3 -c "$_TOUCHES_PY" order
 }
 
 touches_mode() {
   T_CONFIG="${1:-}" python3 -c "$_TOUCHES_PY" mode
 }
+
+touches_hot_files() {
+  local events
+  events="${AUTOCODER_MERGE_EVENTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/merge-events.jsonl}"
+  [ -f "$events" ] || return 0
+  T_CONFIG="${1:-}" T_REPO="${2:-}" T_EVENTS="$events" python3 -c "$_TOUCHES_PY" hot
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+    hot)
+      _t_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      # shellcheck source=repo-id-fns.sh
+      source "${_t_dir}/repo-id-fns.sh"
+      _t_main="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+      touches_hot_files "${_t_main:-.}/.autocoder.json" "$(autocoder_repo_id "$PWD")"
+      ;;
+    *) echo "usage: touches-fns.sh hot   (or source it for the touches_* functions)" >&2; exit 2 ;;
+  esac
+fi
