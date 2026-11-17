@@ -27,7 +27,10 @@ export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
 # Likewise the issue lifecycle events (#190), which the issue verbs append.
 SUITE_ISSUE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-issue-events.XXXXXX")
 export AUTOCODER_ISSUE_EVENTS="$SUITE_ISSUE_EVENTS"
-trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS"' EXIT
+# Each test's output, shown on failure. mktemp, and removed by the trap, so an
+# interrupted run does not leave it behind (#259).
+SUITE_LOG=$(mktemp "${TMPDIR:-/tmp}/shell-suite.XXXXXX")
+trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LOG"' EXIT
 # #197's random spot-check sampling makes exact-label assertions flaky (#225). Off by
 # default for the suite; tests that exercise spot checks set or unset it themselves.
 export AUTOCODER_SPOT_CHECK_RATE="${AUTOCODER_SPOT_CHECK_RATE:-0}"
@@ -52,17 +55,16 @@ fi
 for t in "${tests[@]}"; do
     [ -f "$t" ] || continue
     name="$(basename "$t")"
-    if bash "$t" >/tmp/shell-suite-$$.log 2>&1; then
+    if bash "$t" >"$SUITE_LOG" 2>&1; then
         echo "PASS  $name"
         passed=$((passed + 1))
     else
         echo "FAIL  $name"
-        sed 's/^/      | /' /tmp/shell-suite-$$.log | tail -20
+        sed 's/^/      | /' "$SUITE_LOG" | tail -20
         failed=$((failed + 1))
         failed_names="$failed_names $name"
     fi
 done
-rm -f /tmp/shell-suite-$$.log
 
 total=$((passed + failed))
 
