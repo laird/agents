@@ -343,14 +343,16 @@ def cmd_update(args):
             if args.add_label:
                 if args.add_label not in labels:
                     labels.append(args.add_label)
-                if args.add_label == "working":
+                if args.add_label == "working" and data.get("status") != "closed":
                     # Legacy/idempotent label-set. Does NOT rename to working/;
                     # only `claim` does that. Frontmatter status is updated for
                     # backward-readability.
                     data["status"] = "working"
             if args.remove_label:
                 labels = [l for l in labels if l != args.remove_label]
-                if args.remove_label == "working":
+                # A closed issue stays closed: dropping a stale lock label from it
+                # (#211) must not reopen it.
+                if args.remove_label == "working" and data.get("status") != "closed":
                     data["status"] = "open"
             if args.status:
                 data["status"] = args.status

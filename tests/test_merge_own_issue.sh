@@ -191,6 +191,21 @@ echo "$OUT" | grep -q "a documents-only re-sync (1 document files) then publishe
 [ "$(issue_state)" = CLOSED ] && [ "$(issue_bucket)" = closed ] && [ "$(issue_labels)" = "bug" ] && ok "docs-resync: issue closed (documents are not an input to the test stages)" || bad "docs-resync state: $(issue_state) $(issue_bucket) $(issue_labels)"
 issue_body | grep -q "Issue Resolved" && ok "docs-resync: resolution comment posted" || bad "docs-resync comment: $(issue_body)"
 
+# ── 8c. closed mid-run (a "Fix #N" closing keyword, #211): labels retired, summary posted ──
+# The gate closes the issue and puts the lock labels back, as GitHub does when the pushed
+# commit's title closes it while the job still holds `merging`.
+setup
+CLOSER="python3 $ISSUES_PY close $ISSUE && sed -i 's/^labels: .*/labels: [bug, merging, working, awaiting-integration]/' $TMP/issues/closed/${ISSUE}.md"
+OUT=$(run_own "$CLOSER"); RC=$?
+[ "$RC" -eq 0 ] && ok "closed mid-run: exits 0" || bad "closed mid-run rc=$RC: $OUT"
+echo "$OUT" | grep -q "already closed; posted the landing summary anyway" && ok "closed mid-run: log reports the landing on a closed issue" || bad "closed mid-run: no landing line: $OUT"
+[ "$(issue_state)" = CLOSED ] && [ "$(issue_bucket)" = closed ] && ok "closed mid-run: issue stays closed" || bad "closed mid-run reopened: state=$(issue_state) bucket=$(issue_bucket)"
+[ "$(issue_labels)" = "bug" ] && ok "closed mid-run: merging, working and awaiting-integration retired" || bad "closed mid-run labels: $(issue_labels)"
+[ "$(issue_body | grep -c "already closed, probably by a closing keyword")" -eq 1 ] && issue_body | grep -q "SUMMARY-MARKER-${ISSUE}" && ok "closed mid-run: summary posted once" || bad "closed mid-run summary: $(issue_body)"
+python3 "$ISSUES_PY" update "$ISSUE" --add-label merging
+OUT=$(run_own true)
+[ "$(issue_body | grep -c "already closed, probably by a closing keyword")" -eq 1 ] && [ "$(issue_labels)" = "bug" ] && ok "closed mid-run: rerun posts no second summary" || bad "rerun after mid-run close: $(issue_labels) $(issue_body)"
+
 # ── 9. conflict: bounced under --own-issue (#207), untouched without ────────
 setup
 (cd "$TMP/sibling" && mkdir -p src && echo sibling > src/app.sh && git add -A && git commit -q -m clash && git push -q origin master)
