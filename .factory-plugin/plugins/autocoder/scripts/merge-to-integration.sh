@@ -77,6 +77,12 @@
 #     slots (default max(1, nproc/4)), flock-held files
 #     ${AUTOCODER_TMP:-/tmp}/autocoder-gate-slot-<k>.lock, trying each in turn and blocking
 #     on the last. A job that has to wait says so in its log.
+#   - Landings on one host queue (#189): a job takes merge-queue-fns.sh's lock for its
+#     (origin, integration branch) before it fetches the tip, and drops it once the push
+#     is verified. Jobs behind it sync onto the new tip only when their turn comes, so two
+#     jobs on one host never race a push or write a "push retry" re-sync commit. The wait
+#     is logged ("⏳ Queued: …"). AUTOCODER_MERGE_QUEUE=0 turns it off;
+#     AUTOCODER_MERGE_QUEUE_WAIT caps the wait (default 7200 s, then it lands unqueued).
 #
 # SCRATCH:
 #   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
@@ -204,6 +210,8 @@ merge_event() { :; }
 source "${_MTI_DIR}/repo-id-fns.sh"
 # shellcheck source=feature-ref-fns.sh
 source "${_MTI_DIR}/feature-ref-fns.sh"
+# shellcheck source=merge-queue-fns.sh
+source "${_MTI_DIR}/merge-queue-fns.sh"
 
 TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
 REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
@@ -215,7 +223,7 @@ GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
 GATE_LAST="${GATE_LOG}.integrated"   # output of the latest integrated-tree gate only
-trap '_rc=$?; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 # Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
 # long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
@@ -568,10 +576,15 @@ if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; 
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_rc=$?; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
+
+# 0. Wait our turn (#189): one landing per integration branch per host, held from this
+#    fetch until the push is verified, so the tip we sync onto is still the tip when we
+#    push. Jobs behind us sync only once we have landed. See merge-queue-fns.sh.
+merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.
@@ -881,6 +894,8 @@ if [ "$PUSH_VIA" = git ]; then
 else
   LANDED_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 fi
+# Our work is on the remote; the next job on this host can sync onto it and land.
+merge_queue_release
 
 # The word "verified" is reserved for the one case where the gate passed on the very tree
 # that is now on the integration branch. PARK_NOTE explains every other basis to the

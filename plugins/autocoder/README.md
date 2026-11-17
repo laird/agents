@@ -143,9 +143,39 @@ gh issue edit <issue_number> --remove-label "working"
 # Both agents will work on different issues without conflict
 ```
 
-## Merge Trains (the landing model)
+## Landing: the host queue, and merge trains
 
-Workers bank; the **manager lands**, and it lands in **merge trains**, not one branch at a time.
+### What the scripts do today: one landing at a time per host
+
+In `merge` mode each worker launches its own detached merge job (`merge-launch.sh` →
+`merge-to-integration.sh --own-issue`) as soon as its branch passes review. Those jobs **queue**
+(#189): before a job fetches the integration tip it takes a per-host lock for its (origin URL,
+integration branch), and it holds that lock through the gate until its push is verified. A job
+that has to wait logs `⏳ Queued: issue #N is landing on '<branch>' from this host`, then syncs
+onto the tip only when its turn comes, which by then already carries every earlier landing from
+this host. So two workers on one host that finish at the same moment never reject each other's
+push or write a `Re-sync … (push retry N)` commit. A push from another host can still race; the
+re-sync-and-retry loop handles that as before.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `AUTOCODER_MERGE_QUEUE` | `1` | `0` lands at once, without waiting for other jobs on the host |
+| `AUTOCODER_MERGE_QUEUE_WAIT` | `7200` | seconds to wait for the lock (`0` = forever); past it the job lands unqueued and says so |
+
+The lock is `${AUTOCODER_TMP:-/tmp}/autocoder-land-<key>.lock` (flock), with the current holder
+named in the matching `.holder` file. A job that dies releases its place with it. The per-issue
+`autocoder-merge-<repo-id>-<issue>.{pid,log,exit}` files are unchanged, so gate viewers that read
+them keep working; a queued job's `.log` shows the wait. Gate slots (`AUTOCODER_MAX_GATES`) still
+cap concurrent gates across repos.
+
+### Merge trains (a manager procedure; not scripted by this plugin)
+
+Trains are the next step and are **not implemented as tooling here**: nothing in `scripts/`
+assembles `train/<UTC>`. A manager who wants them runs the procedure below by hand or with a
+project script, and then the swarm's workers bank READY instead of launching merges. Without
+that, the host queue above is how branches land.
+
+In the train model, workers bank; the **manager lands**, and it lands in **merge trains**, not one branch at a time.
 
 - **Why.** Per-branch landings move the integration branch every few minutes. In a swarm of ten
   workers that produced, in one day: dozens of conflicts in wholly generated files that two branches
@@ -176,9 +206,11 @@ Workers bank; the **manager lands**, and it lands in **merge trains**, not one b
 - **Workers' rules do not change.** Rebase at bank time, run the cheap prefix, post READY with the
   prebank block, never gate or push to the integration branch.
 
-The reference implementation is athena2's `scripts/mgr-train.sh` (issue #5956 there); this plugin's
-`merge-to-integration.sh` already gates whatever branch it is handed, so a train branch needs no
-plugin change. A project adopting the model states it in its `AGENTS.md` PUSH & MERGE section.
+The reference implementation is athena2's `scripts/mgr-train.sh` (issue #5956 there). This
+plugin's `merge-to-integration.sh` gates whatever branch it is handed, so a manager can land a
+train branch through it (and through the host queue) unchanged; assembling the train, dropping red
+members and closing member issues are left to the manager. A project adopting the model states it
+in its `AGENTS.md` PUSH & MERGE section.
 
 ## Blocked Issue Review Workflow
 

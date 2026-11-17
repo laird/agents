@@ -22,6 +22,12 @@
 #   was actually finished here — not whatever branch happens to be checked
 #   out in this directory by the time the detached process gets scheduled.
 #
+# QUEUEING (#189):
+#   Launching does not mean landing now. The detached job waits its turn on this host's
+#   landing queue for the integration branch (merge-queue-fns.sh) before it fetches the
+#   tip, so jobs launched together land one after another instead of racing a push. A
+#   waiting job's log says "⏳ Queued: …".
+#
 # DUPLICATE DETECTION:
 #   Refuses to start a second merge for the same issue while one is already
 #   running — the caller should poll the existing job (merge-poll.sh) instead.
