@@ -214,7 +214,25 @@ CODEX_TRUST="> You are running Codex in /home/u/src/project
   2. No, ask me to approve edits and commands
 
   Press enter to continue${PAD}"
-for d in CLAUDE_TRUST CLAUDE_BYPASS CLAUDE_TRUST_NEW GEMINI_TRUST CODEX_TRUST; do
+# Older codex: only the question matches ("No, quit" does not), drawn above its
+# wrapped warning in a narrow pane.
+CODEX_TRUST_OLD="> You are running Codex in
+  /home/u/src/project
+
+  Since this folder is not version
+  controlled, we recommend requiring
+  approval of all edits and commands.
+
+  Do you trust the contents of this
+  directory? Working with untrusted
+  contents comes with higher risk of
+  prompt injection.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue${PAD}"
+for d in CLAUDE_TRUST CLAUDE_BYPASS CLAUDE_TRUST_NEW GEMINI_TRUST CODEX_TRUST CODEX_TRUST_OLD; do
   run_stub tmux "${!d}"
   check "tmux: whole $d dialog → rc 3" "$RC" 3
   check "tmux: whole $d dialog → nothing typed" "$SENT_TEXT" 0

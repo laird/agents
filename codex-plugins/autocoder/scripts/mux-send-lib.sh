@@ -243,11 +243,12 @@ capture_target() {
 AUTOCODER_CONSENT_PATTERN="${AUTOCODER_CONSENT_PATTERN:-No, exit|Bypass Permissions|[Dd]o you trust|one you trust|[Tt]rust (this |the |parent )?folder|work in this folder}"
 
 # An open dialog is the last thing drawn on the pane, and its choices ("No,
-# exit", "Trust folder", "work in this folder") sit in its bottom few lines. So
+# exit", "Trust folder", "work in this folder", or an older codex's question
+# just above its "Yes, continue / No, quit") sit in its bottom lines. So
 # only the last non-blank lines are checked: dialog words higher up, in a shell
 # banner, scrollback or a transcript that quotes a dialog, are not a dialog
 # (#260; the idle sentinel's check does the same, #258).
-AUTOCODER_CONSENT_TAIL_LINES="${AUTOCODER_CONSENT_TAIL_LINES:-8}"
+AUTOCODER_CONSENT_TAIL_LINES="${AUTOCODER_CONSENT_TAIL_LINES:-12}"
 
 # 0 when the pane shows a consent or trust dialog. A pane that cannot be read
 # counts as showing none: the send that follows reports that failure itself.
