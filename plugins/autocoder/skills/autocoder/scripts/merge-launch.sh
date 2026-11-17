@@ -54,8 +54,8 @@
 #   autocoder-merge-<repo-id>-<issue>.log    — merge-to-integration.sh output
 #   autocoder-merge-<repo-id>-<issue>.exit   — its exit code, written on completion
 #   autocoder-merge-<repo-id>-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
-#   autocoder-merge-<repo-id>-<issue>.scripts/ — frozen copy of the scripts the job runs
-#                                               (#212); removed when the job finishes
+#   autocoder-merge-<repo-id>-<issue>.scripts.XXXXXX/ — frozen copy of the scripts the
+#                                               job runs (#212); removed when it finishes
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
@@ -141,8 +141,10 @@ if [ -f "$PIDFILE" ]; then
     echo "   Poll it with: ${_MLI_DIR}/merge-poll.sh --issue ${ISSUE_NUM}"
     exit 0
   fi
-  # Stale pidfile from a finished/dead run — clear state before relaunching.
+  # Stale pidfile from a finished/dead run — clear state before relaunching,
+  # including a snapshot a killed job never got to remove (#212).
   rm -f "$PIDFILE" "$EXITFILE" "$RUNSCRIPT"
+  rm -rf "${STATE}".scripts.*
 fi
 
 : > "$LOG"
@@ -155,13 +157,14 @@ rm -f "$EXITFILE"
 # new text and executes garbage (observed: "line 550: hip.: command not found",
 # then a wrong exit path). Every top-level file is copied, not a computed list, so
 # whatever merge-to-integration.sh sources or runs from its directory comes along.
-SNAPSHOT="${STATE}.scripts"
-rm -rf "$SNAPSHOT"
-if ! { mkdir -p "$SNAPSHOT" \
+# mktemp -d: a fresh, unpredictable, 0700 directory per launch, so nothing else can
+# plant or swap files in it, and a second launch can never delete a running job's copy.
+SNAPSHOT=""
+if ! { SNAPSHOT=$(mktemp -d "${STATE}.scripts.XXXXXX") \
        && find "$_MLI_DIR" -maxdepth 1 -type f -exec cp -p {} "$SNAPSHOT"/ \; ; } \
    || [ ! -x "$SNAPSHOT/merge-to-integration.sh" ]; then
-  echo "merge-launch.sh: could not snapshot ${_MLI_DIR} into ${SNAPSHOT}. Not launching." >&2
-  rm -rf "$SNAPSHOT"
+  echo "merge-launch.sh: could not snapshot ${_MLI_DIR} into ${SNAPSHOT:-a temp dir}. Not launching." >&2
+  [ -n "$SNAPSHOT" ] && rm -rf "$SNAPSHOT"
   exit 1
 fi
 

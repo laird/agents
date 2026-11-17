@@ -45,9 +45,11 @@ bash "$SCRIPTS/merge-launch.sh" --feature feature/issue-21 --issue 21 \
   && ok "merge-launch.sh launched" || bad "merge-launch.sh failed to launch"
 
 RUN=$(ls $STATE_GLOB.run.sh 2>/dev/null | head -1)
-SNAP=$(ls -d $STATE_GLOB.scripts 2>/dev/null | head -1)
+SNAP=$(ls -d $STATE_GLOB.scripts.* 2>/dev/null | head -1)
 [ -n "$SNAP" ] && [ -x "$SNAP/merge-to-integration.sh" ] && ok "a script snapshot exists for the job" \
   || bad "no script snapshot was made"
+[ "$(stat -c %a "$SNAP" 2>/dev/null)" = "700" ] && ok "the snapshot dir is private (0700)" \
+  || bad "snapshot dir mode is $(stat -c %a "$SNAP" 2>/dev/null)"
 grep -q -- "$SNAP/merge-to-integration.sh" "$RUN" 2>/dev/null && ok "the job runs the snapshot, not the live copy" \
   || bad "run.sh does not point at the snapshot: $(grep -o '[^ ]*merge-to-integration.sh' "$RUN" 2>/dev/null)"
 
