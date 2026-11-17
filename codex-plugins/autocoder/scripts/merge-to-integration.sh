@@ -473,7 +473,19 @@ ${summary}${basis_note}
     else
       echo "ℹ️  Issue #${ISSUE_NUM} is already closed; leaving it alone."
     fi
+    # Nobody owns a closed issue: retire every lock label, not just `merging` (#211).
+    # `working` is left behind when the hand-off failed; `awaiting-integration` only
+    # goes when this landing is one that would have closed the issue anyway.
     issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
+    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+    if [ "$PUSHED" -eq 1 ]; then
+      case "$PUBLISH_BASIS" in
+        tested|docs-only|docs-resync|already-landed)
+          if "${_MTI_DIR}/verify-shipped.sh" "$landed" >/dev/null 2>&1; then
+            issue_update "$ISSUE_NUM" --remove-label "awaiting-integration" 2>/dev/null || true
+          fi ;;
+      esac
+    fi
     return 0
   fi
   case "$PUBLISH_BASIS" in
