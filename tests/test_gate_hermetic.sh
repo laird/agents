@@ -79,8 +79,13 @@ printf '{"gate": {"hermetic": true}}\n' > .autocoder.json; git add .autocoder.js
   || bad "hermetic with no env list failed"
 git commit -qm "new tree" --allow-empty; echo b > b; git add b; git commit -qm b
 mkdir -p "$TMP/nopy"; printf '#!/bin/sh\nexit 127\n' > "$TMP/nopy/python3"; chmod +x "$TMP/nopy/python3"
+# Even with a host-mode pass already on record for this tree (an older version wrote it).
+NT=$(git rev-parse 'HEAD^{tree}')
+printf 'pass %s\n' "$(date +%s)" > "$AUTOCODER_GATE_CACHE_DIR/$NT-$(printf true | git hash-object --stdin | cut -c1-12)"
 OUT=$(PATH="$TMP/nopy:$PATH" gate_cache_run . 'true' 2>&1) && bad "gate ran with an unreadable config: $OUT" \
   || ok "an unreadable gate config fails the gate instead of falling back to host mode"
+ls "$AUTOCODER_GATE_CACHE_DIR" | grep -q envunreadable && bad "a record was written for an unreadable config" \
+  || ok "nothing is recorded while the config is unreadable"
 git rm -q .autocoder.json; git commit -qm "host again 2"
 
 # A reader whose repository lacks the tree (another clone sharing the cache) still finds

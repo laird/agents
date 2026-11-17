@@ -21,9 +21,9 @@
 #
 # Source this file; callers use:
 #   gate_env_config <tree-ish> [git-dir]   -> prints the normalized hermetic config, or
-#                                             nothing for host mode; rc 2 if the mode
-#                                             cannot be read (the tree is not in that
-#                                             repository, or the config could not be parsed)
+#                                             nothing for host mode; rc 2 if the tree is
+#                                             not in that repository, rc 3 if its config
+#                                             could not be parsed (e.g. python3 missing)
 #   gate_env_run <dir> "<test-cmd>"         -> runs the command in <dir> in the tree's mode
 
 gate_env_config() {
@@ -47,7 +47,7 @@ for p in g.get("path") or []:
 for e in g.get("env") or []:
     if isinstance(e, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", e):
         print("env " + e)
-') || return 2
+') || return 3
   [ -z "$out" ] || printf '%s\n' "$out"
 }
 
