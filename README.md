@@ -672,6 +672,27 @@ number as well (`/fix N`, a manager dispatch, a resumed loop). `working` and
 `AUTOCODER_REQUIRED_LABEL` overrides it for one command; empty disables it.
 Unset, nothing changes. See [docs/issue-backends.md](docs/issue-backends.md).
 
+### Steering Workers Off Each Other's Files
+
+An issue can declare the areas it expects to edit on one line of its body:
+
+```
+Touches: src/web/village/, src/web/server.rs, tools/**/screensaver/*
+```
+
+Entries are exact paths, directories (trailing `/`) or globs. With no
+`Touches:` line, the backticked paths under a `## Files Affected` heading
+count. Set `claims.avoid_overlap` in `.autocoder.json` and the fix-loop gate
+checks each candidate against the issues other workers hold (`working`):
+
+```json
+{ "claims": { "avoid_overlap": "prefer" } }
+```
+
+`prefer` tries overlapping candidates only after every other one, even a
+lower-priority one; `strict` skips them; `off` (the default) changes nothing.
+An issue with no declared areas never counts as overlapping.
+
 ### Registering a Custom Backend
 
 The built-in sources (`file`, `github`, `jira`, `ado`) need only `issueSource`. A custom backend additionally points `issueBackend` at an executable:

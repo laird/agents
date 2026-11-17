@@ -28,6 +28,10 @@
 # fresh issues of the same priority. It is taken over only when every claim on
 # it is abandoned (see claim-takeover-fns.sh); live claims are always respected.
 #
+# Overlapping areas (#227): with `.autocoder.json` `claims.avoid_overlap` set to
+# `prefer` or `strict`, a candidate whose declared areas overlap an in-flight
+# `working` issue's is tried last, or not at all (touches-fns.sh).
+#
 # Race safety:
 #   File backend: atomic claim via `issue_claim` (rename open/NNN.md →
 #                 working/NNN.md). Loser of the rename race gets exit 1;
@@ -129,7 +133,7 @@ fi
 
 # ── 1. Snapshot all open issues ──────────────────────────────────────────
 GATE_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
-ALL_JSON="$(mktemp)"
+ALL_JSON="$(mktemp)"; WORKING_JSON=""
 # A claim taken below and not yet handed off (#204): see release_pending_claim.
 PENDING_CLAIM=""; PENDING_FRESH=1; PENDING_EXCLUDE=""
 on_exit() {
@@ -137,7 +141,7 @@ on_exit() {
   set +e
   trap '' HUP INT TERM   # a second signal must not cut the release short
   declare -F release_pending_claim >/dev/null && release_pending_claim "$rc"
-  rm -f "$ALL_JSON"
+  rm -f "$ALL_JSON" ${WORKING_JSON:+"$WORKING_JSON"}
   exit "$rc"
 }
 trap on_exit EXIT
@@ -276,6 +280,32 @@ case "$PHASE" in
     exit 0
     ;;
 esac
+
+# ── 2b. Keep off areas another worker is editing (#227) ──────────────────
+# `.autocoder.json` `claims.avoid_overlap`: `prefer` tries candidates whose
+# declared areas (`Touches:` / Files Affected, see touches-fns.sh) overlap an
+# in-flight `working` issue's only after the rest; `strict` skips them; `off`
+# (the default) changes nothing and costs nothing. The config is the main
+# worktree's, as for issueSource (issue-config.sh). Runs after the resume step
+# and on the branch-filtered list. Fails open: if the in-flight issues cannot be
+# listed, candidates keep their order.
+if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
+  # shellcheck source=touches-fns.sh
+  source "${SCRIPT_DIR}/touches-fns.sh"
+  MAIN_WT="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN_WT=""
+  OVERLAP_MODE="$(touches_mode "${MAIN_WT:-.}/.autocoder.json")"
+  if [ "$OVERLAP_MODE" != off ]; then
+    WORKING_JSON="$(mktemp)"
+    if issue_list --state working --limit 500 > "$WORKING_JSON" 2>/dev/null \
+       && ORDERED="$(touches_order "$OVERLAP_MODE" "$CLASSIFICATION" "$ALL_JSON" "$WORKING_JSON")"; then
+      CLASSIFICATION="$ORDERED"
+    else
+      echo "fix-loop-gate: cannot check in-flight areas; claiming without claims.avoid_overlap" >&2
+    fi
+    # strict skipped every candidate: idle, nothing claimed.
+    [ -n "$CLASSIFICATION" ] || exit 1
+  fi
+fi
 
 # Exit 0 when this worker holds the earliest live claim comment on issue $1.
 claim_comment_wins() {
