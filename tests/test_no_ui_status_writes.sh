@@ -21,6 +21,8 @@ existing=()
 for d in "${SHIPPED[@]}"; do [ -d "$d" ] && existing+=("$d"); done
 [ "${#existing[@]}" -ge 3 ] && ok "found shipped trees: ${existing[*]}" || bad "expected shipped trees, found: ${existing[*]}"
 
+# Not a bare `agents-ui` grep: install-release-hook.sh must keep matching the legacy
+# "# agents-ui release hook" marker to replace that hook in existing checkouts.
 hits=$(grep -rnE '/tmp/agents-ui|for agents-tui\)|agents-ui TUI' "${existing[@]}" 2>/dev/null)
 if [ -z "$hits" ]; then
   ok "no shipped file writes or names /tmp/agents-ui"
@@ -36,7 +38,7 @@ for f in plugins/autocoder/commands/fix.md .agent/workflows/fix.md .pi/prompts/f
   if grep -q 'agents-ui' "$f"; then bad "$f mentions agents-ui"; else ok "$f does not mention agents-ui"; fi
 done
 
-for f in plugins/autocoder/commands/monitor-workers.md .agent/workflows/monitor-workers.md; do
+for f in plugins/autocoder/commands/monitor-workers.md .agent/workflows/monitor-workers.md .pi/prompts/monitor-workers.md; do
   grep -q 'autocoder-ctl status --json' "$f" && grep -q 'issue-events.jsonl' "$f" \
     && ok "$f points UIs at ctl status and issue events" \
     || bad "$f does not point UIs at ctl status and issue events"

@@ -928,7 +928,7 @@ above and continue to Step 8 (Report Summary) below.
 This command writes no status files for a UI. Scripts publish worker and issue
 state, so it is the same on every run:
 
-- **Current state**: `autocoder-ctl status --json` lists each worker's
+- **Current state**: a UI calls `autocoder-ctl status --json`, which lists each worker's
   worktree, pane, branch, issue and busy/idle activity.
 - **What happened**: `issue-events.jsonl` records each issue's claim, release,
   gate, landing and escalation; `merge-events.jsonl` records each merge attempt.
