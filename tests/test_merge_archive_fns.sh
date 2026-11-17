@@ -57,6 +57,11 @@ D2="$TMP/autocoder-merge-my.2app-1a2b-10"; echo live > "$D2.log"; touch -d '20 d
 merge_reap_finished "$TMP" is_live
 [ -e "$D2.log" ] && ok "a dotted repo id's current log is never pruned as an archive" || bad "current dotted log pruned"
 
+# Retention counts from archiving: an attempt archived late is not pruned at once.
+LT="$TMP/autocoder-merge-repo-1a2b-11"; job "$LT" "late" 1; touch -d '20 days ago' "$LT.log" "$LT.exit"
+merge_archive_attempt "$LT"; merge_reap_finished "$TMP" is_live
+[ -e "$LT.1.log" ] && ok "a late-archived attempt is kept for the full retention" || bad "late archive pruned at once"
+
 # ── archive retention ──────────────────────────────────────────────────────
 touch -d '20 days ago' "$B.1.log" "$B.1.exit"
 echo keep > "$B.2.log"; echo 0 > "$B.2.exit"

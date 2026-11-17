@@ -29,6 +29,8 @@ merge_archive_attempt() {
   n=$(( $(merge_last_archived "$base") + 1 ))
   [ -f "$base.log" ] && mv -f "$base.log" "$base.$n.log"
   [ -f "$base.exit" ] && mv -f "$base.exit" "$base.$n.exit"
+  # mv keeps the old mtime; retention counts from archiving, not from the job's end.
+  touch "$base.$n.log" "$base.$n.exit" 2>/dev/null || true
   return 0
 }
 
