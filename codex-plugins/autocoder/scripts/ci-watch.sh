@@ -23,8 +23,13 @@
 # found by title, so a lost state file or a second sentinel never files a duplicate.
 #
 # Best effort, always exit 0: no `gh`, no GitHub `origin`, or a gh/API failure is a
-# silent no-op. Rate limit: at most one check per AUTOCODER_CI_WATCH_INTERVAL seconds
+# silent no-op, and a failed issue write leaves the sha unreported so a later call retries.
+# Every gh call is capped at AUTOCODER_CI_WATCH_GH_TIMEOUT seconds (default 30) and never
+# prompts. Rate limit: at most one check per AUTOCODER_CI_WATCH_INTERVAL seconds
 # (default 120) per repo and integration branch.
+#
+# A sha's verdict is final: re-running a failed workflow on the same sha is not noticed,
+# the next landed commit's CI is. All runs cancelled or skipped is a verdict with no action.
 
 set -uo pipefail
 
@@ -63,8 +68,11 @@ source "${_CW_DIR}/issue-fns.sh" || exit 0
 REPO_ID=$(autocoder_repo_id "$REPO") || exit 0
 STATE_DIR="${STATE_DIR:-${AUTOCODER_SENTINEL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/sentinel}}"
 mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
-STATE_FILE="$STATE_DIR/${REPO_ID}-${INTEGRATION}.ci"
+STATE_FILE="$STATE_DIR/${REPO_ID}-${INTEGRATION//\//_}.ci"
 INTERVAL="${AUTOCODER_CI_WATCH_INTERVAL:-120}"
+GH_TIMEOUT="${AUTOCODER_CI_WATCH_GH_TIMEOUT:-30}"
+export GH_PROMPT_DISABLED=1
+ghc() { timeout "$GH_TIMEOUT" gh "$@"; }
 TITLE="CI red on ${INTEGRATION}"
 
 # State: last_check=<epoch> of the last gh call, done_sha=<sha> that last reached a
@@ -75,9 +83,13 @@ if [ -f "$STATE_FILE" ]; then
     case "$k" in last_check|done_sha|red_sha) printf -v "$k" '%s' "$v" ;; esac
   done < "$STATE_FILE"
 fi
+[[ "$done_sha" =~ ^[0-9a-f]{40}$ ]] || done_sha=""
+[[ "$red_sha" =~ ^[0-9a-f]{40}$ ]] || red_sha=""
 state_save() {
-  printf 'last_check=%s\ndone_sha=%s\nred_sha=%s\n' "$last_check" "$done_sha" "$red_sha" \
-    > "$STATE_FILE.tmp" && mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+  local tmp
+  tmp=$(mktemp "$STATE_FILE.XXXXXX") || return 1
+  printf 'last_check=%s\ndone_sha=%s\nred_sha=%s\n' "$last_check" "$done_sha" "$red_sha" > "$tmp" \
+    && mv -f "$tmp" "$STATE_FILE" || rm -f "$tmp"
 }
 
 [ "$SHA" = "$done_sha" ] && exit 0
@@ -87,7 +99,7 @@ now=$(date +%s)
 last_check="$now"
 state_save
 
-RUNS=$(gh run list --commit "$SHA" --limit 100 --json databaseId,conclusion,name,status 2>/dev/null) || exit 0
+RUNS=$(ghc run list --commit "$SHA" --branch "$INTEGRATION" --limit 100 --json databaseId,conclusion,name,status 2>/dev/null) || exit 0
 VERDICT=$(printf '%s' "$RUNS" | python3 -c '
 import json, sys
 try:
@@ -109,7 +121,6 @@ else:
 case "$VERDICT" in
   none|pending|error) exit 0 ;;
 esac
-done_sha="$SHA"
 
 # The open CI issue, found by title.
 find_ci_issue() {
@@ -128,20 +139,25 @@ for r in rows:
 # Issues whose push landed this sha, from refs/autocoder/tips/<integration>/<sha>-<issue>.
 landing_issues() {
   git for-each-ref --format='%(refname)' "refs/autocoder/tips/${INTEGRATION}/${SHA}-*" 2>/dev/null \
-    | sed 's/.*-//' | while read -r n; do
-        if [[ "$n" =~ ^[0-9]+$ ]]; then printf '#%s ' "$n"; else printf '%s ' "$n"; fi
+    | sed "s|.*/${SHA}-||" | while read -r n; do
+        if [[ "$n" =~ ^[0-9]+$ ]]; then printf '#%s ' "$n"
+        elif [[ "$n" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]]; then printf '%s ' "$n"; fi
       done
 }
 
-# Markdown list of failing workflows, their failed jobs and failed steps.
+# Markdown list of failing workflows (at most 10), their failed jobs and failed steps.
+# Names come from workflow files anyone with push access writes, so clean() strips what
+# could leave a code span, mention someone or add a link.
 failure_report() {
   local id name
   while IFS=$'\t' read -r id name; do
     [ -n "$id" ] || continue
-    printf -- '- workflow **%s** (run %s)\n' "$name" "$id"
-    gh run view "$id" --json jobs 2>/dev/null | python3 -c '
-import json, sys
+    printf -- '- workflow `%s` (run %s)\n' "$name" "$id"
+    ghc run view "$id" --json jobs 2>/dev/null | python3 -c '
+import json, re, sys
 RED = {"failure", "timed_out", "startup_failure"}
+def clean(v):
+    return re.sub(r"[`@\[\]<>\r\n]", " ", str(v))[:100]
 try:
     jobs = json.load(sys.stdin).get("jobs", [])
 except Exception:
@@ -149,16 +165,18 @@ except Exception:
 for j in jobs:
     if (j.get("conclusion") or "") not in RED:
         continue
-    print("  - job `%s`" % j.get("name", "?"))
+    print("  - job `%s`" % clean(j.get("name", "?")))
     for s in j.get("steps", []) or []:
         if (s.get("conclusion") or "") in RED:
-            print("    - failed step: `%s`" % s.get("name", "?"))' || true
+            print("    - failed step: `%s`" % clean(s.get("name", "?")))' || true
   done < <(printf '%s' "$RUNS" | python3 -c '
-import json, sys
+import json, re, sys
 RED = {"failure", "timed_out", "startup_failure"}
-for r in json.load(sys.stdin):
-    if (r.get("conclusion") or "") in RED:
-        print("%s\t%s" % (r.get("databaseId", ""), r.get("name", "?")))')
+def clean(v):
+    return re.sub(r"[`@\[\]<>\r\n\t]", " ", str(v))[:100]
+red = [r for r in json.load(sys.stdin) if (r.get("conclusion") or "") in RED]
+for r in red[:10]:
+    print("%s\t%s" % (int(r.get("databaseId") or 0), clean(r.get("name", "?"))))')
 }
 
 case "$VERDICT" in
@@ -171,8 +189,8 @@ Landed by: ${landed:-an unrecorded push}
 $(failure_report)"
     existing=$(find_ci_issue)
     if [ -n "$existing" ]; then
-      issue_comment "$existing" --body "Still red. ${report}" >/dev/null 2>&1 \
-        && echo "🔴 CI red at ${SHA:0:7}; updated #${existing}"
+      issue_comment "$existing" --body "Still red. ${report}" >/dev/null 2>&1 || exit 0
+      echo "🔴 CI red at ${SHA:0:7}; updated #${existing}"
     else
       body="${report}
 
@@ -180,23 +198,26 @@ The integration branch's GitHub Actions CI is red. Fix forward on \`${INTEGRATIO
 This issue is updated while CI stays red and closed when a later landed commit's CI is green.
 
 🤖 Filed by ci-watch.sh (post-merge sentinel)"
-      out=$(issue_create --title "$TITLE" --body "$body" --label P0 --label test-failure 2>/dev/null) \
-        && echo "🔴 CI red at ${SHA:0:7}; filed #$(printf '%s' "$out" | grep -oE '[0-9]+' | tail -1)"
+      out=$(issue_create --title "$TITLE" --body "$body" --label P0 --label test-failure 2>/dev/null) || exit 0
+      echo "🔴 CI red at ${SHA:0:7}; filed #$(printf '%s' "$out" | grep -oE '[0-9]+' | tail -1)"
     fi
     red_sha="$SHA"
     ;;
   green)
     # Only a commit at or after the last red one counts; a stale green sha must not
-    # close a newer red report.
-    if [ -z "$red_sha" ] || git merge-base --is-ancestor "$red_sha" "$SHA" 2>/dev/null; then
+    # close a newer red report. A red sha no longer in history (the branch was rewritten)
+    # does not block the close.
+    if [ -z "$red_sha" ] || ! git cat-file -e "${red_sha}^{commit}" 2>/dev/null \
+       || git merge-base --is-ancestor "$red_sha" "$SHA" 2>/dev/null; then
       existing=$(find_ci_issue)
       if [ -n "$existing" ]; then
-        issue_close "$existing" --comment "✅ CI is green on \`${INTEGRATION}\` at \`${SHA}\`." >/dev/null 2>&1 \
-          && echo "🟢 CI green at ${SHA:0:7}; closed #${existing}"
+        issue_close "$existing" --comment "✅ CI is green on \`${INTEGRATION}\` at \`${SHA}\`." >/dev/null 2>&1 || exit 0
+        echo "🟢 CI green at ${SHA:0:7}; closed #${existing}"
       fi
       red_sha=""
     fi
     ;;
 esac
+done_sha="$SHA"
 state_save
 exit 0

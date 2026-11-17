@@ -151,6 +151,30 @@ check "non-GitHub origin: exit 0, no output, no gh call" '[ "$RC" -eq 0 ] && [ -
 OUT=$(bash "$CIW" --repo "$REPO" --integration main 0000000000000000000000000000000000000000 2>&1); RC=$?
 check "unknown sha: exit 0, no output" '[ "$RC" -eq 0 ] && [ -z "$OUT" ]'
 
+echo "── 8b. a failed issue write is retried, not lost ──"
+F2=$(commit f2); git -C "$REPO" update-ref "refs/autocoder/tips/main/$F2-PROJ-7" "$F2"
+cat > "$FIX/runs-$F2.json" <<'EOF'
+[{"databaseId":61,"conclusion":"failure","name":"Tests `x` @org/team [l](https://e)","status":"completed"}]
+EOF
+cat > "$FIX/jobs-61.json" <<'EOF'
+{"jobs":[{"name":"job `y` @someone","conclusion":"failure","steps":[{"name":"step <b>","conclusion":"failure"}]}]}
+EOF
+chmod a-w "$ISSUES/open"
+OUT=$(ciw "$F2" 2>&1); RC=$?
+chmod u+w "$ISSUES/open"
+check "create fails: exit 0, nothing filed, sha not marked done" '[ "$RC" -eq 0 ] && [ -z "$(open_ci)" ] && ! grep -q "^done_sha=$F2" "$TMP"/state/*.ci'
+OUT=$(ciw "$F2"); F=$(open_ci)
+check "the next call files it" '[ -n "$F" ] && grep -q "$F2" "$F" && grep -q "filed" <<< "$OUT"'
+check "untrusted names cannot mention, link or leave a code span" '! grep -q "@" "$F" && ! grep -q "\[l\]" "$F" && ! grep -q "<b>" "$F" && grep -q "job \`job  y   someone\`" "$F"'
+check "a Jira-style landing key is named as-is" 'grep -q "Landed by: PROJ-7" "$F"'
+check "runs are asked for on the integration branch only" 'grep -q -- "--branch main" "$GHLOG"'
+rm -f "$F"
+
+echo "── 8c. an integration branch with a slash keeps its state ──"
+: > "$GHLOG"
+ciw --integration release/1.0 "$E" >/dev/null 2>&1
+check "state saved under a flattened name" 'ls "$TMP"/state/*-release_1.0.ci >/dev/null 2>&1'
+
 echo "── 9. the post-merge sentinel calls it for the tip ──"
 rm -f "$TMP"/state/*.ci
 cat > "$FIX/runs-$E.json" <<'EOF'
