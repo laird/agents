@@ -245,7 +245,11 @@ SCRIPT_DIR=$(
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
     if [ -f "$d/issue-fns.sh" ]; then echo "$d"; exit 0; fi
   done
-  find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" 2>/dev/null | sort -V | tail -1
+  # Fallback: the installed plugin. Only <ver>/scripts is a complete tree;
+  # <ver>/skills/autocoder/scripts is a subset that sorts after it (#142).
+  find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | while read -r d; do if [ -f "$d/issue-fns.sh" ]; then echo "$d"; fi; done \
+    | sort -V | tail -1
 )
 if [ ! -f "${SCRIPT_DIR}/issue-fns.sh" ]; then
   echo "autocoder: cannot locate issue-fns.sh (resolved SCRIPT_DIR='${SCRIPT_DIR}')" >&2
