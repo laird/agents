@@ -27,10 +27,12 @@ printf 'good\n' > app.sh
 REVERT=$(c "Revert autocoder push ${CULPRIT:0:7} (issue #2)" -m "Range ${CLEAN}..${CULPRIT}" \
   -m "Autocoder-Reverts: ${CULPRIT}
 Autocoder-Reverts-Issue: 2")
-# The re-land, as reland_howto() describes: git revert <revert>, then fix it.
+# The re-land, as reland_howto() describes: git revert <revert> (its own commit,
+# which only re-applies the culprit), then the fix as the issue's next commits.
 git revert --no-edit "$REVERT" >/dev/null 2>&1
-printf 'good\nfixed exit 1\n' > app.sh; git add -A; git commit -q --amend --no-edit
 RELAND=$(git rev-parse HEAD)
+echo 'other' > noise.sh; c "#5: someone else's work" >/dev/null
+printf 'good\nfixed exit 1\n' > app.sh; FIX2=$(c "#2: exit 1 when the gate fails")
 # A commit whose message mentions a revert in words only must not become a case.
 echo x > y; c "revert the colour change, actually" >/dev/null
 echo 'off-by-one fixed' > fixme.sh; FIX=$(c "#4: fix off-by-one")
@@ -44,7 +46,10 @@ jq -e --arg c "$CULPRIT" --arg r "$REVERT" --arg l "$RELAND" '.kind == "culprit"
   "$CASE/case.json" >/dev/null && ok "case.json records culprit, revert, re-land and issue" || bad "case.json: $(cat "$CASE/case.json")"
 grep -q '^+BUG exit 0' "$CASE/diff.patch" && ! grep -q other.sh "$CASE/diff.patch" \
   && ok "diff.patch is exactly the culprit push (prev-good..culprit)" || bad "diff: $(cat "$CASE/diff.patch")"
-grep -q 'fixed exit 1' "$CASE/fix.patch" && ok "fix.patch is the re-land" || bad "fix.patch missing"
+grep -q '^+fixed exit 1' "$CASE/fix.patch" && grep -q "$FIX2" "$CASE/fix.patch" \
+  && ! grep -q '^+BUG' "$CASE/fix.patch" && ! grep -q noise.sh "$CASE/fix.patch" \
+  && ok "fix.patch is the issue's fix after the re-land, not the re-applied culprit or others' work" \
+  || bad "fix.patch: $(cat "$CASE/fix.patch" 2>/dev/null)"
 
 python3 "$RC" harvest --ref HEAD | grep -q '0 new' && ok "a second harvest adds nothing" || bad "harvest not idempotent"
 
@@ -73,9 +78,13 @@ jq -e '.culprits == 2 and .caught == 2 and .clean == 1 and .false_alarms == 0 an
 python3 "$RC" score --reviewer "$TMP/paranoid" --json > "$TMP/p.json"
 jq -e '.caught == 2 and .false_alarms == 1 and .score == 0' "$TMP/p.json" >/dev/null \
   && ok "flagging everything is charged a false alarm" || bad "paranoid: $(cat "$TMP/p.json")"
-python3 "$RC" score --reviewer "$TMP/mute" --json > "$TMP/m.json"
-jq -e '.errors == 3 and .caught == 0 and all(.rows[]; .correct == false)' "$TMP/m.json" >/dev/null \
-  && ok "no Verdict line is an error, never a catch" || bad "mute: $(cat "$TMP/m.json")"
+python3 "$RC" score --reviewer "$TMP/mute" --json > "$TMP/m.json" 2>/dev/null \
+  && bad "a run with reviewer errors exits 0" || ok "a run with reviewer errors fails"
+jq -e '.errors == 3 and .caught == 0 and .false_alarms == 1 and .score == -1 and all(.rows[]; .correct == false)' \
+  "$TMP/m.json" >/dev/null && ok "an error is never a catch and always a false alarm" || bad "mute: $(cat "$TMP/m.json")"
+echo '{"score": -1}' > "$TMP/low.json"
+python3 "$RC" score --reviewer "$TMP/mute" --baseline "$TMP/low.json" --allow-equal >/dev/null 2>&1 \
+  && bad "an erroring reviewer passes the baseline" || ok "an erroring reviewer never passes the baseline"
 
 python3 "$RC" score --reviewer "$TMP/paranoid" --baseline "$TMP/base.json" >/dev/null 2>&1 \
   && bad "a worse reviewer passes the baseline" || ok "a worse score fails the baseline"
@@ -85,6 +94,17 @@ python3 "$RC" score --reviewer "$TMP/good" --baseline "$TMP/base.json" --allow-e
   && ok "--allow-equal accepts an equal score" || bad "--allow-equal"
 python3 "$RC" score --reviewer "$TMP/good" --corpus "$TMP/none" >/dev/null 2>&1 \
   && bad "an empty corpus scores" || ok "an empty corpus fails"
+mkdir -p "$TMP/only/cases" && cp -r tests/review_corpus/cases/revert-* "$TMP/only/cases/"
+python3 "$RC" score --reviewer "$TMP/paranoid" --corpus "$TMP/only" >/dev/null 2>&1 \
+  && bad "a culprit-only corpus scores" || ok "a corpus without clean cases fails"
+mkdir -p "$TMP/bad/cases/x" && echo '{' > "$TMP/bad/cases/x/case.json"
+python3 "$RC" score --reviewer "$TMP/good" --corpus "$TMP/bad" 2>"$TMP/bad.err" >/dev/null \
+  && bad "a malformed case scores" || { grep -q 'malformed case x' "$TMP/bad.err" && ! grep -q Traceback "$TMP/bad.err" \
+  && ok "a malformed case is reported, not a traceback" || bad "malformed: $(cat "$TMP/bad.err")"; }
+( cd "$TMP" && python3 "$RC" score --corpus tests/review_corpus --repo repo --reviewer "$TMP/good" >/dev/null 2>&1 ) \
+  && ok "--corpus resolves against --repo" || bad "--repo resolution"
+( cd "$TMP" && python3 "$RC" score --repo repo >/dev/null 2>"$TMP/norules" ) ; grep -q 'no rules file' "$TMP/norules" \
+  && ok "the claude reviewer refuses to run without REVIEW.md" || bad "no-rules: $(cat "$TMP/norules")"
 
 # The committed corpus is well formed: every case has its diff and a valid kind.
 MALFORMED=0

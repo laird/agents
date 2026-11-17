@@ -23,9 +23,9 @@ Where cases come from (`source`):
 - **`sentinel-revert`**: a push that the post-merge sentinel (`main-sentinel.sh`) found red
   and reverted. The revert carries the trailers `Autocoder-Reverts: <culprit>` and
   `Autocoder-Reverts-Issue: <n>`, plus a `Range <prev-good>..<culprit>` line. The
-  culprit diff is therefore exact, not guessed from commit messages. The harvest
-  finds the commit that re-landed the work (`git revert <revert>`) and stores it as
-  `fix.patch`.
+  culprit diff is therefore exact, not guessed from commit messages. Re-landing
+  starts with `git revert <revert>`, which only re-applies the culprit. The issue's
+  own commits after that (subject `#<n>:` or `Fix #<n>:`) are stored as `fix.patch`.
 - **`reversed-fix`**: a real bug-fix commit from this repo, reversed. Undoing the fix
   restores a defect someone actually shipped. These seed the set until the sentinel
   has reverted enough pushes of its own.
@@ -44,8 +44,11 @@ python3 $S score --baseline /tmp/base.json # exits 1 unless the score went up
 ```
 
 `score` shows each case's diff to the reviewer and reads the last `Verdict: flag` or
-`Verdict: pass` line it prints. If the reviewer prints no such line, the case
-counts as an error, and an error never counts as a catch.
+`Verdict: pass` line it prints. If the reviewer prints no such line (or crashes, or
+times out), the case is an error. An error is wrong for either kind: never a catch,
+always a false alarm. Any error makes `score` exit 1, so a broken reviewer can
+never pass `--baseline`. The corpus must hold both culprit and clean cases.
+`--corpus` and `--rules` are resolved against `--repo`.
 
 The score is the catch rate minus the false-alarm rate, from −1 to 1. Run it on
 every change to the reviewer, and drop any change that does not raise the score

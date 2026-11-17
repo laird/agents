@@ -21,8 +21,11 @@ LAYOUT (tests/review_corpus/, see its README):
   cases/<id>/case.json   {"id", "kind": "culprit"|"clean", "expect": "flag"|"pass",
                           "source", "issue", "commits", "note"}
   cases/<id>/diff.patch  what the reviewer sees
-  cases/<id>/fix.patch   culprits only, when found: the commit that re-landed the
-                         work after the revert (what the fix had to change)
+  cases/<id>/fix.patch   culprits only, when found: what the fix had to change.
+                         For a sentinel revert, the issue's own commits (subject
+                         `#<n>:` or `Fix #<n>:`) that landed after the work was
+                         re-applied with `git revert <revert>`; for a reversed
+                         fix, the fix commit itself
 
 USAGE
   review-corpus.py harvest [--repo DIR] [--ref REF] [--corpus DIR]
@@ -40,10 +43,16 @@ USAGE
       REVIEW_CASE_DIR / REVIEW_RULES in its environment, and must print a line
       `Verdict: flag` or `Verdict: pass` (the last such line counts). The default,
       `claude`, runs `claude -p` with REVIEW.md as the rules.
-      score = catch rate - false-alarm rate. With --baseline, exit 1 unless the
-      score beats the saved one (--allow-equal: or equals it).
+      score = catch rate - false-alarm rate. A case the reviewer could not answer
+      (no Verdict line, crash, timeout) is an error: wrong for either kind, so it
+      is never a catch and always a false alarm, and any error fails the run.
+      The corpus must hold both kinds, or one rate means nothing. With
+      --baseline, exit 1 unless the score beats the saved one (--allow-equal: or
+      equals it).
 
-EXIT: 0 ok; 1 failed or no improvement over --baseline; 2 usage.
+  --corpus and --rules are relative to --repo (default: the current directory).
+
+EXIT: 0 ok; 1 failed, any reviewer error, or no improvement over --baseline; 2 usage.
 """
 
 import argparse
@@ -117,10 +126,17 @@ def cmd_harvest(a):
         prev_good = m.group(1)
         diff = git(repo, "diff", "--binary", prev_good, culprit)
         # The re-land: a later commit on REF that reverted the sentinel's revert
-        # (`git revert <revert>`, as reland_howto() tells the human to do).
+        # (`git revert <revert>`, as reland_howto() tells the human to do). That
+        # commit only re-applies the culprit; the fix is in the issue's own commits
+        # after it.
         reland = git(repo, "log", "--format=%H", "--reverse", f"--grep=This reverts commit {revert}",
                      f"{revert}..{ref}").split()
-        fix = git(repo, "show", "--format=", "--binary", reland[0]) if reland else None
+        fix = None
+        if reland and issue.isdigit():
+            fix_commits = git(repo, "log", "--format=%H", "--reverse", "--no-merges", "-E",
+                              f"--grep=^(Fix )?#{issue}([^0-9]|$)", f"{reland[0]}..{ref}").split()
+            fix = "".join(git(repo, "show", "--format=commit %H%n%n    %s%n", "--binary", c)
+                          for c in fix_commits) or None
         case = {
             "id": f"revert-{culprit[:10]}",
             "kind": "culprit", "expect": "flag", "source": "sentinel-revert",
@@ -141,6 +157,7 @@ def cmd_add(a):
     subject = git(a.repo, "log", "-1", "--format=%s", sha).strip()
     if a.clean:
         diff = git(a.repo, "show", "--format=", "--binary", sha)
+        fix = None
         case = {"id": f"clean-{sha[:10]}", "kind": "clean", "expect": "pass", "source": "landed-clean",
                 "issue": None, "commits": {"commit": sha}, "note": a.note or subject}
     else:
@@ -153,12 +170,7 @@ def cmd_add(a):
         case = {"id": f"reversed-fix-{sha[:10]}", "kind": "culprit", "expect": "flag",
                 "source": "reversed-fix", "issue": None, "commits": {"fix": sha},
                 "note": a.note or f"Reverse of the fix: {subject}"}
-        if write_case(a.corpus, case, diff, fix):
-            print(f"added {case['id']}")
-            return 0
-        print(f"review-corpus: {case['id']} exists or has an empty diff", file=sys.stderr)
-        return 1
-    if write_case(a.corpus, case, diff):
+    if write_case(a.corpus, case, diff, fix):
         print(f"added {case['id']}")
         return 0
     print(f"review-corpus: {case['id']} exists or has an empty diff", file=sys.stderr)
@@ -168,7 +180,7 @@ def cmd_add(a):
 def run_reviewer(reviewer, case_dir, diff, rules):
     env = dict(os.environ, REVIEW_CASE_DIR=str(case_dir), REVIEW_RULES=str(rules))
     if reviewer == "claude":
-        rules_text = pathlib.Path(rules).read_text() if pathlib.Path(rules).is_file() else "(no REVIEW.md)"
+        rules_text = pathlib.Path(rules).read_text()
         cmd = ["claude", "-p", "--model", os.environ.get("REVIEW_MODEL", "sonnet")]
         stdin = REVIEW_PROMPT.format(rules=rules_text, diff=diff)
     else:
@@ -191,20 +203,32 @@ def cmd_score(a):
     if not cases:
         print(f"review-corpus: no cases under {cases_dir}", file=sys.stderr)
         return 1
+    if a.reviewer == "claude" and not pathlib.Path(a.rules).is_file():
+        print(f"review-corpus: no rules file at {a.rules} (pass --rules or --repo)", file=sys.stderr)
+        return 1
     rows = []
     for cj in cases:
-        case = json.loads(cj.read_text())
-        diff = (cj.parent / "diff.patch").read_text()
+        try:
+            case = json.loads(cj.read_text())
+            kind, expect, cid = case["kind"], case["expect"], case["id"]
+            diff = (cj.parent / "diff.patch").read_text()
+        except (OSError, ValueError, KeyError) as e:
+            print(f"review-corpus: malformed case {cj.parent.name}: {e}", file=sys.stderr)
+            return 1
         verdict, err = run_reviewer(a.reviewer, cj.parent, diff, a.rules)
-        rows.append({"id": case["id"], "kind": case["kind"], "expect": case["expect"],
-                     "verdict": verdict, "correct": verdict == case["expect"], "error": err or None})
+        rows.append({"id": cid, "kind": kind, "expect": expect,
+                     "verdict": verdict, "correct": verdict == expect, "error": err or None})
     culprits = [r for r in rows if r["kind"] == "culprit"]
     clean = [r for r in rows if r["kind"] == "clean"]
+    if not culprits or not clean:
+        print("review-corpus: the corpus needs both culprit and clean cases to score", file=sys.stderr)
+        return 1
+    # An error is wrong for either kind: never a catch, always a false alarm.
     caught = sum(r["verdict"] == "flag" for r in culprits)
-    alarms = sum(r["verdict"] == "flag" for r in clean)
-    catch_rate = caught / len(culprits) if culprits else None
-    alarm_rate = alarms / len(clean) if clean else None
-    score = (catch_rate or 0.0) - (alarm_rate or 0.0)
+    alarms = sum(r["verdict"] != "pass" for r in clean)
+    catch_rate = caught / len(culprits)
+    alarm_rate = alarms / len(clean)
+    score = catch_rate - alarm_rate
     result = {"cases": len(rows), "culprits": len(culprits), "caught": caught,
               "clean": len(clean), "false_alarms": alarms,
               "errors": sum(r["verdict"] == "error" for r in rows),
@@ -218,10 +242,14 @@ def cmd_score(a):
             mark = "ok " if r["correct"] else "BAD"
             extra = f"  ({r['error']})" if r["error"] else ""
             print(f"{mark} {r['id']:<32} {r['kind']:<8} expect {r['expect']:<4} got {r['verdict']}{extra}")
-        fmt = lambda x: "n/a" if x is None else f"{x:.0%}"
+        fmt = lambda x: f"{x:.0%}"
         print(f"\ncaught {caught}/{len(culprits)} ({fmt(catch_rate)}), false alarms {alarms}/{len(clean)} "
               f"({fmt(alarm_rate)}), errors {result['errors']}, score {result['score']}")
 
+    if result["errors"]:
+        print(f"review-corpus: {result['errors']} case(s) got no verdict; the score is not trustworthy",
+              file=sys.stderr)
+        return 1
     if a.save:
         pathlib.Path(a.save).write_text(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=2) + "\n")
     if a.baseline:
@@ -257,6 +285,10 @@ def main():
         sp.add_argument("--corpus", default=argparse.SUPPRESS)
         sp.add_argument("--repo", default=argparse.SUPPRESS)
     a = p.parse_args()
+    repo = pathlib.Path(a.repo)
+    a.corpus = str(repo / a.corpus)
+    if getattr(a, "rules", None):
+        a.rules = str(repo / a.rules)
     try:
         return {"harvest": cmd_harvest, "add": cmd_add, "score": cmd_score}[a.cmd](a)
     except RuntimeError as e:
