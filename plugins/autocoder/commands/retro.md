@@ -77,7 +77,7 @@ Three deliberate exclusions:
 
 1. Sources issue configuration — exits immediately if not configured
 2. Reads history log (`HISTORY.md` or `history-log` GitHub issue)
-3. Analyzes git log for user corrections, reverts, repeated fix attempts
+3. Analyzes git log for sentinel reverts (revert rate), human corrections, repeated fix attempts
 4. Queries issue tracker for blocking patterns and reopened issues
 5. Identifies recurring test failures from history
 6. Synthesizes 3–5 evidence-backed recommendations
@@ -90,7 +90,8 @@ Three deliberate exclusions:
 - GitHub backend: comments on the `history-log` labeled issue
 
 **Git log** — signals of agent behavior quality:
-- Reverts and correction keywords in commit messages
+- Sentinel reverts, read from `Autocoder-Reverts` trailers by `revert-rate.sh`: the revert count, the rate per landed issue and the reverted issues
+- Human corrections: correction keywords in commit messages, excluding sentinel reverts
 - Feature branches attempted more than once for the same issue
 
 **Issue tracker** — patterns across all work:
@@ -183,18 +184,35 @@ echo ""
 echo "📊 Git log analysis"
 echo "==================="
 
-COMMIT_COUNT=$(git log --oneline $SINCE_FLAG | wc -l | tr -d ' ')
+COMMIT_COUNT=$(git log --oneline "$SINCE_FLAG" | wc -l | tr -d ' ')
 echo "Commits in range: $COMMIT_COUNT"
 
 echo ""
-echo "--- Correction/revert commits ---"
-git log --all --oneline $SINCE_FLAG \
+echo "--- Sentinel reverts (Autocoder-Reverts trailers) ---"
+# Only the post-merge sentinel's revert commits count: they carry an
+# `Autocoder-Reverts:` trailer (main-sentinel.sh). revert-rate.sh (#250) reads those
+# trailers and prints the revert count, the rate per landed issue and the reverted
+# issues. A commit that only says "revert" in its message is not counted here.
+if [ -f "${SCRIPT_DIR}/revert-rate.sh" ]; then
+  bash "${SCRIPT_DIR}/revert-rate.sh" --since "${SINCE_DATE:-1 year ago}" \
+    || echo "⚠️  revert-rate.sh could not read the history; no revert rate this run."
+else
+  echo "⚠️  revert-rate.sh not found in ${SCRIPT_DIR}; update the autocoder plugin for the revert rate."
+fi
+
+echo ""
+echo "--- Human corrections (keyword match, not sentinel reverts) ---"
+# A keyword grep finds corrections people made by hand. It is a heuristic: it skips
+# every commit with an Autocoder-Reverts trailer, which the section above already counts.
+git log --all "$SINCE_FLAG" \
+  --format='%h %s%x1f%(trailers:key=Autocoder-Reverts,valueonly,separator=%x2c)' \
   --grep="revert\|correct\|actually\|oops\|undo\|mistake" \
-  --regexp-ignore-case | head -20
+  --regexp-ignore-case \
+  | awk -F '\037' '$2 == "" {print $1}' | head -20
 
 echo ""
 echo "--- Issues with multiple fix attempts ---"
-git log --all --format="%D" $SINCE_FLAG \
+git log --all --format="%D" "$SINCE_FLAG" \
   | grep -oE "feature/issue-[0-9]+" \
   | sort | uniq -c | sort -rn \
   | awk '$1 > 1 {print}' | head -10
