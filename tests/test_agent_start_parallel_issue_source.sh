@@ -49,12 +49,18 @@ for mux in tmux cmux herdr; do
   branch_has_env "$mux" && ok "agent copy: the $mux branch sends the issue env" || bad "agent copy: the $mux branch never sends the issue env"
 done
 
-# Workers AND managers, including the manager-only pane: the env is sent at
-# least as many times as the plugin copy sends it, minus the plugin's extra cmux
-# manager variant (it launches the cmux manager from two code paths).
-p=$(grep -c 'send_issue_env_[a-z]* "' "$PLUGIN")
-a=$(grep -c 'send_issue_env_[a-z]* "' "$AGENT")
-[ "$a" -ge $((p - 2)) ] && ok "agent copy sends the env at $a launch sites (plugin: $p)" || bad "agent copy sends the env at only $a launch sites (plugin: $p)"
+# Workers AND managers on every multiplexer: assert each launch target by name,
+# so dropping any single send (e.g. only the herdr worker one) fails here.
+need() { # need <min-count> <exact call>
+  local n; n=$(grep -cF -- "$2" "$AGENT")
+  [ "$n" -ge "$1" ] && ok "agent copy: $2 (x$n)" || bad "agent copy: expected $2 at least $1x, found $n"
+}
+need 2 'send_issue_env_tmux "$PANE_ID"'          # first worker + each further worker
+need 2 'send_issue_env_tmux "$MANAGER_PANE"'     # manager-only pane + manager
+need 1 'send_issue_env_cmux "$WS_REF"'           # cmux workers
+need 1 'send_issue_env_cmux "$REVIEW_WS_REF"'    # cmux manager
+need 1 'send_issue_env_herdr "$PANE_ID"'         # herdr workers
+need 1 'send_issue_env_herdr "$MANAGER_PANE_ID"' # herdr manager
 awk '/Creating manager-only tmux session/{m=1} m&&/send_issue_env_tmux/{f=1} m&&/write_launch_manifest/{exit} END{exit f?0:1}' "$AGENT" \
   && ok "agent copy: the manager-only pane gets the env" || bad "agent copy: the manager-only pane does not get the env"
 
