@@ -422,16 +422,8 @@ probe_awaiting() {
 }
 
 probe_working() {
-  # .AGENT ADAPTATION (#12): this tree's issue backends predate the 9-verb
-  # contract — issues-file.py rejects `--state working` (choices: open,
-  # closed, all) and the github arm passes --state through to `gh issue
-  # list`, which rejects it too. `--label working --state open` expresses
-  # the same set ("open issues carrying the working label") in the dialect
-  # both backends accept. Note: probe_claimable's `--state open` here does
-  # not subtract blocking labels (the older backends cannot), so predicate 1
-  # is broader than in the plugins tree — a known, logged-here limitation.
   local out
-  out=$(probe_backend issue_list --label working --state open --limit 100 2>/dev/null) || return 1
+  out=$(probe_backend issue_list --state working --limit 100 2>/dev/null) || return 1
   printf '%s' "$out" | json_issue_numbers || return 1
 }
 
