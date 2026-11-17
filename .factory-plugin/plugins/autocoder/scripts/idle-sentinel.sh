@@ -1144,6 +1144,18 @@ validate_target() {
 # healthy manager as stuck on the dialog (#256).
 CONSENT_DIALOG_PATTERN='No, exit|Bypass Permissions'
 
+# The dialog is drawn at the bottom of the pane and stays the last thing on it
+# until it is answered, while a running manager's last lines are its input box
+# and footer. So only the last few non-blank lines are checked: dialog text a
+# healthy manager prints or quotes higher up (a transcript, a doc) is not a
+# dialog (#258). Eight lines hold the dialog's choices at any pane width.
+CONSENT_DIALOG_TAIL_LINES=8
+
+consent_dialog_on_screen() {  # consent_dialog_on_screen <captured pane text>
+  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n "$CONSENT_DIALOG_TAIL_LINES" \
+    | grep -Eq "$CONSENT_DIALOG_PATTERN"
+}
+
 # Command namespace for the wake prompt. Claude plugin commands are
 # /autocoder:-prefixed; every other agent's command tree (gemini extension,
 # .agent workflows) uses bare names (/manager-resume, /monitor-loop).
@@ -1336,7 +1348,7 @@ verify_manager_started() {
     # No marker process: either nothing launched or it died instantly. A
     # visible consent dialog is still worth distinguishing.
     cap=$(capture_target "$MUX" "$target")
-    if printf '%s' "$cap" | grep -Eq "$CONSENT_DIALOG_PATTERN"; then
+    if consent_dialog_on_screen "$cap"; then
       return 2
     fi
     return 1
@@ -1345,7 +1357,7 @@ verify_manager_started() {
   SPAWNED_PID_START=$(process_start_time "$pid") || SPAWNED_PID_START=""
   sleep 3
   cap=$(capture_target "$MUX" "$target")
-  if printf '%s' "$cap" | grep -Eq "$CONSENT_DIALOG_PATTERN"; then
+  if consent_dialog_on_screen "$cap"; then
     return 2
   fi
   return 0
