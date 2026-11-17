@@ -39,10 +39,14 @@ printf '#!/bin/bash\necho started > "%s/started"\nsleep 5\n' "$TMP" > "$SANDBOX/
 # Job control gives each run its own process group with SIGINT not ignored (a plain
 # background job in a script starts with SIGINT ignored, so INT would interrupt
 # nothing), and lets the kill reach the slow test's sleep too, so nothing outlives us.
+# Bash cannot trap or reset a signal that was ignored when it started, and the
+# detached merge job starts this test with SIGINT ignored, so the runner is exec'd
+# through python with SIGINT back at its default.
+with_sigint() { python3 -c 'import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
 set -m
 for sig in INT TERM; do
   rm -f "$TMP/started"
-  TMPDIR="$SCRATCH" bash "$SANDBOX/tests/run-shell-suite.sh" test_c_slow.sh >/dev/null 2>&1 &
+  TMPDIR="$SCRATCH" with_sigint bash "$SANDBOX/tests/run-shell-suite.sh" test_c_slow.sh >/dev/null 2>&1 &
   pid=$!
   for _ in $(seq 50); do [ -f "$TMP/started" ] && break; sleep 0.1; done
   during=$(find "$SCRATCH" -name 'shell-suite.*')
