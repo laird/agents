@@ -72,7 +72,13 @@ STATE_FILE="$STATE_DIR/${REPO_ID}-${INTEGRATION//\//_}.ci"
 INTERVAL="${AUTOCODER_CI_WATCH_INTERVAL:-120}"
 GH_TIMEOUT="${AUTOCODER_CI_WATCH_GH_TIMEOUT:-30}"
 export GH_PROMPT_DISABLED=1
-ghc() { timeout "$GH_TIMEOUT" gh "$@"; }
+# timeout is GNU coreutils; stock macOS has none (gtimeout with Homebrew coreutils).
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN=gtimeout
+else TIMEOUT_BIN=""; fi
+ghc() {
+  if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" -k 5 "$GH_TIMEOUT" gh "$@"; else gh "$@"; fi
+}
 TITLE="CI red on ${INTEGRATION}"
 
 # State: last_check=<epoch> of the last gh call, done_sha=<sha> that last reached a
@@ -122,9 +128,12 @@ case "$VERDICT" in
   none|pending|error) exit 0 ;;
 esac
 
-# The open CI issue, found by title.
+# The open CI issue, found by title. A failed listing fails the call (rc 1) rather than
+# reading as "none open", which would file a duplicate.
 find_ci_issue() {
-  issue_list --state open --label test-failure 2>/dev/null | python3 -c '
+  local rows
+  rows=$(issue_list --state open --label test-failure 2>/dev/null) || return 1
+  printf '%s' "$rows" | python3 -c '
 import json, sys
 t = sys.argv[1]
 try:
@@ -157,7 +166,7 @@ failure_report() {
 import json, re, sys
 RED = {"failure", "timed_out", "startup_failure"}
 def clean(v):
-    return re.sub(r"[`@\[\]<>\r\n]", " ", str(v))[:100]
+    return re.sub(r"[`@\[\]<>\r\n\t]", " ", str(v))[:100]
 try:
     jobs = json.load(sys.stdin).get("jobs", [])
 except Exception:
@@ -187,7 +196,7 @@ case "$VERDICT" in
 Landed by: ${landed:-an unrecorded push}
 
 $(failure_report)"
-    existing=$(find_ci_issue)
+    existing=$(find_ci_issue) || exit 0
     if [ -n "$existing" ]; then
       issue_comment "$existing" --body "Still red. ${report}" >/dev/null 2>&1 || exit 0
       echo "🔴 CI red at ${SHA:0:7}; updated #${existing}"
@@ -209,7 +218,7 @@ This issue is updated while CI stays red and closed when a later landed commit's
     # does not block the close.
     if [ -z "$red_sha" ] || ! git cat-file -e "${red_sha}^{commit}" 2>/dev/null \
        || git merge-base --is-ancestor "$red_sha" "$SHA" 2>/dev/null; then
-      existing=$(find_ci_issue)
+      existing=$(find_ci_issue) || exit 0
       if [ -n "$existing" ]; then
         issue_close "$existing" --comment "✅ CI is green on \`${INTEGRATION}\` at \`${SHA}\`." >/dev/null 2>&1 || exit 0
         echo "🟢 CI green at ${SHA:0:7}; closed #${existing}"

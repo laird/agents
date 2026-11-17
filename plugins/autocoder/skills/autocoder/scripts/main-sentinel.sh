@@ -645,7 +645,8 @@ tick() {
   resume_pending
   reconcile_handoffs
   # GitHub Actions CI on the tip (#224): best effort, rate-limited, a no-op off GitHub.
-  [ -f "${_MS_DIR}/ci-watch.sh" ] && timeout 180 bash "${_MS_DIR}/ci-watch.sh" --repo "$REPO" --integration "$INTEGRATION" --state-dir "$STATE_DIR" "$tip" 2>/dev/null | sed 's/^/   /'
+  local cap; cap=$(command -v timeout || command -v gtimeout) && cap="$cap 180"   # none on stock macOS
+  [ -f "${_MS_DIR}/ci-watch.sh" ] && $cap bash "${_MS_DIR}/ci-watch.sh" --repo "$REPO" --integration "$INTEGRATION" --state-dir "$STATE_DIR" "$tip" 2>/dev/null | sed 's/^/   /'
   if [ "$tip" = "$last_tested" ]; then
     echo "💤 ${INTEGRATION} idle at ${tip:0:7} (already gated)"
     prune

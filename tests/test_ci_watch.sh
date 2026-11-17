@@ -170,6 +170,26 @@ check "a Jira-style landing key is named as-is" 'grep -q "Landed by: PROJ-7" "$F
 check "runs are asked for on the integration branch only" 'grep -q -- "--branch main" "$GHLOG"'
 rm -f "$F"
 
+echo "── 8d. no timeout binary (stock macOS): still works ──"
+mkdir -p "$TMP/nott"
+for f in /usr/bin/* /bin/*; do
+  n=$(basename "$f"); case "$n" in timeout|gtimeout) continue ;; esac
+  [ -e "$TMP/nott/$n" ] || ln -s "$f" "$TMP/nott/$n"
+done
+ln -sf "$TMP/bin/gh" "$TMP/nott/gh"
+F3=$(commit f3)
+cp "$FIX/runs-$F2.json" "$FIX/runs-$F3.json"
+OUT=$(PATH="$TMP/nott" bash "$CIW" --repo "$REPO" --integration main "$F3" 2>&1)
+check "without timeout the red sha is still filed" 'grep -q "filed" <<< "$OUT" && [ -n "$(open_ci)" ]'
+rm -f "$(open_ci)"
+
+echo "── 8e. a failed issue listing files nothing (no duplicate) ──"
+F4=$(commit f4)
+cp "$FIX/runs-$F2.json" "$FIX/runs-$F4.json"
+: > "$GHLOG"
+OUT=$(ISSUE_SOURCE=github ciw "$F4" 2>&1); RC=$?
+check "listing failure: exit 0, nothing filed, sha not done" '[ "$RC" -eq 0 ] && grep -q "^issue list" "$GHLOG" && ! grep -q "^issue create" "$GHLOG" && [ -z "$(open_ci)" ] && ! grep -q "^done_sha=$F4" "$TMP"/state/*.ci'
+
 echo "── 8c. an integration branch with a slash keeps its state ──"
 : > "$GHLOG"
 ciw --integration release/1.0 "$E" >/dev/null 2>&1
