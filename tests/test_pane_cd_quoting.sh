@@ -18,7 +18,8 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 # Static check: no launcher types a bare single-quoted cd into a pane.
 HITS=$(grep -nE "(send-keys|send_tmux_command).*\"cd '" \
   "$SCRIPTS/add-worker.sh" "$SCRIPTS/restart-worker.sh" "$SCRIPTS/start-parallel-agents.sh" \
-  "$SCRIPTS/idle-sentinel.sh" "$ROOT/.agent/scripts/start-parallel-agents.sh" 2>/dev/null)
+  "$SCRIPTS/idle-sentinel.sh" "$ROOT/.agent/scripts/start-parallel-agents.sh" \
+  "$ROOT/.agent/scripts/idle-sentinel.sh" 2>/dev/null)
 [ -z "$HITS" ] && ok "no launcher types cd '<dir>' into a pane" \
   || bad "bare-quoted pane cd remains: $HITS"
 
