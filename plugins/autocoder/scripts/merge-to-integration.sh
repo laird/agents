@@ -102,7 +102,12 @@
 #     origin, never on the rebased tip.
 #   - A rebase that leaves nothing to land (every commit is already upstream, e.g. a re-run
 #     after an earlier job landed the same work) is treated like a feature SHA already on
-#     origin/<integration>: nothing is gated or pushed.
+#     origin/<integration>: nothing is gated or pushed. It closes the issue only when the
+#     feature's change applies in reverse to the tip; otherwise it escalates.
+#   - A feature branch containing merge commits is squashed to its net change first: a
+#     plain rebase would drop whatever the merges carried.
+#   - The rebase runs with hooks, rerere, signing, autosquash, autostash, update-refs and
+#     rebase-merges pinned off, so user git config cannot change what lands.
 #
 # SCRATCH:
 #   Everything this job writes outside the repo lives under ${AUTOCODER_TMP:-/tmp} and is
@@ -432,9 +437,16 @@ The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTE
 
 _escalate_conflict() {
   local files
-  echo "❌ Conflict rebasing ${FEATURE} onto '${INTEGRATION_BRANCH}'."
   files=$(git diff --name-only --diff-filter=U 2>/dev/null)
   git rebase --abort 2>/dev/null || git merge --abort 2>/dev/null || true
+  if [ -z "$files" ]; then
+    # The rebase stopped without a conflicted file (a refused commit, a dirty tree, …):
+    # nothing for the worker to resolve, and an empty file list would make every such
+    # failure look like the same conflict.
+    echo "❌ Rebasing ${FEATURE} onto '${INTEGRATION_BRANCH}' failed without a conflict."
+    _fail 1 "rebasing ${FEATURE_SHA:0:8} onto origin/${INTEGRATION_BRANCH} failed without a conflict (see the job log)"
+  fi
+  echo "❌ Conflict rebasing ${FEATURE} onto '${INTEGRATION_BRANCH}'."
   MERGE_OUTCOME=conflict MERGE_FILES="$files" MERGE_ESCALATED="$OWN_ISSUE"   # a successful _bounce clears it
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     if _bounce conflict "$files" ""; then
@@ -474,7 +486,7 @@ _close_or_park() {
   if [ "$landed" != "$FEATURE_SHA" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
     rebase_note="
 
-**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD) was rebased onto \`${INTEGRATION_BRANCH}\` without conflicts and landed as \`${landed}\`. A clean rebase is mechanical; a conflicted one is bounced back to the worker for re-review."
+**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` without conflicts and landed as \`${landed}\`. A clean rebase is mechanical; a conflicted one is bounced back to the worker for re-review."
   fi
   summary="${summary}${rebase_note}"
   if _issue_is_closed; then
@@ -543,13 +555,10 @@ ${summary}
       # The change measured is the feature's own (from the integration tip first seen).
       # After a rebase the landed series sits directly on REBASE_ONTO, so that pair is
       # exactly this change; otherwise (already landed) fall back to the feature tip.
-      if [ -n "${REBASE_ONTO:-}" ]; then
-        bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
-          --base "$REBASE_ONTO" --head "$landed" --apply || true
-      else
-        bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
-          --base "$INT_SEEN_SHA" --head "$FEATURE_SHA" --apply || true
-      fi
+      local sc_base="$INT_SEEN_SHA" sc_head="$FEATURE_SHA"
+      [ -n "${REBASE_ONTO:-}" ] && sc_base="$REBASE_ONTO" sc_head="$landed"
+      bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
+        --base "$sc_base" --head "$sc_head" --apply || true
     else
       MERGE_OUTCOME=parked
       _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
@@ -676,7 +685,7 @@ fi
 # A previous run (or a human) may already have landed this work; gating and pushing it
 # again would land nothing. Go straight to the outcome. $1 is the commit on
 # origin/<integration> that carries the work.
-REBASE_ONTO=""
+REBASE_ONTO="" SQUASH_BASE=""
 _already_landed() {
   delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
   if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
@@ -720,17 +729,62 @@ unset _tok
 # Replay the feature commits onto the integration tip (#221) so the eventual push is a
 # fast-forward and the integration branch stays linear. Never checks out the integration
 # branch -> worktree-safe. A conflict aborts the rebase and bounces to the worker.
+#
+# The user's git config must not change what lands: hooks, rerere (it can auto-stage a
+# replayed conflict, so the bounce would list no files), signing, autosquash/autostash,
+# update-refs (it would rewrite the caller's local branches, which share this ref store)
+# and rebase-merges are all pinned off.
+_GIT_PINNED=(-c core.hooksPath=/dev/null -c rerere.enabled=false -c commit.gpgsign=false
+  -c rebase.autoSquash=false -c rebase.autoStash=false -c rebase.updateRefs=false
+  -c rebase.rebaseMerges=false)
 _rebase_onto_integration() {
-  if ! git -c core.hooksPath=/dev/null rebase "origin/${INTEGRATION_BRANCH}"; then
+  if ! git "${_GIT_PINNED[@]}" rebase "origin/${INTEGRATION_BRANCH}"; then
     _escalate_conflict
   fi
   REBASE_ONTO=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 }
+
+# A plain rebase replays only non-merge commits, so anything a merge commit on the
+# feature branch carries (a conflict resolution, an edit made during the merge) would be
+# silently lost, or its conflict replayed and bounced although the worker resolved it.
+# A branch with merges is first squashed to one commit holding its net change against
+# the newest integration commit it already contains (its merge base), then rebased.
+if [ -n "$(git rev-list --merges "${INT_SEEN_SHA}..HEAD")" ]; then
+  SQUASH_BASE=$(git merge-base HEAD "$INT_SEEN_SHA")
+  SQUASH_MSG="Issue #${ISSUE_NUM}: ${FEATURE} (squashed: the branch contained merge commits)
+
+$(git log --no-merges --format='- %s' "${SQUASH_BASE}..HEAD")"
+  if git reset -q --soft "$SQUASH_BASE" \
+     && git "${_GIT_PINNED[@]}" commit -q --no-verify --allow-empty \
+          --author="$(git log -1 --format='%an <%ae>' "$FEATURE_SHA")" -m "$SQUASH_MSG"; then
+    echo "ℹ️  ${FEATURE} contains merge commits; squashed its net change against ${SQUASH_BASE:0:8} into one commit before rebasing."
+  else
+    _fail 1 "could not squash ${FEATURE_SHA:0:8}, which contains merge commits, before rebasing it"
+  fi
+fi
+
+# Every feature commit was dropped as already upstream (the same patch under another
+# SHA). Patch equality does not prove the change is still on the tip (a copy that landed
+# and was reverted matches too), so close only when the feature's whole change applies in
+# reverse to the tip, i.e. the tip already carries it. Otherwise nothing lands and a
+# human decides; the branch is kept.
+_nothing_left_to_land() {
+  local tip="$1" patch
+  patch=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.patch.XXXXXX")
+  git diff --binary "${FEATURE_BASE:-$INT_SEEN_SHA}" "$FEATURE_SHA" > "$patch"
+  if [ -s "$patch" ] && git apply -R --check "$patch" 2>/dev/null; then
+    rm -f "$patch"
+    echo "ℹ️  Rebasing ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_BRANCH} left nothing to land: its changes are already there."
+    _already_landed "$tip"
+  fi
+  rm -f "$patch"
+  echo "❌ Rebasing ${FEATURE} (${FEATURE_SHA:0:8}) dropped every commit as already upstream, but origin/${INTEGRATION_BRANCH} (${tip:0:8}) does not carry its change. NOT closing."
+  _fail 1 "rebasing ${FEATURE_SHA:0:8} onto origin/${INTEGRATION_BRANCH} dropped every commit as already applied, but ${tip:0:8} does not contain the change (an earlier copy may have been reverted); nothing landed"
+}
+
 _rebase_onto_integration
 if [ "$(git rev-parse HEAD)" = "$INT_SEEN_SHA" ]; then
-  # Every feature commit was already upstream (same patches under other SHAs).
-  echo "ℹ️  Rebasing ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_BRANCH} left nothing to land: its changes are already there."
-  _already_landed "$INT_SEEN_SHA"
+  _nothing_left_to_land "$INT_SEEN_SHA"
 fi
 echo "ℹ️  Rebased ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_BRANCH} (${INT_SEEN_SHA:0:8}): $(git rev-list --count "${INT_SEEN_SHA}..HEAD") commit(s), tip $(git rev-parse --short=8 HEAD)."
 
@@ -912,9 +966,8 @@ for attempt in 1 2 3 4 5; do
   BEFORE_RESYNC=$(git rev-parse HEAD)
   _rebase_onto_integration
   if [ "$(git rev-parse HEAD)" = "$INT_NEW_SHA" ]; then
-    # Someone else landed these very changes while we gated. Nothing of ours is left.
-    echo "ℹ️  After the re-sync nothing of ${FEATURE} is left to land: its changes are already on origin/${INTEGRATION_BRANCH}."
-    _already_landed "$INT_NEW_SHA"
+    # Someone else landed the same changes while we gated.
+    _nothing_left_to_land "$INT_NEW_SHA"
   fi
   if [ "$(git rev-parse HEAD)" != "$BEFORE_RESYNC" ]; then
     if DOCS_COUNT=$(_resync_docs_only "$INT_SEEN_SHA" "$INT_NEW_SHA") && _docs_resync_checks_pass; then

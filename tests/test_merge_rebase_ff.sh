@@ -7,7 +7,10 @@
 #   - the feature branch on origin is deleted with a lease on the pre-rebase SHA, and kept
 #     when it moved during the job;
 #   - a branch whose changes are already on master under other SHAs lands nothing;
-#   - a rebase conflict bounces to the worker with the files listed (#207).
+#   - a rebase conflict bounces to the worker with the files listed (#207);
+#   - a branch containing a merge that carries its own edit lands that edit (squashed);
+#   - a patch that landed earlier and was reverted is not mistaken for already landed;
+#   - user git config (signing without a key) does not change the landing.
 # File backend and a local bare origin, as in tests/test_merge_bounce.sh.
 
 PASS=0; FAIL=0
@@ -123,6 +126,34 @@ OUT=$(run_own true); RC=$?
 [ "$(issue_labels)" = "bug working" ] && ok "conflict: back to working" || bad "conflict labels: $(issue_labels)"
 grep -q '^- `src/a.sh`$' "$(issue_file)" && grep -q "kind=conflict" "$(issue_file)" && ok "conflict: file listed and kind=conflict marker" || bad "conflict comment: $(cat "$(issue_file)")"
 echo "$OUT" | grep -q "Aborted the rebase" && ok "conflict: the rebase was aborted" || bad "conflict log: $OUT"
+
+# ── 6. a feature branch with a merge that carries an extra edit: nothing is lost ──
+setup
+(cd "$TMP/worker" && git fetch -q origin && git merge -q --no-commit origin/master && echo evil > src/evil.sh && git add -A && git commit -qm "Merge origin/master into feature/code" && echo three > src/c.sh && git add -A && git commit -qm "feature three" && git push -q origin feature/code)
+sibling_lands later.txt
+OUT=$(run_own true); RC=$?
+[ "$RC" -eq 0 ] && ok "merge-carrying branch: lands" || bad "merge-carrying rc=$RC: $OUT"
+O show master:src/evil.sh >/dev/null 2>&1 && ok "merge-carrying branch: the edit made inside the merge landed" || bad "the merge's edit was lost"
+O show master:src/c.sh >/dev/null 2>&1 && O show master:src/b.sh >/dev/null 2>&1 && ok "merge-carrying branch: the other commits landed" || bad "commits lost"
+[ -z "$(O rev-list --merges master)" ] && ok "merge-carrying branch: master stays linear" || bad "merge on master"
+echo "$OUT" | grep -q "contains merge commits; squashed" && ok "merge-carrying branch: the squash is logged" || bad "no squash line: $OUT"
+grep -q "squashed to one commit" "$(issue_file)" && ok "merge-carrying branch: close comment mentions the squash" || bad "close comment: $(cat "$(issue_file)")"
+
+# ── 7. the same patch landed earlier and was reverted: not closed, branch kept ──
+setup
+(cd "$TMP/sibling" && git pull -q origin master && git fetch -q origin feature/code && git cherry-pick origin/master..origin/feature/code >/dev/null && git revert --no-edit HEAD HEAD~1 >/dev/null && git push -q origin master)
+BEFORE=$(O rev-parse master)
+OUT=$(run_own true); RC=$?
+[ "$RC" -eq 1 ] && ok "reverted copy: rc 1" || bad "reverted copy rc=$RC: $OUT"
+[ "$(O rev-parse master)" = "$BEFORE" ] && ok "reverted copy: nothing pushed" || bad "reverted copy: master moved"
+[ "$(issue_bucket)" != closed ] && issue_labels | grep -q needs-clarification && ok "reverted copy: escalated, not closed" || bad "reverted copy state: $(issue_bucket) $(issue_labels)"
+O rev-parse -q --verify refs/heads/feature/code >/dev/null && ok "reverted copy: feature branch kept" || bad "reverted copy: feature branch deleted"
+
+# ── 8. user git config cannot change the landing (signing with no key) ─────
+setup
+git -C "$TMP/worker" config commit.gpgsign true; git -C "$TMP/worker" config user.signingkey NO-SUCH-KEY
+OUT=$(run_own true); RC=$?
+[ "$RC" -eq 0 ] && O show master:src/b.sh >/dev/null 2>&1 && ok "commit.gpgsign without a key does not break the rebase" || bad "gpgsign rc=$RC: $OUT"
 
 echo ""
 echo "$PASS passed / $FAIL failed / $((PASS + FAIL)) total"
