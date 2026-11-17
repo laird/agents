@@ -16,6 +16,7 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 for f in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   P="$ROOT/$f"
   grep -q 'Rebase early and often (#222)' "$P" && ok "$f: rebase-early guidance" || bad "$f: no rebase-early guidance"
+  grep -q 'Order: trial-rebase first, then review (#222)' "$P" && ok "$f: the review gate says rebase first" || bad "$f: review gate does not say rebase first"
   # Each review-record check must be preceded (within its block) by a trial rebase.
   python3 - "$P" <<'PY' && ok "$f: every landing site trial-rebases before its review check" || bad "$f: a landing site lacks a trial rebase before its review check"
 import re, sys
@@ -24,7 +25,7 @@ checks = [m.start() for m in re.finditer(r'REVIEW_FILE="\$\(git rev-parse --git-
 ok = len(checks) == 3
 for c in checks:
     window = s[max(0, c - 1500):c]
-    ok = ok and "# Trial rebase (#222)" in window and "git rebase" in window
+    ok = ok and "# Trial rebase (#222)" in window and re.search(r'^\s*if ! git rebase "', window, re.M) is not None
 sys.exit(0 if ok else 1)
 PY
 done
@@ -61,6 +62,9 @@ setup; echo mine > a; g commit -qam mine
 (cd "$TMP/s" && echo theirs > a && g commit -qam theirs && g push -q origin HEAD:master)
 OUT=$(run_block); RC=$?
 [ "$RC" -eq 2 ] && ok "conflict: block exits 2" || bad "conflict rc=$RC"
+git -C "$TMP/w" rebase --abort 2>/dev/null
+OUT2=$(cd "$TMP/w" && ISSUE_NUM=9 bash -c "unset INTEGRATION_BRANCH; $BLOCK" 2>&1)
+printf '%s\n' "$OUT2" | grep -q 'INTEGRATION_BRANCH unset' && ok "unset INTEGRATION_BRANCH fails clearly, not as a conflict" || bad "unset branch: $OUT2"
 printf '%s\n' "$OUT" | grep -qx 'a' && ok "conflict: lists the conflicting file" || bad "conflict output: $OUT"
 git -C "$TMP/w" rebase --abort 2>/dev/null
 

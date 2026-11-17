@@ -1104,6 +1104,11 @@ agent activity and reclaims them with human confirmation.
 
 ## Pre-Landing Review Gate (MANDATORY)
 
+**Order: trial-rebase first, then review (#222).** Every landing block below rebases onto
+the integration branch before its review check. A rebase that moves HEAD invalidates the
+review record, so run that trial rebase *before* this gate. Reviewing first and rebasing
+after means reviewing twice.
+
 Tests prove the change does what its tests check; they say nothing about whether
 it does what the issue asked, stays in scope, or opens a hole. Every landing
 site below runs this gate **after the final commit and before the push** — so
@@ -1316,7 +1321,7 @@ For simple issues, proceed directly:
 2. Implement a complete fix (not partial)
 3. Run targeted tests to verify the fix works
 4. Create a git commit with the changes
-5. Run the Pre-Landing Review Gate (above) and resolve its findings
+5. Trial-rebase onto the integration branch (the landing block below does it), then run the Pre-Landing Review Gate (above) on the rebased HEAD and resolve its findings
 6. Mark as complete
 
 ```bash
@@ -1338,7 +1343,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 # invalidates the review record: review the rebased HEAD. On a conflict, resolve it
 # now while it is small, keeping both sides' behaviour, re-run the targeted tests,
 # and re-run this block.
-git fetch -q origin "$INTEGRATION_BRANCH"
+git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
 if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
   echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
@@ -1610,7 +1615,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 # invalidates the review record: review the rebased HEAD. On a conflict, resolve it
 # now while it is small, keeping both sides' behaviour, re-run the targeted tests,
 # and re-run this block.
-git fetch -q origin "$INTEGRATION_BRANCH"
+git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
 if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
   echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
   echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
@@ -2503,7 +2508,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
   # invalidates the review record: review the rebased HEAD. On a conflict, resolve it
   # now while it is small, keeping both sides' behaviour, re-run the targeted tests,
   # and re-run this block.
-  git fetch -q origin "$INTEGRATION_BRANCH"
+  git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
   if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
     echo "⚠️  Rebase of #${ENHANCE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
     echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
