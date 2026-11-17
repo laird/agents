@@ -150,12 +150,18 @@ DEPLOY_CMD=$(field deploy)
 RESTART_CMD=$(field restart)
 CHECK_CMD=$(field check)
 WAIT="${AUTOCODER_DEPLOY_WAIT:-$(field wait)}"
+case "$WAIT" in ''|*[!0-9]*) refuse "AUTOCODER_DEPLOY_WAIT must be a whole number of seconds, not '$WAIT'" ;; esac
 [ "$(field release)" = 1 ] || RELEASE=false
 CONFIGURED_RELEASE=$(field release)
 
 if [ -z "$INTEGRATION" ]; then
   INTEGRATION=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
-  INTEGRATION="${INTEGRATION:-main}"
+  # No origin/HEAD (a clone made by `git remote add`): main, or master when only it exists.
+  if [ -z "$INTEGRATION" ]; then
+    INTEGRATION=main
+    git rev-parse -q --verify refs/remotes/origin/main >/dev/null \
+      || ! git rev-parse -q --verify refs/remotes/origin/master >/dev/null || INTEGRATION=master
+  fi
 fi
 
 if [ -n "$(git status --porcelain --untracked-files=no -- . ':(exclude).claude')" ]; then
@@ -209,9 +215,11 @@ DEPLOYMENT_ID=$(gh api "repos/{owner}/{repo}/deployments" \
   -f description="$LABEL installed on $HOST" \
   -F auto_merge=false -F 'required_contexts[]' --jq .id) \
   || refuse "GitHub would not create the deployment"
-status() {  # status <state> <description>
+status() {  # status <state> <description>; GitHub caps a description at 140 characters
+  local d="$2"
+  [ "${#d}" -le 140 ] || d="${d:0:137}..."
   gh api "repos/{owner}/{repo}/deployments/$DEPLOYMENT_ID/statuses" \
-    -f state="$1" -f description="$2" >/dev/null \
+    -f state="$1" -f description="$d" >/dev/null \
     || echo "deploy.sh: could not record '$1' on deployment $DEPLOYMENT_ID" >&2
 }
 fail() { echo "deploy.sh: $*" >&2; status failure "$*"; exit 2; }

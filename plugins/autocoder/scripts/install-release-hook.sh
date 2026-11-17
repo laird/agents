@@ -10,8 +10,8 @@
 # The hook goes in the hooks directory every checkout shares (core.hooksPath,
 # else <git common dir>/hooks), as a short shim that runs this directory's
 # release-pre-push.sh. When a plugin update removes that path, the shim falls
-# back to the newest installed autocoder plugin's copy, and does nothing if there
-# is none. An existing pre-push hook that is not this one is left alone: the
+# back to the newest version of the same marketplace's autocoder plugin, and does
+# nothing if there is none. An existing pre-push hook that is not this one is left alone: the
 # script stops and says so.
 set -euo pipefail
 
@@ -47,19 +47,38 @@ if [ "$UNINSTALL" = true ]; then
   exit 0
 fi
 mkdir -p "$hooks"
-cat > "$hook" <<HOOK
-#!/usr/bin/env bash
-$MARK (install-release-hook.sh)
-s="$here/release-pre-push.sh"
-if [ ! -f "\$s" ]; then
+# sq <text>: <text> as one single-quoted shell word, so a path with `"`, `$` or a
+# backquote is data in the generated hook, never code.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# A plugin install lives at .../plugins/cache/<marketplace>/autocoder/<version>/scripts.
+# The fallback, for when an update removes that version, is the newest version from
+# the SAME marketplace: never another marketplace's plugin that happens to be called
+# autocoder. A checkout of the repo (not a plugin install) has no fallback.
+plugin_root=""
+case "$here" in
+  */plugins/cache/*/autocoder/*/scripts) plugin_root="${here%/*/scripts}" ;;
+esac
+{
+  echo '#!/usr/bin/env bash'
+  echo "$MARK (install-release-hook.sh)"
+  echo "s=$(sq "$here/release-pre-push.sh")"
+  echo "root=$(sq "$plugin_root")"
+  cat <<'HOOK'
+if [ ! -f "$s" ]; then
   s=""
-  for f in "\$HOME"/.claude/plugins/cache/*/autocoder/*/scripts/release-pre-push.sh; do
-    [ -f "\$f" ] && s="\$f"
-  done
+  if [ -n "$root" ] && [ -d "$root" ]; then
+    # The highest version by number (1.10.0 after 1.9.0); no `sort -V` on macOS.
+    v=$(ls "$root" 2>/dev/null | awk -F. '
+      function newer(   i) { for (i = 1; i <= NF || i <= nb; i++) if ($i + 0 != b[i] + 0) return $i + 0 > b[i] + 0; return 0 }
+      /^[0-9][0-9.]*$/ && (best == "" || newer()) { best = $0; nb = split($0, b, ".") }
+      END { print best }')
+    [ -n "$v" ] && [ -f "$root/$v/scripts/release-pre-push.sh" ] && s="$root/$v/scripts/release-pre-push.sh"
+  fi
 fi
-[ -n "\$s" ] || exit 0
-exec bash "\$s" "\$@"
+[ -n "$s" ] || exit 0
+exec bash "$s" "$@"
 HOOK
+} > "$hook"
 chmod +x "$hook"
 echo "install-release-hook.sh: installed $hook"
 echo "  A push of the integration branch from $main now releases it"

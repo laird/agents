@@ -93,6 +93,14 @@ check() {  # check <description> <command...>
 has() { grep -qF -- "$1" <<< "$2"; }
 hasnt() { ! grep -qF -- "$1" <<< "$2"; }
 SHA=$(git -C "$TMP/work" rev-parse HEAD)
+# with_config <file> <python expression on d>: a copy of .autocoder.json, edited, for
+# AUTOCODER_CONFIG (editing the committed one would make the tree dirty).
+with_config() {
+  python3 - "$TMP/work/.autocoder.json" "$1" "$2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); exec(sys.argv[3]); json.dump(d, open(sys.argv[2], "w"))
+PY
+}
 
 # ---- deploy.sh: refusals ---------------------------------------------------------
 run "$DEPLOY" unknown-env -- --env qa
@@ -177,6 +185,16 @@ check "records failure" has "state=failure" "$LOG"
 check "does not record success" hasnt "state=success" "$LOG"
 check "does not release" hasnt "release create" "$LOG"
 
+run "$DEPLOY" bad-wait AUTOCODER_DEPLOY_WAIT=soon -- --env nuc-1
+check "a non-numeric AUTOCODER_DEPLOY_WAIT is refused before anything is opened" test "$RC" -eq 1
+check "records nothing" hasnt "gh " "$LOG"
+
+with_config "$TMP/long.json" 'd["environments"][1]["deploy"] = "false " + "x" * 300'
+run "$DEPLOY" long-cmd AUTOCODER_CONFIG="$TMP/long.json" -- --env plain
+check "a failing long command: exit 2" test "$RC" -eq 2
+check "its failure description fits GitHub's 140 characters" \
+  test "$(grep 'state=failure' <<< "$LOG" | sed 's/.*-f description=//' | awk '{ print length($0) }')" -le 140
+
 run "$DEPLOY" deploy-fails STUB_DEPLOY_RC=1 -- --env nuc-1
 check "a failing deploy command: exit 2" test "$RC" -eq 2
 check "records failure" has "state=failure" "$LOG"
@@ -203,14 +221,6 @@ check "an environment without commands only records the Deployment" test "$RC" -
 check "records success" has "state=success" "$LOG"
 check "and does not release unless configured" hasnt "release create" "$LOG"
 
-# with_config <file> <python expression on d>: a copy of .autocoder.json, edited, for
-# AUTOCODER_CONFIG (editing the committed one would make the tree dirty).
-with_config() {
-  python3 - "$TMP/work/.autocoder.json" "$1" "$2" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1])); exec(sys.argv[3]); json.dump(d, open(sys.argv[2], "w"))
-PY
-}
 with_config "$TMP/rod.json" 'd["releaseOnDeploy"] = True'
 run "$DEPLOY" release-on-deploy AUTOCODER_CONFIG="$TMP/rod.json" -- --env plain
 check "a top-level releaseOnDeploy releases every environment's deploy" has "release create" "$LOG"
@@ -344,6 +354,31 @@ OUT=$(cd "$TMP/work" && bash "$SCRIPTS/install-release-hook.sh" 2>&1); RC=$?; CA
 check "replaces agents-ui's own release hook" grep -qF "release-pre-push.sh" "$TMP/work/.git/hooks/pre-push"
 OUT=$(cd "$TMP/work" && bash "$SCRIPTS/install-release-hook.sh" --uninstall 2>&1); RC=$?; CASE=uninstall
 check "--uninstall removes it" test ! -e "$TMP/work/.git/hooks/pre-push"
+
+# ---- the hook shim: quoting and the plugin-update fallback ---------------------------------
+# A plugin path with quotes and a command substitution stays data; when the version the
+# hook names is gone, the newest version (by number) of the SAME marketplace runs, never
+# another marketplace's plugin called autocoder.
+CACHE="$TMP/cache/plugins/cache"
+for v in mkt/autocoder/1.9.0 mkt/autocoder/1.10.0 evil/autocoder/9.9.9; do mkdir -p "$CACHE/$v/scripts"; done
+cp "$SCRIPTS/install-release-hook.sh" "$SCRIPTS/release-pre-push.sh" "$CACHE/mkt/autocoder/1.9.0/scripts/"
+echo 'echo "ran 1.10.0 $*"' > "$CACHE/mkt/autocoder/1.10.0/scripts/release-pre-push.sh"
+echo 'echo "ran evil"' > "$CACHE/evil/autocoder/9.9.9/scripts/release-pre-push.sh"
+NASTY="$TMP/a\"b\$(touch PWNED)'c/scripts"
+mkdir -p "$NASTY"; cp "$SCRIPTS/install-release-hook.sh" "$SCRIPTS/release-pre-push.sh" "$NASTY/"
+git init -q "$TMP/shim1"
+OUT=$(cd "$TMP/shim1" && bash "$NASTY/install-release-hook.sh" >/dev/null && AUTOCODER_NO_RELEASE=1 .git/hooks/pre-push origin u </dev/null 2>&1); RC=$?; LOG=""; CASE=shim-quoting
+check "a plugin path with quotes and \$(...) installs a working hook" test "$RC" -eq 0
+check "and runs nothing from the path" test ! -e "$TMP/shim1/PWNED"
+git init -q "$TMP/shim2"
+(cd "$TMP/shim2" && bash "$CACHE/mkt/autocoder/1.9.0/scripts/install-release-hook.sh" >/dev/null)
+rm -rf "$CACHE/mkt/autocoder/1.9.0"
+OUT=$(cd "$TMP/shim2" && .git/hooks/pre-push origin u </dev/null 2>&1); RC=$?; CASE=shim-fallback
+check "after an update removes its version, the hook runs the newest of the same marketplace" test "$OUT" = "ran 1.10.0 origin u"
+
+run "$RELEASE" bad-tag -- "v1/../../x"
+check "a hand-given tag that is not a plain name: exit 1" test "$RC" -eq 1
+check "and nothing reaches gh" hasnt "gh " "$LOG"
 
 # ---- portability: macOS bash 3.2 and BSD tools ----------------------------------------------
 # What broke in agents-ui's CI on macOS, kept out: an empty array as "${a[@]}" under

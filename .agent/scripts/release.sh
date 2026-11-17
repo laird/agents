@@ -63,7 +63,12 @@ cd "$TOP"
 
 if [ -z "$INTEGRATION" ]; then
   INTEGRATION=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
-  INTEGRATION="${INTEGRATION:-main}"
+  # No origin/HEAD (a clone made by `git remote add`): main, or master when only it exists.
+  if [ -z "$INTEGRATION" ]; then
+    INTEGRATION=main
+    git rev-parse -q --verify refs/remotes/origin/main >/dev/null \
+      || ! git rev-parse -q --verify refs/remotes/origin/master >/dev/null || INTEGRATION=master
+  fi
 fi
 
 MAIN_WT=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p' || true)
@@ -140,6 +145,10 @@ git fetch --quiet --tags origin "+refs/heads/$INTEGRATION:refs/remotes/origin/$I
 
 # No tag given: release only what isn't released yet, under the next tag.
 AUTO=false
+# A tag given by hand goes into an API path: a plain name only.
+if [ -n "$TAG" ] && ! printf '%s' "$TAG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+  refuse "tag '$TAG' is not a plain tag name (letters, digits, '.', '_', '-')"
+fi
 if [ -z "$TAG" ]; then
   SHA=$(git rev-parse "${COMMIT:-origin/$INTEGRATION}^{commit}" 2>/dev/null) || refuse "unknown commit: ${COMMIT}"
   NEWEST=$(tag_names | newest_tag)
