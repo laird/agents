@@ -238,6 +238,7 @@ source "${_MTI_DIR}/repo-id-fns.sh"
 declare -F issue_event >/dev/null || issue_event() { :; }
 AUTOCODER_WORKER="${AUTOCODER_WORKER:-$(basename "$CALLER_DIR")}"
 AUTOCODER_EVENT_BRANCH="$FEATURE"
+AUTOCODER_EVENT_NO_RELEASE=1   # its label cleanup is not the worker releasing the issue
 # shellcheck source=feature-ref-fns.sh
 source "${_MTI_DIR}/feature-ref-fns.sh"
 # shellcheck source=merge-queue-fns.sh

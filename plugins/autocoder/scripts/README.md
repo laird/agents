@@ -520,8 +520,8 @@ This is a contract. Field set **version 1**:
 
 - `v`: the field-set version. A reader skips lines whose `v` it does not know.
 - `ts`: ISO-8601 UTC, when the event happened. Order a timeline by `ts`, not by line:
-  `first-commit` is written when the work first goes to the gate but stamped with the
-  commit's own time.
+  `first-commit` is written once per issue, when its work first goes to the gate, but
+  stamped with the commit's own time.
 - `repo`: the repo id (`autocoder_repo_id`, shared by every worktree of a checkout).
 - `issue`: the issue number, or `null` for the repo-wide `deployed` and `released-tag`.
 - `worker`: `AUTOCODER_WORKER` (`<session>:<n>` in a swarm), else the worktree's dir name.
@@ -531,7 +531,7 @@ This is a contract. Field set **version 1**:
 | `event` | written by | `detail` |
 |---|---|---|
 | `claimed` | `issue_claim` | — |
-| `released` | `issue_release`, or `issue_update --remove-label working` without a hand-off label | — |
+| `released` | `issue_release`, `issue_requeue`, or `issue_update --remove-label working` without a hand-off label (`issue_handoff` and `issue_park` are hand-offs and record nothing) | `via` (`requeue`, when that) |
 | `first-commit` | `merge-launch.sh`, once per issue | `sha` |
 | `gate-queued` | `merge-launch.sh` | `attempt`, `sha` (the commit sent to the gate) |
 | `gate-start` | `merge-to-integration.sh`, once it holds the landing queue | `attempt` |
@@ -544,7 +544,8 @@ This is a contract. Field set **version 1**:
 
 An issue counts as deployed or released once its `landed` sha is an ancestor of the
 event's `sha`. A step can be recorded twice (a release by label and by `issue_release`);
-a reader takes the first after each `claimed`. New events or detail keys may be added
+a reader takes the first after each `claimed`. A merge job's own label cleanup is not
+recorded as `released`. New events or detail keys may be added
 within version 1; renaming or removing one bumps `v`.
 
 Lines older than `AUTOCODER_ISSUE_EVENTS_DAYS` (default 30) are dropped once the file

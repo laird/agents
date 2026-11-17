@@ -109,7 +109,7 @@ gate-end:conflict
 gate-queued
 gate-start
 gate-end:landed
-landed" "$(timeline "$ISSUE" | grep -v '^released$')"
+landed" "$(timeline "$ISSUE")"
 
 python3 - "$AUTOCODER_ISSUE_EVENTS" "$ISSUE" "$FIRST" "$LANDED_SHA" "$REPO_ID" <<'PY' && ok "fields: v, repo, worker, branch, first-commit sha, landed sha, deployed" || bad "event fields"
 import json, sys
@@ -146,6 +146,8 @@ escalated
 released" "$(timeline 19002)"
 eq "decomposed recorded; a hand-off to awaiting-integration is not a release" "claimed
 decomposed" "$(timeline 19003)"
+issue_requeue 19003 >/dev/null 2>&1
+eq "a requeue is a release" "released" "$(timeline 19003 | tail -1)"
 python3 - "$AUTOCODER_ISSUE_EVENTS" <<'PY' && ok "escalated carries label and reason; decomposed carries children" || bad "label event detail"
 import json, sys
 evs = [json.loads(l) for l in open(sys.argv[1])]

@@ -164,7 +164,9 @@ _issue_events_after_update() {
         issue_event decomposed "$issue" children="${AUTOCODER_EVENT_CHILDREN:-}" ;;
     esac
   done
-  if [ "$rm_working" -eq 1 ] && [ "$handoff" -eq 0 ]; then
+  # A merge job dropping `working` is bookkeeping on an issue it owns, not a worker
+  # giving the issue up: it sets AUTOCODER_EVENT_NO_RELEASE.
+  if [ "$rm_working" -eq 1 ] && [ "$handoff" -eq 0 ] && [ -z "${AUTOCODER_EVENT_NO_RELEASE:-}" ]; then
     issue_event released "$issue"
   fi
   return 0

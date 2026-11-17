@@ -105,7 +105,12 @@ issue_park()          { "$_ifns_BACKEND_BIN" park          "$@"; }
 issue_escalate() {
   "$_ifns_BACKEND_BIN" escalate "$@" || return $?
   local reason
-  reason=$(_issue_events_flag_value --comment "$@" | head -1 | cut -c1-200)
+  reason=$(_issue_events_flag_value --comment "$@" | head -1 | cut -c1-200) || true
   issue_event escalated "${1:-}" label="$(_issue_events_flag_value --label "$@")" reason="$reason"
 }
-issue_requeue()       { "$_ifns_BACKEND_BIN" requeue       "$@"; }
+# A requeue (the sentinel giving back a dead merge job's issue) is a release (#190);
+# handoff and park are hand-offs, not releases, and record nothing here.
+issue_requeue() {
+  "$_ifns_BACKEND_BIN" requeue "$@" || return $?
+  issue_event released "${1:-}" via=requeue
+}

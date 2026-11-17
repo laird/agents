@@ -507,7 +507,8 @@ Landed as \`${sha}\`; \`${INTEGRATION}\` green at \`${green}\`.
   issue_has_label "$num" awaiting-integration && return 0
   ship_branch="${CLAUDE_CODE_SHIP_BRANCH:-$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo main)}"
   issue_update "$num" --remove-label merging >/dev/null 2>&1 || true
-  issue_update "$num" --remove-label working >/dev/null 2>&1 || true
+  # Parking landed work is not a release (#190): no `released` event.
+  AUTOCODER_EVENT_NO_RELEASE=1 issue_update "$num" --remove-label working >/dev/null 2>&1 || true
   issue_update "$num" --add-label awaiting-integration >/dev/null 2>&1 || true
   issue_comment "$num" --body "⏳ **Fix complete, not yet shipped — leaving this issue OPEN**
 
