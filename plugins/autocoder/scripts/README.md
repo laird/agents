@@ -185,6 +185,13 @@ counter, and one set of flock files.
   best-effort claim must declare so explicitly in this README and
   provide a relaxed round-trip test.
 
+**A claim the session declines (#248).** `fix-loop-gate.sh` claims before the
+session that ran it reads the work plan. When that session declines the issue
+(for example it must compact first), it runs `release-gate-claim.sh <N> "<reason>"`,
+which drops `working`, posts a `🔓` release comment and clears the worker-state
+record. It touches only the issue this worktree's gate recorded, and refuses once
+`feature/issue-<N>` exists, because then `/fix` owns the claim.
+
 ## C. Walkthrough: adding Jira
 
 1. **Decide the mapping.** Map Jira concepts onto the contract:

@@ -128,3 +128,18 @@ shell-loop mode for multi-issue worker sessions.
 Use the Skill tool to invoke: autocoder:fix
 With args: <issue number from work JSON>
 ```
+
+**Declining the issue (#248).** By the time you read the work plan, the gate has already
+**claimed** the issue: it carries `working` and a `🔒 claim` comment naming this worker.
+If you will not dispatch it this tick, for any reason (most often because you must
+compact your context before starting a new issue), give the claim back **before you
+stop**. Otherwise nobody works the issue and every other worker stays off it:
+
+```bash
+bash "$SCRIPT_DIR/release-gate-claim.sh" "$(jq -r .issue "$WORK_JSON")" "<why this tick declined it, e.g. holding for context compaction>"
+```
+
+Then emit `GATE_CLAIM_RELEASED #<issue>` and stop. The script releases only a claim this
+worktree's gate recorded, and refuses once `feature/issue-<N>` exists (work has started:
+use `/fix`'s explicit release then). Never run it for an `"in_flight": true` plan, which is
+work this session already has under way.
