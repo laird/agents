@@ -87,18 +87,25 @@ sleep 0 & DEAD=$!; wait "$DEAD"
 LIVE=$$
 LIVE_START=$(bash -c "source '$SCRIPT_DIR/claim-owner.sh'; _co_start $LIVE")
 NOW_MS=$(( $(date +%s) * 1000 ))
+OLD_MS=$(( NOW_MS - 600000 ))   # past the 120 s grace period
 
 mkdir -p "$FAKE_GH_DIR"
-add_issue 1 "🔒 claim testhost-$DEAD $NOW_MS start=1700000000 wt=/w/a b"                 # dead, no branch
-add_issue 2 "🔒 claim testhost-$LIVE $NOW_MS start=$LIVE_START wt=/w"                     # live owner
-add_issue 3 "🔒 claim otherhost-$DEAD $NOW_MS wt=/w"                                     # another host
-add_issue 4 "🔒 claim testhost-$DEAD $NOW_MS wt=/w"                                      # remote branch
-add_issue 5 "🔒 claim testhost-$DEAD $NOW_MS wt=/w"                                      # local branch
+add_issue 1 "🔒 claim testhost-$DEAD $OLD_MS start=1700000000 wt=/w/a b"                 # dead, no branch
+add_issue 2 "🔒 claim testhost-$LIVE $OLD_MS start=$LIVE_START wt=/w"                     # live owner
+add_issue 3 "🔒 claim otherhost-$DEAD $OLD_MS wt=/w"                                     # another host
+add_issue 4 "🔒 claim testhost-$DEAD $OLD_MS wt=/w"                                      # remote branch
+add_issue 5 "🔒 claim testhost-$DEAD $OLD_MS wt=/w"                                      # local branch
 add_issue 6 "🔒 [autocoder-claim] Starting fix for issue #6 — lock established"           # no marker
-add_issue 7 "🔒 claim testhost-$LIVE $NOW_MS start=1000 wt=/w"                            # pid reused
-add_issue 8 "🔒 claim testhost-$DEAD $NOW_MS wt=/w" "🔒 claim testhost-$LIVE $NOW_MS wt=/w" # one live of two
-add_issue 9 "🔒 claim my-worker $NOW_MS"                                                   # custom id
-add_issue 10 "🔒 claim testhost-$DEAD $NOW_MS"                                             # old marker format
+add_issue 7 "🔒 claim testhost-$LIVE $OLD_MS start=1000 wt=/w"                            # pid reused
+add_issue 8 "🔒 claim testhost-$DEAD $OLD_MS wt=/w" "🔒 claim testhost-$LIVE $OLD_MS wt=/w" # one live of two
+add_issue 9 "🔒 claim my-worker $OLD_MS"                                                   # custom id
+add_issue 10 "🔒 claim testhost-$DEAD $OLD_MS"                                             # old marker format
+
+add_issue 11 "🔒 claim testhost-$DEAD $NOW_MS wt=/w"                                      # too young to judge
+add_issue 12 "🔒 claim testhost-$DEAD $OLD_MS wt=/w" \
+             "🔒 [autocoder-claim] Starting fix for issue #12 — lock established"        # re-claimed via /fix
+add_issue 13 "🔒 claim testhost-$LIVE $OLD_MS wt=/w" "🔓 **Releasing claim** …" \
+             "🔒 claim testhost-$DEAD $OLD_MS wt=/w"                                    # only the newest claim counts
 
 # ── dry run changes nothing ───────────────────────────────────────────────
 OUT=$(bash "$GH_DIR/sweep-abandoned-claims.sh" --dry-run 2>&1)
@@ -123,7 +130,16 @@ assert_eq "reused pid (start mismatch): released" "no" "$(has_working 7)"
 assert_eq "one live marker of two: kept"     "yes" "$(has_working 8)"
 assert_eq "non host-pid id: kept"            "yes" "$(has_working 9)"
 assert_eq "old marker format, dead: released" "no" "$(has_working 10)"
+assert_eq "claim younger than the grace period: kept" "yes" "$(has_working 11)"
+assert_eq "re-claim with no owner marker: kept" "yes" "$(has_working 12)"
+assert_eq "markers before a release are ignored" "no" "$(has_working 13)"
 assert_eq "kept lines give a reason" "1" "$(grep -c '^kept #3: owner otherhost-.* is on another host' <<< "$OUT")"
+
+# ── an unreachable remote releases nothing ────────────────────────────────
+add_issue 14 "🔒 claim testhost-$DEAD $OLD_MS wt=/w"
+bash "$GH_DIR/sweep-abandoned-claims.sh" --remote nosuchremote >/dev/null 2>&1; RC=$?
+assert_eq "unreachable remote exits 1" "1" "$RC"
+assert_eq "unreachable remote: dead claim kept" "yes" "$(has_working 14)"
 
 # ── an unreadable list is an error, not a silent no-op ───────────────────
 mv "$GH_DIR/issues-gh.sh" "$GH_DIR/issues-gh.sh.off"

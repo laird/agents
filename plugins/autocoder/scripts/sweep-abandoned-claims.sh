@@ -5,12 +5,21 @@
 # sub-task of #179).
 #
 # A claim is abandoned when ALL of these hold:
-#   1. The issue carries at least one claim marker (`🔒 claim <id> <ms> …`,
-#      written by fix-loop-gate.sh via claim-owner.sh, #202).
-#   2. Every marker names an owner `<host>-<pid>` on THIS host whose process is
-#      gone: the pid does not exist, or it exists but started at a different
-#      time than the marker's `start=` (the pid was reused).
-#   3. No branch, local or on the remote, names the issue (`issue-<N>`).
+#   1. The issue's current claim carries owner markers (`🔒 claim <id> <ms> …`,
+#      written by fix-loop-gate.sh via claim-owner.sh, #202). Only markers
+#      posted after the last `[autocoder-claim]` or `🔓` release comment count:
+#      an earlier claim's dead owner says nothing about a later re-claim, and a
+#      re-claim made through /autocoder:fix leaves no owner marker at all.
+#   2. Every such marker names an owner `<host>-<pid>` on THIS host whose
+#      process is gone: the pid does not exist, or it exists but started at a
+#      different time than the marker's `start=` (the pid was reused).
+#   3. The newest marker is older than AUTOCODER_SWEEP_MIN_AGE_S. When
+#      claim-owner.sh finds no long-lived agent process it names the gate's
+#      short-lived caller, which is dead seconds after a perfectly live claim;
+#      by the time the grace period ends that worker has created its branch.
+#   4. No branch, local or on the remote, names the issue (`issue-<N>`). If the
+#      remote cannot be read the sweep releases nothing: an unknown remote is
+#      not proof that no work was pushed.
 #
 # Anything this host cannot judge is left alone: a claim from another host, an
 # id that is not `<host>-<pid>` (AUTOCODER_WORKER_ID set verbatim), an issue
@@ -22,13 +31,15 @@
 #
 # Usage:  sweep-abandoned-claims.sh [--dry-run] [--remote <name>]
 # Output: one line per `working` issue: `released #N: …` or `kept #N: …`.
-# Exit:   0 on success (including nothing to do); 1 when the issue list cannot
-#         be read.
+# Exit:   0 on success (including nothing to do); 1 when the issue list or the
+#         remote's branches cannot be read (nothing is released).
 #
 # Env:    AUTOCODER_SWEEP_HOST       host name to compare owners against
 #                                    (default: `hostname`)
 #         AUTOCODER_SWEEP_START_SLOP seconds of start-time jitter tolerated
 #                                    before a pid counts as reused (default 5)
+#         AUTOCODER_SWEEP_MIN_AGE_S  seconds a claim must have stood before it
+#                                    can be judged abandoned (default 120)
 
 set -uo pipefail
 
@@ -51,6 +62,7 @@ done
 
 HOST="${AUTOCODER_SWEEP_HOST:-$(hostname 2>/dev/null || echo host)}"
 SLOP="${AUTOCODER_SWEEP_START_SLOP:-5}"
+MIN_AGE_S="${AUTOCODER_SWEEP_MIN_AGE_S:-120}"
 
 WORKING=$(issue_list --state working 2>/dev/null) || {
   echo "sweep-abandoned-claims: cannot list working issues" >&2; exit 1; }
@@ -58,9 +70,15 @@ WORKING=$(issue_list --state working 2>/dev/null) || {
 # Issue numbers with a branch: the remote (claimed-issue-numbers.sh) plus local
 # branches, which every worktree of this clone shares — a worker on this host
 # may not have pushed yet.
-REMOTE_NUMS=$(bash "${SCRIPT_DIR}/claimed-issue-numbers.sh" "$REMOTE" 2>/dev/null || echo "[]")
-LOCAL_NUMS=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null \
-  | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' | sort -un | tr '\n' ' ')
+# claimed-issue-numbers.sh fails open (prints [] when the remote is
+# unreachable), which is right for picking candidates and wrong for releasing
+# claims, so the sweep reads the remote itself and stops if it cannot.
+REMOTE_REFS=$(git ls-remote --heads "$REMOTE" 2>/dev/null) || {
+  echo "sweep-abandoned-claims: cannot read branches from '$REMOTE'; releasing nothing" >&2; exit 1; }
+BRANCH_NUMS=" $( { printf '%s\n' "$REMOTE_REFS" | sed 's#.*refs/heads/##'
+                   git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null; } \
+  | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' | sort -un | tr '\n' ' ') "
+NOW_MS=$(( $(date +%s) * 1000 ))
 
 # owner_dead <pid> <start-or-empty> — 0 when the owner process is gone.
 owner_dead() {
@@ -73,30 +91,39 @@ owner_dead() {
 
 NUMS=$(printf '%s' "$WORKING" | jq -r '.[]? | .number' 2>/dev/null)
 for n in $NUMS; do
-  if printf '%s' "$REMOTE_NUMS" | jq -e --argjson n "$n" 'index($n) != null' >/dev/null 2>&1 \
-     || [[ " $LOCAL_NUMS " == *" $n "* ]]; then
+  if [[ "$BRANCH_NUMS" == *" $n "* ]]; then
     echo "kept #$n: a branch exists for it"; continue
   fi
 
-  # One line per marker: "<id> <start-or-empty>".
+  # The current claim's markers, one per line: "<id> <epoch-ms> <start-or-empty>".
   markers=$(issue_get "$n" 2>/dev/null | python3 -c '
 import json, re, sys
 try:
     issue = json.load(sys.stdin)
 except Exception:
     sys.exit(3)
+marker = re.compile(r"\s*🔒 claim (\S+) (\d+)(?: start=(\d+))?(?: wt=[^\n]*)?\s*$")
+current = []
 for c in issue.get("comments") or []:
-    m = re.match(r"\s*🔒 claim (\S+) \d+(?: start=(\d+))?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
+    body = c.get("body") or ""
+    m = marker.match(body)
     if m:
-        print(m.group(1), m.group(2) or "")
+        current.append(" ".join([m.group(1), m.group(2), m.group(3) or ""]))
+    elif "[autocoder-claim]" in body or body.lstrip().startswith("🔓"):
+        current = []   # a later claim or a release supersedes earlier markers
+print("\n".join(current))
 ') || { echo "kept #$n: could not read its comments"; continue; }
 
   if [ -z "$markers" ]; then
-    echo "kept #$n: no claim marker to judge"; continue
+    echo "kept #$n: its current claim has no owner marker to judge"; continue
+  fi
+  newest_ms=$(awk '{ if ($2 > m) m = $2 } END { print m + 0 }' <<< "$markers")
+  if [ $(( (NOW_MS - newest_ms) / 1000 )) -lt "$MIN_AGE_S" ]; then
+    echo "kept #$n: claimed less than ${MIN_AGE_S}s ago"; continue
   fi
 
   verdict=dead; dead_ids=()
-  while read -r id start; do
+  while read -r id _ms start; do
     host="${id%-*}"; pid="${id##*-}"
     if [ "$host" = "$id" ] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
       verdict="owner $id is not <host>-<pid>"; break
