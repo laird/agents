@@ -107,8 +107,9 @@ When no items are left, say so and stop.
 
 ## Settings
 
-`.autocoder.json`, read from the integration side of the landed change (never from the
-change itself, so a change cannot switch off its own sampling):
+`.autocoder.json` in the primary checkout (or, if the file is tracked, the copy on the
+integration side of the landed change). It is never read from the change under review,
+so a change cannot switch off its own sampling:
 
 ```json
 {

@@ -91,7 +91,7 @@ fi
 
 if [ "$LABELS_GIVEN" -eq 0 ]; then
   if _scs_issue_fns; then
-    if _j=$(issue_get "$ISSUE" 2>/dev/null) && LABELS=$(printf '%s' "$_j" | jq -r '.labels | map(.name) | .[]' 2>/dev/null); then :
+    if _j=$(issue_get "$ISSUE" 2>/dev/null) && LABELS=$(printf '%s' "$_j" | jq -r '(.labels // []) | map(.name) | .[]' 2>/dev/null); then :
     else { LABELS=""; echo "spot-check-select.sh: could not read the labels of #${ISSUE}; P0/P1/security not checked" >&2; }
     fi
   else
@@ -104,16 +104,21 @@ fi
 has_label() { printf '%s\n' "$LABELS" | grep -qxF -- "$1"; }
 
 # ── .autocoder.json spotCheck settings ──────────────────────────────────────────
-# Read from the BASE commit (the integration side), never from the change under review:
-# the merge job runs inside the feature's worktree, and a change must not be able to
-# switch off its own sampling by editing `spotCheck`. Only with no base (an unresolvable
-# landed commit) does the working tree's file stand in.
-CFG_RATE=""; SECURITY_GLOBS=()
+# Never read from the change under review: the merge job runs inside the feature's
+# worktree, and a change must not be able to switch off its own sampling. So: the BASE
+# commit's copy (the integration side) when the file is tracked; otherwise (it is usually
+# gitignored, local config written by /set-issue-source) the primary checkout's copy,
+# beside the git common dir, which no feature commit can touch. The current worktree's
+# file is never read.
+CFG_RATE=""; SECURITY_GLOBS=(); _cfg_json=""
 if [ -n "$BASE" ]; then
   _cfg_json=$(git show "${BASE}:.autocoder.json" 2>/dev/null) || _cfg_json=""
-else
-  _top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  _cfg_json=$(cat "$_top/.autocoder.json" 2>/dev/null) || _cfg_json=""
+fi
+if [ -z "$_cfg_json" ]; then
+  _common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _common=""
+  if [ -n "$_common" ] && [ -f "$(dirname "$_common")/.autocoder.json" ]; then
+    _cfg_json=$(cat "$(dirname "$_common")/.autocoder.json" 2>/dev/null) || _cfg_json=""
+  fi
 fi
 if [ -n "$_cfg_json" ]; then
   if ! _cfg=$(printf '%s' "$_cfg_json" | python3 -c '

@@ -128,10 +128,24 @@ printf '{"spotCheck": {"rate": 0}}\n' > .autocoder.json; g commit -qam "disable 
 EVADE=$(git rev-parse HEAD); g checkout -q master
 eq "a change that sets its own rate to 0 is still sampled at the base's rate" \
   "$(sel --issue 1 --sha "$EVADE" --labels P3)" sampled
-printf '{"spotCheck": {"rate": 1}}\n' > .autocoder.json
-eq "the working tree's .autocoder.json is not read when there is a base" \
-  "$(sel --issue 1 --sha "$SMALL" --labels P3)" ""
+# Usually .autocoder.json is gitignored local config, so no commit carries it. The merge
+# job runs in a linked worktree holding the feature; the settings must come from the
+# primary checkout (beside the git common dir), never from that worktree's own file.
+printf '.autocoder.json\n' > .git/info/exclude
+printf '{"spotCheck": {"rate": 1}}\n' > .autocoder.json          # primary checkout
+git worktree add -q --detach "$TMP/wt" "$SMALL"
+( cd "$TMP/wt" && printf '{"spotCheck": {"rate": 0}}\n' > .autocoder.json   # the feature's worktree
+  eq "an untracked config is read from the primary checkout, not the feature's worktree" \
+    "$(sel --issue 1 --sha "$SMALL" --labels P3)" sampled )
 rm -f .autocoder.json
+# A commit the default rate (0.10) does not sample: with the worktree's rate 1 ignored,
+# it must come out unselected.
+UNSAMPLED=""
+for c in $(git rev-list --all); do [ -z "$(expect_for "$c" 0.10)" ] && { UNSAMPLED=$c; break; }; done
+( cd "$TMP/wt" && printf '{"spotCheck": {"rate": 1}}\n' > .autocoder.json
+  eq "the feature worktree's own .autocoder.json is never read" \
+    "$(sel --issue 1 --sha "$UNSAMPLED" --base "$UNSAMPLED" --labels P3)" "" )
+git worktree remove --force "$TMP/wt"
 OUT=$(AUTOCODER_SPOT_CHECK_RATE=banana bash "$S" --issue 1 --sha "$SMALL" --labels P3 2>&1 >/dev/null)
 printf '%s' "$OUT" | grep -q "not a number" && ok "a malformed rate is reported and falls back to the default" \
   || bad "a malformed rate was not reported: $OUT"
