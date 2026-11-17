@@ -15,6 +15,8 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 TMP=$(cd "$TMP" && pwd -P)
+# Events (#247) go to a private log, never the user's real state dir (#254).
+export AUTOCODER_ISSUE_EVENTS="$TMP/issue-events.jsonl"
 STUB="$TMP/stub"; mkdir -p "$STUB/bin"
 LOG="$STUB/calls.log"
 
@@ -221,6 +223,13 @@ has  "the chosen swarm's mux and agent are used" "restart --worktree|$TMP/wt-3|-
 echo '{not json' > "$SW/broken.json"
 run 0 true "an unreadable manifest is skipped"    -- restart "$TMP/wt-1"
 rm -f "$SW/broken.json" "$SW/droid-proj.json"
+
+# #254: the verbs above logged their ctl events to the private log set at the top.
+if jq -e -s 'any(.[]; .event == "ctl")' "$TMP/issue-events.jsonl" >/dev/null 2>&1; then
+  ok "ctl events went to the private log, not the real state dir"
+else
+  bad "no ctl event in \$TMP/issue-events.jsonl: AUTOCODER_ISSUE_EVENTS is not reaching autocoder-ctl"
+fi
 
 echo ""
 echo "autocoder-ctl workers: $PASS passed, $FAIL failed"

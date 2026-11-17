@@ -16,6 +16,8 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 unset ISSUE_SOURCE ISSUE_BACKEND ISSUE_DIR
+# Events (#247) go to a private log, never the user's real state dir (#254).
+export AUTOCODER_ISSUE_EVENTS="$TMP/issue-events.jsonl"
 export AUTOCODER_CTL_ACTOR=dashboard-ui
 
 # run <expected-rc> <expected-ok> <name> -- <cmd...>: one result object, the right
@@ -118,6 +120,13 @@ run 1 false "reject a missing issue" -- "$CTL" reject 999
 # ── A backend failure is exit 1, not a crash ──────────────────────────────────
 printf '{"issueSource": "nosuch"}\n' > .autocoder.json
 run 1 false "file with a broken backend fails cleanly" -- "$CTL" file --title t
+
+# #254: the verbs above logged their ctl events to the private log set at the top.
+if jq -e -s 'any(.[]; .event == "ctl")' "$TMP/issue-events.jsonl" >/dev/null 2>&1; then
+  ok "ctl events went to the private log, not the real state dir"
+else
+  bad "no ctl event in \$TMP/issue-events.jsonl: AUTOCODER_ISSUE_EVENTS is not reaching autocoder-ctl"
+fi
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
