@@ -31,7 +31,9 @@
 # A live manager already recorded is not displaced by another process (a second
 # /monitor-loop run by hand in another pane): --manager leaves the entry alone
 # unless the recorded pid is dead, recycled, this process, or one of its
-# ancestors (the pane shell that launched this agent) (#217).
+# ancestors (the pane shell that launched this agent), or no agent CLI runs at
+# or under it any more (the pane shell outlived its agent) (#217). An entry
+# with no pid_start_time cannot be proven live and is replaced.
 #
 # No manifest (not a swarm), or no way to tell which manifest: prints a note
 # on stderr and exits 0. Exits 1 only on bad arguments or a failed write.
@@ -150,16 +152,37 @@ for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   [ -n "$_a" ] && [ "$_a" -gt 1 ] 2>/dev/null || break
   ANCESTORS="$ANCESTORS $_a"
 done
-LIVE_MGR_START=""
-if [ "$ROLE" = manager ]; then
-  _mpid=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])).get("manager") or {}; print(m.get("pid") or "")' "$MANIFEST" 2>/dev/null)
-  case "$_mpid" in ''|*[!0-9]*) ;; *) LIVE_MGR_START=$(process_start_time "$_mpid" 2>/dev/null || true) ;; esac
-fi
+# Is an agent CLI running at PID or anywhere under it? A pane shell recorded as
+# the manager outlives the agent, so a live shell alone is not a live manager.
+agent_at_or_under() {
+  ps -e -o pid=,ppid=,comm= 2>/dev/null | awk -v root="$1" '
+    { pid[NR]=$1; ppid[NR]=$2; c=$3; sub(/.*\//, "", c); comm[NR]=c; n=NR }
+    END {
+      want[root]=1
+      do { grew=0
+        for (i=1; i<=n; i++) if (!(pid[i] in want) && (ppid[i] in want)) { want[pid[i]]=1; grew=1 }
+      } while (grew)
+      for (i=1; i<=n; i++) if (pid[i] in want && comm[i] ~ /^(claude|codex|gemini|droid|pi|node|claude-.*)$/) { found=1 }
+      exit !found
+    }'
+}
 
 LOCK="${MANIFEST%.json}.lock"
 (
   flock -x 9
   [ -f "$MANIFEST" ] || exit 3
+  # Read the recorded manager under the lock, so the pid checked is the one
+  # the write below would replace.
+  LIVE_MGR_START=""
+  if [ "$ROLE" = manager ]; then
+    _mpid=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])).get("manager") or {}; print(m.get("pid") or "")' "$MANIFEST" 2>/dev/null)
+    case "$_mpid" in
+      ''|*[!0-9]*) ;;
+      *) if agent_at_or_under "$_mpid"; then
+           LIVE_MGR_START=$(process_start_time "$_mpid" 2>/dev/null || true)
+         fi ;;
+    esac
+  fi
   python3 - "$MANIFEST" "$ROLE" "$WORKTREE" "$PROJECT_ROOT" "$BRANCH" "$MARKER_NUMBER" \
     "$PID" "$PID_START" "$STATE" "$NOW" "${TMUX_PANE:-}" "${HERDR_PANE_ID:-}" "${CMUX_WORKSPACE_ID:-}" \
     "${AUTOCODER_MANAGER:+AUTOCODER_MANAGER=${AUTOCODER_MANAGER}}" "$ALLOW_NEW" \
@@ -187,8 +210,9 @@ def mux_fields(entry):
 if role == "manager":
     old = data.get("manager") or {}
     old_pid = str(old.get("pid") or "")
-    # live_mgr_start is the recorded pid's current start token, read before the
-    # lock; it only counts when it matches the token recorded with that pid.
+    # live_mgr_start is the recorded pid's current start token, set only when an
+    # agent CLI runs at or under it; it counts only when it matches the token
+    # recorded with that pid (otherwise the pid was recycled).
     if (old_pid and old_pid != pid and old_pid not in ancestors.split()
             and live_mgr_start and str(old.get("pid_start_time") or "") == live_mgr_start):
         print(f"live manager pid {old_pid} already registered; not replacing it", file=sys.stderr)
@@ -255,6 +279,6 @@ RC=$?
 case $RC in
   0) exit 0 ;;
   3) note "manifest $MANIFEST disappeared; nothing to register"; exit 0 ;;
-  4) note "not registering"; exit 0 ;;
+  4) note "not registering ${ROLE} for $WORKTREE"; exit 0 ;;
   *) note "could not update $MANIFEST (rc=$RC)"; exit 1 ;;
 esac

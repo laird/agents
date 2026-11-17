@@ -101,22 +101,53 @@ OUT=$(cd "$P" && TMUX_PANE=%1 bash "$REG" --manager --pid $$ 2>&1)
 eq "manager update keeps the herdr pane" "h-mgr %1" "$(J "$M" 'm["manager"]["herdrPane"]+" "+m["manager"]["tmuxTarget"]')"
 
 # A live manager recorded under another pid is not displaced (#217); a dead
-# one is, and so is a recorded pid that is this process's ancestor.
-sleep 300 & LIVE=$!
-(cd "$P" && bash "$REG" --manager --pid $LIVE >/dev/null 2>&1)
-OUT=$(cd "$P" && TMUX_PANE=%8 bash "$REG" --manager --pid $$ 2>&1); RC=$?
+# one is, and so is a recycled pid, a pane shell whose agent has exited, and a
+# recorded pid that is this process's ancestor. "Live" means an agent CLI runs
+# at or under the recorded pid, so the stand-in agent is a copy of sleep named
+# claude (one process, so killing it leaves nothing holding the output pipe).
+mkdir -p "$TMP/bin"
+cp "$(command -v sleep)" "$TMP/bin/claude"
+stop_tree() { pkill -P "$1" 2>/dev/null; kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; }
+MREG() { (cd "$P" && bash "$REG" --manager "$@" 2>&1); }
+
+"$TMP/bin/claude" 300 >/dev/null 2>&1 & LIVE=$!
+MREG --pid $LIVE >/dev/null
+OUT=$(TMUX_PANE=%8 MREG --pid $$); RC=$?
 eq "live manager kept: exit 0" "0" "$RC"
 eq "live manager kept: pid" "$LIVE" "$(J "$M" 'm["manager"]["pid"]')"
 eq "live manager kept: pane" "%1" "$(J "$M" 'm["manager"]["tmuxTarget"]')"
 echo "$OUT" | grep -q "live manager pid $LIVE" && ok "says why it kept the manager" || bad "output: $OUT"
-kill $LIVE; wait $LIVE 2>/dev/null
-(cd "$P" && TMUX_PANE=%8 bash "$REG" --manager --pid $$ >/dev/null 2>&1)
+# Same pid, recorded start token wrong: the pid was recycled.
+python3 - "$M" <<'PY2'
+import json, sys
+p = sys.argv[1]; m = json.load(open(p)); m["manager"]["pid_start_time"] = "1"; json.dump(m, open(p, "w"))
+PY2
+TMUX_PANE=%8 MREG --pid $$ >/dev/null
+eq "recycled pid replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
+stop_tree $LIVE
+
+bash -c '"$0" 300; true' "$TMP/bin/claude" >/dev/null 2>&1 & SHELL_PID=$!
+sleep 0.3
+MREG --pid $SHELL_PID >/dev/null
+TMUX_PANE=%8 MREG --pid $$ >/dev/null
+eq "pane shell running an agent kept" "$SHELL_PID" "$(J "$M" 'm["manager"]["pid"]')"
+pkill -P $SHELL_PID 2>/dev/null; sleep 0.3
+bash -c 'sleep 300; true' >/dev/null 2>&1 & STALE=$!
+MREG --pid $STALE >/dev/null
+TMUX_PANE=%8 MREG --pid $$ >/dev/null
+eq "pane shell whose agent exited replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
+stop_tree $SHELL_PID; stop_tree $STALE
+
+"$TMP/bin/claude" 300 >/dev/null 2>&1 & LIVE=$!
+MREG --pid $LIVE >/dev/null; stop_tree $LIVE
+TMUX_PANE=%8 MREG --pid $$ >/dev/null
 eq "dead manager replaced" "$$ %8" "$(J "$M" 'str(m["manager"]["pid"])+" "+m["manager"]["tmuxTarget"]')"
-sleep 300 & OTHER=$!
-(cd "$P" && bash "$REG" --manager --pid $OTHER >/dev/null 2>&1)
+# The recorded pid ($$) is an ancestor of the registering helper: replaced.
+"$TMP/bin/claude" 300 >/dev/null 2>&1 & OTHER=$!
+MREG --pid $OTHER >/dev/null
 eq "recorded ancestor pid is replaced" "$OTHER" "$(J "$M" 'm["manager"]["pid"]')"
-kill $OTHER; wait $OTHER 2>/dev/null
-(cd "$P" && TMUX_PANE=%1 bash "$REG" --manager --pid $$ >/dev/null 2>&1)
+stop_tree $OTHER
+TMUX_PANE=%1 MREG --pid $$ >/dev/null
 
 # ── session selection ───────────────────────────────────────────────────────
 cp "$M" "$P/.autocoder/swarm/other.json"
