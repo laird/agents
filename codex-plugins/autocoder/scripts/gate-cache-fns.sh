@@ -25,8 +25,9 @@
 # committed .autocoder.json sets gate.hermetic gets a key suffixed with a hash of that
 # config, so a host-environment pass never satisfies a hermetic gate. get/put read the
 # tree from the repository in the current directory, or from [git-dir] when given; a
-# tree that repository does not have gets a key no run ever writes (a miss, never a
-# borrowed verdict). Host-mode keys are unchanged.
+# tree that repository does not have is looked up under the host key, as before (a
+# hermetic run never writes the host key, so this cannot borrow a host pass for it).
+# Host-mode keys are unchanged.
 
 # shellcheck source=gate-env-fns.sh
 source "$(dirname "${BASH_SOURCE[0]}")/gate-env-fns.sh"
@@ -39,20 +40,17 @@ _gate_cache_key() {  # <tree> "<cmd>" [git-dir]
   local tree="$1" cmd="$2" cmd_hash env_cfg rc suffix=""
   cmd_hash=$(printf '%s' "$cmd" | git hash-object --stdin 2>/dev/null || printf '%s' "$cmd" | sha1sum | cut -c1-40)
   env_cfg=$(gate_env_config "$tree" "${3:-.}"); rc=$?
-  if [ "$rc" -eq 2 ]; then
-    suffix="-envunknown"
-  elif [ -n "$env_cfg" ]; then
+  if [ "$rc" -eq 0 ] && [ -n "$env_cfg" ]; then
     suffix="-h$(printf '%s' "$env_cfg" | sha1sum | cut -c1-12)"
   fi
   printf '%s-%s%s' "$tree" "${cmd_hash:0:12}" "$suffix"
 }
 
 gate_cache_get() {  # <tree> "<cmd>" [git-dir]
-  # [git-dir] (default: the current directory) must be a repository holding <tree>:
-  # anywhere else the mode is unknown and this is always a miss.
+  # [git-dir] (default: the current directory) should be a repository holding <tree>;
+  # elsewhere the mode cannot be read and the host key is used.
   local f
   f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2" "${3:-.}")"
-  case "$f" in *-envunknown) return 1 ;; esac
   [ -f "$f" ] || return 1
   awk 'NR==1 {print $1}' "$f"
 }
@@ -63,7 +61,6 @@ gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir]
   dir="$(gate_cache_dir)"
   mkdir -p "$dir" || return 1
   f="$dir/$(_gate_cache_key "$tree" "$cmd" "${4:-.}")"
-  case "$f" in *-envunknown) return 1 ;; esac
   tmp=$(mktemp "$dir/.tmp.XXXXXX") || return 1
   printf '%s %s\n' "$verdict" "$(date +%s)" > "$tmp" && mv -f "$tmp" "$f"
 }

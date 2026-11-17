@@ -83,10 +83,11 @@ OUT=$(PATH="$TMP/nopy:$PATH" gate_cache_run . 'true' 2>&1) && bad "gate ran with
   || ok "an unreadable gate config fails the gate instead of falling back to host mode"
 git rm -q .autocoder.json; git commit -qm "host again 2"
 
-# A tree this repository does not have: never a borrowed verdict, never a write.
-gate_cache_get 0123456789abcdef0123456789abcdef01234567 "$READS_HOME" >/dev/null && bad "unknown tree returned a verdict" \
-  || ok "an unknown tree is a miss"
-ls "$AUTOCODER_GATE_CACHE_DIR" | grep -q envunknown && bad "an envunknown key was written" || ok "no envunknown record is written"
+# A reader whose repository lacks the tree (another clone sharing the cache) still finds
+# the host-mode record, as before #223.
+gate_cache_run . "$READS_HOME" >/dev/null 2>&1; H=$(git rev-parse 'HEAD^{tree}'); git init -q "$TMP/other"
+[ "$(cd "$TMP/other" && gate_cache_get "$H" "$READS_HOME")" = pass ] && ok "an unknown tree uses the host key (cross-clone reuse kept)" \
+  || bad "cross-clone host record not found"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
