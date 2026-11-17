@@ -109,6 +109,7 @@ resolve_worker_launch "$MANIFEST_AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 mkdir -p "$(dirname "$LOCK_PATH")"
 exec 9>"$LOCK_PATH"
 flock -x 9
+SWARM_MANIFEST_LOCK_HELD="$LOCK_PATH"   # the manifest helpers must not lock again (#238)
 
 SELECTED_FILE=$(mktemp)
 trap 'rm -f "$SELECTED_FILE"' EXIT

@@ -105,6 +105,7 @@ MUX="${MUX:-$MANIFEST_MUX}"
 mkdir -p "$(dirname "$LOCK_PATH")"
 exec 9>"$LOCK_PATH"
 flock -x 9
+SWARM_MANIFEST_LOCK_HELD="$LOCK_PATH"   # the manifest helpers must not lock again (#238)
 
 SELECTED_FILE=$(mktemp)
 REMOVED_FILE=$(mktemp)

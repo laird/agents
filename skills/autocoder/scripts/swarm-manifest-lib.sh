@@ -308,6 +308,38 @@ print(value)
 PY
 }
 
+# Run "$@" holding the manifest lock (<session>.lock beside <manifest>.json).
+# A script that holds the lock for its whole run (start-workers, remove-worker)
+# sets SWARM_MANIFEST_LOCK_HELD to that lock's path right
+# after taking it: flock on a second open of the same file blocks even within
+# one process, so locking again here would deadlock it (#238).
+_manifest_with_lock() {
+  local lock_path="${1%.json}.lock"
+  shift
+  if [ "${SWARM_MANIFEST_LOCK_HELD:-}" = "$lock_path" ]; then
+    "$@"
+    return
+  fi
+  (
+    flock -x 9 || exit 1
+    "$@"
+  ) 9>"$lock_path"
+}
+
+# The read-modify-write worker helpers lock for themselves (#238): an unlocked
+# writer racing a locked one used to drop the locked writer's change.
+manifest_update_worker_state() {
+  _manifest_with_lock "$1" _manifest_update_worker_state_unlocked "$@"
+}
+
+manifest_add_worker_json() {
+  _manifest_with_lock "$1" _manifest_add_worker_json_unlocked "$@"
+}
+
+manifest_remove_workers() {
+  _manifest_with_lock "$1" _manifest_remove_workers_unlocked "$@"
+}
+
 manifest_get() {
   local manifest_path="$1"
   local expr="$2"
@@ -332,7 +364,7 @@ print(value)
 PY
 }
 
-manifest_update_worker_state() {
+_manifest_update_worker_state_unlocked() {
   local manifest_path="$1"
   local worker_number="$2"
   local state="$3"
@@ -378,7 +410,7 @@ finally:
 PY
 }
 
-manifest_add_worker_json() {
+_manifest_add_worker_json_unlocked() {
   local manifest_path="$1"
   local worker_json="$2"
   python3 - "$manifest_path" "$worker_json" <<'PY'
@@ -409,7 +441,7 @@ finally:
 PY
 }
 
-manifest_remove_workers() {
+_manifest_remove_workers_unlocked() {
   local manifest_path="$1"
   shift
   python3 - "$manifest_path" "$@" <<'PY'

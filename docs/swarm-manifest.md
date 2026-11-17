@@ -35,26 +35,22 @@ covers what is written today; the code is in
 
 ## The lock
 
-Writers take an exclusive `flock` on `<session>.lock` (exceptions below), read
+Writers take an exclusive `flock` on `<session>.lock`, read
 the JSON, change it, write a temp file in the same directory and
 `os.replace` it over the manifest. Every write is atomic, so readers therefore never see a half-written
 file and need no lock to read: open, parse, done.
 
-In `swarm-manifest-lib.sh`, `write_swarm_manifest`, `manifest_set_manager` and
-`manifest_set_state` lock for themselves. `manifest_add_worker_json`,
-`manifest_update_worker_state` and `manifest_remove_workers` do not: the caller
-must hold the lock, as `start-workers.sh` and `remove-worker.sh` do for their
-whole run.
+In `swarm-manifest-lib.sh`, every writer locks for itself: `write_swarm_manifest`,
+`manifest_set_manager`, `manifest_set_state`, `manifest_add_worker_json`,
+`manifest_update_worker_state` and `manifest_remove_workers`. `start-workers.sh`
+and `remove-worker.sh` hold the lock for their whole run, so after taking it they
+set `SWARM_MANIFEST_LOCK_HELD` to the lock's path and the helpers do not lock again
+(a second `flock` on the same file blocks even within one process).
 
 A writer that cannot find the manifest does nothing. Manifests are created by
 `start-parallel-agents.sh`, and by the idle sentinel as a fallback when it
 wakes a manager for a session that has none (`issueSourceOrigin: "sentinel"`,
 `workers: []`, `state: paused`).
-
-Not every writer is locked yet: `add-worker.sh` and `restart-worker.sh` write
-through `manifest_add_worker_json` / `manifest_update_worker_state` without the
-lock (#238). Their writes are still atomic, but one of them racing a locked
-writer can lose that writer's change.
 
 ## Top-level fields
 
