@@ -665,12 +665,12 @@ merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.
-git fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"; }
+git_net_long fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"; }
 INT_SEEN_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 
 # The relaxations (scoped re-gate, merge on a red base) are safe only once a sentinel
 # re-gates the integration tip; its green ref is the proof that one exists.
-if git ls-remote --exit-code origin "refs/heads/${GREEN_REF}" >/dev/null 2>&1; then
+if git_net ls-remote --exit-code origin "refs/heads/${GREEN_REF}" >/dev/null 2>&1; then
   SCOPED_REGATE="${AUTOCODER_SCOPED_REGATE:-1}"
   MERGE_ON_RED_BASE="${AUTOCODER_MERGE_ON_RED_BASE:-1}"
   RED_BASE_REFUSAL="AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base"
@@ -958,7 +958,7 @@ _note_docs_resync() {
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
 PUSH_VIA=""
 for attempt in 1 2 3 4 5; do
-  if git push origin "HEAD:${INTEGRATION_BRANCH}"; then
+  if git_net_long push origin "HEAD:${INTEGRATION_BRANCH}"; then
     PUSHED=1; PUSH_VIA=git
     break
   fi
@@ -966,7 +966,7 @@ for attempt in 1 2 3 4 5; do
   PUSH_RETRIES=$attempt
   merge_event event=push-retry outcome=push-retry repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" push_retries="$attempt"
-  git fetch origin "$INTEGRATION_BRANCH" || break
+  git_net_long fetch origin "$INTEGRATION_BRANCH" || break
   INT_NEW_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   BEFORE_RESYNC=$(git rev-parse HEAD)
   _rebase_onto_integration
@@ -1021,7 +1021,7 @@ fi
 #     A zero exit status is not proof, and `git push --dry-run` is worse than
 #     useless here — it succeeds against a blocked transport because it never
 #     sends the pack. Compare the trees.
-git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
+git_net_long fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
 LOCAL_TREE=$(git rev-parse "HEAD^{tree}")
 REMOTE_TREE=$(git rev-parse "origin/${INTEGRATION_BRANCH}^{tree}" 2>/dev/null || echo "")
 if [ -z "$REMOTE_TREE" ] || [ "$LOCAL_TREE" != "$REMOTE_TREE" ]; then
@@ -1079,7 +1079,7 @@ esac
 
 # 3d. Publish the landed commit as a tip ref for the sentinel. Never fatal.
 TIP_REF="refs/autocoder/tips/${INTEGRATION_BRANCH}/${LANDED_SHA}-${ISSUE_NUM}"
-if git push origin "${LANDED_SHA}:${TIP_REF}" >/dev/null 2>&1; then
+if git_net_long push origin "${LANDED_SHA}:${TIP_REF}" >/dev/null 2>&1; then
   echo "ℹ️  Published ${LANDED_SHA:0:8} as ${TIP_REF}."
 else
   echo "⚠️  Could not publish ${TIP_REF} (not fatal; the sentinel will see the branch tip)."

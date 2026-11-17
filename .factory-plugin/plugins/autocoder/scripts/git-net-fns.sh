@@ -26,3 +26,11 @@ git_net() {
     GIT_TERMINAL_PROMPT=0 "${cmd[@]}" "$@"
   fi
 }
+
+# git_net_long <git args...>: git_net with AUTOCODER_GIT_TIMEOUT_LONG (default 300s), for
+# transfers that can legitimately take minutes: the detached merge job's fetches of the
+# integration branch and its pushes (#234). A stall there used to hang the job for as
+# long as the connection did, with the issue stuck under `merging`.
+git_net_long() {
+  AUTOCODER_GIT_TIMEOUT="${AUTOCODER_GIT_TIMEOUT_LONG:-300}" git_net "$@"
+}

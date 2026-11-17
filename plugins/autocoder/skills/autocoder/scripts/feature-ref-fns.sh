@@ -89,6 +89,6 @@ resolve_feature_sha() {
 delete_feature_branch_if_at() {
   local dir="$1" feature="$2" expect="$3"
   [ -n "$expect" ] || return 1
-  git -C "$dir" push -q --force-with-lease="refs/heads/${feature}:${expect}" \
+  git_net_long -C "$dir" push -q --force-with-lease="refs/heads/${feature}:${expect}" \
     origin ":refs/heads/${feature}" 2>/dev/null
 }
