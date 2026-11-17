@@ -510,6 +510,18 @@ Without a `Failing suites:` line, only file-shaped names whose basename contains
 `flaky-report.sh [--days N] [--repo ID] [--json]` lists the tests seen flaky in the last N
 days (default 14), most sightings first, with the issues whose gates saw them.
 
+## Revert rate: `revert-rate.sh` (#250)
+
+`revert-rate.sh [--last N | --since DATE] [--ref REV] [--json]` reports how many landed
+issues the sentinel reverted. A revert is a commit carrying the sentinel's
+`Autocoder-Reverts:` trailer, and its issue comes from `Autocoder-Reverts-Issue:`. A
+commit that only says "revert" in its message is not counted. A landed issue is a
+non-merge commit whose subject starts `#N`, `Issue #N` or `Fix #N`, counted once however
+many commits it has. The window is the newest N landed issues (default 50), ending at the
+oldest commit of the oldest one, or every commit since DATE. `--json` prints
+`{window, landed, reverts, rate, reverted_issues}`; `rate` is `null` when nothing landed.
+The ref defaults to `origin/HEAD`, else `HEAD`.
+
 ## Issue lifecycle: `issue-events.jsonl` (#190)
 
 The verbs that move an issue through its life append one JSON line each, at the moment
