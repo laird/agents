@@ -71,6 +71,9 @@ text_of "$F" | grep -q '^Please\.$' && text_of "$F" | grep -q 'Filed by dashboar
   && ok "the body keeps the text and names the actor" || bad "body: $(text_of "$F")"
 run 0 true "file with only a title" -- "$CTL" file --title "Bare"
 jq -e '.detail.labels == []' <<<"$OUT" >/dev/null && ok "no labels is an empty list" || bad "bare: $OUT"
+B=$(jq -r .target <<<"$OUT")
+[ "$(IF issue_get "$B" | jq -r .body)" = "Filed by dashboard-ui via autocoder-ctl" ] \
+  && ok "an empty body is just the actor line" || bad "bare body: $(text_of "$B")"
 
 # ── approve ───────────────────────────────────────────────────────────────────
 P=$(new_issue "Proposal: cache" --label enhancement --label proposal)
@@ -91,8 +94,10 @@ jq -e --arg n "$Q" '.target == $n and .detail.commented and .detail.proposal and
 labels_of "$Q" | grep -qx proposal && ok "proposal stays for /refine-proposal" || bad "labels: $(labels_of "$Q")"
 text_of "$Q" | grep -q 'Changes requested\*\* by someone' && text_of "$Q" | grep -q 'Split it in two\.' \
   && ok "the comment names the actor and carries the text" || bad "rc comment: $(text_of "$Q")"
+text_of "$Q" | grep -q "refine-proposal $Q" && ok "a proposal gets the /refine-proposal hint" || bad "hint: $(text_of "$Q")"
 run 0 true "request changes on a non-proposal" -- "$CTL" request-changes "$F" "More detail."
 jq -e '.detail.proposal == false' <<<"$OUT" >/dev/null && ok "detail says it is not a proposal" || bad "non-proposal: $OUT"
+text_of "$F" | grep -q refine-proposal && bad "a non-proposal got the /refine-proposal hint" || ok "a non-proposal gets no /refine-proposal hint"
 run 1 false "request changes on a missing issue" -- "$CTL" request-changes 999 "x"
 
 # ── reject ────────────────────────────────────────────────────────────────────

@@ -116,12 +116,16 @@ ctl_verb_request_changes() {
 
   local actor rc proposal=false
   actor=$(ctl_actor)
-  _ctli_has_label proposal && proposal=true
+  local hint=""
+  if _ctli_has_label proposal; then
+    proposal=true
+    hint="
+
+Run \`/refine-proposal ${issue}\` to revise the proposal with this feedback."
+  fi
   issue_comment "$issue" --body "✏️ **Changes requested** by ${actor} via autocoder-ctl
 
-${text}
-
-Run \`/refine-proposal ${issue}\` to revise the proposal with this feedback."; rc=$?
+${text}${hint}"; rc=$?
   if [ "$rc" -ne 0 ]; then
     ctl_fail "$issue" "could not comment on #${issue} (backend exit ${rc})"
     return
@@ -157,10 +161,10 @@ ctl_verb_file() {
   actor=$(ctl_actor)
   body="${body:+${body}
 
-}---
-Filed by ${actor} via autocoder-ctl"
+---
+}Filed by ${actor} via autocoder-ctl"
   if ! out=$(issue_create --title "$title" --body "$body" "${label_args[@]+"${label_args[@]}"}"); then
-    ctl_fail "" "could not create the issue (the backend failed; is every label defined?)"
+    ctl_fail "" "could not create the issue: the backend failed (see stderr; on GitHub every label must exist)"
     return
   fi
   number=$(printf '%s' "$out" | jq -r '.number // empty' 2>/dev/null)

@@ -69,7 +69,8 @@ autocoder-ctl.sh request-changes <issue> <text>
 Comments "Changes requested by <actor>" followed by the text. The `proposal`
 label stays, so `/refine-proposal <issue>` revises the proposal from the comment.
 The verb also works on an issue that is not a proposal, where it is just a
-comment; `detail.proposal` tells the two cases apart. An empty or blank text is
+comment, without the `/refine-proposal` hint; `detail.proposal` tells the two
+cases apart. An empty or blank text is
 a usage error (exit 2), and a closed issue fails (exit 1).
 
 ```json
@@ -84,7 +85,7 @@ autocoder-ctl.sh file --title <title> [--body <body>] [--label <label>]...
 ```
 
 Creates an issue. Its body ends with the line "Filed by <actor> via
-autocoder-ctl". `--label` can be repeated. On GitHub every label must already
+autocoder-ctl" (after a `---` rule when there is a body). `--label` can be repeated. On GitHub every label must already
 exist in the repository, or the create fails (exit 1). The `target` is the new
 issue's number:
 
