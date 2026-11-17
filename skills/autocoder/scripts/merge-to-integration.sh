@@ -442,7 +442,7 @@ fi
 # and pushing it again would only add an empty merge commit. Go straight to the outcome.
 if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
   echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
-  delete_feature_branch_if_at "$PWD" "$FEATURE" "$FEATURE_SHA" || true
+  delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
   if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
     # An earlier run parked it (disjoint, red base, or not shipped); landing nothing new
     # proves nothing new, so the sentinel keeps ownership.
@@ -766,9 +766,10 @@ else
 fi
 
 # 4. Clean up the feature branch now that its work is on the integration branch. Only
-# while it still points at the commit that landed: a branch that moved since, or that
-# never held this commit, carries work that has not landed (#143).
-delete_feature_branch_if_at "$PWD" "$FEATURE" "$FEATURE_SHA" || true
+# while it still points at FEATURE_SHA, the feature tip this job merged (re-sync merges
+# are never pushed to it): a branch that moved since, or that never held this commit,
+# carries work that has not landed (#143).
+delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
 # The throwaway worktrees are removed by the EXIT trap. Any local $FEATURE branch ref
 # in $CALLER_DIR is untouched by this script; the caller's own cleanup (or the next /fix
 # run branching fresh from origin/<integration-branch>) handles it.

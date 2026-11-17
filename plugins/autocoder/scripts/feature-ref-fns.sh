@@ -22,16 +22,30 @@ resolve_feature_sha() {
   local dir="$1" feature="$2" local_sha="" remote_sha="" tracking
   tracking="refs/remotes/origin/${feature}"
 
-  local_sha=$(git -C "$dir" rev-parse --verify -q "refs/heads/${feature}^{commit}" 2>/dev/null || true)
+  # Only a well-formed branch name is looked up as a branch. Anything else (a raw
+  # SHA is well-formed too, harmlessly) must not reach the fetch refspec, where a
+  # glob like `keep/*` would become a wildcard that force-updates every matching
+  # remote-tracking ref.
+  local is_branch=0
+  git check-ref-format "refs/heads/${feature}" 2>/dev/null && is_branch=1
 
-  if git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+  [ "$is_branch" -eq 1 ] && \
+    local_sha=$(git -C "$dir" rev-parse --verify -q "refs/heads/${feature}^{commit}" 2>/dev/null || true)
+
+  if [ "$is_branch" -eq 1 ] && git -C "$dir" remote get-url origin >/dev/null 2>&1; then
     if git -C "$dir" fetch -q origin "+refs/heads/${feature}:${tracking}" 2>/dev/null; then
       remote_sha=$(git -C "$dir" rev-parse --verify -q "${tracking}^{commit}" 2>/dev/null || true)
-    elif git -C "$dir" ls-remote --exit-code origin "refs/heads/${feature}" >/dev/null 2>&1; then
-      # The branch exists on origin but could not be fetched: refuse to guess
-      # from the local namespace, which is exactly the ref that can be stale.
-      echo "⚠️  origin/${feature} exists but could not be fetched; not falling back to the local branch." >&2
-      return 1
+    else
+      # Fall back to the local namespace ONLY when origin answered and has no such
+      # branch (ls-remote --exit-code exits 2). Any other failure — origin
+      # unreachable, auth, or the branch exists but would not fetch — leaves us
+      # unable to tell the pushed work from a stray, so refuse rather than guess.
+      local ls_rc=0
+      git -C "$dir" ls-remote --exit-code origin "refs/heads/${feature}" >/dev/null 2>&1 || ls_rc=$?
+      if [ "$ls_rc" -ne 2 ]; then
+        echo "⚠️  Could not fetch origin/${feature} (ls-remote rc=${ls_rc}); not falling back to the local branch." >&2
+        return 1
+      fi
     fi
   fi
 
@@ -44,6 +58,7 @@ resolve_feature_sha() {
   fi
 
   if [ -n "$local_sha" ]; then
+    echo "ℹ️  origin has no branch '${feature}'; using the local branch (${local_sha:0:8})." >&2
     printf '%s\n' "$local_sha"
     return 0
   fi

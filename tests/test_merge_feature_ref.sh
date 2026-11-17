@@ -70,6 +70,23 @@ else
   ok "an unknown name resolves to nothing (exit 1)"
 fi
 
+# A glob is not a branch name: it must not reach the fetch refspec.
+git -C "$TMP/worker" push -q origin "$REAL_SHA:refs/heads/keep/one"
+git -C "$TMP/worker" update-ref refs/remotes/origin/keep/one "$STRAY_SHA"
+resolve_feature_sha "$TMP/worker" 'keep/*' >/dev/null 2>&1
+[ "$(git -C "$TMP/worker" rev-parse refs/remotes/origin/keep/one)" = "$STRAY_SHA" ] \
+  && ok "a glob --feature is not used as a fetch refspec" \
+  || bad "a glob --feature rewrote refs/remotes/origin/keep/one"
+
+# An unreachable origin must not fall back to the (possibly stray) local branch.
+git -C "$TMP/worker" remote set-url origin "$TMP/no-such-origin.git"
+if GOT=$(resolve_feature_sha "$TMP/worker" feature/issue-7 2>/dev/null); then
+  bad "unreachable origin fell back to local ${GOT:0:8}"
+else
+  ok "unreachable origin refuses rather than using the local branch"
+fi
+git -C "$TMP/worker" remote set-url origin "$TMP/origin.git"
+
 # ── delete_feature_branch_if_at ─────────────────────────────────────────────
 git push -q origin "$REAL_SHA:refs/heads/feature/issue-8"
 delete_feature_branch_if_at "$TMP/worker" feature/issue-8 "$STRAY_SHA"
