@@ -1,0 +1,34 @@
+diff --git a/.agent/workflows/monitor-workers.md b/.agent/workflows/monitor-workers.md
+index 042ae9f..f6fc709 100644
+--- a/.agent/workflows/monitor-workers.md
++++ b/.agent/workflows/monitor-workers.md
+@@ -287,7 +287,13 @@ worker's earlier commits are already safe on its branch and step 1 rescues the r
+    resumed worker re-claims cleanly.
+ 4. **Hard restart** — a kill, **not** send-keys `/clear`, which is what is jammed:
+    `bash plugins/autocoder/scripts/restart-worker.sh --worktree <worktree>`
+-5. **Resume:** `tmux send-keys -t <pane> "/autocoder:fix <issue_number>" Enter`
++5. **Resume** — text and Enter in separate `send-keys` calls, or the TUI treats the
++   trailing newline as pasted content and never submits:
++   ```bash
++   tmux send-keys -t <pane> "/autocoder:fix <issue_number>"
++   sleep 0.4
++   tmux send-keys -t <pane> Enter
++   ```
+ 
+ Confirm the pane actually came back up before reporting recovery — `restart-worker.sh` kills
+ first, so a failed relaunch leaves a bare shell and a dead worker.
+diff --git a/plugins/autocoder/commands/monitor-workers.md b/plugins/autocoder/commands/monitor-workers.md
+index f9ef186..f5da5e4 100644
+--- a/plugins/autocoder/commands/monitor-workers.md
++++ b/plugins/autocoder/commands/monitor-workers.md
+@@ -343,7 +343,9 @@ those):
+    ```
+ 5. **Resume** in the fresh pane, which re-reads the branch + handoff note:
+    ```bash
+-   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>" Enter
++   tmux send-keys -t <session>:<window>.<pane> "/autocoder:fix <issue_number>"
++   sleep 0.4          # let the TUI leave paste mode
++   tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it never submits
+    ```
+ 
+ Confirm the pane actually came back up before reporting recovery — `restart-worker.sh`

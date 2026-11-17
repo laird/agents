@@ -1,0 +1,11 @@
+{
+  "id": "clean-0f7fad195c",
+  "kind": "clean",
+  "expect": "pass",
+  "source": "landed-clean",
+  "issue": null,
+  "commits": {
+    "commit": "0f7fad195c4472d03ff0c72d5d4ef16e0984eec8"
+  },
+  "note": "Test #195: cover E2E failing and empty suites"
+}

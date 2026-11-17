@@ -1,0 +1,27 @@
+diff --git a/plugins/autocoder/scripts/ctl-core.sh b/plugins/autocoder/scripts/ctl-core.sh
+index c1d2eef..d032ef5 100644
+--- a/plugins/autocoder/scripts/ctl-core.sh
++++ b/plugins/autocoder/scripts/ctl-core.sh
+@@ -107,7 +107,7 @@ ctl_verb_status() {
+   # empty field (a worker with no pane) would shift every field after it.
+   local i=0 nread=0 mux number worktree pane mstate
+   for m in "${manifests[@]}"; do
+-    if ! jq -e 'type == "object" and ((.workers // []) | type == "array" and all(.[]; type == "object"))' "$m" >/dev/null 2>&1; then
++    if ! jq -e 'type == "object" and ((.workers // []) | type == "array")' "$m" >/dev/null 2>&1; then
+       [ -n "$session" ] && { rm -rf "$tmp"; ctl_fail "$root" "the manifest for session '$session' is unreadable"; return; }
+       echo "autocoder-ctl: skipping unreadable manifest $m" >&2; continue
+     fi
+diff --git a/tests/test_autocoder_ctl.sh b/tests/test_autocoder_ctl.sh
+index 82e7815..d7900c8 100644
+--- a/tests/test_autocoder_ctl.sh
++++ b/tests/test_autocoder_ctl.sh
+@@ -136,9 +136,6 @@ jq -e '.detail.workers[2] | .issue == null and .activity == "unknown" and .pane
+ run 2 false "a session name that walks out of the swarm dir" -- "$CTL" status --session ../../x
+ run 2 false "a session name starting with a dot"             -- "$CTL" status --session .hidden
+ run 1 false "a named session whose manifest is unreadable"   -- "$CTL" status --session broken
+-echo '{"workers": [1, {"number": 3}]}' > .autocoder/swarm/odd.json
+-run 1 false "a manifest with a non-object worker is unreadable" -- "$CTL" status --session odd
+-rm .autocoder/swarm/odd.json
+ jq -n '{session: "s2", mux: "tmux", workers: [{number: "x y", worktree: "", tmuxTarget: null, state: "paused"}]}' \
+   > .autocoder/swarm/s2.json
+ git checkout -q -b fix/issue-77

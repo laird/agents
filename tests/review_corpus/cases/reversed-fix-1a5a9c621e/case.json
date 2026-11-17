@@ -1,0 +1,11 @@
+{
+  "id": "reversed-fix-1a5a9c621e",
+  "kind": "culprit",
+  "expect": "flag",
+  "source": "reversed-fix",
+  "issue": null,
+  "commits": {
+    "fix": "1a5a9c621ec5f24f34290a280c1ce66777a8a161"
+  },
+  "note": "Reverse of the fix: #243: review fix \u2014 a manifest whose workers list holds a non-object is unreadable, not an empty swarm"
+}

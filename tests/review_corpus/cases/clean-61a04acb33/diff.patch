@@ -1,0 +1,91 @@
+diff --git a/.agent/scripts/add-worker.sh b/.agent/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/.agent/scripts/add-worker.sh
++++ b/.agent/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/.factory-plugin/plugins/autocoder/scripts/add-worker.sh b/.factory-plugin/plugins/autocoder/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/.factory-plugin/plugins/autocoder/scripts/add-worker.sh
++++ b/.factory-plugin/plugins/autocoder/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/.pi/scripts/add-worker.sh b/.pi/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/.pi/scripts/add-worker.sh
++++ b/.pi/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/codex-plugins/autocoder/scripts/add-worker.sh b/codex-plugins/autocoder/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/codex-plugins/autocoder/scripts/add-worker.sh
++++ b/codex-plugins/autocoder/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/plugins/autocoder/scripts/add-worker.sh b/plugins/autocoder/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/plugins/autocoder/scripts/add-worker.sh
++++ b/plugins/autocoder/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/plugins/autocoder/skills/autocoder/scripts/add-worker.sh b/plugins/autocoder/skills/autocoder/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/plugins/autocoder/skills/autocoder/scripts/add-worker.sh
++++ b/plugins/autocoder/skills/autocoder/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then
+diff --git a/skills/autocoder/scripts/add-worker.sh b/skills/autocoder/scripts/add-worker.sh
+index b5adf6b..cb0efc2 100755
+--- a/skills/autocoder/scripts/add-worker.sh
++++ b/skills/autocoder/scripts/add-worker.sh
+@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
+   exit 0
+ fi
+ 
+-# ── Find next available worktree index ───────────────────────────────────────
++# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
+ # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
+ WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
+ if [ "$USE_WORKTREES" = true ]; then

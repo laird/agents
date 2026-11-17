@@ -1,0 +1,26 @@
+diff --git a/.agent/scripts/README.md b/.agent/scripts/README.md
+index 21818a9..7f53e98 100644
+--- a/.agent/scripts/README.md
++++ b/.agent/scripts/README.md
+@@ -19,7 +19,7 @@ with the plugin copies by hand.
+ <a id="script-dir"></a>
+ ## Resolving `SCRIPT_DIR` in command files
+ 
+-Every command that sources `issue-fns.sh` opens with the same loop, marked
++Commands that source `issue-fns.sh` resolve `SCRIPT_DIR` with the same loop, marked
+ `# Resolve SCRIPT_DIR — see scripts/README.md#script-dir`. It tries, in order,
+ `$(pwd)/.agent/scripts`, `$(pwd)/plugins/autocoder/scripts` and
+ `$(pwd)/.claude-plugin/plugins/autocoder/scripts`, then falls back to the newest
+diff --git a/plugins/autocoder/scripts/README.md b/plugins/autocoder/scripts/README.md
+index 92d75a9..c65fe57 100644
+--- a/plugins/autocoder/scripts/README.md
++++ b/plugins/autocoder/scripts/README.md
+@@ -12,7 +12,7 @@ for the full design.
+ <a id="script-dir"></a>
+ ## Resolving `SCRIPT_DIR` in command files
+ 
+-Every command that sources `issue-fns.sh` opens with the same loop, marked
++Commands that source `issue-fns.sh` resolve `SCRIPT_DIR` with the same loop, marked
+ `# Resolve SCRIPT_DIR — see scripts/README.md#script-dir`. It tries, in order,
+ `$(pwd)/.agent/scripts`, `$(pwd)/plugins/autocoder/scripts` and
+ `$(pwd)/.claude-plugin/plugins/autocoder/scripts`, then falls back to the newest

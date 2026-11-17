@@ -1,0 +1,11 @@
+{
+  "id": "clean-7221b142a6",
+  "kind": "clean",
+  "expect": "pass",
+  "source": "landed-clean",
+  "issue": null,
+  "commits": {
+    "commit": "7221b142a61e5b9da5484c88cb04a8a1c736bd3c"
+  },
+  "note": "#239: review fix \u2014 README no longer claims every command uses the loop (install.md has its own)"
+}

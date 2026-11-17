@@ -1,0 +1,11 @@
+{
+  "id": "reversed-fix-bfbaf2b6c7",
+  "kind": "culprit",
+  "expect": "flag",
+  "source": "reversed-fix",
+  "issue": null,
+  "commits": {
+    "fix": "bfbaf2b6c731ada3986f2f64345d94b76be558b6"
+  },
+  "note": "Reverse of the fix: Fix #207: initialise GATE_BOUNCE; reword the base-worktree failure message"
+}

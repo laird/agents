@@ -1,0 +1,11 @@
+{
+  "id": "clean-3422a0f82f",
+  "kind": "clean",
+  "expect": "pass",
+  "source": "landed-clean",
+  "issue": null,
+  "commits": {
+    "commit": "3422a0f82fa6f318f4ce9ccddb71f568d2d35029"
+  },
+  "note": "fix(autocoder): dispatch example sends Enter as a separate send-keys call"
+}

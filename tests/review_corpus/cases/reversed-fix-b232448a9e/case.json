@@ -1,0 +1,11 @@
+{
+  "id": "reversed-fix-b232448a9e",
+  "kind": "culprit",
+  "expect": "flag",
+  "source": "reversed-fix",
+  "issue": null,
+  "commits": {
+    "fix": "b232448a9ec141bb5123f0e366e7533f98a735ae"
+  },
+  "note": "Reverse of the fix: fix(autocoder): fix-loop-gate BLOCKING set omits blocked and awaiting-integration (#128)"
+}

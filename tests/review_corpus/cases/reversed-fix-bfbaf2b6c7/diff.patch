@@ -1,0 +1,132 @@
+diff --git a/.factory-plugin/plugins/autocoder/scripts/merge-to-integration.sh b/.factory-plugin/plugins/autocoder/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/.factory-plugin/plugins/autocoder/scripts/merge-to-integration.sh
++++ b/.factory-plugin/plugins/autocoder/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+diff --git a/.pi/scripts/merge-to-integration.sh b/.pi/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/.pi/scripts/merge-to-integration.sh
++++ b/.pi/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+diff --git a/codex-plugins/autocoder/scripts/merge-to-integration.sh b/codex-plugins/autocoder/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/codex-plugins/autocoder/scripts/merge-to-integration.sh
++++ b/codex-plugins/autocoder/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+diff --git a/plugins/autocoder/scripts/merge-to-integration.sh b/plugins/autocoder/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/plugins/autocoder/scripts/merge-to-integration.sh
++++ b/plugins/autocoder/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+diff --git a/plugins/autocoder/skills/autocoder/scripts/merge-to-integration.sh b/plugins/autocoder/skills/autocoder/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/plugins/autocoder/skills/autocoder/scripts/merge-to-integration.sh
++++ b/plugins/autocoder/skills/autocoder/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
+diff --git a/skills/autocoder/scripts/merge-to-integration.sh b/skills/autocoder/scripts/merge-to-integration.sh
+index 5f11b9e..8b8944c 100755
+--- a/skills/autocoder/scripts/merge-to-integration.sh
++++ b/skills/autocoder/scripts/merge-to-integration.sh
+@@ -252,8 +252,6 @@ _issue_has_label() {
+ # Set once a push to <integration> has succeeded. From then on a failure is bookkeeping,
+ # not lost work, and the issue is parked instead of escalated.
+ PUSHED=0
+-# Set only immediately before the one _fail that bounces a gate failure (#207).
+-GATE_BOUNCE=0
+ 
+ # ── Bounce (#207) ──────────────────────────────────────────────────────────────
+ # A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+@@ -640,7 +638,7 @@ _gate_integrated_tree() {
+   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+   _remove_worktree "$BASE_WORKTREE_DIR"
+   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
+-    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
++    echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; treating the failure as this change's. NOT pushing."
+     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
+   fi
+   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"

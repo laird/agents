@@ -1,0 +1,11 @@
+{
+  "id": "reversed-fix-41f0575f8c",
+  "kind": "culprit",
+  "expect": "flag",
+  "source": "reversed-fix",
+  "issue": null,
+  "commits": {
+    "fix": "41f0575f8c549e6d28385a82ed36437576a30c60"
+  },
+  "note": "Reverse of the fix: CLAUDE.md: gate on run-shell-suite.sh, which exits non-zero when a suite fails"
+}

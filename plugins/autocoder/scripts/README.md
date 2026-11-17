@@ -347,6 +347,9 @@ Each tick:
    the re-land steps on the P0 and on issue `I`, and clear the pending state.
    Issue `I`, if parked, goes back in the queue. A reverted push's issue is never
    closed as landed: the revert's trailer is the record step 4 checks.
+   `review-corpus.py harvest` turns each of these reverts into a review test
+   case (`tests/review_corpus/`, #167), so a change to the pre-landing reviewer
+   can be scored against the pushes it should have stopped.
 6. Red otherwise: files the P0 (or comments on the still-open one, found by title
    when the state file lost its number) and exits 3.
 7. Hand-offs: for each open issue labelled `merging` (or `awaiting-integration`

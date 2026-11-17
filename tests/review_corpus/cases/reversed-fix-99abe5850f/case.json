@@ -1,0 +1,11 @@
+{
+  "id": "reversed-fix-99abe5850f",
+  "kind": "culprit",
+  "expect": "flag",
+  "source": "reversed-fix",
+  "issue": null,
+  "commits": {
+    "fix": "99abe5850f038b0f86abdb80a3fff863dfa4cfb5"
+  },
+  "note": "Reverse of the fix: Fix #204 review: remove the label before posting the \ud83d\udd13 release"
+}

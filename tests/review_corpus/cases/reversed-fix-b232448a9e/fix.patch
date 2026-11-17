@@ -1,0 +1,13 @@
+diff --git a/plugins/autocoder/scripts/fix-loop-gate.sh b/plugins/autocoder/scripts/fix-loop-gate.sh
+index c9bf96a..0bc46f1 100755
+--- a/plugins/autocoder/scripts/fix-loop-gate.sh
++++ b/plugins/autocoder/scripts/fix-loop-gate.sh
+@@ -64,7 +64,7 @@ with open(os.environ["ALL_JSON_PATH"]) as f:
+ PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
+ BLOCKING = {
+     "needs-approval", "needs-design", "needs-clarification",
+-    "too-complex", "future", "decomposed",
++    "too-complex", "future", "decomposed", "blocked", "awaiting-integration",
+ }
+ WORKING = "working"
+ PROPOSAL = "proposal"

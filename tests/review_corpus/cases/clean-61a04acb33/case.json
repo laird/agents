@@ -1,0 +1,11 @@
+{
+  "id": "clean-61a04acb33",
+  "kind": "clean",
+  "expect": "pass",
+  "source": "landed-clean",
+  "issue": null,
+  "commits": {
+    "commit": "61a04acb333d7a890154b135905c510ef620b212"
+  },
+  "note": "#233: review nit \u2014 the numbering comment covers both modes"
+}
