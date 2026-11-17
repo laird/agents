@@ -524,6 +524,35 @@ made in the window counts, so the rate can exceed 1. `--json` prints
 `{window, landed, reverts, rate, reverted_issues}`; `rate` is `null` when nothing landed.
 The ref defaults to `origin/HEAD`, else `HEAD`.
 
+## Revert circuit breaker: `revert-breaker.sh` (#252)
+
+When the sentinel has to revert too much of what lands, the breaker stops merging and
+sends work to human review instead. After every revert it pushes, `main-sentinel.sh` runs
+`revert-breaker.sh --ref origin/<integration>`. That reads `revert-rate.sh --last <window>`
+and trips when at least `minReverts` of the newest `window` landed issues were reverted
+and the rate is at or above `threshold`. Tripping opens one tracking issue labelled
+`revert-breaker` and `needs-approval`, naming the window, the rate and the reverted
+issues. While one is open, a later trip opens no other.
+
+The open issue is the switch. While it is open, `merge-launch.sh` does not start a merge
+job: it runs `revert-breaker.sh --land-as-pr`, which pushes the branch, opens a PR
+(`gh pr create`, with the summary file as its body) and, with `--own-issue`, parks the
+issue under `awaiting-integration`. If the push or the PR fails it exits 1 and changes no
+label. A human closes the breaker issue to restore `merge`; no commit is needed, and
+every worktree sees the change at its next launch. If the tracker cannot be read, the
+launch treats the breaker as closed rather than stalling.
+
+Settings are in the main checkout's `.autocoder.json`:
+
+```json
+"revertBreaker": {"window": 20, "threshold": 0.15, "minReverts": 2}
+```
+
+Those are the defaults. `"revertBreaker": "off"` disables the breaker: it never trips,
+and an issue left open from before no longer switches landing. `revert-breaker.sh
+--active` exits 0 and prints the open issue's number, or exits 1 when none is open or
+the breaker is off.
+
 ## Issue lifecycle: `issue-events.jsonl` (#190)
 
 The verbs that move an issue through its life append one JSON line each, at the moment

@@ -122,6 +122,17 @@ if [ -z "$FEATURE_SHA" ] && git rev-parse --git-dir >/dev/null 2>&1; then
   exit 1
 fi
 
+# Revert circuit breaker (#252): while an open `revert-breaker` issue exists, the merge
+# mode is `pr`. Push the branch, open a PR and park the issue instead of starting a merge
+# job. An unreadable tracker counts as closed, so a network blip never stalls landing.
+if [ -f "${_MLI_DIR}/revert-breaker.sh" ] && _ml_breaker=$(bash "${_MLI_DIR}/revert-breaker.sh" --active </dev/null 2>/dev/null); then
+  echo "🚨 Revert breaker #${_ml_breaker} is open: landing issue #${ISSUE_NUM} as a pull request instead of merging."
+  _ml_pr=(--land-as-pr --feature "$FEATURE" --feature-sha "$FEATURE_SHA" --issue "$ISSUE_NUM" --integration "$INTEGRATION_BRANCH")
+  [ -n "$SUMMARY_FILE" ] && _ml_pr+=(--summary-file "$SUMMARY_FILE")
+  [ "$OWN_ISSUE" -eq 1 ] && _ml_pr+=(--own-issue)
+  exec bash "${_MLI_DIR}/revert-breaker.sh" "${_ml_pr[@]}"
+fi
+
 # shellcheck source=test-cmd-fns.sh
 source "${_MLI_DIR}/test-cmd-fns.sh"
 # shellcheck source=repo-id-fns.sh

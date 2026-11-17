@@ -381,6 +381,9 @@ finish_revert() {
   last_green="$REVERT"; last_tested="$REVERT"; red_issue=""
   clear_pending
   state_save
+  # Revert circuit breaker (#252): too many reverts switch landing to pr mode. Idempotent,
+  # so a resumed finish never opens a second breaker issue. Best effort.
+  bash "${_MS_DIR}/revert-breaker.sh" --ref "origin/$INTEGRATION" || true
 }
 
 # Find the culprit among the recorded tips, revert that push on the current tip, gate, push
