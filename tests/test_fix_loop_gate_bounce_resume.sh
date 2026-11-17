@@ -109,6 +109,21 @@ backend issue_comment 5 --body "'<!-- autocoder-bounce kind=gate worktree=/elsew
 bash "$SCRIPT_DIR/bounce-resume.sh" check 5 >/dev/null 2>&1; RC=$?
 assert_eq "newest bounce names another worktree: check says no" "1" "$RC"
 
+# ── 5b. No local feature/issue-N branch: not ours to find (cheap prefilter) ─
+reset
+bounced 5 "$ME"
+git branch -D feature/issue-5 >/dev/null 2>&1
+bash "$SCRIPT_DIR/bounce-resume.sh" find >/dev/null 2>&1; RC=$?
+assert_eq "bounce without a local branch: find exits 1" "1" "$RC"
+
+# ── 5c. A record kept through a backend hiccup is never overwritten ─────────
+reset
+bounced 5 "$ME"
+echo "999 " > "$STATE"     # issue_get 999 fails: worker_resume_plan keeps the record
+gate >/dev/null
+assert_eq "kept record survives: not replaced by the bounce" "999" "$(cut -d' ' -f1 "$STATE" 2>/dev/null)"
+[ "$(plan .issue)" = 5 ] && bad "bounce resumed over a kept record" || ok "bounce not resumed over a kept record"
+
 # ── 6. No bounces at all: find says none ───────────────────────────────────
 reset
 add_issue 7 "P1"

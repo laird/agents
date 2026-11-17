@@ -90,13 +90,21 @@ if [ "$MODE" = check ]; then
   exit $?
 fi
 
-# find: oldest first, so a worker clears its backlog in order.
-nums=$(issue_list --state working --limit 200 2>/dev/null | python3 -c '
-import json, sys
+# find: oldest first, so a worker clears its backlog in order. Only issues with a
+# local feature/issue-N branch can be ours: the merge was launched from this repo,
+# and its branches are shared by every worktree of it. That keeps the per-issue
+# issue_get calls to our own candidates, not every worker's live issue.
+LOCAL=$(git for-each-ref --format='%(refname:lstrip=2)' 'refs/heads/feature/issue-*' 2>/dev/null \
+  | sed -nE 's#^feature/issue-([0-9]+)$#\1#p' | tr '\n' ' ')
+[ -n "$LOCAL" ] || exit 1
+nums=$(issue_list --state working --limit 200 2>/dev/null | LOCAL="$LOCAL" python3 -c '
+import json, os, sys
+mine = set(os.environ["LOCAL"].split())
 try:
-    print(" ".join(str(i["number"]) for i in sorted(json.load(sys.stdin), key=lambda i: i["number"])))
+    issues = json.load(sys.stdin)
 except ValueError:
-    pass') || exit 1
+    sys.exit(0)
+print(" ".join(str(n) for n in sorted(i["number"] for i in issues if str(i["number"]) in mine)))') || exit 1
 for n in $nums; do
   json=$(issue_get "$n" 2>/dev/null) || continue
   if kind=$(owns "$json"); then

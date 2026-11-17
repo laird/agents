@@ -101,7 +101,10 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
     # and its live branch keeps every other worker off it. Re-record it and resume
     # it through the same path (#208). Runs before the snapshot and classify(), which
     # drop issues with a live branch (#210). bounce-resume.sh fails toward "none".
-    if [ "$RESUME_RC" -eq 1 ] && [ -f "${SCRIPT_DIR}/bounce-resume.sh" ] \
+    # Only when nothing is held: a record worker_resume_plan kept through a backend
+    # hiccup (exit 1, file still present) must not be overwritten by a bounce.
+    if [ "$RESUME_RC" -eq 1 ] && [ ! -f "$(worker_state_file 2>/dev/null || echo /nonexistent/x)" ] \
+       && [ -f "${SCRIPT_DIR}/bounce-resume.sh" ] \
        && BOUNCED="$(bash "${SCRIPT_DIR}/bounce-resume.sh" find 2>/dev/null)"; then
       read -r BOUNCED_NUM BOUNCED_KIND <<< "$BOUNCED"
       echo "fix-loop-gate: #${BOUNCED_NUM} was bounced back to this worktree (${BOUNCED_KIND}); resuming it" >&2
