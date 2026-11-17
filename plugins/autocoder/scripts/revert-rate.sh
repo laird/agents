@@ -13,7 +13,9 @@
 #   --ref REV    history to read (default origin/HEAD, else HEAD)
 #   --json       {window, landed, reverts, rate, reverted_issues} instead of one line
 #
-# rate is reverts / landed, or null when nothing landed in the window.
+# With --last, a revert counts only if the issue it names is one of the N. With --since,
+# every sentinel revert made in the window counts, even of an issue that landed before
+# it, so the rate can exceed 1. rate is reverts / landed, or null when nothing landed.
 # Exit status: 0, 1 when the history cannot be read, 2 on a usage error.
 
 LAST="" SINCE="" REF="" JSON=0
@@ -24,7 +26,7 @@ while [ $# -gt 0 ]; do
       case "$1" in --last) LAST="$2" ;; --since) SINCE="$2" ;; --ref) REF="$2" ;; esac
       shift 2 ;;
     --json) JSON=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "revert-rate: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -73,10 +75,13 @@ for pos, rec in enumerate(sys.stdin.read().split("\x1e")):
             break  # the (N+1)th issue: the window is full
         landed.append(n)
     end = pos
-# With --last, the window ends at the oldest commit of its oldest issue; a revert older
-# than that belongs to an issue outside the window.
+# With --last, a revert counts only when it is newer than the oldest issue commit in the window
+# commit and, when it names its issue, that issue is one of the landed issues in the window:
+# a revert of an older issue says nothing about the issues in the window.
 if limit is not None:
-    revert_at = [r for r in revert_at if end is not None and r[0] < end]
+    in_window = set(landed)
+    revert_at = [r for r in revert_at
+                 if end is not None and r[0] < end and (not r[1] or r[1] & in_window)]
 reverts = len(revert_at)
 reverted = set().union(*(r[1] for r in revert_at)) if revert_at else set()
 window = {"ref": ref}

@@ -64,6 +64,18 @@ J=$(bash "$SCRIPT" --ref HEAD --last 4 --json)
 eq "--last 4: landed"  "4" "$(jq -r .landed <<<"$J")"
 eq "--last 4: reverts" "1" "$(jq -r .reverts <<<"$J")"
 
+# --last never counts a revert of an issue outside the window, however new the revert.
+commit "2026-04-01T00:00:00Z" "#7: seventh"
+commit "2026-04-02T00:00:00Z" "Revert autocoder push aaa1111 (issue #1)" "Range e..f" \
+  "Autocoder-Reverts: aaa1111
+Autocoder-Reverts-Issue: 1"
+J=$(bash "$SCRIPT" --ref HEAD --last 1 --json)
+eq "--last 1: revert of an older issue not counted" "0" "$(jq -r .reverts <<<"$J")"
+eq "--last 1: reverted issues empty"                "[]" "$(jq -c .reverted_issues <<<"$J")"
+J=$(bash "$SCRIPT" --ref HEAD --since 2026-04-01T00:00:00Z --json)
+eq "--since counts every revert made in the window" "1" "$(jq -r .reverts <<<"$J")"
+git reset -q --hard HEAD~2
+
 # --since: February onward holds #3 #4 #5 #6 and only #5's revert.
 J=$(bash "$SCRIPT" --ref HEAD --since 2026-02-01T00:00:00Z --json)
 eq "--since: landed"  "4"   "$(jq -r .landed <<<"$J")"

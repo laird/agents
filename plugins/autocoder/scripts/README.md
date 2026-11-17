@@ -518,7 +518,9 @@ issues the sentinel reverted. A revert is a commit carrying the sentinel's
 commit that only says "revert" in its message is not counted. A landed issue is a
 non-merge commit whose subject starts `#N`, `Issue #N` or `Fix #N`, counted once however
 many commits it has. The window is the newest N landed issues (default 50), ending at the
-oldest commit of the oldest one, or every commit since DATE. `--json` prints
+oldest commit of the oldest one, or every commit since DATE. With `--last`, a revert
+counts only when the issue it names is one of the N; with `--since`, every sentinel revert
+made in the window counts, so the rate can exceed 1. `--json` prints
 `{window, landed, reverts, rate, reverted_issues}`; `rate` is `null` when nothing landed.
 The ref defaults to `origin/HEAD`, else `HEAD`.
 
