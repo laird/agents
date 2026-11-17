@@ -21,15 +21,18 @@
 #
 # Source this file; callers use:
 #   gate_env_config <tree-ish> [git-dir]   -> prints the normalized hermetic config, or
-#                                             nothing for host mode; rc 2 if the tree is
-#                                             not in that repository (mode unknown)
+#                                             nothing for host mode; rc 2 if the mode
+#                                             cannot be read (the tree is not in that
+#                                             repository, or the config could not be parsed)
 #   gate_env_run <dir> "<test-cmd>"         -> runs the command in <dir> in the tree's mode
 
 gate_env_config() {
   local tree="$1" gd="${2:-.}" json
   git -C "$gd" cat-file -e "${tree}^{tree}" 2>/dev/null || return 2
   json=$(git -C "$gd" cat-file blob "${tree}:.autocoder.json" 2>/dev/null) || return 0
-  printf '%s' "$json" | python3 -c '
+  case "$json" in *hermetic*) ;; *) return 0 ;; esac   # not opted in: no parser needed
+  local out
+  out=$(printf '%s' "$json" | python3 -c '
 import json, re, sys
 try:
     g = json.load(sys.stdin).get("gate")
@@ -44,12 +47,16 @@ for p in g.get("path") or []:
 for e in g.get("env") or []:
     if isinstance(e, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", e):
         print("env " + e)
-'
+') || return 2
+  [ -z "$out" ] || printf '%s\n' "$out"
 }
 
 gate_env_run() {
   local dir="$1" cmd="$2" cfg line p path="" names=() n
-  cfg=$(gate_env_config HEAD "$dir")
+  if ! cfg=$(gate_env_config HEAD "$dir"); then
+    echo "gate-env: cannot read the gate environment for $dir (python3 missing?); refusing to run the gate" >&2
+    return 1
+  fi
   if [ -z "$cfg" ]; then
     echo "gate-env: host environment"
     (cd "$dir" && bash -c "$cmd")
@@ -60,8 +67,11 @@ gate_env_run() {
       "path "*)
         p=${line#path }
         case "$p" in
-          "~")    p=$HOME ;;
-          "~/"*)  p="$HOME/${p#\~/}" ;;
+          "~"|"~/"*)
+            if [ -z "${HOME:-}" ] || [[ "$HOME" == *:* ]]; then
+              echo "gate-env: ignoring gate.path entry $p (HOME is unset or contains ':')" >&2; continue
+            fi
+            [ "$p" = "~" ] && p=$HOME || p="$HOME/${p#\~/}" ;;
           /*)     ;;
           *)      echo "gate-env: ignoring gate.path entry that is not absolute: $p" >&2; continue ;;
         esac
@@ -76,7 +86,7 @@ gate_env_run() {
     trap 'rm -rf "$home"' EXIT
     trap 'exit 143' TERM INT HUP
     args=()
-    for n in "${names[@]}"; do
+    for n in ${names[@]+"${names[@]}"}; do
       [ -n "${!n+x}" ] && args+=("$n=${!n}")
     done
     args+=(PATH="$path" HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"

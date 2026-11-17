@@ -48,6 +48,8 @@ _gate_cache_key() {  # <tree> "<cmd>" [git-dir]
 }
 
 gate_cache_get() {  # <tree> "<cmd>" [git-dir]
+  # [git-dir] (default: the current directory) must be a repository holding <tree>:
+  # anywhere else the mode is unknown and this is always a miss.
   local f
   f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2" "${3:-.}")"
   case "$f" in *-envunknown) return 1 ;; esac

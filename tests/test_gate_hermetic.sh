@@ -73,6 +73,16 @@ gate_cache_run . 'test "$HOME" != '"'$HOME'" >/dev/null 2>&1 && ok "a declared H
 git rm -q .autocoder.json; git commit -qm "host again"
 gate_cache_run . "$READS_HOME" >/dev/null 2>&1 && ok "removing the config restores host mode" || bad "host mode not restored"
 
+# No env list (empty array under set -u) still runs; python3 missing fails the gate, not host mode.
+printf '{"gate": {"hermetic": true}}\n' > .autocoder.json; git add .autocoder.json; git commit -qm "bare hermetic"
+(set -u; gate_cache_run . 'test -z "${DECLARED_VAR:-}"') >/dev/null 2>&1 && ok "hermetic with no env list runs under set -u" \
+  || bad "hermetic with no env list failed"
+git commit -qm "new tree" --allow-empty; echo b > b; git add b; git commit -qm b
+mkdir -p "$TMP/nopy"; printf '#!/bin/sh\nexit 127\n' > "$TMP/nopy/python3"; chmod +x "$TMP/nopy/python3"
+OUT=$(PATH="$TMP/nopy:$PATH" gate_cache_run . 'true' 2>&1) && bad "gate ran with an unreadable config: $OUT" \
+  || ok "an unreadable gate config fails the gate instead of falling back to host mode"
+git rm -q .autocoder.json; git commit -qm "host again 2"
+
 # A tree this repository does not have: never a borrowed verdict, never a write.
 gate_cache_get 0123456789abcdef0123456789abcdef01234567 "$READS_HOME" >/dev/null && bad "unknown tree returned a verdict" \
   || ok "an unknown tree is a miss"
