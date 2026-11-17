@@ -214,3 +214,77 @@ validate_cmux_target() {
   local workspace="$1"
   run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux read-screen --workspace "$workspace" >/dev/null
 }
+
+# Read what a pane shows. tmux targets are pane IDs, cmux targets workspace
+# refs, herdr targets pane IDs.
+capture_target() {
+  local mux="$1" target="$2"
+  case "$mux" in
+    tmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux capture-pane -p -t "$target" 2>/dev/null ;;
+    cmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux read-screen --workspace "$target" 2>/dev/null ;;
+    herdr) run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane read "$target" 2>/dev/null ;;
+  esac
+}
+
+# Consent and folder-trust dialogs an agent can show when it starts: claude's
+# --dangerously-skip-permissions consent ("No, exit" is the default) and its
+# "trust this folder" check, gemini's "Do you trust this folder?", codex's
+# "Do you trust the contents of this directory?". A launcher that types the
+# first prompt and Enter a fixed time after starting the agent answers such a
+# dialog with its default instead of submitting the prompt (#253). Override
+# with an extended regex when an agent words its dialog differently.
+AUTOCODER_CONSENT_PATTERN="${AUTOCODER_CONSENT_PATTERN:-No, exit|Bypass Permissions|bypass permissions|[Dd]o you trust|one you trust|[Tt]rust (this |the |parent )?folder|work in this folder}"
+
+# 0 when the pane shows a consent or trust dialog. A pane that cannot be read
+# counts as showing none: the send that follows reports that failure itself.
+consent_dialog_showing() {
+  local mux="$1" target="$2"
+  capture_target "$mux" "$target" | grep -Eq "$AUTOCODER_CONSENT_PATTERN"
+}
+
+# Type the first prompt into an agent that was just launched, unless the agent
+# is showing a consent or trust dialog. The pane is checked before the text is
+# typed and again before Enter, so a dialog that draws while the text is being
+# typed still gets no Enter. Returns 0 sent, 1 the send failed, 3 a dialog is
+# showing (nothing submitted; the dialog is left for a person to answer).
+#   send_agent_prompt <tmux|cmux|herdr> <target> <text>
+send_agent_prompt() {
+  local mux="$1" target="$2" text="$3"
+  if consent_dialog_showing "$mux" "$target"; then
+    _agent_prompt_withheld "$target" "$text"
+    return 3
+  fi
+  case "$mux" in
+    tmux)
+      run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" "$text" || return 1
+      sleep "$AUTOCODER_MUX_SUBMIT_DELAY"
+      if consent_dialog_showing tmux "$target"; then
+        _agent_prompt_withheld "$target" "$text"
+        return 3
+      fi
+      run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux send-keys -t "$target" Enter || return 1
+      ;;
+    cmux)
+      run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux send --workspace "$target" "$text" >/dev/null || return 1
+      if consent_dialog_showing cmux "$target"; then
+        _agent_prompt_withheld "$target" "$text"
+        return 3
+      fi
+      run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux send-key --workspace "$target" enter >/dev/null || return 1
+      ;;
+    herdr)
+      # `herdr agent prompt` writes text and Enter as one; the check above is
+      # the last chance to hold it back.
+      prompt_herdr_agent "$target" "$text" || send_herdr_command "$target" "$text" || return 1
+      ;;
+    *)
+      echo "send_agent_prompt: unknown multiplexer '$mux'" >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+_agent_prompt_withheld() {
+  echo "⚠️  $1 is showing a consent or trust dialog; not answering it. Answer it in that pane, then send: $2" >&2
+}

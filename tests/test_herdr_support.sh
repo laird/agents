@@ -284,11 +284,17 @@ for rel in start-parallel-agents.sh add-worker.sh restart-worker.sh; do
     && pass "$rel registers workers via launch_herdr_agent" \
     || fail "$rel never calls launch_herdr_agent (workers stay anonymous)"
 done
+# Since #253 the launchers prompt through send_agent_prompt, which checks for a
+# consent dialog and then calls prompt_herdr_agent for herdr.
+awk '/^send_agent_prompt\(\)/,/^}/' "$ROOT/plugins/autocoder/scripts/mux-send-lib.sh" \
+  | grep -q 'prompt_herdr_agent' \
+  && pass "send_agent_prompt prompts herdr through the agent surface" \
+  || fail "send_agent_prompt never calls prompt_herdr_agent"
 for rel in start-parallel-agents.sh start-workers.sh add-worker.sh restart-worker.sh; do
   s="$ROOT/plugins/autocoder/scripts/$rel"
-  grep -q 'prompt_herdr_agent' "$s" \
+  grep -qE 'prompt_herdr_agent|send_agent_prompt' "$s" \
     && pass "$rel prompts through the agent surface" \
-    || fail "$rel never calls prompt_herdr_agent"
+    || fail "$rel never calls prompt_herdr_agent or send_agent_prompt"
 done
 
 # 9f. launch_herdr_agent recovery paths — pins the SLOW-START pathology seen

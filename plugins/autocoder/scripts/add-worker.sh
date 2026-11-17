@@ -242,6 +242,9 @@ if [ "$MUX" = "tmux" ]; then
     manifest_add_worker_json "$MANIFEST_PATH" "$WORKER_JSON"
     echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
     bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    # Leave a consent or trust dialog alone rather than answer it (#253).
+    send_agent_prompt tmux "$PANE_ID" "$WORKER_CMD" || true
   else
     tmux send-keys -t "$PANE_ID" "$WORKER_CMD" C-m
   fi
@@ -304,6 +307,8 @@ elif [ "$MUX" = "cmux" ]; then
     manifest_add_worker_json "$MANIFEST_PATH" "$WORKER_JSON"
     echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
     bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    send_agent_prompt cmux "$WS_REF" "$WORKER_CMD" || true
   else
     cmux send --workspace "$WS_REF" "$WORKER_CMD" >/dev/null
     cmux send-key --workspace "$WS_REF" enter >/dev/null
@@ -359,7 +364,7 @@ elif [ "$MUX" = "herdr" ]; then
     echo "   Manifest-backed swarm detected: starting newly added worker $WORKER_NUM."
     bash "$SCRIPT_DIR/start-workers.sh" "$WORKER_NUM" --session "$SESSION_NAME" --agent "$AGENT" --mux "$MUX"
   elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
-    prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+    send_agent_prompt herdr "$PANE_ID" "$WORKER_CMD" || true
   else
     send_herdr_command "$PANE_ID" "$WORKER_CMD"
   fi

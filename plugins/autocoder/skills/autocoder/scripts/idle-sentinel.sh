@@ -1107,15 +1107,6 @@ detect_mux() {
   return 1
 }
 
-capture_target() {
-  local mux="$1" target="$2"
-  case "$mux" in
-    tmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux capture-pane -p -t "$target" 2>/dev/null ;;
-    cmux)  run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" cmux read-screen --workspace "$target" 2>/dev/null ;;
-    herdr) run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane read "$target" 2>/dev/null ;;
-  esac
-}
-
 send_shell_line() {
   local mux="$1" target="$2" text="$3"
   case "$mux" in

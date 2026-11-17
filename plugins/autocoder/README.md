@@ -618,6 +618,8 @@ join-parallel --mux cmux
 
 Auto-detection prefers a *running* cmux, then a *running* herdr, then tmux — except when launched from inside a herdr pane (`HERDR_ENV=1`), where herdr wins. A merely installed cmux or herdr with no live server never captures the swarm. Agents are then checked in order. Override with `--mux` and `--agent`.
 
+**Consent and trust dialogs.** An agent started in a folder it has not seen may first ask whether to trust the folder, and `claude --dangerously-skip-permissions` asks for consent (its default is "No, exit"). The launch scripts (`start-parallel`, `add-worker`, `restart-worker`, `start-workers`) check the pane before typing the first prompt and again before pressing Enter. If a dialog is showing they print a warning and send nothing, so the dialog waits for you; answer it in the pane, then send the prompt (or run `start-workers.sh <N>`). The claude manager gets its prompt in argv and types nothing. Set `AUTOCODER_CONSENT_PATTERN` (an extended regex) if an agent words its dialog differently.
+
 ### How It Works
 
 #### tmux Mode

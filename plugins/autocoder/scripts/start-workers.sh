@@ -204,6 +204,33 @@ ISSUE_DIR_PATH=$(manifest_get "$MANIFEST_PATH" 'm.get("issueDir")')
 ISSUE_BACKEND=$(manifest_get "$MANIFEST_PATH" 'm.get("issueBackend")')
 export ISSUE_SOURCE ISSUE_DIR_PATH ISSUE_BACKEND
 
+# Send WORKER_CMD to one worker. An agent-input worker hosts an agent TUI that
+# may be showing a consent or trust dialog; send_agent_prompt returns 3 and
+# leaves the dialog alone rather than answer it with the prompt's Enter (#253).
+# herdr agent-input workers take the prompt through the agent surface, with
+# typing into the raw pane as the fallback (inside send_agent_prompt).
+deliver_worker_cmd() {  # <mux> <target> <command mode>
+  if [ "$3" = "agent-input" ]; then
+    send_agent_prompt "$1" "$2" "$WORKER_CMD"
+    return
+  fi
+  case "$1" in
+    tmux)  send_tmux_text_enter "$2" "$WORKER_CMD" ;;
+    cmux)  send_cmux_command "$2" "$WORKER_CMD" ;;
+    herdr) send_herdr_command "$2" "$WORKER_CMD" ;;
+  esac
+}
+
+report_delivery_failure() {  # <number> <target> <rc>
+  manifest_update_worker_state "$MANIFEST_PATH" "$1" failed || true
+  delivery_failed=1
+  if [ "$3" -eq 3 ]; then
+    echo "❌ Worker $1 ($2) is showing a consent or trust dialog; answer it, then run start-workers.sh $1" >&2
+  else
+    echo "❌ Worker $1 command delivery failed: $2" >&2
+  fi
+}
+
 delivery_failed=0
 while IFS= read -r worker_json; do
   [ -z "$worker_json" ] && continue
@@ -236,13 +263,11 @@ while IFS= read -r worker_json; do
         continue
       fi
     fi
-    if send_tmux_text_enter "$tmux_target" "$WORKER_CMD"; then
+    if deliver_worker_cmd tmux "$tmux_target" "$command_mode"; then
       manifest_update_worker_state "$MANIFEST_PATH" "$number" started
       echo "✅ Worker $number command sent to $tmux_target"
     else
-      manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
-      delivery_failed=1
-      echo "❌ Worker $number command delivery failed: $tmux_target" >&2
+      report_delivery_failure "$number" "$tmux_target" "$?"
     fi
   elif [ "$MANIFEST_MUX" = "cmux" ]; then
     if ! validate_cmux_target "$cmux_workspace"; then
@@ -266,13 +291,11 @@ while IFS= read -r worker_json; do
         continue
       fi
     fi
-    if send_cmux_command "$cmux_workspace" "$WORKER_CMD"; then
+    if deliver_worker_cmd cmux "$cmux_workspace" "$command_mode"; then
       manifest_update_worker_state "$MANIFEST_PATH" "$number" started
       echo "✅ Worker $number command sent to $cmux_workspace"
     else
-      manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
-      delivery_failed=1
-      echo "❌ Worker $number command delivery failed: $cmux_workspace" >&2
+      report_delivery_failure "$number" "$cmux_workspace" "$?"
     fi
   elif [ "$MANIFEST_MUX" = "herdr" ]; then
     if ! validate_herdr_target "$herdr_pane"; then
@@ -296,17 +319,11 @@ while IFS= read -r worker_json; do
         continue
       fi
     fi
-    # agent-input workers host an interactive agent (registered at swarm
-    # start), so the command goes through the agent surface; typing into the
-    # raw pane stays the shell-mode path and the fallback.
-    if { [ "$command_mode" = "agent-input" ] && prompt_herdr_agent "$herdr_pane" "$WORKER_CMD"; } \
-       || send_herdr_command "$herdr_pane" "$WORKER_CMD"; then
+    if deliver_worker_cmd herdr "$herdr_pane" "$command_mode"; then
       manifest_update_worker_state "$MANIFEST_PATH" "$number" started
       echo "✅ Worker $number command sent to $herdr_pane"
     else
-      manifest_update_worker_state "$MANIFEST_PATH" "$number" failed || true
-      delivery_failed=1
-      echo "❌ Worker $number command delivery failed: $herdr_pane" >&2
+      report_delivery_failure "$number" "$herdr_pane" "$?"
     fi
   else
     echo "❌ Unknown mux in manifest: $MANIFEST_MUX" >&2

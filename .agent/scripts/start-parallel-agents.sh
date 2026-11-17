@@ -458,9 +458,15 @@ if [ "$MUX" = "tmux" ]; then
   echo "   Starting $WORKER_CMD in all agents (sequential)..."
   for i in $(seq 0 $((NUM_AGENTS - 1))); do
     echo "   → Agent $((i+1)): sending $WORKER_CMD..."
-    tmux send-keys -t "${WORKER_PANES[$i]}" "$WORKER_CMD"
-    sleep 0.5
-    tmux send-keys -t "${WORKER_PANES[$i]}" "Enter"
+    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+      # The agent was just launched and may be showing a consent or trust
+      # dialog; send_agent_prompt leaves one alone instead of answering it (#253).
+      send_agent_prompt tmux "${WORKER_PANES[$i]}" "$WORKER_CMD" || true
+    else
+      tmux send-keys -t "${WORKER_PANES[$i]}" "$WORKER_CMD"
+      sleep 0.5
+      tmux send-keys -t "${WORKER_PANES[$i]}" "Enter"
+    fi
 
     # Wait for THIS agent to fully process $WORKER_CMD before starting next
     echo "   → Agent $((i+1)): waiting for initialization..."
@@ -490,10 +496,12 @@ if [ "$MUX" = "tmux" ]; then
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
     tmux send-keys -t "$MANAGER_PANE" "$AGENT_LAUNCH_CMD" C-m
     sleep 5
+    send_agent_prompt tmux "$MANAGER_PANE" "$MANAGER_CMD" || true
+  else
+    tmux send-keys -t "$MANAGER_PANE" "$MANAGER_CMD"
+    sleep 0.5
+    tmux send-keys -t "$MANAGER_PANE" "Enter"
   fi
-  tmux send-keys -t "$MANAGER_PANE" "$MANAGER_CMD"
-  sleep 0.5
-  tmux send-keys -t "$MANAGER_PANE" "Enter"
 
   # R2-F1: live launches record the manifest too, not just manager-only ones.
   write_launch_manifest running "$LAUNCH_MODE" true "$MANAGER_PANE" "" ""
@@ -603,7 +611,11 @@ elif [ "$MUX" = "cmux" ]; then
 
     # Send worker command
     echo "   → Worker $i: sending $WORKER_CMD..."
-    cmux_send_cmd "$WS_REF" "$WORKER_CMD"
+    if [ -n "$AGENT_LAUNCH_CMD" ]; then
+      send_agent_prompt cmux "$WS_REF" "$WORKER_CMD" || true
+    else
+      cmux_send_cmd "$WS_REF" "$WORKER_CMD"
+    fi
 
     echo "   → Worker $i: waiting for initialization..."
     sleep 10
@@ -642,9 +654,12 @@ elif [ "$MUX" = "cmux" ]; then
         echo "   Starting coordinator..."
         cmux_send_cmd "$REVIEW_WS_REF" "$AGENT_LAUNCH_CMD"
         sleep 5
+        echo "   → Manager: sending $MANAGER_CMD..."
+        send_agent_prompt cmux "$REVIEW_WS_REF" "$MANAGER_CMD" || true
+      else
+        echo "   → Manager: sending $MANAGER_CMD..."
+        cmux_send_cmd "$REVIEW_WS_REF" "$MANAGER_CMD"
       fi
-      echo "   → Manager: sending $MANAGER_CMD..."
-      cmux_send_cmd "$REVIEW_WS_REF" "$MANAGER_CMD"
       # R2-F1: live launches record the manifest too.
       write_launch_manifest running "$LAUNCH_MODE" true "" "$REVIEW_WS_REF" ""
     fi
@@ -746,7 +761,7 @@ elif [ "$MUX" = "herdr" ]; then
 
       # Interactive agent: submit the loop through the agent surface.
       echo "   → Worker $i: sending $WORKER_CMD..."
-      prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+      send_agent_prompt herdr "$PANE_ID" "$WORKER_CMD" || true
     else
       # Shell-loop agent (codex/droid): type the command into the raw pane.
       echo "   → Worker $i: sending $WORKER_CMD..."
@@ -787,7 +802,7 @@ elif [ "$MUX" = "herdr" ]; then
       read -r -a MANAGER_ARGV <<< "$AGENT_LAUNCH_CMD"
       launch_herdr_agent "$(herdr_agent_name "manager-${PROJECT_NAME}")" "${MANAGER_ARGV[0]}" "$MANAGER_PANE_ID" "$AGENT_LAUNCH_CMD"
       echo "   → Manager: sending $MANAGER_CMD..."
-      prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+      send_agent_prompt herdr "$MANAGER_PANE_ID" "$MANAGER_CMD" || true
       # R2-F1: live launches record the manifest too.
       write_launch_manifest running "$LAUNCH_MODE" true "" "" "$MANAGER_PANE_ID"
     else

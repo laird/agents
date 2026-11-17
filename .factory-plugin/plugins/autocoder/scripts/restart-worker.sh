@@ -165,7 +165,12 @@ if [ "$MUX" = "tmux" ]; then
     [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
   else
-    tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
+    if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+      # Leave a consent or trust dialog alone rather than answer it (#253).
+      send_agent_prompt tmux "$PANE" "$WORKER_CMD" || true
+    else
+      tmux send-keys -t "$PANE" "$WORKER_CMD" C-m
+    fi
 
     # Confirm the relaunch actually took. A respawned pane that failed to start
     # the loop sits at a bare shell, and reporting success there hides a dead
@@ -236,6 +241,8 @@ elif [ "$MUX" = "cmux" ]; then
   if [ "$WORKER_STATE" = "paused" ]; then
     [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
+  elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+    send_agent_prompt cmux "$WS_REF" "$WORKER_CMD" || true
   else
     cmux send --workspace "$WS_REF" "$WORKER_CMD" >/dev/null
     cmux send-key --workspace "$WS_REF" enter >/dev/null
@@ -306,7 +313,7 @@ for ws in data.get('result', {}).get('workspaces', []):
     [ -n "$WORKER_NUM" ] && manifest_update_worker_state "$MANIFEST_PATH" "$WORKER_NUM" paused || true
     echo "   Paused worker relaunched; WORKER_CMD was not sent."
   elif [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
-    prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+    send_agent_prompt herdr "$PANE_ID" "$WORKER_CMD" || true
   else
     send_herdr_command "$PANE_ID" "$WORKER_CMD"
   fi

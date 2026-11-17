@@ -658,7 +658,13 @@ if [ "$MUX" = "tmux" ]; then
     echo "   Starting $WORKER_CMD in all agents (sequential)..."
     for i in $(seq 0 $((NUM_AGENTS - 1))); do
       echo "   → Agent $((i+1)): sending $WORKER_CMD..."
-      send_tmux_text_enter "${WORKER_TARGETS[$i]}" "$WORKER_CMD"
+      if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+        # The agent was just launched and may be showing a consent or trust
+        # dialog; send_agent_prompt leaves one alone instead of answering it.
+        send_agent_prompt tmux "${WORKER_TARGETS[$i]}" "$WORKER_CMD" || true
+      else
+        send_tmux_text_enter "${WORKER_TARGETS[$i]}" "$WORKER_CMD"
+      fi
 
       # Wait for THIS agent to fully process $WORKER_CMD before starting next
       echo "   → Agent $((i+1)): waiting for initialization..."
@@ -711,7 +717,9 @@ if [ "$MUX" = "tmux" ]; then
       else
         send_tmux_command "$MANAGER_TARGET" "$MANAGER_LAUNCH_CMD"
         sleep 5
-        send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
+        # Agents with no argv prompt: hold the prompt back if the agent is
+        # showing a consent or trust dialog rather than answer it with Enter.
+        send_agent_prompt tmux "$MANAGER_TARGET" "$MANAGER_CMD" || true
       fi
     else
       send_tmux_text_enter "$MANAGER_TARGET" "$MANAGER_CMD"
@@ -839,7 +847,11 @@ elif [ "$MUX" = "cmux" ]; then
     if [ "$PAUSED" = false ] && [ "$SEND_WORKER_LOOP" = true ]; then
       # Send worker command
       echo "   → Worker $i: sending $WORKER_CMD..."
-      send_cmux_command "$WS_REF" "$WORKER_CMD"
+      if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
+        send_agent_prompt cmux "$WS_REF" "$WORKER_CMD" || true
+      else
+        send_cmux_command "$WS_REF" "$WORKER_CMD"
+      fi
 
       echo "   → Worker $i: waiting for initialization..."
       sleep 10
@@ -899,7 +911,7 @@ elif [ "$MUX" = "cmux" ]; then
           send_cmux_command "$MANAGER_WS_REF" "$MANAGER_LAUNCH_CMD"
           sleep 5
           echo "   → Manager: sending $MANAGER_CMD..."
-          send_cmux_command "$MANAGER_WS_REF" "$MANAGER_CMD"
+          send_agent_prompt cmux "$MANAGER_WS_REF" "$MANAGER_CMD" || true
         fi
       else
         echo "   → Manager: sending $MANAGER_CMD..."
@@ -1035,7 +1047,7 @@ elif [ "$MUX" = "herdr" ]; then
       echo "   → Worker $i: sending $WORKER_CMD..."
       if [ "$WORKER_COMMAND_MODE" = "agent-input" ]; then
         # Agent surface: the pane ID resolves to the agent occupying it.
-        prompt_herdr_agent "$PANE_ID" "$WORKER_CMD" || send_herdr_command "$PANE_ID" "$WORKER_CMD"
+        send_agent_prompt herdr "$PANE_ID" "$WORKER_CMD" || true
       else
         send_herdr_command "$PANE_ID" "$WORKER_CMD"
         echo "   → Worker $i: waiting for initialization..."
@@ -1094,7 +1106,7 @@ elif [ "$MUX" = "herdr" ]; then
         else
           launch_herdr_agent "$(herdr_agent_name "manager-${PROJECT_NAME}")" "$AGENT" "$MANAGER_PANE_ID" "$MANAGER_LAUNCH_CMD"
           echo "   → Manager: sending $MANAGER_CMD..."
-          prompt_herdr_agent "$MANAGER_PANE_ID" "$MANAGER_CMD" || send_herdr_command "$MANAGER_PANE_ID" "$MANAGER_CMD"
+          send_agent_prompt herdr "$MANAGER_PANE_ID" "$MANAGER_CMD" || true
         fi
       else
         echo "   → Manager: sending $MANAGER_CMD..."
