@@ -53,7 +53,8 @@ _ct_worktree_holds() {
   local wt="$1" n="$2" ms="$3" gd rec_n="" rec_ms=""
   [ -n "$wt" ] && [ -d "$wt" ] || return 1
   gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  read -r rec_n rec_ms _ < "$gd/autocoder-worker-state" 2>/dev/null || return 1
+  [ -f "$gd/autocoder-worker-state" ] || return 1
+  read -r rec_n rec_ms _ < "$gd/autocoder-worker-state" || true   # last line may lack a newline
   [ "$rec_n" = "$n" ] && [ "$rec_ms" = "$ms" ]
 }
 
