@@ -164,7 +164,7 @@ if [ "$NUM_WORKERS" -gt 1 ]; then
   exit 0
 fi
 
-# ── Find next available worktree index ───────────────────────────────────────
+# ── Pick the new worker's number (and, with worktrees, its -wt-N dir) ─────────
 # Skip numbers the manifest already uses, and with worktrees existing -wt-N dirs (#233).
 WORKER_NUM=$(next_worker_number "$([ "$HAS_MANIFEST" = true ] && echo "$MANIFEST_PATH")" "$PROJECT_ROOT" "$USE_WORKTREES")
 if [ "$USE_WORKTREES" = true ]; then
