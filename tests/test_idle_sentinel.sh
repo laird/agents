@@ -762,6 +762,35 @@ EOF
   [ "$R" = "wake-failed:consent-dialog" ] \
     && ok "the consent dialog's 'No, exit' choice is detected on its own (#256)" \
     || bad "dialog choice wake: last_tick_result=$R, wanted wake-failed:consent-dialog"
+  # #258: a healthy manager whose output quotes the dialog higher up the screen
+  # (a transcript, a doc) is not stuck on it. Only the bottom lines count.
+  QUOTED=$'Notes on the consent dialog:\n  WARNING: Claude Code running in Bypass Permissions mode\n  ❯ 1. No, exit'
+  for i in 1 2 3 4 5 6 7 8 9 10; do QUOTED+=$'\n'"working on step $i"; done
+  QUOTED+=$'\n⏵⏵ bypass permissions on (shift+tab to cycle)'
+  R=$(consent_wake quoted "$QUOTED")
+  [ "$R" = "wake:duty" ] \
+    && ok "dialog text quoted above a running manager's last lines is not a consent dialog (#258)" \
+    || bad "quoted-dialog wake: last_tick_result=$R, wanted wake:duty (#258)"
+  R=$(consent_wake fulldialog "$(cat <<'DIALOG'
+╭────────────────────────────────────────────────────────────╮
+│ WARNING: Claude Code running in Bypass Permissions mode    │
+│                                                            │
+│ In Bypass Permissions mode, Claude Code will not ask for   │
+│ your approval before running potentially dangerous         │
+│ commands.                                                  │
+│                                                            │
+│ By proceeding, you accept all responsibility for actions   │
+│ taken while running in Bypass Permissions mode.            │
+│                                                            │
+│ ❯ 1. No, exit                                              │
+│   2. Yes, I accept                                         │
+╰────────────────────────────────────────────────────────────╯
+   Enter to confirm · Esc to exit
+DIALOG
+)")
+  [ "$R" = "wake-failed:consent-dialog" ] \
+    && ok "a full-size consent dialog at the bottom of the pane is still detected (#258)" \
+    || bad "full dialog wake: last_tick_result=$R, wanted wake-failed:consent-dialog (#258)"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 9. start-parallel-agents.sh --manager-only (U2): manifest shape
