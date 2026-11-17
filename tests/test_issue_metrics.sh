@@ -117,6 +117,87 @@ assert_not_contains "session comment omits the sessions row"      '| Agent sessi
 m1=$(printf '%s' "$agg" | head -1); m2=$(printf '%s' "$one" | head -1)
 [ "$m1" != "$m2" ] && ok "session and aggregate markers differ" || bad "session and aggregate markers differ"
 
+# ── Pre-landing review outcomes (#249), from fixture close comments ───────
+# Offline: --comments-dir stands in for the issue backend, so nothing reads the
+# real tracker.
+CM="$LOGS/comments"; mkdir -p "$CM"
+REC900='✅ **Issue Resolved**
+
+## Root Cause
+x
+
+## Review
+Rounds: 3 · Reviewer: subagents · Security review: not needed
+
+| # | Tag | Finding | Resolution |
+|---|---|---|---|
+| 1 | Important | a.sh:1 — `x | y` unquoted | Fixed in abc123 |
+| 2 | Important | b.sh:2 — wrong default | Answered: intentional, see #12 |
+| 3 | Pre-existing | c.sh:3 — old bug | Filed as #77 |
+| 4 | Nit | naming | Left: cosmetic |
+| 5 | Nit | typo | Fixed |
+
+Reviewed-HEAD: 0123456789abcdef0123456789abcdef01234567
+Verdict: pass
+
+| 9 | Important | text the merge job wrote after the record | Fixed |'
+SKIP901='## Review
+Skipped: `.autocoder.json` review=off (merge mode merge).
+
+Reviewed-HEAD: 0123456789abcdef0123456789abcdef01234567
+Verdict: pass'
+OLD902='## Review
+Rounds: 1
+
+| # | Tag | Finding | Resolution |
+|---|---|---|---|
+| 1 | Important | first attempt | Fixed |
+
+Verdict: pass'
+NEW902='## Review
+Rounds: 2
+
+| # | Tag | Finding | Resolution |
+|---|---|---|---|
+| 1 | Nit | second landing | Left: fine |
+
+Verdict: pass'
+jq -n --arg a 'claim' --arg b "$REC900" '{body: "issue body", comments: [{body: $a}, {body: $b}]}' > "$CM/900.json"
+jq -n --arg b "$SKIP901" '{body: "", comments: [{body: $b}]}' > "$CM/901.json"
+jq -n --arg a "$OLD902" --arg b "$NEW902" '{body: "", comments: [{body: $a}, {body: "reopened"}, {body: $b}]}' > "$CM/902.json"
+# A summary that has a "## Review" section of its own but no record in it.
+jq -n '{body: "## Review\nLooks good to me.\n\n| 1 | Important | not a record | Fixed |", comments: []}' > "$CM/903.json"
+echo '{not json' > "$CM/904.json"
+finished worker-444-fix-903-130000.jsonl 0.10 1000 1 10
+finished worker-444-fix-904-130000.jsonl 0.10 1000 1 10
+
+rv=$(run_py --comments-dir "$CM" --json 900 901 902 903 904 905)
+rvq() { printf '%s' "$rv" | jq -c "$1" 2>/dev/null; }
+[ "$(rvq '."900".review | [.status, .rounds, .verdict, .total]')" = '["reviewed",3,"pass",5]' ] \
+  && ok "a close comment's record gives rounds, verdict and the finding count" || bad "record 900" "$(rvq '."900".review')"
+[ "$(rvq '."900".review.findings')" = '{"important":2,"nit":2,"pre-existing":1,"other":0}' ] \
+  && ok "findings are counted by tag" || bad "tags" "$(rvq '."900".review.findings')"
+[ "$(rvq '."900".review.resolutions')" = '{"fixed":2,"answered":1,"filed":1,"left":1,"other":0}' ] \
+  && ok "findings are counted by resolution, and a | inside a finding is not a column" || bad "resolutions" "$(rvq '."900".review.resolutions')"
+[ "$(rvq '."901".review.status')" = '"skipped"' ] && ok "a Skipped: record is reported as skipped" || bad "skipped" "$(rvq '."901".review')"
+[ "$(rvq '."902".review | [.rounds, .findings.nit, .findings.important]')" = '[2,1,0]' ] \
+  && ok "the latest record on the issue wins" || bad "latest" "$(rvq '."902".review')"
+[ "$(rvq '."903".review.status')" = '"no record"' ] \
+  && ok "a ## Review section without Rounds/Verdict is not a record" || bad "no record 903" "$(rvq '."903".review')"
+[ "$(rvq '."904".review.status')" = '"unavailable"' ] \
+  && ok "unreadable comments are unavailable, not no record" || bad "unavailable" "$(rvq '."904".review')"
+[ "$(rvq '."905" | [.review.status, .sessions]')" = '["no record",0]' ] \
+  && ok "a named issue with no transcript and no comments is reported as no record" || bad "905" "$(rvq '."905"')"
+
+tbl=$(run_py --comments-dir "$CM" 900 901 905)
+assert_contains "the table shows the review outcome" \
+  '3 round(s); 2 Important, 2 Nit, 1 Pre-existing; 2 fixed, 1 answered, 1 filed, 1 left' "$tbl"
+assert_contains "the table shows a missing record as 'no record'" 'no record' "$tbl"
+md=$(run_py --comments-dir "$CM" --markdown 901)
+assert_contains "the comment body carries the review row" '| Pre-landing review | skipped |' "$md"
+plain=$(run_py --json 900)
+assert_not_contains "without --reviews nothing reads comments or adds a review" '"review"' "$plain"
+
 # ── Poster: renders without touching a backend ────────────────────────────
 if [ -x "$POST" ]; then
   dry=$(AUTOCODER_LOG_DIR="$LOGS" "$POST" 900 --dry-run 2>&1)

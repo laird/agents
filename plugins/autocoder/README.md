@@ -822,7 +822,7 @@ that into a per-issue record before `/tmp` loses it.
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `issue-metrics.py` | Aggregate transcripts per issue; table, `--json`, or a markdown comment body | `python3 ~/.claude/plugins/autocoder/scripts/issue-metrics.py [--since YYYY-MM-DD] [--json] [--markdown [ISSUE...]] [--session PATH --issue N --markdown]` |
+| `issue-metrics.py` | Aggregate transcripts per issue; table, `--json`, or a markdown comment body. `--reviews` adds each issue's pre-landing review outcome (rounds, findings by tag and resolution) from its close comment | `python3 ~/.claude/plugins/autocoder/scripts/issue-metrics.py [--since YYYY-MM-DD] [--json] [--markdown [ISSUE...]] [--reviews [--comments-dir DIR]] [--session PATH --issue N --markdown]` |
 | `post-issue-metrics.sh` | Post that comment on the issue via the configured backend | `bash ~/.claude/plugins/autocoder/scripts/post-issue-metrics.sh <issue> [--session PATH] [--dry-run] [--force]` |
 
 `claude-worker-loop.sh` runs the poster automatically after each fix session, passing

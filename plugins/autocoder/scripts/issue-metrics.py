@@ -35,6 +35,22 @@ USAGE
   issue-metrics.py --markdown 1455        # aggregate comment body for one issue
   issue-metrics.py --session PATH --markdown   # one session's comment body
   issue-metrics.py --since 2026-08-25     # filter by session end date
+  issue-metrics.py --reviews 167          # add the pre-landing review outcome
+
+REVIEW OUTCOMES (--reviews):
+  The merge job appends the Pre-Landing Review record (autocoder-review-N.md) to
+  the issue's close comment: a `Rounds: <n>` line, a `# | Tag | Finding |
+  Resolution` table, and `Verdict:`. --reviews reads each issue's comments
+  through the issue backend (or --comments-dir, a directory of `<N>.json`
+  issue_get documents, for offline use) and reports rounds, findings by tag
+  (Important / Nit / Pre-existing) and by resolution (fixed / answered / filed /
+  left). The latest record on the issue wins. Status is one of:
+    reviewed    a record with findings counted (possibly zero findings)
+    skipped     a `Skipped:` record (review turned off in .autocoder.json)
+    no record   the issue's comments hold no review record
+    unavailable the comments could not be read; never reported as "no record"
+  With --reviews, issues named on the command line are reported even when they
+  have no transcripts.
 """
 
 import argparse
@@ -42,6 +58,7 @@ import datetime as dt
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 
@@ -157,6 +174,120 @@ def collect(only=None, since=None, log_dir=None):
     return issues
 
 
+# ── Pre-landing review outcomes ──────────────────────────────────────────────
+REVIEW_HEAD_RE = re.compile(r"^#{2,3}\s+Review\s*$", re.M)
+ROUNDS_RE = re.compile(r"^Rounds:\s*(\d+)", re.M)
+VERDICT_RE = re.compile(r"^Verdict:\s*(\S+)", re.M)
+SKIPPED_RE = re.compile(r"^Skipped:", re.M)
+TAGS = ("important", "nit", "pre-existing")
+RESOLUTIONS = ("fixed", "answered", "filed", "left")
+
+
+def _tag(cell):
+    t = cell.strip().strip("*").strip().lower().replace(" ", "-")
+    if t == "preexisting":
+        t = "pre-existing"
+    return t if t in TAGS else "other"
+
+
+def _resolution(cell):
+    r = cell.strip().strip("*").strip().lower()
+    return next((k for k in RESOLUTIONS if r.startswith(k)), "other")
+
+
+def parse_review(text):
+    """The review record in one comment, or None when it holds none.
+
+    A record starts at a `## Review` heading and must carry a `Verdict:` line, a
+    `Rounds:` line or a `Skipped:` line, so an unrelated "## Review" section in a
+    summary is not read as one. When a comment holds several, the last counts."""
+    heads = list(REVIEW_HEAD_RE.finditer(text or ""))
+    for h in reversed(heads):
+        rec = text[h.end():]
+        nxt = REVIEW_HEAD_RE.search(rec)
+        if nxt:
+            rec = rec[:nxt.start()]
+        verdict = VERDICT_RE.search(rec)
+        if verdict:
+            rec = rec[:verdict.end()]      # the merge job's own text follows it
+        rounds = ROUNDS_RE.search(rec)
+        if SKIPPED_RE.search(rec):
+            return {"status": "skipped",
+                    "verdict": verdict.group(1) if verdict else None}
+        if not (verdict or rounds):
+            continue
+        findings = {k: 0 for k in TAGS + ("other",)}
+        resolutions = {k: 0 for k in RESOLUTIONS + ("other",)}
+        total = 0
+        for line in rec.splitlines():
+            line = line.strip()
+            if not line.startswith("|"):
+                continue
+            cells = line.strip("|").split("|")
+            # `| # | Tag | Finding | Resolution |`: a finding may hold a `|` of its
+            # own, so the tag is the second cell and the resolution the last.
+            if len(cells) < 4 or not cells[0].strip().isdigit():
+                continue
+            findings[_tag(cells[1])] += 1
+            resolutions[_resolution(cells[-1])] += 1
+            total += 1
+        return {"status": "reviewed",
+                "rounds": int(rounds.group(1)) if rounds else None,
+                "verdict": verdict.group(1) if verdict else None,
+                "findings": findings, "resolutions": resolutions, "total": total}
+    return None
+
+
+def review_of(issue_doc):
+    """The latest review record across an issue's body and comments."""
+    if issue_doc is None:
+        return {"status": "unavailable"}
+    texts = [issue_doc.get("body") or ""]
+    texts += [(c or {}).get("body") or "" for c in issue_doc.get("comments") or []]
+    for t in reversed(texts):
+        r = parse_review(t)
+        if r:
+            return r
+    return {"status": "no record"}
+
+
+def fetch_issue(issue, comments_dir=None):
+    """issue_get's document for <issue>, or None when it cannot be read."""
+    if comments_dir:
+        try:
+            with open(os.path.join(comments_dir, f"{issue}.json")) as fh:
+                return json.load(fh)
+        except FileNotFoundError:
+            return {"comments": []}        # a fixture issue with no comments
+        except (OSError, ValueError):
+            return None
+    fns = os.path.join(os.path.dirname(os.path.abspath(__file__)), "issue-fns.sh")
+    try:
+        r = subprocess.run(["bash", "-c", 'source "$1" >/dev/null 2>&1 && issue_get "$2"', "_", fns, str(issue)],
+                           capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def review_summary(rv):
+    """One line for the table and the comment."""
+    st = rv["status"]
+    if st != "reviewed":
+        return st
+    f, r = rv["findings"], rv["resolutions"]
+    rounds = rv["rounds"] if rv["rounds"] is not None else "?"
+    s = (f"{rounds} round(s); {f['important']} Important, {f['nit']} Nit, "
+         f"{f['pre-existing']} Pre-existing")
+    if f["other"]:
+        s += f", {f['other']} untagged"
+    s += (f"; {r['fixed']} fixed, {r['answered']} answered, {r['filed']} filed, "
+          f"{r['left']} left")
+    if r["other"]:
+        s += f", {r['other']} other"
+    return s
+
+
 def hms(ms):
     total = int(ms // 1000)
     h, rem = divmod(total, 3600)
@@ -192,6 +323,8 @@ def markdown(issue, a, session_file=None):
     rows.append(("Model", model))
     if a["first"] and a["last"]:
         rows.append(("Window", f"{a['first']:%Y-%m-%d %H:%M} → {a['last']:%H:%M}"))
+    if a.get("review"):
+        rows.append(("Pre-landing review", review_summary(a["review"])))
 
     out = [marker, "### Implementation metrics (autocoder swarm)", "",
            "| Metric | Value |", "| --- | --- |"]
@@ -219,7 +352,13 @@ def main():
     p.add_argument("--markdown", action="store_true")
     p.add_argument("--since", help="YYYY-MM-DD; drop sessions that ended earlier")
     p.add_argument("--log-dir", default=LOG_DIR)
+    p.add_argument("--reviews", action="store_true",
+                   help="add each issue's pre-landing review outcome (reads its comments)")
+    p.add_argument("--comments-dir",
+                   help="with --reviews: read <N>.json issue documents from here, not the backend")
     args = p.parse_args()
+    if args.comments_dir:
+        args.reviews = True
 
     if args.session:
         if not os.path.isfile(args.session):
@@ -240,6 +379,11 @@ def main():
 
     since = dt.date.fromisoformat(args.since) if args.since else None
     data = collect(set(args.issues) or None, since, args.log_dir)
+    if args.reviews:
+        for issue in args.issues:
+            data[issue]                  # named issues are reported without transcripts
+        for issue in data:
+            data[issue]["review"] = review_of(fetch_issue(issue, args.comments_dir))
     if not data:
         print("issue-metrics: no matching transcripts", file=sys.stderr)
         return 1
@@ -263,7 +407,8 @@ def main():
         return 0
 
     print(f"{'ISSUE':>7} {'SESS':>5} {'FLY':>4} {'WALL':>9} {'TURNS':>7} "
-          f"{'COST':>9} {'OUT_TOK':>10} {'CACHE_RD':>12}")
+          f"{'COST':>9} {'OUT_TOK':>10} {'CACHE_RD':>12}"
+          + ("  REVIEW" if args.reviews else ""))
     tc = tt = 0.0
     for issue in sorted(data):
         a = data[issue]
@@ -272,7 +417,8 @@ def main():
         print(f"{issue:>7} {a['sessions']:>5} {a['in_flight']:>4} "
               f"{hms(a['duration_ms']):>9} {a['num_turns']:>7,} "
               f"${a['cost_usd']:>8,.2f} {a['output_tokens']:>10,} "
-              f"{a['cache_read']:>12,}")
+              f"{a['cache_read']:>12,}"
+              + (f"  {review_summary(a['review'])}" if args.reviews else ""))
     print(f"{'TOTAL':>7} {'':>5} {'':>4} {hms(tt):>9} {'':>7} ${tc:>8,.2f}")
     return 0
 
