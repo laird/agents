@@ -81,7 +81,7 @@ jq -nRr --unbuffered --argjson win "$CTX_WINDOW" '
 
   def render:
     if .type == "__raw" then
-      (if (.line | length) == 0 then empty else .line end)
+      (if (.line | length) == 0 then empty else (.line | gsub("\u001f"; "")) end)
 
     elif .type == "system" and .subtype == "init" then
       "\(stamp) ▸ session \(.session_id[0:8]) · \(.model // "?") · \(.cwd)"
@@ -113,26 +113,35 @@ jq -nRr --unbuffered --argjson win "$CTX_WINDOW" '
   # each assistant request. A STATUS record (\u001f-prefixed) goes out only when
   # the whole-point percentage changes; the shell below renders it.
   foreach (inputs | (fromjson? // {type: "__raw", line: .})) as $e
-    ({pct: null, model: null, cwd: null, out: []};
+    ({pct: null, model: null, winmodel: null, cwd: null, out: []};
      .out = [$e | render]
      | if $e.type == "system" and $e.subtype == "init" then
-         .model = ($e.model // .model) | .cwd = ($e.cwd // .cwd)
+         # init carries the model as configured, e.g. `claude-opus-5-5[1m]`; the
+         # API echoes the bare id on assistant events, so the window is decided here.
+         .model = ($e.model // .model) | .winmodel = ($e.model // .winmodel) | .cwd = ($e.cwd // .cwd)
        else . end
-     | if $e.type == "assistant" and ($e.message.usage? | type) == "object" then
+     # Subagent (sidechain) requests have their own, smaller context: skip them, or
+     # the reading flips between the main session and each subagent.
+     | if $e.type == "assistant" and ($e.parent_tool_use_id == null)
+          and ($e.message.usage? | type) == "object" then
          ($e.message.usage
            | (.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)) as $used
-         | .model = ($e.message.model // .model)
-         | window(.model) as $w
+         | .model = (.model // $e.message.model)
+         | window(.winmodel // .model) as $w
          | ((100 * $used / $w) | floor) as $p
-         | if $used > 0 and $p != .pct then
+         # Over 100% means the window guess is wrong: say nothing rather than
+         # hand the monitor a number that would trigger a handoff.
+         | if $used > 0 and $p <= 100 and $p != .pct then
              .pct = $p
-             | .out += ["\u001fSTATUS\t\($p)\t\($w)\t\(.model // "")\t\(.cwd // "")"]
+             | .out += ["\u001fSTATUS\u001e\($p)\u001e\($w)\u001e\(.model // "")\u001e\(.cwd // "")"]
            else . end
        else . end;
      .out[])
 ' | while IFS= read -r line; do
-  if [[ "$line" == $'\x1f'STATUS$'\t'* ]]; then
-    IFS=$'\t' read -r _ pct win model cwd <<< "$line"
+  if [[ "$line" == $'\x1f'STATUS$'\x1e'* ]]; then
+    # \x1e, not tab: tab is IFS whitespace, so an empty field would collapse and
+    # shift the cwd into the model slot.
+    IFS=$'\x1e' read -r _ pct win model cwd <<< "$line"
     status_line "$pct" "$win" "$model" "$cwd"
   else
     printf '%s\n' "$line"

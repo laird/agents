@@ -44,10 +44,27 @@ OUT=$( { init claude-sonnet-5-5 "$WT"; asst 150000; asst 9000; } | bash "$R")
 eq "drop after compaction is shown" "ctx 5%" "$(printf '%s\n' "$OUT" | grep -oE 'ctx [0-9]+%' | tail -1)"
 
 # ── 4. Window: [1m] model, and the env override ─────────────────────────────
-OUT=$( { init 'claude-opus-5-5[1m]' "$WT"; asst 259000 'claude-opus-5-5[1m]'; } | bash "$R")
+# Real streams: `[1m]` only on init; assistant events echo the bare API id.
+OUT=$( { init 'claude-opus-5-5[1m]' "$WT"; asst 259000 'claude-opus-5-5'; } | bash "$R")
 eq "[1m] model reads of 1M" "── ctx 26% of 1M | Opus 5.5 | wt repo-wt-1 | branch feature/issue-7" "$(printf '%s\n' "$OUT" | status)"
 OUT=$( { init claude-sonnet-5-5 "$WT"; asst 499000; } | AUTOCODER_CTX_WINDOW=1000000 bash "$R")
 eq "AUTOCODER_CTX_WINDOW overrides" "ctx 50%" "$(printf '%s\n' "$OUT" | grep -oE 'ctx [0-9]+%' | tail -1)"
+
+# ── 4b. Over 100% means the window guess is wrong: say nothing ────────────
+OUT=$( { init claude-sonnet-5-5 "$WT"; asst 259000; } | bash "$R")
+eq "over-100% reading is not shown" "0" "$(printf '%s\n' "$OUT" | status | wc -l | tr -d ' ')"
+
+# ── 4c. Subagent (sidechain) requests do not move the reading ──────────────
+side='{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":1000},"content":[{"type":"text","text":"sub"}]}}'
+OUT=$( { init claude-sonnet-5-5 "$WT"; asst 49000; echo "$side"; asst 49100; } | bash "$R")
+eq "sidechain adds no status line" "1" "$(printf '%s\n' "$OUT" | status | wc -l | tr -d ' ')"
+eq "reading stays on the main session" "ctx 25%" "$(printf '%s\n' "$OUT" | grep -oE 'ctx [0-9]+%' | tail -1)"
+
+# ── 4d. Empty fields do not shift: no model anywhere, cwd from init ────────
+noinit_model=$(printf '{"type":"system","subtype":"init","session_id":"abcdef123456","cwd":"%s"}' "$WT")
+nomodel='{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":49000},"content":[]}}'
+OUT=$( { echo "$noinit_model"; echo "$nomodel"; } | bash "$R")
+eq "empty model leaves cwd in place" "── ctx 25% | wt repo-wt-1 | branch feature/issue-7" "$(printf '%s\n' "$OUT" | status)"
 
 # ── 5. Branch is read live, so it follows the worker ────────────────────────
 git -C "$WT" checkout -q -b feature/issue-8
