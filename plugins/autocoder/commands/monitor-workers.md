@@ -42,7 +42,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 
 1. **Check worktree status** — For each worker worktree, report branch, last commit time, and whether actively working
 2. **Read worker screens** — Use the multiplexer (tmux/cmux/herdr) to check if agents are idle or active
-3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove
+3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove (claims whose owner process is dead and that have no branch are released at once by `sweep-abandoned-claims.sh`)
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
 6. **Dispatch idle workers** — Send `/autocoder:fix <issue_number>` to idle workers via the multiplexer (tmux/cmux/herdr)
@@ -299,7 +299,20 @@ shows a completed final message (e.g. "✻ Cogitated for Xm") with no spinner an
 
 ### Step 4: Detect Stale "working" Labels
 
-For each issue with the "working" label, check if work is actually happening:
+**First, sweep provably abandoned claims (no waiting, no question).** A claim whose
+owner process is dead on this host, with no `issue-<N>` branch locally or on the
+remote, had no work in flight. Release it now rather than after the 60-minute rule:
+
+```bash
+bash "${SCRIPT_DIR}/sweep-abandoned-claims.sh"
+```
+
+It reads the owner from each `🔒 claim <host>-<pid> …` marker, posts a comment naming the
+dead owner, then releases the label. It leaves alone any claim it cannot judge from this
+host: another host's, one with a branch, one with a live owner, and one with no marker.
+`--dry-run` lists what it would release. Those left alone go through the checks below.
+
+For each remaining issue with the "working" label, check if work is actually happening:
 
 1. **Check worktree match**: Is there a worktree with a branch containing the issue number? If so, has it had commits in the last 60 minutes?
 2. **Check screen**: Can you find an agent actively working on this issue via the multiplexer screen read (tmux/cmux/herdr)?
