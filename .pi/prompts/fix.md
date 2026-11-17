@@ -1358,7 +1358,7 @@ if [ "$LANDING_MODE" = "pr" ]; then
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   gh pr create \
     --base "$INTEGRATION_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
@@ -1388,7 +1388,7 @@ else
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "feature/issue-${ISSUE_NUM}" \
@@ -1492,7 +1492,7 @@ if [ "$LANDING_MODE" = "pr" ]; then
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   gh pr create \
     --base "$INTEGRATION_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
@@ -1522,7 +1522,7 @@ else
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "feature/issue-${ISSUE_NUM}" \
@@ -1939,7 +1939,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     # High-risk diff (#165): open a pull request instead of merging, and stop.
     DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
       --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
     gh pr create \
       --base "${INTEGRATION_BRANCH}" \
       --head "enhancement/issue-${ENHANCE_NUM}-auto" \
@@ -1963,7 +1963,7 @@ $(cat "$REVIEW_FILE")
   # with unfilled slots is never handed to the merge job.
   bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
     --feature "enhancement/issue-${ENHANCE_NUM}-auto" \

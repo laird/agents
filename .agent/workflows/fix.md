@@ -1241,7 +1241,7 @@ fi
 # merge below the diff is gone. A body with unfilled slots is never published (#196).
 CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
   --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}") \
-  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
 
 # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
 git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
@@ -1278,7 +1278,7 @@ if [ "$LANDING_MODE" = "pr" ]; then
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   gh pr create \
     --base "$PARENT_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
@@ -1441,7 +1441,7 @@ fi
 # merge below the diff is gone. A body with unfilled slots is never published (#196).
 CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
   --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}") \
-  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+  || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
 
 # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
 git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
@@ -1478,7 +1478,7 @@ if [ "$LANDING_MODE" = "pr" ]; then
   # "Review Digest" above); a body with unfilled slots is never published.
   DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
     --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   gh pr create \
     --base "$PARENT_BRANCH" \
     --head "feature/issue-${ISSUE_NUM}" \
@@ -1926,7 +1926,7 @@ Co-Authored-By: Antigravity <noreply@antigravity.ai>"
   # merge below the diff is gone. A body with unfilled slots is never published (#196).
   CLOSE_DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
     --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}") \
-    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
 
   # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
   git fetch -q 2>/dev/null || true   # judge the diff against the remote parent, not a stale local copy
@@ -1962,7 +1962,7 @@ Co-Authored-By: Antigravity <noreply@antigravity.ai>"
     # High-risk diff (#165): open a pull request instead of merging, and stop.
     DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
       --base "$PARENT_BRANCH" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots — fill $DIGEST_SECTIONS and re-run"; exit 1; }
+      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
     gh pr create \
       --base "${PARENT_BRANCH}" \
       --head "enhancement/issue-${ENHANCE_NUM}-auto" \

@@ -168,7 +168,9 @@ else
   RISK_ERR=$(mktemp "${TMPDIR:-/tmp}/review-digest-risk.XXXXXX") || RISK_ERR=/dev/null
   if TIER=$(bash "$(dirname "${BASH_SOURCE[0]}")/landing-mode.sh" --mode merge --base "$BASE" --head "$HEAD_REF" 2>"$RISK_ERR"); then
     if [ "$TIER" = pr ]; then
-      _hits=$(sed -n 's/^  \(.*\)  (risk\.high: .*)$/`\1`/p' "$RISK_ERR" 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+      _hits=$(sed -n 's/^  \(.*\)  (risk\.high: .*)$/\1/p' "$RISK_ERR" 2>/dev/null | head -20 | tr -d '`' | sed 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g')
+      # Paths lose their backticks so none can close the code span early and turn the
+      # rest into live markdown (an @mention, a link); the list stops at 20.
       RISK_LINE="**Risk**: high — touches \`risk.high\` paths in .autocoder.json (#165)${_hits:+: ${_hits}}."
     else
       RISK_LINE="**Risk**: standard — no \`risk.high\` path in .autocoder.json (#165) touched."
@@ -192,7 +194,7 @@ else
   else
     REVERT_LINE="\`git revert --no-edit ${_first:0:12}^..${_last:0:12}\` (the branch's ${NCOMMITS} commits, newest first)."
   fi
-  REVERT_LINE="${REVERT_LINE} If they were rebased on landing, revert the landed commits instead (named below when the merge job landed them)."
+  REVERT_LINE="${REVERT_LINE} A landing that rebases changes these SHAs: then revert the landed commits, which the merge job names below."
 fi
 
 # Verification must name a command ("$ ...") and show output after it.
