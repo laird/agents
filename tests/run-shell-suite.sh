@@ -22,6 +22,9 @@ cd "$ROOT" || exit 1
 SUITE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-merge-events.XXXXXX")
 export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
 trap 'rm -f "$SUITE_EVENTS"' EXIT
+# #197's random spot-check sampling makes exact-label assertions flaky (#225). Off by
+# default for the suite; tests that exercise spot checks set or unset it themselves.
+export AUTOCODER_SPOT_CHECK_RATE="${AUTOCODER_SPOT_CHECK_RATE:-0}"
 
 passed=0
 failed=0

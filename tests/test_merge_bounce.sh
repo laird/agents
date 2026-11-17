@@ -21,6 +21,10 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# #197 samples merge-mode work for a spot check (rate 0.10 by default), which adds a
+# `spot-check` label at random and breaks exact-label assertions (#225). Pin it off;
+# the spot-check tests set their own rates.
+export AUTOCODER_SPOT_CHECK_RATE=0
 export ISSUE_SOURCE=file
 export AUTOCODER_TMP="$TMP/tmp"; mkdir -p "$AUTOCODER_TMP"
 export ISSUE_DIR_PATH="$TMP/issues"
