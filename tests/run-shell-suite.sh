@@ -12,6 +12,9 @@
 #   Deliberately does NOT stop at the first failure: the regression report is
 #   more useful when it names every failing suite, not just the earliest one.
 #
+# Arguments, optional: test file names (test_x.sh or tests/test_x.sh) to run instead of
+# all of them. The merge gate's flaky re-run uses this (AUTOCODER_GATE_RERUN_CMD, #191).
+#
 # Exit status: 0 when every test passed, 1 otherwise.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
@@ -30,7 +33,20 @@ passed=0
 failed=0
 failed_names=""
 
-for t in tests/test_*.sh; do
+if [ "$#" -gt 0 ]; then
+    tests=()
+    for a in "$@"; do
+        t="tests/$(basename "$a")"
+        case "$(basename "$a")" in
+            test_*.sh) [ -f "$t" ] && tests+=("$t") || { echo "FAIL  $(basename "$a") (no such test)"; failed=$((failed + 1)); failed_names="$failed_names $(basename "$a")"; } ;;
+            *) echo "run-shell-suite: not a test file: $a" >&2; exit 2 ;;
+        esac
+    done
+else
+    tests=(tests/test_*.sh)
+fi
+
+for t in "${tests[@]}"; do
     [ -f "$t" ] || continue
     name="$(basename "$t")"
     if bash "$t" >/tmp/shell-suite-$$.log 2>&1; then

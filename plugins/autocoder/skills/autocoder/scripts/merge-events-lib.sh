@@ -17,7 +17,10 @@
 #    "duration_s": <n>, "landed": "<sha>"|null, "push_retries": <n>, "exit": <code>|null,
 #    "reason": "<text>"}
 #   One "attempt" line per merge job (its final outcome) plus one "push-retry" line per
-#   rejected push. Documented for readers (agents-ui) in scripts/README.md.
+#   rejected push. A gate that sees a test fail and then pass on the same tree adds a
+#   "flaky" line (#191): {"ts", "event": "flaky", "outcome": "flaky", "repo", "issue",
+#   "branch", "tree", "test", "first_failure_excerpt"}. flaky-report.sh summarises them.
+#   Documented for readers (agents-ui) in scripts/README.md.
 #
 # ROTATION: lines older than AUTOCODER_MERGE_EVENTS_DAYS (default 30) are dropped when
 #   the file passes 1 MiB. Rotators serialise on a lock file; appenders do not take it, so
@@ -53,9 +56,10 @@ for a in args:
         ev[k] = v in ("1", "true", "yes")
     else:
         ev[k] = v if v != "" else None
-for k in ("files", "gate_tests_failed"):
-    ev.setdefault(k, [])
-ev.setdefault("escalated", False)
+if ev.get("event") != "flaky":
+    for k in ("files", "gate_tests_failed"):
+        ev.setdefault(k, [])
+    ev.setdefault("escalated", False)
 line = json.dumps(ev, separators=(",", ":")) + "\n"
 # One write() of an O_APPEND line: concurrent jobs do not interleave.
 # 0600 and O_NOFOLLOW: the log names branches, files and failure reasons.

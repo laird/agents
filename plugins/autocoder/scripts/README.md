@@ -467,3 +467,29 @@ After a day, the post-merge sentinel archives a finished job's current log as th
 numbered attempt instead of deleting it. Archived attempts are pruned after
 `AUTOCODER_MERGE_ARCHIVE_DAYS` (default 14). `tests/run-shell-suite.sh`
 points the file at a temp path, so test runs never write to the real one.
+
+### Flaky tests: same tree fails, then passes (#191)
+
+A gate result is cached per `<tree, command>` (`gate-cache-fns.sh`), and a fail record also
+keeps the failing test names and an excerpt of each failure. When the gate runs a tree it
+has already seen fail and a test named in that record now passes, nothing changed but the
+run, so the test is flaky. The merge job appends one `flaky` line per such test:
+
+```json
+{"ts":"2026-11-17T09:12:03Z","event":"flaky","outcome":"flaky","repo":"agents-5ea0ca80",
+ "issue":191,"branch":"feature/issue-191","tree":"<tree sha>","test":"test_x.sh",
+ "first_failure_excerpt":"FAIL  test_x.sh\n      | ..."}
+```
+
+`test` is null when the earlier record named no test (the gate as a whole flipped).
+
+Set `AUTOCODER_GATE_FLAKE_RERUN=1` in the merge job's environment to re-run a failing gate
+once on the same tree before calling it red. A clean re-run records the sightings and the
+branch lands; a second failure is a real failure. By default the whole command re-runs.
+`AUTOCODER_GATE_RERUN_CMD` re-runs only the failed tests: `{tests}` is replaced by their
+names, e.g. `bash tests/run-shell-suite.sh {tests}` (the suite runner takes test names).
+Names with characters outside `[A-Za-z0-9._/:+-]` are never put in a command; the whole
+command re-runs instead.
+
+`flaky-report.sh [--days N] [--repo ID] [--json]` lists the tests seen flaky in the last N
+days (default 14), most sightings first, with the issues whose gates saw them.

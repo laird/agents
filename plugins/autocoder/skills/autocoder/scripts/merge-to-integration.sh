@@ -307,6 +307,12 @@ _emit_attempt_event() {
     files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
     landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON"
 }
+# A test that failed on a tree and then passed on the same tree (#191): gate-cache-fns.sh
+# calls this from gate_cache_run, and it becomes a "flaky" line in merge-events.jsonl.
+gate_cache_on_flaky() {  # <tree> <test> <first-failure excerpt>
+  merge_event event=flaky outcome=flaky repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
+    branch="${FEATURE:-}" tree="$1" test="$2" first_failure_excerpt="$3"
+}
 # Set only immediately before the one _fail that bounces a gate failure (#207).
 GATE_BOUNCE=0
 
@@ -339,12 +345,9 @@ if hits:
 # Names of the suites the latest integrated-tree gate reported failing, one per line:
 # run-shell-suite.sh's "Failing suites:" line, else "FAIL <name>" lines.
 _failing_suites() {
-  local f="$GATE_LAST" names
+  local f="$GATE_LAST"
   [ -s "$f" ] || f="$GATE_LOG"
-  [ -s "$f" ] || return 0
-  names=$(sed -n 's/^Failing suites://p' "$f" | tr ' ' '\n')
-  [ -n "$names" ] || names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
-  printf '%s\n' "$names" | sed '/^$/d' | sort -u
+  gate_log_failed_tests "$f"
 }
 # _bounce <conflict|gate> <newline-separated items> <detail>. Returns 1, changing
 # nothing, when the newest earlier bounce has the same kind and sig: the caller escalates.
