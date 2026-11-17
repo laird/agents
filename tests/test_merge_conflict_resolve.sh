@@ -132,7 +132,7 @@ export AUTOCODER_CONFLICT_RESOLVER='for f in $AUTOCODER_CONFLICT_FILES; do echo 
 BEFORE=$(origin_tip)
 OUT=$(run_own '! grep -q broken src/a.sh'); RC=$?
 [ "$RC" -eq 2 ] && [ "$(origin_tip)" = "$BEFORE" ] && ok "red resolution: gate fails, nothing pushed" || bad "red resolution: rc=$RC: $OUT"
-[ "$(issue_bucket)" = working ] && issue_body | grep -q 'Conflict auto-resolved' \
+[ "$(issue_bucket)" = working ] && issue_body | grep -q 'Resolved automatically in this run, but nothing landed' \
   && ok "red resolution: bounced with the resolution noted" || bad "red resolution state: $(issue_bucket): $(issue_body)"
 
 # ── 6. resolver declines: bounce with the attempted diff attached ──────────
@@ -158,6 +158,21 @@ sibling_edit src/a.sh=sibling
 export AUTOCODER_CONFLICT_RESOLVER='echo x > src/a.sh; git add -A; git -c user.email=r@x -c user.name=R commit -q -m sneaky'
 OUT=$(run_own); RC=$?
 [ "$RC" -eq 1 ] && issue_body | grep -q 'moved HEAD or ended the rebase' && ok "HEAD moved: refused" || bad "HEAD moved: rc=$RC: $(issue_body)"
+
+# ── 8b. resolver edits a file it was not given (tracked or new): refused ───
+setup
+sibling_edit src/a.sh=sibling
+export AUTOCODER_CONFLICT_RESOLVER='echo merged > src/a.sh; echo extra > src/b.sh'
+OUT=$(run_own); RC=$?
+[ "$RC" -eq 1 ] && issue_body | grep -q 'changed files it was not given: src/b.sh' && [ "$(origin_show src/a.sh)" = sibling ] \
+  && ok "stray tracked edit: refused, nothing landed" || bad "stray tracked: rc=$RC: $(issue_body)"
+setup
+sibling_edit src/a.sh=sibling
+export AUTOCODER_CONFLICT_RESOLVER='echo merged > src/a.sh; echo helper > src/helper.sh'
+OUT=$(run_own); RC=$?
+[ "$RC" -eq 1 ] && issue_body | grep -q 'changed files it was not given: src/helper.sh' \
+  && ok "stray new file: refused (it would be gated but not pushed)" || bad "stray new: rc=$RC: $(issue_body)"
+issue_body | grep -q 'Resolved automatically\|Conflict auto-resolved' && bad "refused attempt claims a resolution" || ok "refused attempt claims no resolution"
 
 # ── 9. resolver times out ───────────────────────────────────────────────────
 setup

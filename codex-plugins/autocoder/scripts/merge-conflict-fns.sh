@@ -161,6 +161,24 @@ _cf_timeout_bin() {
   fi
 }
 
+# _cf_strays <listed files>: paths the resolver changed that are not in the list, one per
+# line; rc 0 when there are any. Before it runs, every non-conflicted path matches the
+# index (the rebase staged its clean merges), so a change it made shows up as a work-tree
+# difference from the index or as a new untracked file.
+_cf_strays() {
+  local out
+  out=$( { git diff --name-only -z; git ls-files -z --others --exclude-standard; } 2>/dev/null \
+    | python3 -c '
+import sys
+allowed = set(sys.argv[1].splitlines())
+for p in sorted({p for p in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0") if p}):
+    if p not in allowed:
+        print(p)
+' "$1")
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
 # Run the resolver once over the files still conflicted. rc 0 when every one is resolved.
 _cf_run_resolver() {
   local files="$1" cmd ctx head_before rc=0 tb f left="" attempt
@@ -173,10 +191,17 @@ _cf_run_resolver() {
   _cf_write_context "$ctx" "$files"
   head_before=$(git rev-parse HEAD)
   tb=$(_cf_timeout_bin)
-  echo "🤝 Conflict in $(printf '%s' "$files" | wc -l | tr -d ' ') file(s); asking the resolver (${CF_RESOLVER}, up to ${CF_TIMEOUT}s)."
+  if [ -z "$tb" ]; then
+    # Unbounded would hold the merge-queue lock for as long as the resolver likes.
+    CONFLICT_ATTEMPT_REASON="no timeout(1)/gtimeout(1) to bound the resolver, so it was not run"
+    echo "❌ Conflict not resolved: ${CONFLICT_ATTEMPT_REASON}."
+    rm -f "$ctx"
+    return 1
+  fi
+  echo "🤝 Conflict in $(printf '%s\n' "$files" | grep -c .) file(s); asking the resolver (${CF_RESOLVER}, up to ${CF_TIMEOUT}s)."
   AUTOCODER_CONFLICT_FILES="$files" AUTOCODER_CONFLICT_CONTEXT="$ctx" \
   AUTOCODER_INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-}" AUTOCODER_ISSUE="${ISSUE_NUM:-}" \
-    ${tb:+$tb -k 10 "$CF_TIMEOUT"} bash -c "$cmd" </dev/null || rc=$?
+    "$tb" -k 10 "$CF_TIMEOUT" bash -c "$cmd" </dev/null || rc=$?
   rm -f "$ctx"
 
   # Keep what it did, whatever the verdict: a refused attempt goes into the comment.
@@ -193,6 +218,10 @@ _cf_run_resolver() {
     CONFLICT_ATTEMPT_REASON="the resolver declined (exit ${rc})"
   elif [ "$(git rev-parse HEAD)" != "$head_before" ] || ! _cf_rebasing; then
     CONFLICT_ATTEMPT_REASON="the resolver moved HEAD or ended the rebase itself"
+  elif _cf_strays "$files" > /dev/null; then
+    # Anything else it touched would be gated but not committed (an untracked file), or
+    # would stop the rebase (a tracked one): either way not what lands.
+    CONFLICT_ATTEMPT_REASON="the resolver changed files it was not given: $(_cf_strays "$files" | paste -sd, -)"
   else
     while IFS= read -r f; do
       [ -n "$f" ] || continue
@@ -245,24 +274,36 @@ conflict_try_resolve() {
       [ "$CF_RESOLVER" != off ] && [ "$CONFLICT_RESOLVER_TRIED" -eq 0 ] || return 1
       _cf_run_resolver "$union_left" || return 1
     fi
-    # The resolved stop may leave nothing to commit (both sides made the same change).
     if ! GIT_EDITOR=true git "${_GIT_PINNED[@]}" rebase --continue >/dev/null 2>&1; then
-      if _cf_rebasing && [ -z "$(_cf_unmerged)" ] \
-         && git diff --cached --quiet; then
-        git "${_GIT_PINNED[@]}" rebase --skip >/dev/null 2>&1 || true
+      # The resolved stop may leave nothing to commit (both sides made the same change).
+      if _cf_rebasing && [ -z "$(_cf_unmerged)" ] && git diff --cached --quiet \
+         && GIT_EDITOR=true git "${_GIT_PINNED[@]}" rebase --skip >/dev/null 2>&1; then
+        continue
       fi
+      CONFLICT_ATTEMPT_REASON="git rebase --continue failed after the conflict was resolved"
+      echo "❌ ${CONFLICT_ATTEMPT_REASON}."
+      return 1
     fi
   done
   return 0
 }
 
-# conflict_resolution_note: markdown for a comment. Empty when nothing was attempted.
+# conflict_resolution_note [landed|unlanded]: markdown for a comment. Empty when nothing
+# was attempted. "unlanded" (the default) is for a bounce or escalation: whatever was
+# resolved did not land.
 conflict_resolution_note() {
   local note="" diff
   if [ -n "$CONFLICT_RESOLVED_FILES" ]; then
-    note="
+    if [ "${1:-unlanded}" = landed ]; then
+      note="
 
-**Conflict auto-resolved** (#164, ${CONFLICT_RESOLVED_BY}) in the merge job's worktree:
+**Conflict auto-resolved** (#164, ${CONFLICT_RESOLVED_BY}) in the merge job's worktree:"
+    else
+      note="
+
+**Resolved automatically in this run, but nothing landed** (#164, ${CONFLICT_RESOLVED_BY}):"
+    fi
+    note="${note}
 $(printf '%s\n' "$CONFLICT_RESOLVED_FILES" | sed 's/^/- `/; s/$/`/')"
   fi
   if [ -n "$CONFLICT_ATTEMPT_REASON" ]; then

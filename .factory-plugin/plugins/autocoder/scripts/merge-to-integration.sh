@@ -510,7 +510,7 @@ _close_or_park() {
   if [ -n "$CONFLICT_RESOLVED_FILES" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
     rebase_note="
 
-**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` and landed as \`${landed}\`. The rebase hit a conflict that the merge job resolved itself; the gate passed on the resolved tree, but the resolution was not part of the reviewed HEAD.$(conflict_resolution_note)"
+**Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` and landed as \`${landed}\`. The rebase hit a conflict that the merge job resolved itself; the gate passed on the resolved tree, but the resolution was not part of the reviewed HEAD.$(conflict_resolution_note landed)"
   elif [ "$landed" != "$FEATURE_SHA" ] && [ "${PUBLISH_BASIS:-}" != already-landed ]; then
     rebase_note="
 
