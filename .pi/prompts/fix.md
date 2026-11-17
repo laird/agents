@@ -1139,6 +1139,30 @@ REVIEW
 printf '\nReviewed-HEAD: %s\nVerdict: pass\n' "$(git rev-parse HEAD)" >> "$REVIEW_FILE"
 ```
 
+## Verify Before Claiming (MANDATORY)
+
+Verification is a required step, not an optional skill (#170). Before you fill
+the Review Digest below, on the final committed `HEAD`:
+
+1. Run `$TEST_COMMAND` (and any targeted tests for the change) and read the
+   actual result. A suite you did not run, or whose summary you did not read,
+   is not evidence.
+2. Copy the exact command and its result lines into the digest's
+   **Verification** section: the command on a line starting with `$ `, its
+   output on the lines after it. The renderer refuses a Verification section
+   without both, for any change that has a diff.
+3. Anything the tests do not exercise goes under **Not verified / confidence**.
+
+`superpowers:verification-before-completion`, when installed, helps with this
+step; it does not replace it.
+
+The digest also carries two lines you do not write: **Risk** (the tier from
+`landing-mode.sh`, #165) and **How to revert** (`git revert` over the branch's
+commits, or the merge revert for a PR; the merge job adds the exact landed range
+to its close comment). If undoing the change takes more than a revert (a data
+migration, a config rollout), add a `## How to revert` section to the sections
+file; it is printed after the computed line.
+
 ## Review Digest (MANDATORY)
 
 Every place this command publishes work (a PR body in `pr` mode, the merge
@@ -1851,8 +1875,8 @@ TEST_OUTPUT=$(cat /tmp/test-output.txt 2>/dev/null || echo "Test output not capt
 if [ $TEST_EXIT_CODE -eq 0 ]; then
   echo "✅ All tests pass!"
 
-  # Use verification skill before claiming complete
-  # Use Skill tool: superpowers:verification-before-completion
+  # Verify Before Claiming (MANDATORY, #170): the command and its result go in the
+  # digest's Verification section. superpowers:verification-before-completion helps.
 
   # Commit changes
   git add -A

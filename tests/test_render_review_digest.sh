@@ -4,7 +4,9 @@
 # A filled body renders and exits 0; an unfilled slot or the legacy
 # "[Detailed explanation" placeholder exits 1; ordinary <...> / [...] text passes;
 # Size is computed by the script, with parity mirrors counted on their own line;
-# net growth asks for a justification; --size-only reports REVIEW FIT.
+# net growth asks for a justification; --size-only reports REVIEW FIT; Risk and
+# How to revert are computed, and Verification must show a command and its
+# result (#170).
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -131,6 +133,53 @@ sed -i 's/$/\r/; s/^## Intent\r$/## Intent   \r/' "$TMP/sections.md"
 OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>/dev/null); RC=$?
 [ "$RC" -eq 0 ] && ok "CRLF + trailing-space headings: exits 0" || bad "CRLF sections exited $RC"
 lacks "CRLF: no carriage returns in the body" "$OUT" $'\r'
+
+# ── 10. Evidence: Risk, How to revert, a command in Verification (#170) ──
+filled; printf '\n## Why net growth\nFixture data.\n' >> "$TMP/sections.md"
+FIRST=$(git rev-list --reverse "$BASE"..HEAD | head -1); LAST=$(git rev-parse HEAD)
+OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>"$TMP/err"); RC=$?
+[ "$RC" -eq 0 ] && ok "evidence: filled body exits 0" || { bad "evidence: exited $RC"; cat "$TMP/err"; }
+has "standard risk without risk.high" "$OUT" "**Risk**: standard"
+has "close comment reverts the branch's commits" "$OUT" "git revert --no-edit ${FIRST:0:12}^..${LAST:0:12}"
+OUT=$(bash "$R" --issue 42 --base "$BASE" --head "$FIRST" --sections "$TMP/sections.md" 2>/dev/null)
+has "one commit: revert names it" "$OUT" "git revert --no-edit ${FIRST:0:12}\` (the one commit"
+OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" --pr 2>/dev/null)
+has "PR body reverts the merge" "$OUT" "git revert -m 1 <merge commit>"
+printf '\n## How to revert\nAlso restore the old config: `cp a b`.\n' >> "$TMP/sections.md"
+OUT=$(bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" 2>/dev/null)
+REV=$(printf '%s\n' "$OUT" | awk '/^## How to revert$/{on=1;next} /^## /{on=0} on')
+has "extra revert steps follow the computed line" "$REV" "Also restore the old config"
+has "the computed line stays" "$REV" "git revert --no-edit"
+
+# High risk: the tiers are read from the base.
+g checkout -q master; printf '{"risk":{"high":["big.txt"]}}\n' > .autocoder.json; g add .autocoder.json; g commit -qm tiers
+HB=$(git rev-parse HEAD); g checkout -q feature
+OUT=$(bash "$R" --issue 42 --base "$HB" --sections "$TMP/sections.md" 2>/dev/null)
+has "a risk.high path makes it high, naming the path" "$OUT" '**Risk**: high — touches `risk.high` paths in .autocoder.json (#165): `big.txt`.'
+printf '{"risk":{"high":"nope"}}\n' > "$TMP/badcfg"; g checkout -q master; cp "$TMP/badcfg" .autocoder.json; g commit -qam badtiers
+HB2=$(git rev-parse HEAD); g checkout -q feature
+OUT=$(bash "$R" --issue 42 --base "$HB2" --sections "$TMP/sections.md" 2>/dev/null)
+has "a malformed risk setting is unknown, not standard" "$OUT" "**Risk**: unknown"
+
+# Verification needs a "$ command" and its output.
+filled; printf '\n## Why net growth\nFixture data.\n' >> "$TMP/sections.md"
+sed -i '/^\$ bash tests\/test_x.sh$/d' "$TMP/sections.md"
+bash "$R" --issue 42 --base "$BASE" --sections "$TMP/sections.md" >/dev/null 2>"$TMP/err"; RC=$?
+[ "$RC" -eq 1 ] && ok "Verification without a command exits 1" || bad "no command exited $RC"
+grep -q 'starting with "\$ "' "$TMP/err" && ok "stderr says what Verification needs" || bad "stderr: $(cat "$TMP/err")"
+printf '## Intent\nx\n\n## Where to look\nx\n\n## Verification\n$ bash tests/run.sh\n\n## Not verified / confidence\nx\n\n## Why net growth\nx\n' > "$TMP/noout.md"
+bash "$R" --issue 42 --base "$BASE" --sections "$TMP/noout.md" >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 1 ] && ok "a command with no result exits 1" || bad "command without output exited $RC"
+printf '## Intent\nx\n\n## Where to look\nx\n\n## Verification\n```\n$ bash tests/run.sh\nTests: 0 failed\n```\n\n## Not verified / confidence\nx\n\n## Why net growth\nx\n' > "$TMP/fenced.md"
+bash "$R" --issue 42 --base "$BASE" --sections "$TMP/fenced.md" >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "a fenced command and result pass" || bad "fenced evidence exited $RC"
+
+# No diff of its own (a decomposed parent's rollup): no command needed, nothing to revert.
+printf '## Intent\nx\n\n## Where to look\nx\n\n## Verification\nEvery sub-task is CLOSED.\n\n## Not verified / confidence\nx\n' > "$TMP/rollup.md"
+OUT=$(bash "$R" --issue 42 --base HEAD --sections "$TMP/rollup.md" 2>"$TMP/err"); RC=$?
+[ "$RC" -eq 0 ] && ok "empty diff: no command required" || { bad "rollup exited $RC"; cat "$TMP/err"; }
+has "empty diff: risk none" "$OUT" "**Risk**: none"
+has "empty diff: nothing to revert" "$OUT" "Nothing to revert here"
 
 # ── 9. Bad arguments ─────────────────────────────────────────────────────
 bash "$R" --issue 42 --base no-such-ref >/dev/null 2>&1; RC=$?

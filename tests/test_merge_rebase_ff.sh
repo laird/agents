@@ -3,7 +3,8 @@
 #   - a branch behind master by unrelated commits lands as a fast-forward: linear history,
 #     no merge commit, the feature's commits replayed in order on the old tip;
 #   - a lost push race re-syncs by rebasing again: still linear, no "push retry" commit;
-#   - the close comment names the rebased landed commit and the reviewed pre-rebase HEAD;
+#   - the close comment names the rebased landed commit and the reviewed pre-rebase HEAD,
+#     and the exact range that reverts the landing (#170);
 #   - the feature branch on origin is deleted with a lease on the pre-rebase SHA, and kept
 #     when it moved during the job;
 #   - a branch whose changes are already on master under other SHAs lands nothing;
@@ -82,6 +83,8 @@ O rev-parse -q --verify "refs/autocoder/tips/master/${LANDED}-${ISSUE}" >/dev/nu
 grep -q "Landed by rebase" "$(issue_file)" && grep -q "$FEATURE_SHA" "$(issue_file)" && grep -q "$LANDED" "$(issue_file)" \
   && ok "close comment says landed by rebase and names both commits" || bad "close comment: $(cat "$(issue_file)")"
 O rev-parse -q --verify refs/heads/feature/code >/dev/null && bad "feature branch still on origin" || ok "feature branch deleted (lease on the pre-rebase SHA)"
+grep -qF "**How to revert what landed**: \`git revert --no-edit ${OLD_TIP}..${LANDED}\` (2 commits" "$(issue_file)" \
+  && ok "close comment names the exact landed range to revert (#170)" || bad "revert line: $(grep -i revert "$(issue_file)")"
 echo "$OUT" | grep -q "Rebased feature/code" && ok "log names the rebase" || bad "no rebase line: $OUT"
 
 # ── 2. lost push race: re-sync by rebase, still linear, no push-retry commit ──
@@ -97,6 +100,9 @@ O log --format=%s master | grep -q "push retry" && bad "race: a push-retry commi
 [ "$(O log --format=%s master | head -3 | tr '\n' '|')" = "feature two|feature one|sibling race|" ] \
   && ok "race: the series was rebased onto the racing tip" || bad "race history: $(O log --format=%s master)"
 [ "$(issue_bucket)" = closed ] && ok "race: issue closed" || bad "race issue $(issue_bucket) $(issue_labels)"
+RACE_TIP=$(O rev-parse master~2)
+grep -qF "\`git revert --no-edit ${RACE_TIP}..$(O rev-parse master)\`" "$(issue_file)" \
+  && ok "race: the revert range starts at the tip the series was re-synced onto" || bad "race revert line: $(grep -i revert "$(issue_file)")"
 
 # ── 3. feature branch moved during the job: kept ────────────────────────────
 setup

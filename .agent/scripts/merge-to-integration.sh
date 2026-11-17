@@ -494,6 +494,24 @@ $(printf '%s\n' "$files" | sed '/^$/d' | sed 's/^/- `/; s/$/`/')$(conflict_resol
 # under `awaiting-integration` with PARK_NOTE (set by the publish-basis case below); the
 # post-merge sentinel closes a parked issue once its landed commit is on a green tip.
 PARK_NOTE=""
+# The exact command that undoes this landing (#170). After a rebase the landed series
+# sits directly on REBASE_ONTO, so REBASE_ONTO..landed is this change and nothing else.
+# Work that was already on the branch (landed by an earlier run or a human) has no
+# known range; say how to find it instead of guessing.
+landed_revert_note() {  # <landed sha>
+  local landed="$1" n
+  if [ -n "${REBASE_ONTO:-}" ] && [ "${PUBLISH_BASIS:-}" != already-landed ] \
+     && n=$(git rev-list --count "${REBASE_ONTO}..${landed}" 2>/dev/null) && [ "$n" -ge 1 ]; then
+    if [ "$n" -eq 1 ]; then
+      printf '\n\n**How to revert what landed**: `git revert --no-edit %s`' "$landed"
+    else
+      printf '\n\n**How to revert what landed**: `git revert --no-edit %s..%s` (%s commits, newest first)' "$REBASE_ONTO" "$landed" "$n"
+    fi
+  else
+    printf '\n\n**How to revert what landed**: this work was already on `%s` before this job ran; find its commits with `git log --oneline -E --grep='"'"'#%s([^0-9]|$)'"'"' origin/%s` and `git revert` them, newest first.' \
+      "$INTEGRATION_BRANCH" "$ISSUE_NUM" "$INTEGRATION_BRANCH"
+  fi
+}
 _park() {
   issue_park "$ISSUE_NUM" --comment "$1" 2>/dev/null || true
 }
@@ -516,7 +534,7 @@ _close_or_park() {
 
 **Landed by rebase** (#221): \`${FEATURE_SHA}\` (the reviewed HEAD${SQUASH_BASE:+, squashed to one commit because it contained merge commits}) was rebased onto \`${INTEGRATION_BRANCH}\` without conflicts and landed as \`${landed}\`. A clean rebase is mechanical; a conflicted one is bounced back to the worker for re-review."
   fi
-  summary="${summary}${rebase_note}"
+  summary="${summary}${rebase_note}$(landed_revert_note "$landed")"
   if _issue_is_closed; then
     # Most often GitHub closed it the moment our push landed, because a commit says
     # "Fix #N" (a closing keyword). Returning silently here lost the summary and

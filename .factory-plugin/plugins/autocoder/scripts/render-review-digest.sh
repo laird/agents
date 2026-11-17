@@ -20,9 +20,10 @@
 #                       ## Where to look
 #                       ## Verification
 #                       ## Not verified / confidence
+#                       ## How to revert       (optional: extra steps beyond git revert)
 #                       ## Why net growth      (only needed when Size asks for it)
-#                     A heading that is missing or empty renders as a {{FILL: ...}}
-#                     slot, which fails the placeholder check below.
+#                     A required heading that is missing or empty renders as a
+#                     {{FILL: ...}} slot, which fails the placeholder check below.
 #   --pr              Prefix "Closes #N" (PR bodies). Omit for close comments,
 #                     where the issue is being closed anyway.
 #   --head REF        The commit whose change is measured (default HEAD). The
@@ -32,6 +33,20 @@
 #                       changed=<n> files=<n> mirror_changed=<n> mirror_files=<n> over=<yes|no>
 #                     `over` compares the non-mirror counts with the thresholds
 #                     (REVIEW FIT, below).
+#
+# EVIDENCE (#170): a body that closes an issue must show how it was checked and
+#   how to undo it.
+#   - Verification must contain the command that was run, on a line starting
+#     with "$ ", followed by at least one line of its actual output. A change with
+#     no diff of its own (a decomposed parent's rollup) is exempt.
+#   - Risk is computed, never written: landing-mode.sh (#165) on the same diff.
+#     "high" when it touches a `risk.high` glob from .autocoder.json on <base>,
+#     else "standard"; "unknown" when landing-mode cannot decide.
+#   - How to revert is computed from the diff: a PR body names the merge revert;
+#     a close comment names `git revert` over the branch's commits. Anything a
+#     revert does not undo (a migration, a config rollout) goes in the optional
+#     "## How to revert" section, printed after the computed line. The merge job
+#     adds the exact landed range when the commits were rebased on landing.
 #
 # SIZE: `git diff --numstat <base>...<head>`. Parity mirrors are counted on their
 #   own line, not in the review size, because a reviewer reads the source once:
@@ -47,8 +62,8 @@
 #   verification output and prose legitimately contain `Vec<T>`, `<sha>`, HTML,
 #   redirections and markdown links.
 #
-# Exit: 0 body printed on stdout; 1 unfilled placeholder (body on stdout, the
-#   offending lines on stderr); 2 bad arguments or the base ref does not resolve.
+# Exit: 0 body printed on stdout; 1 unfilled placeholder or a Verification with
+#   no command and result (body on stdout, the problem on stderr); 2 bad arguments or the base ref does not resolve.
 
 set -uo pipefail
 
@@ -143,6 +158,51 @@ slot() {  # slot <heading> <fill hint>
   if [ -n "$body" ]; then printf '%s\n' "$body"; else printf '{{FILL: %s}}\n' "$2"; fi
 }
 
+# ── Risk and revert (#170) ──────────────────────────────────────────────────
+NCOMMITS=$(git rev-list --count --no-merges "${BASE}..${HEAD_REF}" 2>/dev/null || echo 0)
+EMPTY=0
+[ $((INS + DEL + M_INS + M_DEL + FILES + M_FILES)) -eq 0 ] && EMPTY=1
+if [ "$EMPTY" -eq 1 ]; then
+  RISK_LINE="**Risk**: none — no diff of its own."
+else
+  RISK_ERR=$(mktemp "${TMPDIR:-/tmp}/review-digest-risk.XXXXXX") || RISK_ERR=/dev/null
+  if TIER=$(bash "$(dirname "${BASH_SOURCE[0]}")/landing-mode.sh" --mode merge --base "$BASE" --head "$HEAD_REF" 2>"$RISK_ERR"); then
+    if [ "$TIER" = pr ]; then
+      _hits=$(sed -n 's/^  \(.*\)  (risk\.high: .*)$/`\1`/p' "$RISK_ERR" 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+      RISK_LINE="**Risk**: high — touches \`risk.high\` paths in .autocoder.json (#165)${_hits:+: ${_hits}}."
+    else
+      RISK_LINE="**Risk**: standard — no \`risk.high\` path in .autocoder.json (#165) touched."
+    fi
+  else
+    RISK_LINE="**Risk**: unknown — landing-mode.sh could not decide: $(head -1 "$RISK_ERR" 2>/dev/null)"
+  fi
+  [ "$RISK_ERR" = /dev/null ] || rm -f "$RISK_ERR"
+fi
+if [ "$EMPTY" -eq 1 ]; then
+  REVERT_LINE="Nothing to revert here: this change has no commits of its own. Revert the pieces that landed separately, each from its own close comment."
+elif [ "$PR" -eq 1 ]; then
+  REVERT_LINE="Revert the merge of this PR: GitHub's **Revert** button, or \`git revert -m 1 <merge commit>\` (a squash or rebase merge: \`git revert\` the commits it landed)."
+else
+  _first=$(git rev-list --reverse --no-merges "${BASE}..${HEAD_REF}" | head -1)
+  _last=$(git rev-parse "$HEAD_REF")
+  if [ -n "$(git rev-list --merges "${BASE}..${HEAD_REF}" 2>/dev/null)" ]; then
+    REVERT_LINE="The branch contains merge commits, so revert what landed: the commits the merge job names below, or \`git revert -m 1 <merge commit>\`."
+  elif [ "$NCOMMITS" -le 1 ]; then
+    REVERT_LINE="\`git revert --no-edit ${_last:0:12}\` (the one commit on the branch)."
+  else
+    REVERT_LINE="\`git revert --no-edit ${_first:0:12}^..${_last:0:12}\` (the branch's ${NCOMMITS} commits, newest first)."
+  fi
+  REVERT_LINE="${REVERT_LINE} If they were rebased on landing, revert the landed commits instead (named below when the merge job landed them)."
+fi
+
+# Verification must name a command ("$ ...") and show output after it.
+verification_has_evidence() {
+  section "Verification" | awk '
+    /^[[:space:]]*\$ [^[:space:]]/ { cmd = 1; next }
+    cmd && /[^[:space:]]/ && !/^[[:space:]]*(```|~~~)/ { out = 1 }
+    END { exit !(cmd && out) }'
+}
+
 BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/review-digest.XXXXXX") \
   || { echo "render-review-digest.sh: mktemp failed" >&2; exit 2; }
 trap 'rm -f "$BODY_FILE"' EXIT
@@ -156,6 +216,10 @@ trap 'rm -f "$BODY_FILE"' EXIT
   slot "Verification" "exact commands run and their actual result lines, not \"tests pass\""
   printf '\n## Not verified / confidence\n'
   slot "Not verified / confidence" "what was not exercised, known risks, confidence: high|medium|low"
+  printf '\n## Risk\n%s\n' "$RISK_LINE"
+  printf '\n## How to revert\n%s\n' "$REVERT_LINE"
+  REVERT_EXTRA=$(section "How to revert")
+  [ -n "$REVERT_EXTRA" ] && printf '%s\n' "$REVERT_EXTRA"
   printf '\n## Size\n'
   printf '+%d/−%d across %d files' "$INS" "$DEL" "$FILES"
   [ "$OVER" = yes ] && printf ' (over the review-fit limit of %d lines / %d files)' "$MAX_LINES" "$MAX_FILES"
@@ -170,6 +234,10 @@ trap 'rm -f "$BODY_FILE"' EXIT
 } > "$BODY_FILE"
 
 cat "$BODY_FILE"
+if [ "$EMPTY" -eq 0 ] && [ -n "$(section Verification)" ] && ! verification_has_evidence; then
+  echo "render-review-digest.sh: ## Verification must show the command you ran on a line starting with \"\$ \", followed by its actual result lines (#170)." >&2
+  exit 1
+fi
 if grep -nE '\{\{FILL:|\[Detailed explanation' "$BODY_FILE" >&2; then
   echo "render-review-digest.sh: the body above has unfilled slots (lines listed); fill them in --sections and render again." >&2
   exit 1
