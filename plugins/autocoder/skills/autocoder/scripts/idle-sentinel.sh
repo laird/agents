@@ -1228,7 +1228,7 @@ prepare_manager_target() {
         win=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux new-window -t "$SESSION_NAME" -n manager -P -F '#{window_id}') || return 1
         WAKE_TARGET_CREATED=true
         WAKE_TARGET=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" tmux display-message -p -t "$win" '#{pane_id}') || return 1
-        send_tmux_command "$WAKE_TARGET" "cd '$PROJECT_ROOT'"
+        send_tmux_command "$WAKE_TARGET" "$(printf 'cd %q' "$PROJECT_ROOT")"
         return 0
       fi
       # No session at all (host reboot): bootstrap via --manager-only (CDR #4)

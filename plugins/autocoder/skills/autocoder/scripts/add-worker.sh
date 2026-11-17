@@ -214,7 +214,7 @@ if [ "$MUX" = "tmux" ]; then
   PANE_ID=$(tmux split-window -h -t "$AGENTS_WINDOW" -P -F '#{pane_id}')
   PANE_INDEX=$(tmux display-message -p -t "$PANE_ID" '#{pane_index}')
 
-  tmux send-keys -t "$PANE_ID" "cd '$WORKER_DIR'" C-m
+  tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "$WORKER_DIR")" C-m
   tmux send-keys -t "$PANE_ID" "$(worker_marker_export "$SESSION_NAME" "$WORKER_NUM")" C-m
   if [ -n "${ISSUE_SOURCE:-}" ]; then
     while IFS= read -r line; do

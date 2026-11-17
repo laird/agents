@@ -374,7 +374,7 @@ if [ "$MUX" = "tmux" ]; then
     echo "🖥️  Creating manager-only tmux session: $SESSION_NAME"
     REVIEW_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "review" -P -F '#{window_id}')
     MANAGER_PANE=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
-    tmux send-keys -t "$MANAGER_PANE" "cd '$PROJECT_ROOT'" C-m
+    tmux send-keys -t "$MANAGER_PANE" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
     tmux send-keys -t "$MANAGER_PANE" "export $MANAGER_MARKER" C-m
     if [ "$AGENT" = "claude" ]; then
       tmux send-keys -t "$MANAGER_PANE" "export ANTIGRAVITY_TASK_LIST_ID='$TASK_LIST_ID'" C-m
@@ -401,9 +401,9 @@ if [ "$MUX" = "tmux" ]; then
   PANE_ID=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{pane_id}')
   WORKER_PANES+=("$PANE_ID")
   if [ "$USE_WORKTREES" = true ]; then
-    tmux send-keys -t "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'" C-m
+    tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "${WORKTREE_PATHS[0]}")" C-m
   else
-    tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
+    tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
   fi
   tmux send-keys -t "$PANE_ID" "$(worker_marker_line 1)" C-m
 
@@ -422,9 +422,9 @@ if [ "$MUX" = "tmux" ]; then
     WORKER_PANES+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
-      tmux send-keys -t "$PANE_ID" "cd '${WORKTREE_PATHS[$((i-1))]}'" C-m
+      tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "${WORKTREE_PATHS[$((i-1))]}")" C-m
     else
-      tmux send-keys -t "$PANE_ID" "cd '$PROJECT_ROOT'" C-m
+      tmux send-keys -t "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
     fi
     tmux send-keys -t "$PANE_ID" "$(worker_marker_line "$i")" C-m
 
@@ -477,7 +477,7 @@ if [ "$MUX" = "tmux" ]; then
 
   # Set up review window
   echo "   Starting coordinator..."
-  tmux send-keys -t "$MANAGER_PANE" "cd '$PROJECT_ROOT'" C-m
+  tmux send-keys -t "$MANAGER_PANE" "$(printf 'cd %q' "$PROJECT_ROOT")" C-m
 
   # Identity marker: exported before the REPL launches so the manager process
   # carries it in /proc/<pid>/environ (see MANAGER_MARKER above).

@@ -141,7 +141,7 @@ if [ "$MUX" = "tmux" ]; then
   tmux respawn-pane -k -t "$PANE"
   sleep 1
 
-  tmux send-keys -t "$PANE" "cd '$WORKTREE'" C-m
+  tmux send-keys -t "$PANE" "$(printf 'cd %q' "$WORKTREE")" C-m
   if [ -n "${ISSUE_SOURCE:-}" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] && tmux send-keys -t "$PANE" "$line" C-m

@@ -548,7 +548,7 @@ if [ "$MUX" = "tmux" ]; then
     echo "🖥️  Creating manager-only tmux session: $SESSION_NAME"
     REVIEW_WINDOW=$(tmux new-session -d -s "$SESSION_NAME" -n "review" -P -F '#{window_id}')
     MANAGER_TARGET=$(tmux display-message -p -t "$REVIEW_WINDOW" '#{pane_id}')
-    send_tmux_command "$MANAGER_TARGET" "cd '$PROJECT_ROOT'"
+    send_tmux_command "$MANAGER_TARGET" "$(printf 'cd %q' "$PROJECT_ROOT")"
     send_issue_env_tmux "$MANAGER_TARGET"
     send_tmux_command "$MANAGER_TARGET" "export AUTOCODER_ROUTE='$ROUTE'"
     send_tmux_command "$MANAGER_TARGET" "export $MANAGER_MARKER"
@@ -579,10 +579,10 @@ if [ "$MUX" = "tmux" ]; then
   PANE_ID=$(tmux display-message -p -t "$AGENTS_WINDOW" '#{pane_id}')
   WORKER_TARGETS+=("$PANE_ID")
   if [ "$USE_WORKTREES" = true ]; then
-    send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[0]}'"
+    send_tmux_command "$PANE_ID" "$(printf 'cd %q' "${WORKTREE_PATHS[0]}")"
     WORKER_DIR="${WORKTREE_PATHS[0]}"
   else
-    send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+    send_tmux_command "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")"
     WORKER_DIR="$PROJECT_ROOT"
   fi
   send_issue_env_tmux "$PANE_ID"
@@ -603,10 +603,10 @@ if [ "$MUX" = "tmux" ]; then
     WORKER_TARGETS+=("$PANE_ID")
 
     if [ "$USE_WORKTREES" = true ]; then
-      send_tmux_command "$PANE_ID" "cd '${WORKTREE_PATHS[$((i-1))]}'"
+      send_tmux_command "$PANE_ID" "$(printf 'cd %q' "${WORKTREE_PATHS[$((i-1))]}")"
       WORKER_DIR="${WORKTREE_PATHS[$((i-1))]}"
     else
-      send_tmux_command "$PANE_ID" "cd '$PROJECT_ROOT'"
+      send_tmux_command "$PANE_ID" "$(printf 'cd %q' "$PROJECT_ROOT")"
       WORKER_DIR="$PROJECT_ROOT"
     fi
     send_issue_env_tmux "$PANE_ID"
@@ -669,7 +669,7 @@ if [ "$MUX" = "tmux" ]; then
 
   # Set up review window
   echo "   Starting coordinator..."
-  send_tmux_command "$MANAGER_TARGET" "cd '$PROJECT_ROOT'"
+  send_tmux_command "$MANAGER_TARGET" "$(printf 'cd %q' "$PROJECT_ROOT")"
   send_issue_env_tmux "$MANAGER_TARGET"
 
   # Thread routing mode to the manager loop so /autocoder:monitor-workers knows
