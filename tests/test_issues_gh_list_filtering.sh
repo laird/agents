@@ -80,6 +80,14 @@ EOF
 cat > "$TMP/bin/gh" <<STUB
 #!/bin/bash
 if [ "\$1" = "issue" ] && [ "\$2" = "list" ]; then
+  # GH_TRUNCATE=1 models real gh paging: return only the first --limit issues,
+  # 30 when no --limit is passed (gh's own default). See #140.
+  if [ -n "\${GH_TRUNCATE:-}" ]; then
+    lim=30
+    while [ \$# -gt 0 ]; do [ "\$1" = "--limit" ] && lim="\$2"; shift; done
+    jq --argjson n "\$lim" '.[0:\$n]' "\${GH_FIXTURE:-$TMP/issues.json}"
+    exit 0
+  fi
   cat "\${GH_FIXTURE:-$TMP/issues.json}"
   exit 0
 fi
@@ -119,6 +127,33 @@ assert_numbers "list --state open --limit 1 returns exactly one filtered result"
 # ── the approval gate (AUTOCODER_REQUIRED_LABEL) narrows open further ──────
 OUT=$(AUTOCODER_REQUIRED_LABEL=swarm run_backend list --state open)
 assert_numbers "list --state open with a required label excludes unapproved #1 and #5" "[]" "$OUT"
+
+# ── #140: no bucket may inherit gh's default page size of 30 ──────────────
+# Without an explicit --limit, `gh issue list` returns 30 issues, so a swarm
+# with a larger backlog never saw the rest: an unblocked P0 past the page was
+# invisible and workers reported IDLE_NO_WORK_AVAILABLE. Fixture: 40 claimed
+# issues, then an unblocked P0 (#41) and a needs-design issue (#42), both past
+# gh's default page.
+jq -n '[range(1;41) | {number: ., title: "claimed", body: "", labels: [{name:"working"}], state: "OPEN"}]
+       + [{number: 41, title: "unblocked P0 past page 1", body: "", labels: [{name:"P0"}], state: "OPEN"},
+          {number: 42, title: "blocked past page 1", body: "", labels: [{name:"needs-design"}], state: "OPEN"}]' \
+  > "$TMP/issues_many.json"
+
+OUT=$(GH_TRUNCATE=1 GH_FIXTURE="$TMP/issues_many.json" run_backend list --state open)
+assert_numbers "#140: list --state open sees an unblocked P0 beyond gh's default 30" "[41]" "$OUT"
+OUT=$(GH_TRUNCATE=1 GH_FIXTURE="$TMP/issues_many.json" run_backend list --state working)
+COUNT=$(printf '%s' "$OUT" | jq length)
+if [ "$COUNT" = "40" ]; then echo "PASS: #140: list --state working reports all 40 claims"; PASS=$((PASS + 1))
+else echo "FAIL: #140: list --state working reports all 40 claims — got $COUNT"; FAIL=$((FAIL + 1)); fi
+OUT=$(GH_TRUNCATE=1 GH_FIXTURE="$TMP/issues_many.json" run_backend list --state blocked)
+assert_numbers "#140: list --state blocked sees a blocked issue beyond gh's default 30" "[42]" "$OUT"
+GH_TRUNCATE=1 GH_FIXTURE="$TMP/issues_many.json" assert_exit "#140: any-claimable finds the P0 beyond gh's default 30" 0 run_backend any-claimable
+for st in closed all; do
+  OUT=$(GH_TRUNCATE=1 GH_FIXTURE="$TMP/issues_many.json" run_backend list --state "$st")
+  COUNT=$(printf '%s' "$OUT" | jq length)
+  if [ "$COUNT" = "42" ]; then echo "PASS: #140: list --state $st is not capped at 30"; PASS=$((PASS + 1))
+  else echo "FAIL: #140: list --state $st is not capped at 30 — got $COUNT"; FAIL=$((FAIL + 1)); fi
+done
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
