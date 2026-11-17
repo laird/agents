@@ -226,6 +226,7 @@ if role == "manager":
     mgr["pid_start_time"] = pid_start or None
     mgr["registeredAt"] = now
     data["manager"] = mgr
+    data["state"] = "running"   # a live manager means the swarm runs (#218)
     print(f"manager pid {mgr['pid']}")
 else:
     real = os.path.realpath(worktree)
@@ -262,6 +263,7 @@ else:
         entry["state"] = state or "started"
         entry["stateUpdatedAt"] = now
     entry["registeredAt"] = now
+    data["state"] = "running"   # a live worker means the swarm runs (#218)
     print(f"worker {entry['number']} {verb}")
 
 fd, tmp = tempfile.mkstemp(prefix=".manifest.", suffix=".json", dir=os.path.dirname(path))

@@ -44,6 +44,7 @@ eq "pid recorded" "$$" "$(J "$M" 'm["workers"][1]["pid"]')"
 [ -n "$(J "$M" 'm["workers"][1]["pid_start_time"] or ""')" ] && ok "pid start time recorded" || bad "no pid_start_time"
 eq "state started" "started" "$(J "$M" 'm["workers"][1]["state"]')"
 eq "worker 1 untouched" "%9 paused" "$(J "$M" 'm["workers"][0]["tmuxTarget"]+" "+m["workers"][0]["state"]')"
+eq "registering a worker sets the swarm running (#218)" "running" "$(J "$M" 'm["state"]')"
 
 git -C "$P-wt-2" checkout -q -b feature/issue-7
 OUT=$(cd "$P-wt-2" && HERDR_PANE_ID=h-1 bash "$REG" --pid $$ 2>&1); RC=$?
@@ -65,8 +66,14 @@ p = sys.argv[1]; m = json.load(open(p))
 [w for w in m["workers"] if w["number"] == 2][0]["state"] = "paused"
 json.dump(m, open(p, "w"))
 PY2
+python3 - "$M" <<'PY2'
+import json, sys
+p = sys.argv[1]; m = json.load(open(p)); m["state"] = "paused"
+json.dump(m, open(p, "w"))
+PY2
 (cd "$P-wt-2" && bash "$REG" --pid $$ >/dev/null 2>&1)
 eq "state kept without --state" "paused" "$(J "$M" '[w["state"] for w in m["workers"] if w["number"] == 2][0]')"
+eq "re-registering a worker sets a paused swarm running (#218)" "running" "$(J "$M" 'm["state"]')"
 (cd "$P-wt-2" && bash "$REG" --pid $$ --state started >/dev/null 2>&1)
 eq "--state sets it" "started" "$(J "$M" '[w["state"] for w in m["workers"] if w["number"] == 2][0]')"
 
@@ -92,8 +99,14 @@ PY2
 (cd "$P" && bash "$REG" --session ../../x --pid $$ >/dev/null 2>&1); eq "session with a path: exit 1" "1" "$?"
 
 # ── --manager ───────────────────────────────────────────────────────────────
+python3 - "$M" <<'PY2'
+import json, sys
+p = sys.argv[1]; m = json.load(open(p)); m["state"] = "paused"
+json.dump(m, open(p, "w"))
+PY2
 OUT=$(cd "$P" && HERDR_PANE_ID=h-mgr bash "$REG" --manager --pid $$ 2>&1); RC=$?
 eq "--manager exits 0" "0" "$RC"
+eq "registering the manager sets the swarm running (#218)" "running" "$(J "$M" 'm["state"]')"
 eq "manager pid set" "$$" "$(J "$M" 'm["manager"]["pid"]')"
 eq "manager pane set" "h-mgr" "$(J "$M" 'm["manager"]["herdrPane"]')"
 eq "--manager adds no worker" "2" "$(J "$M" 'len(m["workers"])')"

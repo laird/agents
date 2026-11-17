@@ -249,6 +249,43 @@ PY
   ) 9>"$lock_path"
 }
 
+# Set the swarm's top-level state of an EXISTING manifest, under the manifest
+# lock. "paused" belongs to an explicit step-down only (#218): registration
+# sets "running", and the derived recomputes above never demote to "paused".
+# Exits 2 when no manifest exists.
+manifest_set_state() {
+  local manifest_path="$1"
+  local state="$2"
+  local lock_path="${manifest_path%.json}.lock"
+
+  (
+    flock -x 9
+    [ -f "$manifest_path" ] || exit 2
+    python3 - "$manifest_path" "$state" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, state = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+data["state"] = state
+
+directory = os.path.dirname(path)
+fd, tmp = tempfile.mkstemp(prefix=".manifest.", suffix=".json", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+  ) 9>"$lock_path"
+}
+
 # Read one field of the manifest's manager entry. Backward compatible with
 # manifests written before the identity fields existed (and with
 # "manager": null): a missing field prints nothing and exits 0, so callers
@@ -324,7 +361,9 @@ if states and all(s == "started" for s in states):
 elif any(s in ("started", "starting", "failed") for s in states):
     data["state"] = "partial"
 else:
-    data["state"] = "paused"
+    # No worker started: keep the swarm state as it is. Only an explicit
+    # step-down writes "paused" (manifest_set_state; #218).
+    data["state"] = data.get("state") or "paused"
 
 directory = os.path.dirname(path)
 fd, tmp = tempfile.mkstemp(prefix=".manifest.", suffix=".json", dir=directory)
@@ -390,14 +429,14 @@ workers = [
 ]
 data["workers"] = workers
 states = [worker.get("state") for worker in workers]
-if not states:
-    data["state"] = "paused"
-elif all(state == "started" for state in states):
+if states and all(state == "started" for state in states):
     data["state"] = "running"
 elif any(state in ("started", "starting", "failed") for state in states):
     data["state"] = "partial"
 else:
-    data["state"] = "paused"
+    # No worker left started (or none left): a live manager may still be
+    # running the swarm. Only an explicit step-down writes "paused" (#218).
+    data["state"] = data.get("state") or "paused"
 
 directory = os.path.dirname(path)
 fd, tmp = tempfile.mkstemp(prefix=".manifest.", suffix=".json", dir=directory)

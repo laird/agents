@@ -641,12 +641,35 @@ kill -0 "$MPID" 2>/dev/null \
 [ ! -e "$P/.autocoder/stepped-down" ] \
   && ok "stepped-down marker was consumed" \
   || bad "stepped-down marker survived the tick"
+[ "$(manifest_get "$MF" 'm.get("state")')" = "paused" ] \
+  && ok "step-down marked the swarm paused (#218)" \
+  || bad "after step-down: state=$(manifest_get "$MF" 'm.get("state")'), wanted paused"
 [ "$(state_get_t "$P" last_tick_result)" = "quiescent" ] \
   && ok "the same tick fell through to predicate mode (quiescent)" \
   || bad "post-stepdown: last_tick_result=$(state_get_t "$P" last_tick_result), wanted quiescent"
 grep -q "STEPDOWN marker present — retiring lingering manager pid=$MPID" "$P/.autocoder/sentinel.log" \
   && ok "the retirement was logged with the pid" \
   || bad "no STEPDOWN retirement log line"
+
+# 6d. #218: a manager that stepped down and EXITED (the normal path) also
+#     pauses the swarm; a manager that merely died, with no marker, does not.
+P=$(new_project stepdown-exited file)
+SESSION="claude-$(basename "$P")"
+bash -c 'exit 0' & DEADPID=$!; wait "$DEADPID"
+MF=$(write_manager_manifest "$P" "$SESSION" "$DEADPID" "1")
+date -u +%Y-%m-%dT%H:%M:%SZ > "$P/.autocoder/stepped-down"
+run_sentinel "$BASEPATH" -- --once --project "$P" >/dev/null 2>&1
+[ "$(manifest_get "$MF" 'm.get("state")')" = "paused" ] \
+  && ok "an exited stepped-down manager leaves the swarm paused (#218)" \
+  || bad "exited step-down: state=$(manifest_get "$MF" 'm.get("state")'), wanted paused"
+P=$(new_project dead-no-stepdown file)
+SESSION="claude-$(basename "$P")"
+MF=$(write_manager_manifest "$P" "$SESSION" "$DEADPID" "1")
+run_sentinel "$BASEPATH" -- --once --project "$P" >/dev/null 2>&1
+[ -z "$(manifest_manager_field "$MF" pid)" ] \
+  && [ "$(manifest_get "$MF" 'm.get("state")')" = "running" ] \
+  && ok "a dead manager without a step-down is cleared but does not pause the swarm (#218)" \
+  || bad "dead manager, no marker: pid=$(manifest_manager_field "$MF" pid) state=$(manifest_get "$MF" 'm.get("state")'), wanted cleared + running"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 7+8(duty). Real wake on a PRIVATE tmux server: stale-counter reset, duty

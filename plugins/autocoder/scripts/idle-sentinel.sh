@@ -686,6 +686,18 @@ clear_manifest_manager() {
   log_event "MANIFEST cleared manager entry ($1)"
 }
 
+# The swarm state is "paused" only after an explicit step-down (#218);
+# registration (swarm-register.sh) sets it back to "running".
+mark_manifest_paused() {
+  [ -f "$MANIFEST_PATH" ] || return 0
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN would mark manifest paused: $MANIFEST_PATH"
+    return 0
+  fi
+  manifest_set_state "$MANIFEST_PATH" paused || return 0
+  log_event "MANIFEST state=paused ($1)"
+}
+
 refresh_manifest_manager_identity() {
   local pid="$1" start="$2"
   [ "$DRY_RUN" = true ] && return 0
@@ -1695,6 +1707,7 @@ run_tick() {
         log_event "STEPDOWN marker present — retiring lingering manager pid=$MANAGER_PID"
         kill_pid_verified "$MANAGER_PID" "$MANAGER_PID_START"
         clear_manifest_manager "stepped-down manager retired"
+        mark_manifest_paused "manager stepped down"
         rm -f "$STEPDOWN_FILE"
       fi
       MANAGER_PID=""
@@ -1710,7 +1723,9 @@ run_tick() {
   elif [ -f "$STEPDOWN_FILE" ]; then
     # Manager already gone (manifest cleared by manager_alive): the marker
     # is spent — consume it so a LATER manager generation is never retired
-    # by a stale file.
+    # by a stale file. The manager exited after stepping down: that is the
+    # one event that pauses the swarm (#218).
+    mark_manifest_paused "manager stepped down and exited"
     [ "$DRY_RUN" = true ] || rm -f "$STEPDOWN_FILE"
   fi
   orphan_sweep

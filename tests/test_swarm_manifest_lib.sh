@@ -41,4 +41,24 @@ remaining=$(manifest_get "$MANIFEST" 'm.get("workers", [])[0].get("number")')
 swarm_state=$(manifest_get "$MANIFEST" 'm.get("state")')
 [ "$swarm_state" = "running" ] || { echo "FAIL: swarm should remain running with started worker" >&2; exit 1; }
 
+# #218: no worker started is not a step-down. The recomputes keep the swarm
+# state; only manifest_set_state (the sentinel's step-down) writes paused.
+manifest_update_worker_state "$MANIFEST" 2 paused
+swarm_state=$(manifest_get "$MANIFEST" 'm.get("state")')
+[ "$swarm_state" = "running" ] || { echo "FAIL: pausing a worker must not pause the swarm (got $swarm_state)" >&2; exit 1; }
+manifest_remove_workers "$MANIFEST" 2
+swarm_state=$(manifest_get "$MANIFEST" 'm.get("state")')
+[ "$swarm_state" = "running" ] || { echo "FAIL: removing the last worker must not pause the swarm (got $swarm_state)" >&2; exit 1; }
+manifest_set_state "$MANIFEST" paused
+swarm_state=$(manifest_get "$MANIFEST" 'm.get("state")')
+[ "$swarm_state" = "paused" ] || { echo "FAIL: manifest_set_state should write paused (got $swarm_state)" >&2; exit 1; }
+# A paused launch stays paused until a worker actually starts.
+manifest_add_worker_json "$MANIFEST" "$worker3"
+manifest_update_worker_state "$MANIFEST" 3 paused
+swarm_state=$(manifest_get "$MANIFEST" 'm.get("state")')
+[ "$swarm_state" = "paused" ] || { echo "FAIL: a paused swarm should stay paused (got $swarm_state)" >&2; exit 1; }
+rc=0; manifest_set_state "$TMP/none.json" running || rc=$?
+[ "$rc" = "2" ] || { echo "FAIL: manifest_set_state on a missing manifest should exit 2 (got $rc)" >&2; exit 1; }
+[ ! -e "$TMP/none.json" ] || { echo "FAIL: manifest_set_state created a manifest" >&2; exit 1; }
+
 echo "ok swarm-manifest-lib"
