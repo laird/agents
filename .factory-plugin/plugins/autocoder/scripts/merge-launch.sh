@@ -54,6 +54,8 @@
 #   autocoder-merge-<repo-id>-<issue>.log    — merge-to-integration.sh output
 #   autocoder-merge-<repo-id>-<issue>.exit   — its exit code, written on completion
 #   autocoder-merge-<repo-id>-<issue>.run.sh — generated wrapper (avoids nested-quote hell)
+#   autocoder-merge-<repo-id>-<issue>.scripts/ — frozen copy of the scripts the job runs
+#                                               (#212); removed when the job finishes
 #
 # Exit codes:
 #   0  launched (or an equivalent job was already running) — poll with merge-poll.sh
@@ -146,6 +148,23 @@ fi
 : > "$LOG"
 rm -f "$EXITFILE"
 
+# Run a frozen snapshot of the scripts, not the live ones in this checkout (#212).
+# The job runs for 8-30 minutes while this worker moves on: it switches branches
+# and edits files, including these very scripts. Bash reads a running script
+# incrementally, so an in-place change resumes the job at a byte offset into the
+# new text and executes garbage (observed: "line 550: hip.: command not found",
+# then a wrong exit path). Every top-level file is copied, not a computed list, so
+# whatever merge-to-integration.sh sources or runs from its directory comes along.
+SNAPSHOT="${STATE}.scripts"
+rm -rf "$SNAPSHOT"
+if ! { mkdir -p "$SNAPSHOT" \
+       && find "$_MLI_DIR" -maxdepth 1 -type f -exec cp -p {} "$SNAPSHOT"/ \; ; } \
+   || [ ! -x "$SNAPSHOT/merge-to-integration.sh" ]; then
+  echo "merge-launch.sh: could not snapshot ${_MLI_DIR} into ${SNAPSHOT}. Not launching." >&2
+  rm -rf "$SNAPSHOT"
+  exit 1
+fi
+
 # Generate a real wrapper script rather than nesting this into a `bash -c`
 # string: --test-cmd carries its own quoting-heavy shell (&&, quoted env vars,
 # pipes), and re-quoting that into another layer of quotes is exactly the kind
@@ -154,11 +173,12 @@ rm -f "$EXITFILE"
   printf '#!/bin/bash\n'
   printf 'echo $$ > %q\n' "$PIDFILE"
   printf '%q --feature %q --feature-sha %q --issue %q --integration %q --test-cmd %q' \
-    "${_MLI_DIR}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD"
+    "${SNAPSHOT}/merge-to-integration.sh" "$FEATURE" "$FEATURE_SHA" "$ISSUE_NUM" "$INTEGRATION_BRANCH" "$TEST_CMD"
   [ -n "$SUMMARY_FILE" ] && printf ' --summary-file %q' "$SUMMARY_FILE"
   [ "$OWN_ISSUE" -eq 1 ] && printf ' --own-issue'
   printf ' > %q 2>&1\n' "$LOG"
   printf 'echo $? > %q\n' "$EXITFILE"
+  printf 'rm -rf %q\n' "$SNAPSHOT"
 } > "$RUNSCRIPT"
 chmod +x "$RUNSCRIPT"
 
