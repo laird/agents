@@ -217,17 +217,26 @@ git -C "$REPO" remote set-url origin "$TMP/origin.git"
 git -C "$REPO" push -q origin HEAD:refs/heads/feature/issue-19
 assert_eq "feature/issue-19 on origin: respected" "1" "$(run_gate)"
 
-# ── 6c. Dead pid, but the claim's worktree still holds the issue ────────────
+# ── 6c. Dead pid, but the claim's worktree still holds THIS claim ───────────
 # (an owner pid that was only ever short-lived: the gate's parent shell)
 reset_issues
 P=$(dead_pid)
 WT2="$TMP/wt2"; git -C "$REPO" worktree add -q --detach "$WT2"
-working_issue 20 P1 "🔒 claim ${HOST}-${P} $(ms_ago 10) start=1 wt=$WT2"
-echo "20 123 -" > "$(git -C "$WT2" rev-parse --absolute-git-dir)/autocoder-worker-state"
-assert_eq "dead pid but its worktree's record names #20: respected" "1" "$(run_gate)"
-echo "99 123 -" > "$(git -C "$WT2" rev-parse --absolute-git-dir)/autocoder-worker-state"
+REC="$(git -C "$WT2" rev-parse --absolute-git-dir)/autocoder-worker-state"
+CMS=$(ms_ago 10)
+working_issue 20 P1 "🔒 claim ${HOST}-${P} ${CMS} start=1 wt=$WT2"
+echo "20 ${CMS} -" > "$REC"
+assert_eq "dead pid but its worktree records this claim: respected" "1" "$(run_gate)"
+echo "20 123 -" > "$REC"
 run_gate >/dev/null
-assert_eq "...and once that worktree holds something else: taken over" "20" "$(plan_issue)"
+assert_eq "a record of the same issue but a different claim does not count" "20" "$(plan_issue)"
+# A leftover record cannot keep a dead claim alive past the grace period.
+reset_issues
+CMS=$(ms_ago 8000)
+working_issue 21 P1 "🔒 claim ${HOST}-${P} ${CMS} start=1 wt=$WT2"
+echo "21 ${CMS} -" > "$REC"
+run_gate >/dev/null
+assert_eq "a matching record past the grace period: taken over" "21" "$(plan_issue)"
 git -C "$REPO" worktree remove --force "$WT2"
 
 # ── 7. Every claim must be abandoned ─────────────────────────────────────────

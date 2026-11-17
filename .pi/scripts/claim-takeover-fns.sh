@@ -13,10 +13,12 @@
 # branch, local or on origin) AND either
 #   - its owner is on THIS host and is dead: the pid is gone, or now belongs to a
 #     different process (its start time differs from the recorded start=), AND
-#     the claim's worktree (wt=) does not hold the issue in its #182 record. The
-#     record catches an owner pid that was only ever short-lived (claim-owner.sh
-#     falls back to the gate's parent when it finds no agent ancestor): the gate
-#     writes the record in the same run as the claim; or
+#     the claim's worktree (wt=) does not hold THIS claim in its #182 record (same
+#     issue and same claim timestamp) within the grace period. The record catches
+#     an owner pid that was only ever short-lived (claim-owner.sh falls back to the
+#     gate's parent when it finds no agent ancestor): the gate writes it in the
+#     same run as the claim. It stops counting after the grace period, so a record
+#     left behind by a crashed worker cannot keep a dead claim alive forever; or
 #   - its owner cannot be checked from here (another host, no pid, or a marker
 #     from before #202, which named the gate's own always-dead pid) and the claim
 #     is older than AUTOCODER_CLAIM_GRACE_S (default 7200 s). Another host's
@@ -44,14 +46,15 @@ _ct_branch_exists() {
   [ "$rc" -ne 2 ]
 }
 
-# _ct_worktree_holds <wt-path> <issue-num> → exit 0 when that worktree's #182
-# record (worker-state-fns.sh) names the issue.
+# _ct_worktree_holds <wt-path> <issue-num> <claim-ms> → exit 0 when that
+# worktree's #182 record (worker-state-fns.sh: "<issue> <claim-ms> ...") is this
+# very claim, not merely the same issue number.
 _ct_worktree_holds() {
-  local wt="$1" n="$2" gd rec
+  local wt="$1" n="$2" ms="$3" gd rec_n="" rec_ms=""
   [ -n "$wt" ] && [ -d "$wt" ] || return 1
   gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  rec=$(cut -d' ' -f1 "$gd/autocoder-worker-state" 2>/dev/null) || return 1
-  [ "$rec" = "$n" ]
+  read -r rec_n rec_ms _ < "$gd/autocoder-worker-state" 2>/dev/null || return 1
+  [ "$rec_n" = "$n" ] && [ "$rec_ms" = "$ms" ]
 }
 
 # _ct_owner_alive <pid> <recorded-start> → exit 0 when the pid is alive and is the
@@ -87,7 +90,7 @@ claims_abandoned() {
     if [ "$wt" != "-" ] && [[ "$id" =~ ^(.+)-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" = "$host" ]; then
       pid="${BASH_REMATCH[2]}"
       _ct_owner_alive "$pid" "$start" && return 1
-      _ct_worktree_holds "$wt" "$n" && return 1
+      [ "$age" -le "$grace_ms" ] && _ct_worktree_holds "$wt" "$n" "$ms" && return 1
       out+="${ms} ${id} owner pid ${pid} is no longer running on ${host}"$'\n'
     else
       [ "$age" -gt "$grace_ms" ] || return 1
