@@ -143,79 +143,7 @@ Never stop, just keep looking for issues to address. Priority: Triage Unprioriti
 
 ## Unprioritized Issue Triage
 
-When unprioritized issues are detected, review each one and assign an appropriate priority label before continuing with the fix workflow.
-
-### Triage Process
-
-For each unprioritized issue:
-
-1. **Read the issue** - Understand the title, description, and any labels
-2. **Assess severity and impact**:
-   - **P0 (Critical)**: System down, data loss, security vulnerability, blocks all users
-   - **P1 (High)**: Major feature broken, significant user impact, no workaround
-   - **P2 (Medium)**: Feature partially broken, workaround exists, moderate impact
-   - **P3 (Low)**: Minor issue, cosmetic, nice-to-have, minimal user impact
-3. **Assign the priority label**:
-
-```bash
-# Assign priority to an issue (backend-neutral).
-#
-# Apply labels ONE AT A TIME and check each result. `gh issue edit` is
-# all-or-nothing: if any single label is unknown to the repo it rejects the
-# WHOLE edit, so a combined
-#     issue_update "$N" --add-label "P3" --add-label "needs-clarification"
-# applies NEITHER when the blocking label is missing. The issue then keeps zero
-# labels — neither prioritized nor blocked — so it re-enters the claimable pool
-# and every worker re-triages it, fails identically, and moves on. The failure
-# goes to stderr while the workflow continues, so it is silent and repeating.
-apply_label() {  # apply_label <issue> <label>
-  if issue_update "$1" --add-label "$2"; then
-    return 0
-  fi
-  echo "⚠️  Could not apply '$2' to issue #$1 — does the label exist in this repo?" >&2
-  return 1
-}
-
-apply_label <ISSUE_NUMBER> "P2"                    # priority: apply first, on its own
-apply_label <ISSUE_NUMBER> "needs-clarification"   # then each blocking label separately
-```
-
-Applying the priority first and separately matters: if a later label fails, the
-issue is still correctly prioritized rather than left bare.
-
-4. **Add a triage comment** explaining the priority decision:
-
-```bash
-issue_comment <ISSUE_NUMBER> --body "🏷️ **Triage Complete**
-
-**Priority Assigned**: P2 (Medium)
-
-**Rationale**: [Brief explanation of why this priority was chosen]
-
-🤖 Triaged by autonomous fix workflow"
-```
-
-### Triage Decision Matrix
-
-| Indicator | P0 | P1 | P2 | P3 |
-|-----------|----|----|----|----|
-| Production impact | Critical/Down | Major degradation | Partial impact | Minimal |
-| User scope | All users | Many users | Some users | Few users |
-| Workaround | None | Difficult | Available | Easy |
-| Data risk | Loss/corruption | Possible | Unlikely | None |
-| Security | Active exploit | Vulnerability | Potential | None |
-| Keywords | "crash", "down", "urgent", "security" | "broken", "fails", "blocking" | "issue", "bug", "incorrect" | "minor", "cosmetic", "enhancement" |
-
-### Triage Instructions
-
-When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
-
-1. Parse the `UNPRIORITIZED_DATA` to get issue numbers, titles, and descriptions
-2. For each issue, use the decision matrix to determine priority
-3. Assign the label and post a triage comment
-4. Continue to the main fix workflow after all issues are triaged
-
-**Model Selection for Triage**: Use **Haiku** for straightforward triage decisions, escalate to **Sonnet** if the issue description is ambiguous or requires deeper analysis.
+Moved to `.agent/shared/fix-triage.md` (#240). Read it when the configuration block prints `UNPRIORITIZED_ISSUES_FOUND=true`.
 
 ## Issue Complexity Detection
 
@@ -247,7 +175,7 @@ When `UNPRIORITIZED_ISSUES_FOUND=true` is detected:
 
 Model tiers are resolved from env vars → `.autocoder.json` → built-in defaults.
 Agents inherit credentials from the running Gemini/Antigravity session — no separate API keys needed.
-See `autocoder:references/model-config.md` for full reference and override instructions.
+See `.agent/shared/model-config.md` for full reference and override instructions.
 
 | Tier | Default (Gemini/Antigravity) | Used for |
 |------|-----------------------------|---------|
@@ -866,7 +794,7 @@ echo ""
 #
 # If this issue PASSES all three tests → proceed to branch creation immediately.
 #
-# See "Ultra-Complex Issues - Decompose into Sub-Tasks" later in this document
+# See .agent/shared/fix-decomposition.md ("Ultra-Complex Issues - Decompose into Sub-Tasks")
 # for the full decomposition protocol including sub-task body template.
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -936,25 +864,7 @@ echo "{\"status\": \"working\", \"issue\": ${ISSUE_NUM}, \"title\": \"${ISSUE_TI
 
 ## First-Run: Configure Merge Mode
 
-When `MERGE_MODE_NOT_CONFIGURED=true` is detected in the output above, you **MUST** prompt the user before proceeding:
-
-1. Use AskUserQuestion to ask: *"How should completed issues be integrated? Options: **merge** (auto-merge feature branch to parent and push — fully autonomous) or **pr** (push feature branch and create a pull request for human review). Enter 'merge' or 'pr':"*
-2. Set `MERGE_MODE` to the user's response (default to `merge` if unclear).
-3. Append the setting to the project's GEMINI.md (or AGENTS.md if it exists) so it persists:
-
-```bash
-cat >> GEMINI.md << MERGE_MODE_CONFIG
-
-### Merge Mode
-\`\`\`
-${MERGE_MODE}
-\`\`\`
-Options: \`merge\` (auto-merge to parent branch and push) or \`pr\` (push feature branch and create a pull request, then stop).
-MERGE_MODE_CONFIG
-echo "✅ Saved merge mode '$MERGE_MODE' to GEMINI.md"
-```
-
-4. Commit the GEMINI.md change so all agents share the setting.
+Moved to `.agent/shared/fix-first-run.md` (#240). Read it when the configuration block prints `MERGE_MODE_NOT_CONFIGURED=true`.
 
 ## CRITICAL: Release the 'working' Label Only on a Terminal Outcome
 
@@ -1490,118 +1400,7 @@ fi
 
 ### Step 2B: Complex Issue - Use Superpowers (if available)
 
-For complex issues requiring design and planning. If `SUPERPOWERS_AVAILABLE=true`, use superpowers skills. Otherwise, use direct problem-solving approaches.
-
-**1. Systematic Debugging (if bugs)**
-
-If the issue involves bugs or test failures:
-
-```
-# If superpowers available:
-Use Skill tool: superpowers:systematic-debugging
-
-# If superpowers NOT available:
-# - Reproduce the issue and capture error output
-# - Trace through code to identify root cause
-# - Form and test hypotheses
-# - Document findings before implementing fix
-```
-
-This will:
-- Investigate root cause thoroughly
-- Analyze patterns across failures
-- Test hypotheses before implementing
-- Ensure understanding before solutions
-
-**2. Brainstorming (if new features)**
-
-If the issue requires new feature design:
-
-```
-# If thorough-brainstorming available (preferred):
-Use Skill tool: thorough-brainstorming
-
-# If superpowers available (fallback):
-Use Skill tool: superpowers:brainstorming
-
-# If neither available:
-# - Explore 2-3 design alternatives
-# - List pros/cons for each approach
-# - Identify open questions and assumptions
-# - Select approach with clear rationale
-```
-
-This will:
-- Explore design alternatives
-- Clarify requirements through questions
-- Validate assumptions
-- Refine rough ideas into concrete designs
-
-**3. Writing Plans (for implementation)**
-
-After design is complete, create implementation plan:
-
-```
-# If thorough-writing-plans available (preferred):
-Use Skill tool: thorough-writing-plans
-
-# If superpowers available (fallback):
-Use Skill tool: superpowers:writing-plans
-
-# If neither available:
-# - Break work into numbered tasks (5-15 tasks)
-# - Specify exact file paths and changes for each
-# - Include verification command for each task
-# - Order tasks by dependency
-```
-
-This will:
-- Break down into bite-sized tasks
-- Specify exact file paths and changes
-- Include verification steps
-- Assume zero prior codebase knowledge
-
-**4. Executing Plans**
-
-Execute the plan in controlled batches:
-
-```
-# If superpowers available:
-Use Skill tool: superpowers:executing-plans
-
-# If superpowers NOT available:
-# - Execute 3-5 tasks at a time
-# - Run verification after each batch
-# - Stop and reassess if verification fails
-# - Track completed vs remaining tasks
-```
-
-This will:
-- Load and review the plan critically
-- Execute tasks in batches
-- Report progress for review between batches
-- Track completion systematically
-
-**5. Verification**
-
-Before claiming complete, verify the fix:
-
-```
-# If superpowers available:
-Use Skill tool: superpowers:verification-before-completion
-
-# If superpowers NOT available:
-# - Run all verification commands
-# - Capture and review output
-# - Confirm success criteria are met
-# - Run full test suite before committing
-```
-
-This will:
-- Run verification commands
-- Confirm output shows success
-- Provide evidence before assertions
-- Ensure tests pass before committing
+Moved to `.agent/shared/fix-complex-issues.md` (#240). Read it when Step 1 rates the issue complex: it walks debugging, brainstorming, planning, execution and verification. Then continue with Step 3 below.
 
 ### Step 3: Commit and Close
 
@@ -1820,36 +1619,7 @@ fi
 
 ## Example Workflow
 
-### Simple Issue Example:
-```
-Issue #240: TypeScript compilation errors in disabled-features
-→ Direct fix: Delete broken test files
-→ Verify: $BUILD_COMMAND (from GEMINI.md autocoder config)
-→ Commit and close
-```
-
-### Complex Issue Example:
-```
-Issue #222: Review Management system broken (~30 test failures)
-→ Complexity detected: >30 failures, multiple components
-→ Use superpowers:systematic-debugging
-  - Investigate root cause
-  - Analyze test failure patterns
-  - Identify common issues
-→ Use thorough-brainstorming (preferred) or superpowers:brainstorming
-  - Design fix approach
-  - Validate assumptions
-→ Use thorough-writing-plans (preferred) or superpowers:writing-plans
-  - Create implementation plan
-  - Break into tasks
-→ Use superpowers:executing-plans
-  - Execute in batches
-  - Review between batches
-→ Use superpowers:verification-before-completion
-  - Run all tests
-  - Confirm passing
-→ Commit and close with evidence
-```
+Moved to `.agent/shared/fix-complex-issues.md` (#240). Read it when you want a worked simple-vs-complex example.
 
 ## Blocking Detection & Label Assignment
 
@@ -1870,239 +1640,11 @@ Before attempting to work on an issue, assess whether it can be handled autonomo
 
 ### Detection Process
 
-**Step 1: Read the issue carefully**
-
-Look for these red flags:
-- **Vague or incomplete**: No specific steps, missing context, unclear acceptance criteria → `needs-clarification`
-- **Multiple solutions**: Several valid approaches, trade-offs unclear, design needed → `needs-design`
-- **Major decision**: Architectural change, breaking change, security impact → `needs-approval`
-- **Too large**: >100 test failures, affects multiple systems, irreversible → `too-complex`
-
-**Step 2: If blocked, add label and skip**
-
-```bash
-BLOCKING_LABEL=""  # Will be set to one of: needs-clarification, needs-design, needs-approval, too-complex
-BLOCKING_REASON=""  # Human-readable explanation
-
-# Example: Issue has unclear requirements
-if [issue description is vague or missing critical information]; then
-  BLOCKING_LABEL="needs-clarification"
-  BLOCKING_REASON="Issue description is unclear. Need specific details about: [what's missing]"
-fi
-
-# Example: Issue requires design decisions
-#
-# IMPORTANT: when applying `needs-design`, BLOCKING_REASON MUST explain
-# *what specifically* needs designing. Do not leave placeholder text — the
-# script rejects reasons containing unfilled brackets like `[list options]`.
-#
-# Write a multi-line reason covering, at minimum:
-#   - The specific design questions that are open (1–N concrete questions)
-#   - The candidate approaches you considered and why none is the clear winner
-#   - What artifact would unblock the work (ADR? spec doc? a decision from a named owner?)
-#
-# Example of a good reason:
-#   "Issue asks for 'real-time notifications' but doesn't specify transport.
-#    Open questions:
-#    1. SSE (we use it elsewhere) vs WebSocket vs polling?
-#    2. Who is the audience — specific user groups only, or all users?
-#    3. Persistence semantics — at-least-once? best-effort?
-#    Approaches considered:
-#    - SSE: matches existing infra but only server-push.
-#    - WebSocket: bidirectional but new infra surface.
-#    Needs an ADR or a decision from the platform owner before implementation."
-if [multiple approaches possible, no clear winner]; then
-  BLOCKING_LABEL="needs-design"
-  BLOCKING_REASON="$(cat <<'NEEDS_DESIGN_REASON'
-<one-paragraph summary of what is undecided>
-
-Open questions:
-1. <specific question>
-2. <specific question>
-
-Approaches considered:
-- <approach>: <pros/cons>
-- <approach>: <pros/cons>
-
-Unblocks when: <ADR/spec/decision-owner that needs to land>
-NEEDS_DESIGN_REASON
-)"
-fi
-
-# Example: Issue requires architectural approval
-if [breaking change or major architectural decision]; then
-  BLOCKING_LABEL="needs-approval"
-  BLOCKING_REASON="This requires architectural decision: [describe the decision]"
-fi
-
-# Example: Issue is too complex for autonomous resolution
-if [>100 test failures or cross-cutting concerns]; then
-  BLOCKING_LABEL="too-complex"
-  BLOCKING_REASON="Too large for autonomous resolution: [describe complexity]"
-fi
-
-# If a blocking label was identified, use the script to add it and skip
-if [ -n "$BLOCKING_LABEL" ]; then
-  # Determine script location (portable across different plugin install locations)
-  SCRIPT_DIR="$HOME/.agent/plugins/autocoder/scripts"
-
-  bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "$BLOCKING_LABEL" "$BLOCKING_REASON"
-  # Log to history
-  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "Blocked #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "Added label: ${BLOCKING_LABEL}." \
-    "${BLOCKING_REASON:0:200}" \
-    "Requires human review before proceeding."
-
-  echo "⏭️  Skipping to next issue..."
-  echo ""
-  # Continue to next issue in the workflow
-fi
-```
-
-**Step 3: If not blocked, proceed with fix**
-
-If no blocking conditions detected, continue with the normal fix workflow (simple vs complex vs ultra-complex determination).
+Moved to `.agent/shared/fix-blocking.md` (#240). Read it when an issue may need a blocking label: it has the red flags, the reason-writing rules and the `add-blocking-label.sh` call.
 
 ### Ultra-Complex Issues - Decompose into Sub-Tasks
 
-This section is triggered both by the **task scope gate** (above, at claim time) and by the
-complexity assessment (Step 1) when you discover mid-implementation that the scope is larger than expected.
-
-For issues too large for autonomous resolution (>100 test failures, major architecture changes, significant trade-off decisions, or issues that fail the scope gate):
-
-**Decomposition rules — each sub-task MUST satisfy ALL of these:**
-
-1. **Context fit**: Completable in one agent conversation (not "migrate everything", not "audit all files")
-2. **Worktree independence**: Touches a distinct set of files from sibling sub-tasks — no sub-task may edit the same file as another sibling that could run concurrently. If two sub-tasks MUST touch the same file, sequence them (sub-task B depends on sub-task A) and describe that dependency in the body. Each sub-task's `Touches:` line (in the template below) names its areas; two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`, never run in parallel.
-3. **Testable in isolation**: Has its own acceptance criteria and can be verified independently.
-4. **No shared in-flight state**: Does not require uncommitted changes from a sibling sub-task to compile or pass tests.
-
-**First, attempt to decompose the issue into manageable sub-tasks:**
-
-```bash
-echo "⚠️  Issue requires decomposition: attempting breakdown"
-
-# Use brainstorming skill to analyze and decompose the complex issue
-if [ "$SUPERPOWERS_AVAILABLE" = "true" ] || [ "$THOROUGH_SKILLS_AVAILABLE" = "true" ]; then
-  echo "📋 Using thorough-brainstorming (preferred) or superpowers:brainstorming to decompose issue #$ISSUE_NUM..."
-  # Prompt: "Decompose issue #$ISSUE_NUM into 3-8 sub-tasks. Each sub-task must:
-  # (a) fit in one agent context window, (b) touch a DISTINCT set of files from
-  # every other sub-task so they can run in parallel worktrees without merge conflicts,
-  # (c) be independently testable. List any sub-tasks that must run after another
-  # (sequential dependencies). For each, provide: title, description, files affected,
-  # acceptance criteria, priority, and dependencies."
-
-  # After decomposition analysis is complete, create GitHub issues for each sub-task
-  # Store sub-task numbers for linking
-  SUBTASK_NUMBERS=()
-
-  # Example sub-task creation (repeat for each decomposed task):
-  # for SUBTASK in "${SUBTASKS[@]}"; do
-  SUBTASK_RESULT=$(issue_create \
-    --label "bug" --label "P2" --label "subtask" \
-    --title "Subtask: [Brief description]" \
-    --body "$(cat <<SUBTASK_BODY
-## Sub-task of #${ISSUE_NUM}
-
-This is a decomposed sub-task from the larger issue #${ISSUE_NUM}.
-
-## Description
-[What needs to be done in this specific sub-task]
-
-## Files Affected
-[List specific files or directories this sub-task will modify. This MUST NOT overlap
-with the files listed in sibling sub-tasks unless those sub-tasks have a sequential
-dependency (listed below). Overlapping file lists = merge conflict in the worktree swarm.]
-
-Touches: [comma-separated files, directories (trailing /) or globs from the list above]
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
-
-## Dependencies
-- Sub-task of #${ISSUE_NUM}
-- [Depends on: #<sibling-subtask-number> — reason why this must run after that one]
-- [Can run in parallel with: #<sibling-subtask-number>]
-
-## Testing
-[How to verify this sub-task is complete in isolation, without sibling sub-tasks merged]
-
----
-
-🤖 Auto-decomposed from #${ISSUE_NUM} by autonomous fix workflow
-SUBTASK_BODY
-)")
-  SUBTASK_NUM=$(echo "$SUBTASK_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
-
-  SUBTASK_NUMBERS+=("$SUBTASK_NUM")
-  echo "✅ Created sub-task #$SUBTASK_NUM"
-  # done
-
-  # Release the parent issue claim before exiting — workers will pick up sub-tasks.
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_release "$ISSUE_NUM" 2>/dev/null || true
-
-  # Update original issue to reference all sub-tasks
-  issue_comment "$ISSUE_NUM" --body "🔍 **Issue Decomposed into Sub-Tasks**
-
-This issue has been broken down into independently-workable sub-tasks that can
-run in parallel worktrees without merge conflicts:
-
-$(for num in "${SUBTASK_NUMBERS[@]}"; do echo "- [ ] #$num"; done)
-
-**Parallel safety**: each sub-task touches different files. Check each sub-task's
-\"Files Affected\" section before assigning to confirm no overlap.
-
-**Status**: This issue will be automatically closed once all sub-tasks are completed and verified.
-
-🤖 Auto-decomposed by autonomous fix workflow"
-
-  # Add label to indicate decomposition
-  # The children go into the lifecycle event log (#190).
-  AUTOCODER_EVENT_CHILDREN="${SUBTASK_NUMBERS[*]}" issue_update "$ISSUE_NUM" --add-label "decomposed" 2>/dev/null || true
-
-  echo "✅ Decomposed issue #$ISSUE_NUM into ${#SUBTASK_NUMBERS[@]} sub-tasks"
-  echo "📋 Sub-tasks: ${SUBTASK_NUMBERS[*]}"
-  echo ""
-  echo "⏭️  Claim released. Sub-tasks will be picked up by workers on the next tick."
-
-else
-  # Fallback: If superpowers not available, add too-complex label
-  echo "ℹ️  Superpowers not available for decomposition"
-
-  # Prepare detailed reason for blocking
-  COMPLEXITY_REASON="Ultra-complex issue requiring decomposition or human guidance.
-
-**Complexity Indicators**:
-- [List specific indicators: >100 test failures, major architectural change, etc.]
-
-**Recommended Approach**:
-- Manually decompose into smaller sub-tasks
-- Use /review-blocked to interactively review this issue
-- Consider using superpowers plugin for assisted decomposition
-
-**Available Tools**:
-$(if [ "$QUINT_AVAILABLE" = "true" ]; then
-  echo "- ✅ Quint plugin available for structured reasoning"
-else
-  echo "- ℹ️  Quint plugin not installed - manual review recommended"
-fi)"
-
-  # Determine script location (portable across different plugin install locations)
-  SCRIPT_DIR="$HOME/.agent/plugins/autocoder/scripts"
-
-  # Use the script to add blocking label
-  bash "$SCRIPT_DIR/add-blocking-label.sh" "$ISSUE_NUM" "too-complex" "$COMPLEXITY_REASON"
-
-  echo "⏭️  Issue labeled as too-complex. Use /review-blocked to review."
-fi
-
-echo ""
-# Continue to next issue
-```
+Moved to `.agent/shared/fix-decomposition.md` (#240). Read it when the task scope gate or Step 1 says the issue is too large: it has the decomposition rules, the sub-task body template and the `too-complex` fallback.
 
 **Monitoring Decomposed Issues**:
 
@@ -2173,52 +1715,11 @@ fi
 
 ### Skip Criteria (Legacy)
 
-Skip to next issue if:
-- Issue requires external dependencies (API keys, services) → add `needs-clarification` label
-- Issue is blocked by another issue → add comment, don't add blocking label
-- Issue requires user input/decision → add appropriate blocking label (`needs-approval`, `needs-design`, or `needs-clarification`)
+Moved to `.agent/shared/fix-blocking.md` (#240). Read it when deciding whether to skip an issue.
 
 ## No Priority Issues Found
 
-If no issues with P0-P3 labels exist, run full regression testing:
-
-### Step 1: Run Full Regression Test
-
-Use the `/full-regression-test` command to run the complete test suite:
-
-```
-/full-regression-test
-```
-
-This command will:
-- Load test configuration from GEMINI.md
-- Run build verification
-- Run unit tests
-- Run E2E tests (if configured)
-- Analyze failures and assign priorities
-- Create/update GitHub issues for each failure
-- Generate a detailed report
-
-### Step 2: Review Results
-
-After `/full-regression-test` completes:
-
-- **If failures found**: Issues are created with priority labels (P0-P3)
-- **If all pass**: No new issues created
-
-Check newly created issues:
-
-```bash
-# View issues created by regression test
-issue_list --state open --label "test-failure" --limit 20
-```
-
-### Step 3: Continue Workflow
-
-After regression testing:
-
-- **If issues were created** → Continue fixing (workflow picks them up automatically)
-- **If all tests passed** → Move to Enhancement Phase (Step 5)
+Moved to `.agent/shared/fix-no-priority-work.md` (#240). Read it when no P0-P3 issue is claimable: it covers Steps 1-3, the full regression run and what to do with its results. Then continue with Step 4 below.
 
 ### Step 4: If All Tests Pass - Work on Enhancements
 
@@ -2295,132 +1796,7 @@ fi
 
 #### 5B: Propose New Enhancements (if none exist)
 
-If no enhancement issues exist, analyze the codebase and propose improvements:
-
-**First, check test coverage** using the persistent coverage report:
-
-```bash
-# Fast path: Read existing report if available
-if [ -f "test-coverage.md" ]; then
-  echo "📊 Reading test-coverage.md (fast path)"
-  # Parse coverage from report header
-  OVERALL_COV=$(grep "Overall Coverage" test-coverage.md | grep -oE '[0-9]+' | head -1)
-  echo "Current coverage: ${OVERALL_COV}%"
-
-  # Show lowest coverage areas from report
-  echo ""
-  echo "Areas needing coverage:"
-  grep -E "<!-- COVERAGE: [0-9]+%" test-coverage.md | head -5
-else
-  # No report exists - run full analysis to create it
-  echo "📊 No test-coverage.md found, running full analysis..."
-  /improve-test-coverage --analyze
-fi
-```
-
-If coverage is below 80%, use `/improve-test-coverage` to improve it (this uses the fast path when test-coverage.md exists).
-
-**Then use `thorough-brainstorming` (preferred) or `superpowers:brainstorming`** to identify other valuable enhancements:
-
-```
-# If thorough-brainstorming available (preferred):
-Use Skill tool: thorough-brainstorming
-
-# If superpowers available (fallback):
-Use Skill tool: superpowers:brainstorming
-```
-
-Focus areas for enhancement proposals:
-1. **Test Coverage** - Use `/improve-test-coverage` to improve gaps (reads from test-coverage.md)
-2. **Code Quality** - Complex functions to refactor, duplication to reduce
-3. **Performance** - Slow queries, caching opportunities, bundle optimization
-4. **Documentation** - API docs, code examples, best practices
-
-**Create Enhancement Proposal** (tagged with `proposal` label for human review):
-
-```bash
-PROPOSAL_RESULT=$(issue_create \
-  --label "enhancement" --label "proposal" --label "P3" \
-  --title "Proposal: [Brief description]" \
-  --body "$(cat <<'ENHANCEMENT_BODY'
-## Proposed Enhancement
-
-[Detailed description of what this enhancement accomplishes]
-
-## Rationale
-
-[Why this improvement is valuable - metrics, user impact, maintainability]
-
-## Implementation Plan
-
-### Phase 1: [First phase]
-- [ ] Task 1.1
-- [ ] Task 1.2
-
-### Phase 2: [Second phase]
-- [ ] Task 2.1
-- [ ] Task 2.2
-
-### Phase 3: Verification
-- [ ] Run full test suite
-- [ ] Manual verification of feature
-- [ ] Update documentation
-
-## Success Criteria
-
-- [ ] All existing tests pass
-- [ ] New tests added for enhancement
-- [ ] Documentation updated
-- [ ] No performance regression
-
-## Estimated Complexity
-
-[Simple | Medium | Complex]
-
----
-
-## 📋 Proposal Status
-
-**Status**: ⏳ Awaiting Human Approval
-
-### How to Approve This Proposal
-
-To approve and allow automated implementation:
-```bash
-/update-issue <issue_number> --remove-label "proposal"
-```
-
-### How to Provide Feedback
-
-Comment on this issue with your feedback. The AI will incorporate your suggestions when you run `/refine-proposal <issue_number>`.
-
-### How to Reject This Proposal
-
-```bash
-/close-issue <issue_number> "Rejected: [reason]"
-```
-
----
-
-🤖 Proposed by autonomous improvement workflow
-ENHANCEMENT_BODY
-)")
-PROPOSAL_NUM=$(echo "$PROPOSAL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
-
-echo "✅ Created proposal issue #${PROPOSAL_NUM}. Awaiting human approval before implementation."
-echo "💡 Use '/list-proposals' to view all pending proposals"
-echo ""
-
-# Write idle status file for agents-ui TUI monitoring
-SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-[ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
-echo "IDLE_NO_WORK_AVAILABLE"
-```
-
-**IMPORTANT**: After creating a proposal, output `IDLE_NO_WORK_AVAILABLE` to trigger the sleep cycle. This gives humans time to review the proposal before the next iteration. Do NOT immediately create more proposals or loop without sleeping.
+Moved to `.agent/shared/fix-no-priority-work.md` (#240). Read it when 5A finds no approved enhancement: it covers the coverage check, brainstorming and the proposal issue template.
 
 #### 5C: Implement Approved Enhancement Using Superpowers
 
@@ -2696,102 +2072,11 @@ $(cat "$REVIEW_FILE")
 fi
 ```
 
-**If Tests Fail - Create Bug Issues**:
-
-```bash
-if [ $TEST_EXIT_CODE -ne 0 ]; then
-  echo "❌ Tests failed during enhancement implementation"
-
-  # Parse test failures and create issues for each
-  # Extract failing test names and create individual issues
-
-  issue_create \
-    --label "bug" --label "test-failure" --label "P1" \
-    --title "Test failure during enhancement #${ENHANCE_NUM}: [Test name]" \
-    --body "$(cat <<FAILURE_BODY
-## Test Failure
-
-**Related Enhancement**: #${ENHANCE_NUM}
-**Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\`
-
-## Failing Test
-\`\`\`
-[Test name and location]
-\`\`\`
-
-## Error Output
-\`\`\`
-${TEST_OUTPUT}
-\`\`\`
-
-## Context
-This test failure occurred while implementing enhancement #${ENHANCE_NUM}.
-
-## Suggested Investigation
-1. Check if enhancement changes broke existing functionality
-2. Verify test expectations are still valid
-3. Check for missing dependencies or setup
-
-🤖 Created by autonomous enhancement workflow
-FAILURE_BODY
-)"
-
-  # Comment on enhancement issue about the failure
-  issue_comment "$ENHANCE_NUM" --body "⚠️ **Implementation Blocked by Test Failures**
-
-Test failures occurred during implementation. Bug issues have been created:
-- [List created bug issue numbers]
-
-Enhancement implementation paused. Will resume after bugs are fixed.
-
-🤖 Autonomous enhancement workflow"
-
-  # Do NOT merge - leave branch for investigation
-  echo "⚠️ Enhancement branch preserved for investigation: enhancement/issue-${ENHANCE_NUM}-auto"
-
-  # KEEP the 'working' label. The enhancement is PAUSED, not finished — the
-  # branch is preserved and this worker intends to resume once the bug issues
-  # land. Releasing here would re-expose an issue that already has unmerged work
-  # on a branch (issue #14). Release it only if you are truly abandoning the
-  # enhancement, and then use the explicit-release path (comment + label removal).
-  echo "⏸️  Enhancement #$ENHANCE_NUM paused ('working' lock retained; branch preserved)"
-
-  # Switch back to integration branch
-  git checkout "$PARENT_BRANCH"
-fi
-```
+**If Tests Fail - Create Bug Issues:** moved to `.agent/shared/fix-enhancement-failures.md` (#240). Read it when the enhancement's tests fail: it files the bug issues and pauses the enhancement, keeping the `working` label and the branch.
 
 #### 5E: Enhancement Skip Criteria
 
-Skip an enhancement and move to the next if:
-- Enhancement requires external services not available
-- Enhancement scope is too large (>50 files affected)
-- Enhancement has unresolved dependencies on other issues
-- Enhancement requires user decisions not documented
-
-```bash
-# Explicit release: announce the hand-off FIRST, then drop the lock, so peers
-# and /monitor-workers see a deliberate release rather than a vanished lock.
-issue_comment "$ENHANCE_NUM" --body "🔓 **Enhancement Skipped — releasing claim**
-
-This enhancement cannot be automatically implemented because:
-[Reason]
-
-**Recommendation**: [What manual steps are needed]
-**State left behind**: [what exists on the branch, if anything]
-
-Releasing the \`working\` lock so another agent can pick this up.
-
-🤖 Autonomous enhancement workflow"
-
-# Terminal outcome only: this is an abandonment, paired with the release comment above.
-issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-
-# Add 'needs-review' label
-issue_update "$ENHANCE_NUM" --add-label "needs-review"
-```
-
----
+Moved to `.agent/shared/fix-enhancement-failures.md` (#240). Read it when an enhancement cannot be implemented automatically.
 
 ## MANDATORY: Continuous Loop
 
@@ -2829,91 +2114,7 @@ The workflow follows this strict priority order:
 
 ### Loop Implementation
 
-After every issue is resolved, skipped, or when checking for work:
-
-```bash
-# Fetch all open issues
-issue_list --state open --limit 100 > /tmp/all-issues.json
-
-# Count priority bug issues (P0-P3, excluding proposals, blocked, decomposed, and issues being worked on)
-PRIORITY_ISSUES=$(cat /tmp/all-issues.json | python3 -c "
-import json, sys
-issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'decomposed', 'awaiting-integration']
-priority = [i for i in issues
-            if any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
-            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
-            and not any(l['name'] == 'working' for l in i.get('labels',[]))
-            and not any(l['name'] in blocking_labels for l in i.get('labels',[]))]
-print(len(priority))
-")
-
-# Count APPROVED enhancement issues (enhancement label but NOT proposal, blocked, or working label)
-APPROVED_ENHANCEMENTS=$(cat /tmp/all-issues.json | python3 -c "
-import json, sys
-issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
-approved = [i for i in issues
-            if any(l['name'] == 'enhancement' for l in i.get('labels',[]))
-            and not any(l['name'] == 'proposal' for l in i.get('labels',[]))
-            and not any(l['name'] == 'working' for l in i.get('labels',[]))
-            and not any(l['name'] in blocking_labels for l in i.get('labels',[]))]
-print(len(approved))
-")
-
-# Count pending proposals
-PENDING_PROPOSALS=$(cat /tmp/all-issues.json | python3 -c "
-import json, sys
-issues = json.load(sys.stdin)
-proposals = [i for i in issues if any(l['name'] == 'proposal' for l in i.get('labels',[]))]
-print(len(proposals))
-")
-
-if [ "$PRIORITY_ISSUES" -gt 0 ]; then
-  echo "🐛 Found $PRIORITY_ISSUES priority bug(s). Fixing bugs first..."
-  # Process next bug issue (repeat from "Get highest priority issue" section)
-elif [ "$APPROVED_ENHANCEMENTS" -gt 0 ]; then
-  echo "🚀 No bugs! Found $APPROVED_ENHANCEMENTS approved enhancement(s). Implementing..."
-  # Process next approved enhancement (Step 5C)
-else
-  echo "✨ No bugs or approved enhancements."
-
-  # Count blocked issues
-  BLOCKED_ISSUES_COUNT=$(cat /tmp/all-issues.json | python3 -c "
-import json, sys
-issues = json.load(sys.stdin)
-blocking_labels = ['needs-approval', 'needs-design', 'needs-clarification', 'too-complex', 'future', 'awaiting-integration']
-blocked = [i for i in issues if any(l['name'] in blocking_labels for l in i.get('labels', []))]
-print(len(blocked))
-")
-
-  if [ "$PENDING_PROPOSALS" -gt 0 ] || [ "$BLOCKED_ISSUES_COUNT" -gt 0 ]; then
-    if [ "$PENDING_PROPOSALS" -gt 0 ]; then
-      echo "📋 $PENDING_PROPOSALS proposal(s) awaiting human approval."
-      echo "💡 Use '/list-proposals' to review pending proposals"
-    fi
-    if [ "$BLOCKED_ISSUES_COUNT" -gt 0 ]; then
-      echo "🚫 $BLOCKED_ISSUES_COUNT issue(s) blocked (requires human review)."
-      echo "💡 Use '/review-blocked' to review and approve blocked issues"
-    fi
-    echo "💤 Nothing to do until proposals/blocked issues are approved or new issues arrive."
-    echo ""
-
-    # Write idle status file for agents-ui TUI monitoring
-    SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME=$(herdr pane current 2>/dev/null | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-    [ -n "$SESSION_NAME" ] || SESSION_NAME="unknown"
-    echo "{\"status\": \"idle\", \"completed\": \"$(date -Iseconds)\"}" > "/tmp/agents-ui/${SESSION_NAME}.json"
-
-    echo "IDLE_NO_WORK_AVAILABLE"
-  else
-    echo "No pending proposals or blocked issues. Will brainstorm new proposals..."
-    # Run /full-regression-test first if not recently run
-    # Then brainstorm proposals using thorough-brainstorming (preferred) or superpowers:brainstorming
-    # After creating proposals, output IDLE_NO_WORK_AVAILABLE
-  fi
-fi
-```
+Moved to `.agent/shared/fix-loop-and-proposals.md` (#240). Read it when you need the queue-counting script that picks the next kind of work.
 
 ### Never Stop
 
@@ -2958,65 +2159,4 @@ This signals the stop hook to sleep (default 15 minutes) before checking again f
 
 ## Proposal Management
 
-### What is a Proposal?
-
-A **proposal** is an AI-generated enhancement suggestion that requires human review before implementation. Proposals are tagged with the `proposal` label and will NOT be automatically implemented.
-
-### How to Review Proposals
-
-Use the `/list-proposals` command to see all pending proposals:
-
-```bash
-/list-proposals
-```
-
-### How to Approve a Proposal
-
-To approve a proposal for automated implementation, remove the `proposal` label:
-
-```bash
-/update-issue <issue_number> --remove-label "proposal"
-```
-
-Once the `proposal` label is removed, the `/fix` workflow will automatically implement the enhancement on its next iteration.
-
-### How to Provide Feedback on a Proposal
-
-1. **Comment on the issue** with your feedback, questions, or requested changes
-2. Run `/refine-proposal <issue_number>` to have the AI incorporate your feedback
-3. Review the updated proposal
-4. Approve or provide additional feedback
-
-### How to Reject a Proposal
-
-```bash
-/close-issue <issue_number> "Rejected: [reason for rejection]"
-```
-
-### Proposal Labels
-
-| Label | Meaning |
-|-------|---------|
-| `proposal` | AI-generated, awaiting human approval |
-| `enhancement` | Describes a feature improvement |
-| `P0`-`P3` | Priority level (assigned during triage) |
-
-**Note**: An issue can have both `proposal` and `enhancement` labels. The `proposal` label is what prevents automatic implementation.
-
----
-
-🤖 **Ready to fix issue #$ISSUE_NUM! Start working on it now, then IMMEDIATELY continue to the next issue.**
-
-**REMINDER**: The `working` label is released only on a **terminal outcome** —
-the issue is closed, or you explicitly release it (blocked / skipped / abandoned)
-with a release comment in the same step:
-
-```bash
-# Terminal outcome only. Never after a partial commit, a batch boundary, or a pause.
-issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-```
-
-Dropping it while the issue is still open and still yours re-exposes it to the
-claimable pool and causes a peer to duplicate your work. Leaving it held while
-you are genuinely still working is correct — `/monitor-workers` reclaims locks
-that go stale.
+Moved to `.agent/shared/fix-loop-and-proposals.md` (#240). Read it when you need to explain how proposals are reviewed, approved, refined or rejected.

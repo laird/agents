@@ -16,9 +16,12 @@ SCRIPTS="$ROOT/plugins/autocoder/scripts"
 ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-for f in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
-  P="$ROOT/$f"
-  python3 - "$P" <<'PY' && ok "$f: the sub-task template carries a Touches: line" || bad "$f: no Touches: line in the sub-task template"
+# The decomposition protocol (template and chaining rule) moved out of fix.md into
+# a reference file per platform (#240); the worker guidance stays in fix.md.
+for pair in "plugins/autocoder/commands/fix.md:skills/autocoder/references/fix-decomposition.md" \
+            ".agent/workflows/fix.md:.agent/shared/fix-decomposition.md"; do
+  f="${pair%%:*}"; P="$ROOT/$f"; d="${pair#*:}"; D="$ROOT/$d"
+  python3 - "$D" <<'PY' && ok "$d: the sub-task template carries a Touches: line" || bad "$d: no Touches: line in the sub-task template"
 import sys
 s = open(sys.argv[1]).read()
 i = s.index("--body \"$(cat <<SUBTASK_BODY")
@@ -27,8 +30,9 @@ t = s[i:j]
 fa, tl, ac = t.find("## Files Affected"), t.find("\nTouches: "), t.find("## Acceptance Criteria")
 sys.exit(0 if -1 < fa < tl < ac else 1)
 PY
-  grep -q 'two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`' "$P" \
-    && ok "$f: overlapping sub-tasks are chained with Depends on:" || bad "$f: no rule chaining overlapping sub-tasks"
+  grep -q 'two sub-tasks whose `Touches:` areas overlap share a hotspot and must be chained with `Depends on:`' "$D" \
+    && ok "$d: overlapping sub-tasks are chained with Depends on:" || bad "$d: no rule chaining overlapping sub-tasks"
+  grep -qF "${d##*/}" "$P" && ok "$f points to $d" || bad "$f does not point to $d"
   grep -q 'keep `Touches:` current (#229)' "$P" && ok "$f: workers are told to keep Touches: current" || bad "$f: no Touches: guidance"
   grep -q '"${SCRIPT_DIR}/touches-set.sh" "$ISSUE_NUM" --base "origin/${INTEGRATION_BRANCH}" \\$' "$P" \
     && grep -A1 '"${SCRIPT_DIR}/touches-set.sh" "$ISSUE_NUM" --base "origin/${INTEGRATION_BRANCH}" \\$' "$P" | grep -q -- '--declare "' \

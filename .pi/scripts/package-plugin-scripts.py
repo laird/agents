@@ -322,6 +322,9 @@ def rendered_prompt(source: Path, hint: str | None) -> str:
     # copied from the Claude command never looked there (#201).
     body = body.replace('  for d in "$(pwd)/.agent/scripts" \\\n',
                         '  for d in "$(pwd)/.pi/scripts" \\\n           "$(pwd)/.agent/scripts" \\\n')
+    # `autocoder:references/<file>.md` is a Claude Code plugin path; on Pi the
+    # references ship beside the skill in .pi/skills/autocoder-references/ (#240).
+    body = body.replace("autocoder:references/", f"{PI_SKILL_DIR}/autocoder-references/")
     rendered = "---\n" + "\n".join(front) + "\n---\n" + generated + "\n\n" + body
     if hint:
         # Pi drops trailing words unless the template consumes them: `/fix 42`
