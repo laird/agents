@@ -20,6 +20,8 @@
 #                          (the caller — e.g. the idle sentinel — owns the
 #                          dispatch). Implies --no-worktrees.
 #   --no-worktrees         Run all agents in the same directory
+#   --no-attach            Do not attach to the tmux session at the end (for
+#                          callers with no terminal, such as autocoder-ctl start)
 #
 # Examples:
 #   start-parallel-agents.sh 3 --mux tmux --agent claude
@@ -62,6 +64,7 @@ MUX=""
 AGENT=""
 PAUSED=false
 MANAGER_ONLY=false
+NO_ATTACH=false
 CLI_ISSUE_SOURCE=""
 CLI_ISSUE_DIR=""
 ROUTE="self"
@@ -87,6 +90,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --manager-only)
       MANAGER_ONLY=true
+      shift
+      ;;
+    --no-attach)
+      NO_ATTACH=true
       shift
       ;;
     --issue-source)
@@ -128,6 +135,7 @@ while [[ $# -gt 0 ]]; do
       echo "                         (the caller — e.g. the idle sentinel — owns the"
       echo "                         dispatch). Implies --no-worktrees."
       echo "  --no-worktrees         Run all agents in the same directory"
+      echo "  --no-attach            Do not attach to the tmux session at the end"
       echo ""
       echo "Examples:"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent claude"
@@ -536,6 +544,10 @@ if [ "$MUX" = "tmux" ]; then
       exit 0
     fi
     echo "⚠️  Session '$SESSION_NAME' already exists"
+    if [ "$NO_ATTACH" = true ]; then
+      echo "   Inspect it with: tmux attach -t $SESSION_NAME"
+      exit 0
+    fi
     echo "   Attaching to existing session..."
     tmux attach-session -t "$SESSION_NAME"
     exit 0
@@ -754,7 +766,7 @@ if [ "$MUX" = "tmux" ]; then
   echo ""
 
   # Attach to the session
-  tmux attach-session -t "$SESSION_NAME"
+  [ "$NO_ATTACH" = true ] || tmux attach-session -t "$SESSION_NAME"
 
 # ============================================================================
 # CMUX MODE

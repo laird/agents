@@ -79,8 +79,8 @@ dispatcher sources only the module of the verb being run.
 | issues | `ctl-issues.sh` | `approve`, `reject`, `request-changes`, `file` | [autocoder-ctl/issues.md](autocoder-ctl/issues.md) |
 | swarm | `ctl-swarm.sh` | `start`, `add-worker`, `remove-worker`, `stop-swarm` | [autocoder-ctl/swarm.md](autocoder-ctl/swarm.md) |
 
-The workers, issues and swarm modules come with later sub-tasks of #192. Until a
-module ships, its verbs answer exit 3, `"not implemented"`.
+A verb whose module is not installed (an older or partial plugin copy) answers
+exit 3, `"not implemented"`.
 
 ### release
 
