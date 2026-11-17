@@ -149,8 +149,9 @@ instead, which `swarm-register.sh` writes when the loop starts.
 - for the manager: updates the entry's mux fields, `pid`, `pid_start_time` and
   `registeredAt`, keeping the rest (or creates one if `manager` is `null`),
   unless a different manager is still live, in which case it changes nothing;
-- sets the swarm `state` to `running`, when it registered something. A worker
-  entry's own `state` is left as it was.
+- sets the swarm `state` to `running`, when it registered something. An existing
+  worker entry's own `state` is left as it was (a new entry gets `started`,
+  and `--state` overrides both).
 
 No manifest means not a swarm: it prints a note and exits 0. The main checkout
 is never added as a worker unless a session is given explicitly.
