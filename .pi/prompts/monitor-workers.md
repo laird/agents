@@ -222,6 +222,14 @@ issue_list --state open | jq -r '.[] | "#\(.number): \(.title)"'
 
 # Issues currently being worked (lives in working/ bucket)
 issue_list --state working | jq -r '.[] | "#\(.number): \(.title)"'
+
+# Merged work sampled for human review and not yet reviewed (#197). These issues
+# are CLOSED by design, so only --state all finds them.
+SPOT_CHECK_COUNT=$(issue_list --state all --label spot-check --limit 500 | jq 'length')
+SPOT_CHECK_MAX=$(python3 -c "import json; print(int((json.load(open('.autocoder.json')).get('spotCheck') or {}).get('backlogMax', 20)))" 2>/dev/null || echo 20)
+echo "🔎 Spot-check backlog: ${SPOT_CHECK_COUNT} unreviewed (review with /spot-check)"
+[ "${SPOT_CHECK_COUNT:-0}" -gt "$SPOT_CHECK_MAX" ] \
+  && echo "⚠️  Spot-check backlog ${SPOT_CHECK_COUNT} is over ${SPOT_CHECK_MAX}: tell the human to run /spot-check. Do not pause the swarm for it."
 ```
 
 Also check the integration-branch sentinel, if one runs beside the swarm

@@ -13,7 +13,7 @@
 #
 # USAGE:
 #   render-review-digest.sh --issue N --base REF [--pr] [--sections FILE]
-#   render-review-digest.sh --size-only --base REF
+#   render-review-digest.sh --size-only --base REF [--head REF]
 #
 #   --sections FILE   Markdown written by the agent with any of these headings:
 #                       ## Intent
@@ -25,12 +25,15 @@
 #                     slot, which fails the placeholder check below.
 #   --pr              Prefix "Closes #N" (PR bodies). Omit for close comments,
 #                     where the issue is being closed anyway.
+#   --head REF        The commit whose change is measured (default HEAD). The
+#                     spot-check selector (#197) measures a landed commit that is
+#                     not checked out.
 #   --size-only       Print one machine-readable line and exit 0:
 #                       changed=<n> files=<n> mirror_changed=<n> mirror_files=<n> over=<yes|no>
 #                     `over` compares the non-mirror counts with the thresholds
 #                     (REVIEW FIT, below).
 #
-# SIZE: `git diff --numstat <base>...HEAD`. Parity mirrors are counted on their
+# SIZE: `git diff --numstat <base>...<head>`. Parity mirrors are counted on their
 #   own line, not in the review size, because a reviewer reads the source once:
 #   .agent/, plugins/*/skills/, codex-plugins/, .factory/, .factory-plugin/, .pi/.
 #
@@ -49,11 +52,12 @@
 
 set -uo pipefail
 
-ISSUE=""; BASE=""; PR=0; SECTIONS=""; SIZE_ONLY=0
+ISSUE=""; BASE=""; HEAD_REF=HEAD; PR=0; SECTIONS=""; SIZE_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)     ISSUE="${2:-}"; shift 2 ;;
     --base)      BASE="${2:-}"; shift 2 ;;
+    --head)      HEAD_REF="${2:-}"; shift 2 ;;
     --sections)  SECTIONS="${2:-}"; shift 2 ;;
     --pr)        PR=1; shift ;;
     --size-only) SIZE_ONLY=1; shift ;;
@@ -64,6 +68,8 @@ done
 [ -n "$BASE" ] || { echo "render-review-digest.sh: --base is required" >&2; exit 2; }
 git rev-parse --verify -q "${BASE}^{commit}" >/dev/null \
   || { echo "render-review-digest.sh: base '$BASE' does not resolve to a commit" >&2; exit 2; }
+git rev-parse --verify -q "${HEAD_REF}^{commit}" >/dev/null \
+  || { echo "render-review-digest.sh: head '$HEAD_REF' does not resolve to a commit" >&2; exit 2; }
 if [ "$SIZE_ONLY" -eq 0 ] && [ -z "$ISSUE" ]; then
   echo "render-review-digest.sh: --issue is required" >&2; exit 2
 fi
@@ -76,7 +82,7 @@ fi
 read -r INS DEL FILES M_INS M_DEL M_FILES < <(
   # --no-renames: a rename is a delete plus an add, each under its own plain path
   # (numstat would otherwise print "a => b", which the mirror match cannot read).
-  git -c core.quotePath=false diff --no-renames --numstat "${BASE}...HEAD" | awk -F'\t' '
+  git -c core.quotePath=false diff --no-renames --numstat "${BASE}...${HEAD_REF}" | awk -F'\t' '
     function mirror(p) {
       return p ~ /^\.agent\// || p ~ /^plugins\/[^\/]+\/skills\// || p ~ /^codex-plugins\// \
           || p ~ /^\.factory\// || p ~ /^\.factory-plugin\// || p ~ /^\.pi\//

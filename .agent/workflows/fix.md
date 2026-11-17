@@ -529,7 +529,7 @@ fi
 if [ "$ISSUE_SOURCE" = "github" ]; then
   EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
 
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "needs-review-focus:Larger than the review-fit limit; the digest names every hunk to read:fef2c0"; do
+  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "needs-review-focus:Larger than the review-fit limit; the digest names every hunk to read:fef2c0" "spot-check:Closed merge-mode work sampled for human review (see /spot-check):c2e0c6"; do
     IFS=':' read -r name desc color <<< "$label"
     if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
       echo "Creating label: $name"
@@ -1356,7 +1356,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
   if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
     # Genuinely shipped — safe to close.
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+    if issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ${CLOSE_DIGEST}
 
@@ -1364,7 +1364,12 @@ $(cat "$REVIEW_FILE")
 
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 
-🤖 Auto-resolved by autonomous fix workflow"
+🤖 Auto-resolved by autonomous fix workflow"; then
+      # Merge mode samples closed work for later human review (#197). This merge put the
+      # integration branch first, so the change is measured from the first parent.
+      bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$LANDED_COMMIT" \
+        --base "$LANDED_COMMIT^1" --apply || true
+    fi
   else
     # Real work, really pushed, but NOT on the shipping branch. Closing here
     # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
@@ -1655,7 +1660,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
   if "${SCRIPT_DIR}/verify-shipped.sh" "$LANDED_COMMIT"; then
     # Genuinely shipped — safe to close.
     issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-    issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
+    if issue_close "$ISSUE_NUM" --comment "✅ **Issue Resolved**
 
 ${CLOSE_DIGEST}
 
@@ -1664,7 +1669,12 @@ $(cat "$REVIEW_FILE")
 **Branch**: \`feature/issue-${ISSUE_NUM}\` (merged and deleted)
 **Commit**: [commit hash]
 
-🤖 Auto-resolved by autonomous fix workflow with superpowers"
+🤖 Auto-resolved by autonomous fix workflow with superpowers"; then
+      # Merge mode samples closed work for later human review (#197). This merge put the
+      # integration branch first, so the change is measured from the first parent.
+      bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$LANDED_COMMIT" \
+        --base "$LANDED_COMMIT^1" --apply || true
+    fi
   else
     # Real work, really pushed, but NOT on the shipping branch. Closing here
     # would assert "shipped" falsely. Leave the issue OPEN, keep the lock
@@ -2030,11 +2040,16 @@ if [ -n "$PARENT_ISSUE" ]; then
       printf '## Not verified / confidence\nThe sub-tasks were gated one at a time; nothing re-tested them together beyond each merge gate. Confidence: medium.\n'
     } > "$ROLLUP_SECTIONS"
     if ROLLUP=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$PARENT_ISSUE" --base HEAD --sections "$ROLLUP_SECTIONS"); then
-      issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+      if issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
 
 ${ROLLUP}
 
-🤖 Auto-closed by autonomous fix workflow"
+🤖 Auto-closed by autonomous fix workflow" && [ "$MERGE_MODE" != "pr" ]; then
+        # Merge mode samples closed work for later human review (#197). The rollup
+        # has no diff of its own, so only its labels and the random sample apply.
+        bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$PARENT_ISSUE" \
+          --sha "$(git rev-parse HEAD)" --base HEAD --apply || true
+      fi
     else
       echo "❌ Rollup digest for #$PARENT_ISSUE did not render — leaving it open"
     fi
@@ -2501,7 +2516,7 @@ on \`${PARENT_BRANCH}\`. The issue stays open and keeps its \`working\` label." 
 
   # Remove 'working' label and close enhancement with details
   issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
+  if issue_close "$ENHANCE_NUM" --comment "✅ **Enhancement Implemented**
 
 ${CLOSE_DIGEST}
 
@@ -2509,7 +2524,12 @@ $(cat "$REVIEW_FILE")
 
 **Branch**: \`enhancement/issue-${ENHANCE_NUM}-auto\` (merged and deleted)
 
-🤖 Auto-implemented by autonomous enhancement workflow"
+🤖 Auto-implemented by autonomous enhancement workflow"; then
+    # Merge mode samples closed work for later human review (#197). This merge put the
+    # integration branch first, so the change is measured from the first parent.
+    bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$ENHANCE_NUM" --sha "$(git rev-parse HEAD)" \
+      --base "$(git rev-parse HEAD)^1" --apply || true
+  fi
 
   # Write completion status file for agents-ui TUI monitoring
   SESSION_NAME=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)

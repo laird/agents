@@ -43,6 +43,7 @@
     "../../../plugins/autocoder/commands/brainstorm-issue.md",
     "../../../plugins/autocoder/commands/full-regression-test.md",
     "../../../plugins/autocoder/commands/improve-test-coverage.md",
+    "../../../plugins/autocoder/commands/spot-check.md",
     "../../../plugins/autocoder/commands/monitor-workers.md",
     "../../../plugins/autocoder/commands/monitor-loop.md",
     "../../../plugins/autocoder/commands/show-issue.md",

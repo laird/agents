@@ -436,6 +436,10 @@ ${summary}
 🤖 Auto-resolved by autonomous fix workflow"; then
       issue_update "$ISSUE_NUM" --remove-label "merging" 2>/dev/null || true
       echo "✅ Issue #${ISSUE_NUM} closed."
+      # Sample closed work for later human review (#197). Never gates; never fatal.
+      # The change measured is the feature's own (from the integration tip first seen).
+      bash "${_MTI_DIR}/spot-check-select.sh" --issue "$ISSUE_NUM" --sha "$landed" \
+        --base "$INT_SEEN_SHA" --head "$FEATURE_SHA" --apply || true
     else
       _park "⚠️ The work landed on \`${INTEGRATION_BRANCH}\` as \`${landed}\` but the tracker refused to close this issue. Parked under \`awaiting-integration\` for the sentinel or a human to close."
       echo "⚠️  Issue #${ISSUE_NUM} could not be closed; parked under 'awaiting-integration' with the work landed on '${INTEGRATION_BRANCH}'."

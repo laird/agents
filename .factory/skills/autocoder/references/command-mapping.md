@@ -10,6 +10,7 @@
 | `/review-blocked` | Review blocked issues by priority and recommend approve / reject / clarify actions |
 | `/full-regression-test` | Run `bash plugins/autocoder/scripts/regression-test.sh` and file issues for failures |
 | `/improve-test-coverage` | Analyze current coverage and add tests without regressing the suite |
+| `/spot-check` | List closed `spot-check` issues (`--state all`), review each landed commit, and record ok / follow-up / revert |
 | `/list-proposals` | Query open proposal issues and summarize status |
 | `/approve-proposal` | Remove the `proposal` label after validating the request |
 | `/list-needs-design` | Query issues with `needs-design` |

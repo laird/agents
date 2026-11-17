@@ -495,6 +495,8 @@ Landed as \`${sha}\`; \`${INTEGRATION}\` green at \`${green}\`.
       issue_update "$num" --remove-label awaiting-integration >/dev/null 2>&1 || true
       issue_update "$num" --remove-label merging >/dev/null 2>&1 || true
       echo "✅ issue #${num}: landed as ${sha:0:7}, closed"
+      # Sample closed work for later human review (#197). Never gates; never fatal.
+      bash "${_MS_DIR}/spot-check-select.sh" --issue "$num" --sha "$sha" --apply >/dev/null || true
     fi
     return 0
   fi

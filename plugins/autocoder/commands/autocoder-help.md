@@ -80,6 +80,7 @@ Based on what you find, give contextual guidance:
 |---------|---------|
 | `/full-regression-test` | Run comprehensive test suite |
 | `/improve-test-coverage` | Analyze and improve test coverage |
+| `/spot-check [number]` | Review merged work sampled for human review (ok / follow-up / revert) |
 
 ### Setup
 
