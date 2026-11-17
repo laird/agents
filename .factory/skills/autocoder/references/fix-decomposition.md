@@ -64,6 +64,7 @@ Touches: [comma-separated files, directories (trailing /) or globs from the list
 ## Dependencies
 - Sub-task of #${ISSUE_NUM}
 - [Depends on: #<sibling-subtask-number> — reason why this must run after that one]
+- [On GitHub, also add it as a native "blocked by" link: it can't be created or lost by wording]
 - [Can run in parallel with: #<sibling-subtask-number>]
 
 ## Testing

@@ -35,16 +35,23 @@
 # Expects $_ifns_BACKEND_BIN (set by issue-fns.sh).
 
 # jq definitions shared by the parsers below.
-#   decl_deps:  issue object → sorted numbers its body declares, minus itself
-#               and its parent.
-#   parent_num: issue object → the number on its "Sub-task of #N" line, or null.
+#   decl_prefix: what may precede a declaration at the start of a line: quote
+#                marks, a heading, a list marker, a checkbox, "[", bold/italics.
+#   parent_num:  issue object → the number on its "Sub-task of #N" line (a line
+#                that starts with it, like a dependency), or null.
+#   decl_deps:   issue object → sorted numbers its body declares, minus itself
+#                and its parent.
 _IDEPS_JQ_DEFS='
+def decl_prefix:
+  "(?i)^\\s*(>\\s*)*(#{1,6}\\s+)?([-*+]\\s+|[0-9]+[.)]\\s+)?(\\[[ xX]\\]\\s+)?\\[?\\s*([*_]{1,2}\\s*)?";
 def parent_num:
-  [ (.body // "") | split("\n")[] | scan("(?i)\\bsub-?task of #([0-9]+)") | .[0] | tonumber ][0];
+  [ (.body // "") | split("\n")[]
+    | select(test(decl_prefix + "sub-?task of\\s*#[0-9]"))
+    | capture("(?i)sub-?task of\\s*#(?<n>[0-9]+)").n | tonumber ][0];
 def decl_deps:
   (.number | tonumber? // .) as $self | parent_num as $parent
   | [ (.body // "") | split("\n")[]
-      | select(test("(?i)^\\s*(>\\s*)*([-*+]\\s+|[0-9]+[.)]\\s+)?(\\[[ xX]\\]\\s+)?\\[?\\s*([*_]{1,2}\\s*)?(depends on|blocked by)\\b"))
+      | select(test(decl_prefix + "(depends on|blocked by)\\b"))
       | scan("#([0-9]+)") | .[0] | tonumber
       | select(. != $self and . != $parent) ]
   | unique;
@@ -95,20 +102,16 @@ _ideps_state_is_met() {
   esac
 }
 
-# _ideps_lookup <n> — one backend read of issue <n>: prints "<state> <parent>"
-# ("-" for either when it's unknown). An unreadable issue prints "- -".
+# _ideps_lookup <n> [<back>] — one backend read of issue <n>: prints
+# "<state> <parent> <waits-back>" ("-" for an unknown state or parent;
+# <waits-back> is 1 when <n> declares a dependency on <back>, else 0). An
+# unreadable issue prints "- - 0".
 _ideps_lookup() {
-  "$_ifns_BACKEND_BIN" get "$1" 2>/dev/null \
-    | jq -r "$_IDEPS_JQ_DEFS"'"\(.state // "-" | if . == "" then "-" else . end) \(parent_num // "-")"' 2>/dev/null \
-    || echo "- -"
-}
-
-# True (exit 0) when the backend reports issue <n> closed, or can't read it.
-_ideps_is_met() {
-  local state _parent
-  read -r state _parent <<<"$(_ideps_lookup "$1")"
-  [ "$state" = "-" ] && state=""
-  _ideps_state_is_met "$state"
+  local out
+  out=$("$_ifns_BACKEND_BIN" get "$1" 2>/dev/null \
+    | jq -r --argjson back "${2:-0}" "$_IDEPS_JQ_DEFS"'
+        "\(.state // "-" | if . == "" then "-" else . end) \(parent_num // "-") \(if (decl_deps | index($back)) then 1 else 0 end)"' 2>/dev/null)
+  echo "${out:-- - 0}"
 }
 
 # Cycles in a wait graph: {"<n>": [m, ...]} on stdin → one line per cycle,
@@ -154,7 +157,7 @@ _ideps_filter() {
       unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
       continue
     fi
-    read -r state parent <<<"$(_ideps_lookup "$n")"
+    read -r state parent _ <<<"$(_ideps_lookup "$n")"
     [ "$state" = "-" ] && state=""
     if [ "$parent" != "-" ] && [ -n "$parent" ]; then
       parents=$(printf '%s' "$parents" | jq -c --arg k "$n" --argjson p "$parent" '. + {($k): $p}' 2>/dev/null || printf '%s' "$parents")
@@ -192,21 +195,22 @@ issue_unmet_dependencies() {
   deps=$(printf '%s' "$issue" | jq -c '[.]' | _ideps_body_deps 2>/dev/null | jq -r --arg k "$n" '.[$k] // [] | .[]' 2>/dev/null)
   parent=$(printf '%s' "$issue" | jq -r "$_IDEPS_JQ_DEFS"'parent_num // empty' 2>/dev/null)
   for d in $deps; do
-    read -r state dparent <<<"$(_ideps_lookup "$d")"
+    read -r state dparent back <<<"$(_ideps_lookup "$d" "$n")"
     [ "$state" = "-" ] && state=""
     [ "$dparent" = "$n" ] && continue        # its own sub-task
     _ideps_state_is_met "$state" && continue
     waiting+=("#$d")
-    back=$("$_ifns_BACKEND_BIN" get "$d" 2>/dev/null | jq -c '[.]' | _ideps_body_deps 2>/dev/null \
-           | jq -r --arg k "$d" --argjson n "$n" '(.[$k] // []) | index($n) // empty' 2>/dev/null)
-    [ -n "$back" ] && echo "⚠ cycle: #$n ↔ #$d" >&2
+    [ "$back" = "1" ] && echo "⚠ cycle: #$n ↔ #$d" >&2
   done
   case "$_ifns_BACKEND_BIN" in
     *issues-gh.sh)
       native=$(_ideps_gh_blockers | jq -r --arg k "$n" '.[$k] // [] | .[]' 2>/dev/null)
       for d in $native; do
-        [ "$d" = "$n" ] || [ "$d" = "$parent" ] && continue
-        case " ${waiting[*]} " in *" #$d "*) ;; *) waiting+=("#$d") ;; esac
+        { [ "$d" = "$n" ] || [ "$d" = "$parent" ]; } && continue
+        case " ${waiting[*]} " in *" #$d "*) continue ;; esac
+        read -r _ dparent _ <<<"$(_ideps_lookup "$d")"
+        [ "$dparent" = "$n" ] && continue    # its own sub-task
+        waiting+=("#$d")
       done ;;
   esac
   [ ${#waiting[@]} -eq 0 ] && return 0

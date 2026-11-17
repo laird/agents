@@ -147,12 +147,12 @@ and every caller: the fix-loop gate, `/fix`, the manager's dispatch and
 scaling, and `issue_any_claimable` (which the idle sentinel relies on).
 
 - **Declared in the body**: every `#N` on a line that **starts** with
-  `Depends on` or `Blocked by`, after any list marker, checkbox, `[`, quote or
-  bold (`Depends on: #N, #M`, `- **Blocked by #N**`; the decomposition
+  `Depends on` or `Blocked by`, after any heading, list marker, checkbox, `[`,
+  quote or bold (`Depends on: #N, #M`, `- **Blocked by #N**`; the decomposition
   template's `## Dependencies` section writes these). The words mid-sentence
   are prose and declare nothing (#181).
 - **Never self-gating**: an issue never waits on itself, its parent
-  (`Sub-task of #N`) or its own sub-tasks (issues whose body names it as their
+  (a line that starts with `Sub-task of #N`) or its own sub-tasks (issues whose body names it as their
   parent).
 - **Native on GitHub**: open "blocked by" relationships, read for all open
   issues in one GraphQL query; skipped when there is no `origin` or the server

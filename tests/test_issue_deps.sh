@@ -110,10 +110,13 @@ issue open    37 "Cycle B"       "Blocked by #36"
 issue open    38 "Ring A"        "Depends on: #39"
 issue open    39 "Ring B"        "Depends on: #45"
 issue open    45 "Ring C"        "Depends on: #38"
+issue open    46 "Mention"       "Depends on: #47\nUnlike the earlier sub-task of #47, this one is small."
+issue open    47 "Prereq"        "Nothing."
+issue open    48 "Heading"       "### Blocked by: #47"
 for n in 40 41 42 43 44; do issue open "$n" "Dep $n" "Nothing."; done
 
 OUT=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
-check "prose, self, parent and children don't gate; declared lines do" "$OUT" "[30,32,33,34,40,41,42,43,44]"
+check "prose, self, parent and children don't gate; declared lines do" "$OUT" "[30,32,33,34,40,41,42,43,44,47]"
 DEPS=$(run "issue_list --state all | _ideps_body_deps | jq -c '{\"30\": .[\"30\"], \"31\": .[\"31\"], \"32\": .[\"32\"], \"33\": .[\"33\"]}'")
 check "declared forms parsed; prose, self and parent dropped" "$DEPS" '{"30":[],"31":[40,41,42,43,44],"32":[],"33":[]}'
 WAITS=$(run_err "issue_list --state open")
@@ -128,6 +131,12 @@ OUT=$(run "issue_unmet_dependencies 34; echo rc=\$?")
 check "a parent doesn't wait on its own sub-tasks (open or being worked)" "$OUT" "rc=0"
 OUT=$(run "issue_unmet_dependencies 30; echo rc=\$?")
 check "prose mentions are not dependencies" "$OUT" "rc=0"
+OUT=$(run "issue_unmet_dependencies 46; echo rc=\$?")
+check "a 'sub-task of' mention mid-sentence is not a parent" "$OUT" "#47
+rc=1"
+OUT=$(run "issue_unmet_dependencies 48; echo rc=\$?")
+check "a heading can declare a dependency" "$OUT" "#47
+rc=1"
 ERR=$(run_err "issue_unmet_dependencies 36")
 check "explicit dispatch reports a cycle" "$ERR" "⚠ cycle: #36 ↔ #37"
 
