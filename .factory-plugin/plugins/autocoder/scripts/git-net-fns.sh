@@ -32,5 +32,7 @@ git_net() {
 # integration branch and its pushes (#234). A stall there used to hang the job for as
 # long as the connection did, with the issue stuck under `merging`.
 git_net_long() {
-  AUTOCODER_GIT_TIMEOUT="${AUTOCODER_GIT_TIMEOUT_LONG:-300}" git_net "$@"
+  local long="${AUTOCODER_GIT_TIMEOUT_LONG:-300}"
+  [[ "$long" =~ ^[1-9][0-9]*$ ]] || long=300   # a bad value must not shrink to git_net's 60s
+  AUTOCODER_GIT_TIMEOUT="$long" git_net "$@"
 }

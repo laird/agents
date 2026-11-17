@@ -51,6 +51,7 @@ ELAPSED=$((SECONDS - START))
   || bad "the job hung on the stalled push: $(tail -5 <<<"$OUT")"
 [ "$RC" -ne 0 ] && ok "a push that never completes is reported as a failure" || bad "rc 0 despite no push"
 echo "$OUT" | grep -q "Could not publish" && ok "says it could not publish" || bad "output: $(tail -8 <<<"$OUT")"
+echo "$OUT" | grep -q "timed out after 2s (stalled connection)" && ok "names the stall, not a sibling push" || bad "no timeout message: $(grep -i push <<<"$OUT" | head -3)"
 [ "$(git -C "$TMP/origin.git" rev-parse master)" = "$(git -C "$TMP/w" rev-parse master)" ] \
   && ok "nothing landed on origin/master" || bad "origin/master moved"
 LEFT=""; for p in $(cat "$TMP/stalled.pids" 2>/dev/null); do kill -0 "$p" 2>/dev/null && { LEFT="$LEFT $p"; kill "$p" 2>/dev/null; }; done

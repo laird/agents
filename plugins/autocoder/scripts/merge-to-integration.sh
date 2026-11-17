@@ -665,7 +665,16 @@ merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
 #    is a fast-forward. Never checks out the integration branch -> worktree-safe.
-git_net_long fetch origin "$INTEGRATION_BRANCH" || { echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"; }
+fetch_rc=0
+git_net_long fetch origin "$INTEGRATION_BRANCH" || fetch_rc=$?
+if [ "$fetch_rc" -ne 0 ]; then
+  if git_net_timed_out "$fetch_rc"; then
+    echo "❌ Fetching origin/${INTEGRATION_BRANCH} timed out after ${AUTOCODER_GIT_TIMEOUT_LONG:-300}s (stalled connection)"
+    _fail 1 "fetching origin/${INTEGRATION_BRANCH} timed out (stalled connection)"
+  else
+    echo "❌ Could not fetch origin/${INTEGRATION_BRANCH}"; _fail 1 "could not fetch origin/${INTEGRATION_BRANCH}"
+  fi
+fi
 INT_SEEN_SHA=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 
 # The relaxations (scoped re-gate, merge on a red base) are safe only once a sentinel
@@ -958,11 +967,17 @@ _note_docs_resync() {
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
 PUSH_VIA=""
 for attempt in 1 2 3 4 5; do
-  if git_net_long push origin "HEAD:${INTEGRATION_BRANCH}"; then
+  push_rc=0
+  git_net_long push origin "HEAD:${INTEGRATION_BRANCH}" || push_rc=$?
+  if [ "$push_rc" -eq 0 ]; then
     PUSHED=1; PUSH_VIA=git
     break
   fi
-  echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
+  if git_net_timed_out "$push_rc"; then
+    echo "⚠️  Push to '${INTEGRATION_BRANCH}' timed out after ${AUTOCODER_GIT_TIMEOUT_LONG:-300}s (stalled connection); re-syncing (attempt ${attempt}/5)…"
+  else
+    echo "⚠️  Push to '${INTEGRATION_BRANCH}' rejected (a sibling worker likely pushed first); re-syncing (attempt ${attempt}/5)…"
+  fi
   PUSH_RETRIES=$attempt
   merge_event event=push-retry outcome=push-retry repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" push_retries="$attempt"
