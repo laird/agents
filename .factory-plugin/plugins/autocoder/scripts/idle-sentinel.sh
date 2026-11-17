@@ -116,7 +116,8 @@ SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
 # sh_quote <s>: <s> as one POSIX-shell word, '…' with each ' written '\'' (#235).
 # Cron runs its lines with /bin/sh, so bash's printf %q ($'…' forms) is not safe here.
 sh_quote() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
-# cron_escape <s>: cron turns an unescaped % in the command into a newline; \% keeps it.
+# cron_escape <s>: cron turns an unescaped % in the command into a newline; \% keeps it
+# (Vixie cron / cronie; other crons may differ).
 cron_escape() { printf '%s' "${1//%/\\%}"; }
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
@@ -1835,7 +1836,6 @@ run_locked_tick() {
 
 CRON_MARK="# autocoder-idle-sentinel:$PROJECT_ROOT"
 
-
 detect_scheduler() {
   # Prints cron|systemd|loop|none. Never installs anything.
   # Every check is anchored to THIS exact project (#18): on a shared host,
@@ -1905,6 +1905,15 @@ cmd_ensure() {
   fi
 
   if command -v crontab >/dev/null 2>&1; then
+    # A newline cannot be escaped in a crontab line: it would start a second line,
+    # i.e. a cron job of the path's choosing. Refuse rather than install (#235).
+    local _p
+    for _p in "$PROJECT_ROOT" "$SELF_PATH" "$AC_DIR"; do
+      case "$_p" in *$'\n'*|*$'\r'*)
+        echo "❌ Refusing to install a cron entry: a path contains a newline ($(printf '%q' "$_p"))." >&2
+        return 1 ;;
+      esac
+    done
     local mins=$(( INTERVAL_S / 60 ))
     [ "$mins" -lt 1 ] && mins=1
     local sched
@@ -1934,7 +1943,7 @@ cmd_ensure() {
   # No crontab available: fall back to a detached loop (recorded, so a later
   # --ensure will find it and not double-install).
   if [ "$DRY_RUN" = true ]; then
-    echo "DRY-RUN would start: nohup '$SELF_PATH' --loop --project '$PROJECT_ROOT' &"
+    echo "DRY-RUN would start: nohup $(sh_quote "$SELF_PATH") --loop --project $(sh_quote "$PROJECT_ROOT") &"
     return 0
   fi
   nohup "$SELF_PATH" --loop --project "$PROJECT_ROOT" >> "$AC_DIR/sentinel.cron.log" 2>&1 &

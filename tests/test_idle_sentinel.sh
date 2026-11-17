@@ -974,6 +974,16 @@ echo "$OUT" | grep -q "already scheduled via cron" && [ "$(wc -l < "$STORE4")" -
   && ok "second --ensure finds the escaped entry (no double install)" \
   || bad "quoted-path entry not detected: $OUT / $(cat "$STORE4")"
 
+# A newline in the path cannot be escaped in a crontab line (it would start a second
+# cron job): --ensure must refuse and install nothing (#235).
+NLDIR="$TMP/nl"$'\n''* * * * * touch /tmp/should-not-exist'
+git init -q "$NLDIR"; mkdir -p "$NLDIR/.issues"
+python3 -c 'import json,sys; json.dump({"issueSource":"file","issueDir":sys.argv[1]}, open(sys.argv[2],"w"))' "$NLDIR/.issues" "$NLDIR/.autocoder.json"
+STORE5="$TMP/cronstore-newline"
+OUT=$(run_sentinel "$CRONSHIM:$BASEPATH" CRONTAB_STORE="$STORE5" -- --ensure --project "$NLDIR" 2>&1)
+[ ! -s "$STORE5" ] && ok "newline in the path: no cron entry installed" || bad "cron entry installed for a newline path: $(cat "$STORE5")"
+echo "$OUT" | grep -q "Refusing to install a cron entry" && ok "newline in the path: --ensure says why" || bad "no refusal message: $OUT"
+
 # Loop detection: a running --loop for THIS project blocks a cron install.
 P=$(new_project ensloop file)
 STORE3="$TMP/cronstore-loop"
