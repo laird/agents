@@ -19,7 +19,7 @@
 # declares no areas. With no `Touches:` line (or an empty one), the backticked
 # paths in a `## Files Affected` section count instead. Lines inside fenced code
 # blocks are ignored, so an issue that quotes the format does not declare it.
-# A catch-all (`**`, `*`, `/`) names nothing and is dropped; at most 64 areas of
+# A catch-all (`**`, `*`, `/`) names nothing and is dropped; at most 32 areas of
 # 32 segments are read per issue.
 # Bodies are read as markdown: a backend that stores HTML (ADO) declares nothing.
 #
@@ -53,7 +53,7 @@ import fnmatch, functools, json, os, re, sys
 
 TOUCHES_RE = re.compile(r"^[ \t>*_-]*Touches[*_]*:[*_]*[ \t]*(.*)$", re.IGNORECASE)
 HEADING_RE = re.compile(r"^#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$")
-FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
+FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
 BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 NO_AREAS = {"none", "n/a", "na", "-", "nothing", "tbd"}
 
@@ -68,14 +68,19 @@ def looks_like_path(s):
 
 def prose_lines(body):
     # Lines outside fenced code blocks: a fence that quotes the format, or a
-    # `# comment` in a shell snippet, is not a declaration or a heading.
-    fenced = False
+    # `# comment` in a shell snippet, is not a declaration or a heading. A fence
+    # closes only on a bare run of its own character at least as long (CommonMark).
+    opener = None
     for line in body.splitlines():
-        if FENCE_RE.match(line):
-            fenced = not fenced
-            continue
-        if not fenced:
+        m = FENCE_RE.match(line)
+        if opener is None:
+            if m:
+                opener = m.group(1)
+                continue
             yield line
+        elif m and m.group(1)[0] == opener[0] and len(m.group(1)) >= len(opener) \
+                and not m.group(2).strip():
+            opener = None
 
 def areas_of(issue):
     body = issue.get("body") or ""
@@ -107,7 +112,7 @@ def keep(areas):
 WILD = re.compile(r"[*?\[]")
 
 MAX_SEGS = 32     # an area deeper than this is cut to its first segments
-MAX_AREAS = 64    # areas read per issue
+MAX_AREAS = 32    # areas read per issue
 
 def segs(area):
     out = []
@@ -120,9 +125,11 @@ def segs(area):
     return out[:MAX_SEGS]
 
 def is_catch_all(area):
-    # `**`, `*`, `/`: names no part of the tree, so it would overlap every issue
-    # and, under strict, idle every other worker. Not a declaration.
-    return not any(not WILD.search(s) for s in segs(area))
+    # Matches every path: no segment has a literal character (`**`, `*`, `*/**`,
+    # or nothing after `/`). It would overlap every issue and, under strict, idle
+    # every other worker, so it is not a declaration. `*.md` and `**/*.rs` are
+    # real globs and are kept.
+    return all(not s.replace("*", "").replace("?", "") for s in segs(area))
 
 def is_leaf(area):
     # A file, with nothing under it: no trailing `/` and the last segment has an

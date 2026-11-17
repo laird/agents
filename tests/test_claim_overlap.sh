@@ -61,6 +61,14 @@ assert_eq "** on both sides is decided quickly" yes "$([ $((SECONDS - START)) -l
 
 ov() { if areas_overlap "$1" "$2"; then echo yes; else echo no; fi; }
 assert_eq "a catch-all overlaps nothing"             no  "$(ov '**' src/a.rs)"
+assert_eq "*.md is a real glob, not a catch-all"     yes "$(ov '*.md' README.md)"
+assert_eq "**/*.rs is a real glob, not a catch-all"  yes "$(ov '**/*.rs' src/a.rs)"
+assert_eq "real globs are kept by the parser" "$(printf '**/*.rs\n*.md')" \
+  "$(touches_of "$(body_json 'Touches: **/*.rs, *.md, */**')")"
+assert_eq "a fence closes only on its own marker" "real/" \
+  "$(touches_of "$(body_json $'```\n~~~\nTouches: ex/\n```\nTouches: real/')")"
+assert_eq "a longer fence is not closed by a shorter one" "real/" \
+  "$(touches_of "$(body_json $'````\n```\nTouches: ex/\n````\nTouches: real/')")"
 assert_eq "directory covers a file under it"        yes "$(ov src/web/ src/web/server.rs)"
 assert_eq "directory without its slash still covers" yes "$(ov src/web src/web/x.rs)"
 assert_eq "sibling prefix is not a parent"           no  "$(ov src/web src/webby/x.rs)"
