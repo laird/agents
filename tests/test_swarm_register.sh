@@ -100,6 +100,24 @@ eq "--manager adds no worker" "2" "$(J "$M" 'len(m["workers"])')"
 OUT=$(cd "$P" && TMUX_PANE=%1 bash "$REG" --manager --pid $$ 2>&1)
 eq "manager update keeps the herdr pane" "h-mgr %1" "$(J "$M" 'm["manager"]["herdrPane"]+" "+m["manager"]["tmuxTarget"]')"
 
+# A live manager recorded under another pid is not displaced (#217); a dead
+# one is, and so is a recorded pid that is this process's ancestor.
+sleep 300 & LIVE=$!
+(cd "$P" && bash "$REG" --manager --pid $LIVE >/dev/null 2>&1)
+OUT=$(cd "$P" && TMUX_PANE=%8 bash "$REG" --manager --pid $$ 2>&1); RC=$?
+eq "live manager kept: exit 0" "0" "$RC"
+eq "live manager kept: pid" "$LIVE" "$(J "$M" 'm["manager"]["pid"]')"
+eq "live manager kept: pane" "%1" "$(J "$M" 'm["manager"]["tmuxTarget"]')"
+echo "$OUT" | grep -q "live manager pid $LIVE" && ok "says why it kept the manager" || bad "output: $OUT"
+kill $LIVE; wait $LIVE 2>/dev/null
+(cd "$P" && TMUX_PANE=%8 bash "$REG" --manager --pid $$ >/dev/null 2>&1)
+eq "dead manager replaced" "$$ %8" "$(J "$M" 'str(m["manager"]["pid"])+" "+m["manager"]["tmuxTarget"]')"
+sleep 300 & OTHER=$!
+(cd "$P" && bash "$REG" --manager --pid $OTHER >/dev/null 2>&1)
+eq "recorded ancestor pid is replaced" "$OTHER" "$(J "$M" 'm["manager"]["pid"]')"
+kill $OTHER; wait $OTHER 2>/dev/null
+(cd "$P" && TMUX_PANE=%1 bash "$REG" --manager --pid $$ >/dev/null 2>&1)
+
 # ── session selection ───────────────────────────────────────────────────────
 cp "$M" "$P/.autocoder/swarm/other.json"
 python3 - "$P/.autocoder/swarm/other.json" <<'PY'

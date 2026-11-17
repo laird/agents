@@ -28,6 +28,11 @@
 # The main checkout is the manager's, so it is only registered as a worker when
 # the manifest already lists it, or --session / AUTOCODER_WORKER says so.
 #
+# A live manager already recorded is not displaced by another process (a second
+# /monitor-loop run by hand in another pane): --manager leaves the entry alone
+# unless the recorded pid is dead, recycled, this process, or one of its
+# ancestors (the pane shell that launched this agent) (#217).
+#
 # No manifest (not a swarm), or no way to tell which manifest: prints a note
 # on stderr and exits 0. Exits 1 only on bad arguments or a failed write.
 
@@ -136,17 +141,33 @@ fi
 PID_START=$(process_start_time "$PID" 2>/dev/null || true)
 NOW=$(now_utc_iso)
 
+# This process's ancestors, so a manager entry recorded as the pane shell
+# (an ancestor of the agent) is recognised as the same manager.
+ANCESTORS=""
+_a=$$
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  _a=$(ps -o ppid= -p "$_a" 2>/dev/null | tr -d ' ')
+  [ -n "$_a" ] && [ "$_a" -gt 1 ] 2>/dev/null || break
+  ANCESTORS="$ANCESTORS $_a"
+done
+LIVE_MGR_START=""
+if [ "$ROLE" = manager ]; then
+  _mpid=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])).get("manager") or {}; print(m.get("pid") or "")' "$MANIFEST" 2>/dev/null)
+  case "$_mpid" in ''|*[!0-9]*) ;; *) LIVE_MGR_START=$(process_start_time "$_mpid" 2>/dev/null || true) ;; esac
+fi
+
 LOCK="${MANIFEST%.json}.lock"
 (
   flock -x 9
   [ -f "$MANIFEST" ] || exit 3
   python3 - "$MANIFEST" "$ROLE" "$WORKTREE" "$PROJECT_ROOT" "$BRANCH" "$MARKER_NUMBER" \
     "$PID" "$PID_START" "$STATE" "$NOW" "${TMUX_PANE:-}" "${HERDR_PANE_ID:-}" "${CMUX_WORKSPACE_ID:-}" \
-    "${AUTOCODER_MANAGER:+AUTOCODER_MANAGER=${AUTOCODER_MANAGER}}" "$ALLOW_NEW" <<'PY'
+    "${AUTOCODER_MANAGER:+AUTOCODER_MANAGER=${AUTOCODER_MANAGER}}" "$ALLOW_NEW" \
+    "$ANCESTORS" "$LIVE_MGR_START" <<'PY'
 import json, os, re, sys, tempfile
 
 (path, role, worktree, root, branch, marker_number, pid, pid_start, state, now,
- tmux, herdr, cmux, manager_marker, allow_new) = sys.argv[1:]
+ tmux, herdr, cmux, manager_marker, allow_new, ancestors, live_mgr_start) = sys.argv[1:]
 
 def num(w):
     try:
@@ -164,6 +185,14 @@ def mux_fields(entry):
             entry.setdefault(key, None)
 
 if role == "manager":
+    old = data.get("manager") or {}
+    old_pid = str(old.get("pid") or "")
+    # live_mgr_start is the recorded pid's current start token, read before the
+    # lock; it only counts when it matches the token recorded with that pid.
+    if (old_pid and old_pid != pid and old_pid not in ancestors.split()
+            and live_mgr_start and str(old.get("pid_start_time") or "") == live_mgr_start):
+        print(f"live manager pid {old_pid} already registered; not replacing it", file=sys.stderr)
+        sys.exit(4)
     mgr = data.get("manager") or {
         "launchMode": "manual", "agentLaunched": True, "readinessMode": None,
         "readyFile": None, "marker": manager_marker or None, "spawned_at": now,
@@ -226,6 +255,6 @@ RC=$?
 case $RC in
   0) exit 0 ;;
   3) note "manifest $MANIFEST disappeared; nothing to register"; exit 0 ;;
-  4) note "not registering $WORKTREE"; exit 0 ;;
+  4) note "not registering"; exit 0 ;;
   *) note "could not update $MANIFEST (rc=$RC)"; exit 1 ;;
 esac
