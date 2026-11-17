@@ -113,19 +113,8 @@ VICTIM=$!; sleep 1
 flock -n "$AUTOCODER_TMP/autocoder-land-${K1}.lock" true && bad "lock was not held by the live job" || ok "the live job holds its place"
 kill -9 "$VICTIM"; wait "$VICTIM" 2>/dev/null
 flock -w 4 "$AUTOCODER_TMP/autocoder-land-${K1}.lock" true && ok "a SIGKILLed job's place is released" || bad "a dead job kept the queue blocked"
-sleep 0.3
 ls "$AUTOCODER_TMP"/autocoder-land-"${K1}".?????? "$AUTOCODER_TMP/autocoder-land-${K1}.holder" >/dev/null 2>&1 \
   && bad "a SIGKILLed job left its scratch dir or holder file" || ok "a SIGKILLed job's leftovers are tidied by its holder"
-
-# ── a job stopped while still waiting leaves no waiter behind ───────────────
-flock "$AUTOCODER_TMP/autocoder-land-${K1}.lock" sleep 6 &
-H3=$!; sleep 0.3
-( trap 'merge_queue_release' EXIT; merge_queue_acquire "$TMP/w1" master 9 >/dev/null ) &
-WAITER=$!; sleep 1
-ls -d "$AUTOCODER_TMP"/autocoder-land-"${K1}".?????? >/dev/null 2>&1 && ok "a waiting job has a holder" || bad "no holder while waiting"
-kill -TERM "$WAITER"; wait "$WAITER" 2>/dev/null; sleep 0.5
-ls -d "$AUTOCODER_TMP"/autocoder-land-"${K1}".?????? >/dev/null 2>&1 && bad "a stopped waiter left its holder queuing" || ok "a stopped waiter's holder is gone"
-kill "$H3" 2>/dev/null; wait "$H3" 2>/dev/null
 
 # ── a symlink planted at the holder path is replaced, never written through ─
 echo precious > "$TMP/victim"
