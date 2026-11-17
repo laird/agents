@@ -153,6 +153,7 @@ Rounds: 1
 |---|---|---|---|
 | 1 | Important | first attempt | Fixed |
 
+Reviewed-HEAD: 1111111
 Verdict: pass'
 NEW902='## Review
 Rounds: 2
@@ -161,17 +162,20 @@ Rounds: 2
 |---|---|---|---|
 | 1 | Nit | second landing | Left: fine |
 
+Reviewed-HEAD: 2222222
 Verdict: pass'
 jq -n --arg a 'claim' --arg b "$REC900" '{body: "issue body", comments: [{body: $a}, {body: $b}]}' > "$CM/900.json"
 jq -n --arg b "$SKIP901" '{body: "", comments: [{body: $b}]}' > "$CM/901.json"
 jq -n --arg a "$OLD902" --arg b "$NEW902" '{body: "", comments: [{body: $a}, {body: "reopened"}, {body: $b}]}' > "$CM/902.json"
 # A summary that has a "## Review" section of its own but no record in it.
 jq -n '{body: "## Review\nLooks good to me.\n\n| 1 | Important | not a record | Fixed |", comments: []}' > "$CM/903.json"
+# An issue body quoting the gate's template: no reviewed sha, so not a record.
+jq -n '{body: "## Review\nRounds: <n>\n\n| 1 | Important | <file:line> | Fixed in <sha> |\n\nReviewed-HEAD: %s\nVerdict: pass", comments: [{body: "no review here"}]}' > "$CM/906.json"
 echo '{not json' > "$CM/904.json"
 finished worker-444-fix-903-130000.jsonl 0.10 1000 1 10
 finished worker-444-fix-904-130000.jsonl 0.10 1000 1 10
 
-rv=$(run_py --comments-dir "$CM" --json 900 901 902 903 904 905)
+rv=$(run_py --comments-dir "$CM" --json 900 901 902 903 904 905 906)
 rvq() { printf '%s' "$rv" | jq -c "$1" 2>/dev/null; }
 [ "$(rvq '."900".review | [.status, .rounds, .verdict, .total]')" = '["reviewed",3,"pass",5]' ] \
   && ok "a close comment's record gives rounds, verdict and the finding count" || bad "record 900" "$(rvq '."900".review')"
@@ -188,6 +192,11 @@ rvq() { printf '%s' "$rv" | jq -c "$1" 2>/dev/null; }
   && ok "unreadable comments are unavailable, not no record" || bad "unavailable" "$(rvq '."904".review')"
 [ "$(rvq '."905" | [.review.status, .sessions]')" = '["no record",0]' ] \
   && ok "a named issue with no transcript and no comments is reported as no record" || bad "905" "$(rvq '."905"')"
+
+[ "$(rvq '."906".review.status')" = '"no record"' ] \
+  && ok "a quoted record template is not a record" || bad "template 906" "$(rvq '."906".review')"
+rc=0; run_py --comments-dir "$LOGS/nope" 900 >/dev/null || rc=$?
+[ "$rc" = "2" ] && ok "a missing --comments-dir is an error, not 'no record' for all" || bad "missing comments dir" "exit $rc"
 
 tbl=$(run_py --comments-dir "$CM" 900 901 905)
 assert_contains "the table shows the review outcome" \

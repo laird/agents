@@ -179,6 +179,9 @@ REVIEW_HEAD_RE = re.compile(r"^#{2,3}\s+Review\s*$", re.M)
 ROUNDS_RE = re.compile(r"^Rounds:\s*(\d+)", re.M)
 VERDICT_RE = re.compile(r"^Verdict:\s*(\S+)", re.M)
 SKIPPED_RE = re.compile(r"^Skipped:", re.M)
+# Every record the gate writes ends with the commit it reviewed. Requiring it
+# keeps a quoted template (an issue about the review gate) from counting.
+REVIEWED_HEAD_RE = re.compile(r"^Reviewed-HEAD:\s*[0-9a-f]{7,40}\s*$", re.M)
 TAGS = ("important", "nit", "pre-existing")
 RESOLUTIONS = ("fixed", "answered", "filed", "left")
 
@@ -198,9 +201,9 @@ def _resolution(cell):
 def parse_review(text):
     """The review record in one comment, or None when it holds none.
 
-    A record starts at a `## Review` heading and must carry a `Verdict:` line, a
-    `Rounds:` line or a `Skipped:` line, so an unrelated "## Review" section in a
-    summary is not read as one. When a comment holds several, the last counts."""
+    A record starts at a `## Review` heading and must carry a `Reviewed-HEAD: <sha>`
+    line and a `Verdict:`, `Rounds:` or `Skipped:` line, so an unrelated
+    "## Review" section or a quoted template is not read as one. When a comment holds several, the last counts."""
     heads = list(REVIEW_HEAD_RE.finditer(text or ""))
     for h in reversed(heads):
         rec = text[h.end():]
@@ -210,6 +213,8 @@ def parse_review(text):
         verdict = VERDICT_RE.search(rec)
         if verdict:
             rec = rec[:verdict.end()]      # the merge job's own text follows it
+        if not REVIEWED_HEAD_RE.search(rec):
+            continue
         rounds = ROUNDS_RE.search(rec)
         if SKIPPED_RE.search(rec):
             return {"status": "skipped",
@@ -359,6 +364,9 @@ def main():
     args = p.parse_args()
     if args.comments_dir:
         args.reviews = True
+        if not os.path.isdir(args.comments_dir):
+            print(f"issue-metrics: no such comments dir: {args.comments_dir}", file=sys.stderr)
+            return 2
 
     if args.session:
         if not os.path.isfile(args.session):
