@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_bounce.sh — under --own-issue, a merge conflict or a red gate before
 # the push is bounced back to the owning worker instead of escalated (#207):
 #   - the issue ends `working` (merging retired), never `needs-clarification`;

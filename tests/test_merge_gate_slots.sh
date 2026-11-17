@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_gate_slots.sh — gates on one host share AUTOCODER_MAX_GATES slots.
 #
 # Every gate in merge-to-integration.sh runs inside a flock-held slot file

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_md_rebase_steps.sh — /fix rebases early and often, and trial-rebases
 # at every landing site before its review check (#222, part of #183).
 #

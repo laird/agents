@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_claim_release.sh — fix-loop-gate.sh must release a
 # claim it took but could not hand off (#204). Between `issue_claim` and writing
 # the work plan the gate can hit an error or be killed; the claim it leaves names

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_sweep_abandoned_claims.sh — sweep-abandoned-claims.sh (#205)
 # releases a `working` claim at once when its owner process is dead on this
 # host and no branch exists for the issue, and leaves every other claim alone.

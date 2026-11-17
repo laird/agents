@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_swarm_register.sh — swarm-register.sh adds or updates this
 # worktree's worker entry (or the manager's) in the swarm manifest (#215).
 

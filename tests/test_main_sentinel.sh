@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_main_sentinel.sh — main-sentinel.sh gates the integration tip after merges,
 # reuses worker verdicts, bisects over the tip refs the pipeline recorded, reverts exactly
 # the culprit push, files the P0 against its issue, survives a crash between push and

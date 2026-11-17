@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issue_spec.sh — issue-spec.sh: the spec a /fix worker builds from
 # is the issue body PLUS its comment thread, minus autocoder bookkeeping (#134).
 #

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_launch_snapshot.sh — pins #212: the detached merge job runs a
 # frozen snapshot of the scripts, so editing (or a branch switch rewriting) the
 # worker's own copy mid-run cannot corrupt the job.

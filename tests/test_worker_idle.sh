@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_worker_idle.sh — pin the idle-detection rules that a manager got
 # wrong in production: it read a bare `❯` prompt as idle and dispatched work
 # over three workers that were 7, 19 and 23 minutes into live tasks, and it

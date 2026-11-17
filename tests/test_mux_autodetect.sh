@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # Tests for multiplexer auto-detect liveness probing (issue #18).
 #
 # The bug: auto-detect chose cmux whenever the `cmux` binary was on $PATH.

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_statusline.sh — pin the swarm status line and its installer.
 #
 # The status line is the manager's only cheap read on worker context pressure

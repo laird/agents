@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_branch_lock.sh — fix-loop-gate.sh must not claim an
 # issue whose feature/issue-N branch is live on origin (#210).
 #

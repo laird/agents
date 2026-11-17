@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_worker_marker.sh — pins #216: workers launched by start-parallel
 # and by add-worker carry AUTOCODER_WORKER=<session>:<N> in their environment,
 # like the manager's AUTOCODER_MANAGER=<session> marker, so swarm-register.sh

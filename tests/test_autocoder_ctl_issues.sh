@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_autocoder_ctl_issues.sh — autocoder-ctl's issue decisions (#245):
 # approve, reject, request-changes and file, each through the dispatcher.
 #

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # Tests for the API push fallback and the never-close-on-failed-push guard
 # (issues #23 and #26).
 set -euo pipefail

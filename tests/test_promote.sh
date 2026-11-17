@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_promote.sh — promote.sh moves an environment branch only to a commit that
 # carries proof of a full-regression pass (the sentinel's green tip, the previous
 # environment's tip, or a recorded tree pass), runs the environment's own test first,

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # Verify start-issue-work.sh establishes the visible issue ownership contract.
 
 set -euo pipefail

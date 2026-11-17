@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_pi_support.sh — guards the Pi platform's two silent-failure traps.
 #
 # Both were found by running pi 0.84.4 and reading the user message off

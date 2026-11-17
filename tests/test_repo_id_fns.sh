@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_repo_id_fns.sh — autocoder_repo_id names one repository one way.
 #
 # merge-launch.sh, merge-poll.sh, merge-to-integration.sh and the sentinel key their

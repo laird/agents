@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_md_review_digest.sh — every place fix.md publishes work uses the
 # review digest renderer (#196), in both platform copies.
 #

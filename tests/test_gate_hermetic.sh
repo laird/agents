@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_gate_hermetic.sh — opt-in hermetic merge gate (#223). With gate.hermetic in
 # the tree's committed .autocoder.json the test command runs under env -i: declared PATH
 # dirs + /usr/bin:/bin, a fresh temporary HOME, LANG=C.UTF-8 and only the declared

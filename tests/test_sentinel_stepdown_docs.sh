@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_sentinel_stepdown_docs.sh — doc contracts for the idle-sentinel
 # step-down protocol (spec: docs/specs/2026-09-16-idle-sentinel-design.md).
 #

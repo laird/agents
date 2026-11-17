@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issue_deps.sh — issue dependencies (issue-deps.sh).
 #
 # Workers must work issues in an order their dependencies allow: the claimable

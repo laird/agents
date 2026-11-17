@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_spot_check_wiring.sh — spot-check (#197) runs at every merge-mode close
 # and nowhere else that matters, and its human side is registered on every platform.
 #

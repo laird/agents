@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_start_parallel_base_index.sh — pin that the tmux launcher never
 # addresses windows by a hardcoded index.
 #

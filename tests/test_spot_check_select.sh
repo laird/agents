@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_spot_check_select.sh — the merge-mode spot-check selector (#197).
 #
 # Every trigger selects with its reason (P0/P1, security label, security path glob,

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_launch_poll.sh — pin #1693's fix: merge-to-integration.sh
 # must never run inside a single foreground call. It legitimately takes
 # 25-30 minutes, and agent harnesses kill a foreground Bash-tool call at a

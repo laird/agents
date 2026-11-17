@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_gate_cache_fns.sh — gate results are keyed by <tree, command>, a pass is
 # reused, a fail is reused only on request, and the key changes with the command.
 

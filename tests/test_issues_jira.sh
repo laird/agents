@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issues_jira.sh — guards the Jira backend's JQL, request shaping,
 # output schema, and exit codes.
 #

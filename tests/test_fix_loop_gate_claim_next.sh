@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_claim_next.sh — fix-loop-gate.sh must try the next
 # candidate when a sibling worker wins the claim race for the top one.
 # Before this, the loser exited 1 ("no work") and slept a full tick while the

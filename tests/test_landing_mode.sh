@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_landing_mode.sh — landing-mode.sh picks merge vs pr from the diff's
 # risk tier (#165), and fix.md lands through it at every landing site.
 

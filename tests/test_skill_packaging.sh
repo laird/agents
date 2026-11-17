@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_skill_packaging.sh — guards that every repo skill is actually
 # packaged into the Claude Code plugin that ships it.
 #

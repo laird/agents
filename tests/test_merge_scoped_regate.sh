@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_scoped_regate.sh — merge-to-integration.sh runs the gate only when it
 # has to, and judges a failure against the integration tip rather than in isolation:
 #   - a rejected push whose re-sync is disjoint from this change is pushed with no second

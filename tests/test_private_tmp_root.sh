@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_private_tmp_root.sh — merge/sentinel state lives in a private per-user
 # directory, and merge-launch.sh never runs a run.sh it did not just write (#213).
 #

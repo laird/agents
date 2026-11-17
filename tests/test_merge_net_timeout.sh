@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_net_timeout.sh — the detached merge job's own network calls are bounded
 # (#234). A stalled push used to hang merge-to-integration.sh for as long as the
 # connection did, with the issue stuck under `merging`. With git_net_long the push gives

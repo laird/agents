@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_add_worker_number.sh — add-worker numbers a new worker after the ones the
 # swarm already has (#233). Under --no-worktrees it used to answer 1 every time, so the
 # new worker's manifest entry, wt1-<project> label and AUTOCODER_WORKER marker collided

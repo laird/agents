@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_swarm_manifest_lock.sh — manifest_add_worker_json (add-worker.sh) and
 # manifest_update_worker_state (restart-worker.sh) take the manifest lock (#238).
 # Unlocked, either one racing a locked writer (swarm-register.sh, manifest_set_manager)

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_manifest_versions.sh — every plugin manifest agrees on versions.
 #
 # WHY THIS EXISTS:

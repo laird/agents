@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_md_touches.sh — /fix writes and keeps current the `Touches:` line
 # the fix-loop gate reads to steer workers apart (#229, sub-task of #186).
 #

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_autoclosed.sh — when the issue is closed while the merge job runs
 # (GitHub closes it the moment the push lands if a commit says "Fix #N"), the job
 # still posts its landing summary and retires `merging` (#209).

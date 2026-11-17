@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_takeover.sh — pins #203 (sub-task of #179): the gate
 # takes over a `working` issue whose every claim is abandoned, instead of backing
 # off from it forever, and still respects a live claim.

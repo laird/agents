@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_mux_send_enter.sh — pin that prompt submission uses a SEPARATE Enter.
 #
 # `tmux send-keys -t <pane> "$text" Enter` in one call reliably leaves the text

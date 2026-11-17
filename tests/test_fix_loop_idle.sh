@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_idle.sh — verify Goal #2: zero-cost idle preflight.
 # When .issues/open/ is empty, fix-loop-gate.sh should exit 1 (idle) and
 # NOT write a work-plan file, so the outer loop never invokes /fix.

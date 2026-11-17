@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issue_create_priority.sh — `issue_create --priority PX` labels the issue PX,
 # and `create` refuses flags it does not know (#199), on the gh and file backends.
 # (Jira and ADO are covered in test_issues_jira.sh / test_issues_ado.sh.)

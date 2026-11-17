@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_worktree_cross_device.sh — pins #1967: the throwaway
 # isolation worktree merge-to-integration.sh creates (#1821) must end up with
 # a COMPLETE node_modules and software-factory/*/dist even when `cp -al`

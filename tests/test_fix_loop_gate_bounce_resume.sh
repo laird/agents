@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_bounce_resume.sh — pins #208: when a merge job bounces
 # an issue back to the worktree that launched it (#207: `working` plus an
 # `autocoder-bounce ... worktree=<path>` comment), that worktree's gate resumes it

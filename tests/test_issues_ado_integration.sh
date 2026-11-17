@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issues_ado_integration.sh — end-to-end test of issues-ado.sh
 # against a STATEFUL in-process fake of the Azure DevOps WIT API
 # (tests/fixtures/fake_ado.py).

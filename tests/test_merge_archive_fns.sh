@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_archive_fns.sh — merge attempts are archived, never lost (#184).
 #
 # merge-launch.sh archives the previous attempt before a relaunch, and main-sentinel.sh

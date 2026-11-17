@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_revert_rate.sh — revert-rate.sh counts sentinel reverts by their
 # Autocoder-Reverts trailers, never by the word "revert" (#250).
 # Everything runs in a private temp git repo; nothing touches the issue layer.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_deploy_release.sh — deploy.sh, release.sh and the pre-push release hook
 # (release-pre-push.sh, install-release-hook.sh), ported from agents-ui's
 # tools/test_deploy.sh and tools/test_release.sh (#200). Each case runs the real

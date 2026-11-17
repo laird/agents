@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_landed_then_edited.sh — a change that already landed (as a patch-equivalent
 # commit) and was then edited by a sibling is recognised as landed, not escalated as
 # "nothing landed"; a landed change that was REVERTED, or undone in any one file, is

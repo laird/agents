@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_autocoder_ctl_swarm.sh — autocoder-ctl's swarm lifecycle verbs (#246):
 # start, add-worker, remove-worker and stop-swarm, through the dispatcher.
 #

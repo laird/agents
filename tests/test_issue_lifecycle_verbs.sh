@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issue_lifecycle_verbs.sh — the four lifecycle verbs a detached merge job
 # drives after a worker's claim, on every backend:
 #   handoff   working -> merging              (issue stays unclaimable)

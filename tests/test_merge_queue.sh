@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_queue.sh — merge jobs on one host land one at a time (#189).
 #
 # Two workers (two clones of one origin) finish at the same moment and each starts

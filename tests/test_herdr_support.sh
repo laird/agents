@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_herdr_support.sh — pins the herdr multiplexer contract.
 #
 # herdr is the third supported multiplexer after tmux and cmux. The traps this

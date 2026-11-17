@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_install_ripgrep.sh — install-ripgrep.sh must install a verified
 # binary without root, refuse a tampered download, and never download when rg
 # or Homebrew is already there. Hermetic: curl, uname and brew are stubs, and

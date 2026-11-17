@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issue_events.sh — the issue lifecycle is recorded as it happens (#190).
 #
 # Drives one issue through a fake repo with the real verbs: claim → commit → a gate

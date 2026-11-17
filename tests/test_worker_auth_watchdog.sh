@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_worker_auth_watchdog.sh — pins worker-auth-watchdog.sh behaviour.
 #
 # The pane fixtures are the real screens from a 2026-09-27 fleet outage, when

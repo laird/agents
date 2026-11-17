@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_install_cli_wrappers.sh — pins how /autocoder:install puts the
 # terminal commands (start-parallel, add-worker, ...) into ~/.local/bin.
 #

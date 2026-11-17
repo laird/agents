@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_pane_cd_quoting.sh — pins #232: the launchers type `cd <dir>` into
 # a pane, and a directory whose name contains a single quote must still land
 # the agent in that directory. The old `cd '<dir>'` form broke out of its own

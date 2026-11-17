@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_git_net_timeout.sh — worker-path git network calls are bounded (#220).
 #
 # A stalled HTTPS connection left resolve_feature_sha's `git fetch` (merge-launch.sh)

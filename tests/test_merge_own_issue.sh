@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_own_issue.sh — with --own-issue the detached merge job owns the issue
 # from its first act to its last, through the backend's lifecycle verbs:
 #   - first act: `working` → `merging` (handoff), before anything that can fail;

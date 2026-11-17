@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_flaky_sightings.sh — the merge gate records a flaky sighting when a test
 # fails on a tree and then passes on the same tree (#191).
 #

@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_md_handoff.sh — the /fix protocol hands the merge off instead of polling,
 # and the merge JOB owns the issue from the launch onward.
 #

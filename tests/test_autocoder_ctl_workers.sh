@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_autocoder_ctl_workers.sh — autocoder-ctl's worker verbs (#244):
 # nudge, stop and restart, through the dispatcher.
 #

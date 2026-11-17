@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fetch_blocked_issues.sh — fetch-blocked-issues.sh must find the
 # blocked issues (#145).
 #

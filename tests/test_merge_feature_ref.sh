@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_feature_ref.sh — pins #143: the merge job must land the work
 # that was pushed to origin/<feature>, not a stray local branch of the same name.
 #

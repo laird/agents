@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_sentinel_shared_fns.sh — the helpers main-sentinel.sh and merge-to-integration.sh
 # share: one repo id per clone across its worktrees, the re-gate rule with its global-path
 # list, seeding a throwaway worktree with node_modules, and gate-cache pruning.

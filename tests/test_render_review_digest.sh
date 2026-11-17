@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_render_review_digest.sh — the reviewer-first body renderer (#196).
 #
 # A filled body renders and exits 0; an unfilled slot or the legacy

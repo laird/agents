@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_ci_watch.sh — ci-watch.sh turns a red GitHub Actions run on the integration
 # branch into one P0 test-failure issue, updates it for a later red commit, closes it when a
 # later commit is green, and stays silent for pending, missing or non-GitHub CI. The

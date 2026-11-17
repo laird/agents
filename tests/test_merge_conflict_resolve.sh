@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_conflict_resolve.sh — the merge job resolves a conflicted rebase in its
 # own worktree before bouncing or escalating (#164, merge-conflict-fns.sh):
 #   - files declared in .autocoder.json "unionMerge" are union-merged and land;

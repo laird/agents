@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # Tests for the --route <self|manager> flag on start-parallel-agents.sh (issue #16).
 set -euo pipefail
 

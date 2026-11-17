@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_revert_breaker.sh — the revert circuit breaker (#252).
 # A private temp repo with the file backend and a stub `gh`; nothing reaches a real tracker.
 

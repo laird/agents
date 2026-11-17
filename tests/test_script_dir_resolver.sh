@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # The SCRIPT_DIR resolver is copied into every autocoder command (Claude Code),
 # workflow (Antigravity) and generated pi prompt. Each copy must pick a COMPLETE
 # script tree, never a partial one (#142):

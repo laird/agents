@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_release_gate_claim.sh — a gate tick that claims an issue and then
 # declines it (e.g. holding for compaction) must be able to give the claim back
 # (#248). release-gate-claim.sh releases only the claim this worktree's gate

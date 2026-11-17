@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issues_gh_list_filtering.sh — guards the GitHub backend's
 # open/working/blocked label filtering.
 #

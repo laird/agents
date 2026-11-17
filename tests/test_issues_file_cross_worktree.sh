@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issues_file_cross_worktree.sh — verify Goal #5 of the design:
 # all backend operations from a secondary worktree target the main worktree's
 # .issues/ directory.

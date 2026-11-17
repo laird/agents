@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_claim_readback.sh — on a best-effort backend
 # (GitHub, Jira, ADO) `issue_claim` is a label-add every racer "wins".
 # fix-loop-gate.sh must settle the race itself by posting a claim comment and

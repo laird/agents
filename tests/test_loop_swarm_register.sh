@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_loop_swarm_register.sh — /fix-loop and /monitor-loop register
 # themselves in the swarm manifest at start (#217, part of #178). Runs the
 # "Register in the swarm manifest" block of every command copy against a

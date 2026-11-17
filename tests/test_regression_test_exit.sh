@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_regression_test_exit.sh — regression-test.sh must fail when tests fail
 # or when nothing ran (issues #195, #73).
 #

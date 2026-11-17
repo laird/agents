@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_idle_sentinel.sh — formal suite for the idle-sentinel feature.
 #
 # Subject: plugins/autocoder/scripts/idle-sentinel.sh (spec:

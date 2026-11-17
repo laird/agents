@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_claim_overlap.sh — overlap-aware claim selection (#227, sub-task of #186).
 #
 # An issue declares the areas it will edit (`Touches:` line, or the backticked

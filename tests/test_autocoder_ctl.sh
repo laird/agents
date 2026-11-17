@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_autocoder_ctl.sh — autocoder-ctl.sh, the one command surface for UIs (#243).
 #
 # The contract: every invocation prints exactly one JSON object

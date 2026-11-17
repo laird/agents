@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_worktree_isolation.sh — pins #1821: merge-to-integration.sh
 # must test and push the branch it was asked to merge, never whatever branch
 # happens to be checked out in the caller's worktree by the time it actually

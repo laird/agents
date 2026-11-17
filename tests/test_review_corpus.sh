@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_review_corpus.sh — review-corpus.py: build a review test set from
 # sentinel reverts and score a reviewer against it (#167).
 #

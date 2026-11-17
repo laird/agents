@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_issues_ado.sh — guards the Azure DevOps backend's WIQL, JSON-patch
 # request shaping, output schema, and exit codes. curl is stubbed so no network
 # is needed and outgoing payloads can be asserted.

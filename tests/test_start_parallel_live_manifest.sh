@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_start_parallel_live_manifest.sh — pins #137: a swarm started WITHOUT
 # --paused writes its swarm manifest too.
 #

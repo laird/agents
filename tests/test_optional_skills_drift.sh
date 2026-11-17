@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_optional_skills_drift.sh — runs the optional-skills drift guard in CI.
 #
 # WHY THIS EXISTS:

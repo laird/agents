@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_script_packaging.sh — guards that every platform's plugin carries
 # the scripts that platform actually runs.
 #

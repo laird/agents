@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_remote_swarm.sh — pins join-parallel --remote and remote-swarm-setup.
 #
 # A remote join must hand the terminal to herdr's own remote attach (or to

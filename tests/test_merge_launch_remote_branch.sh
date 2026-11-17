@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_launch_remote_branch.sh — merge-launch.sh and feature branches
 # that are not (only) local (#206, building on #143).
 #

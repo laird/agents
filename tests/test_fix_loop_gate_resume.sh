@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_fix_loop_gate_resume.sh — pins #182: after compaction or a restart,
 # fix-loop-gate.sh resumes the issue THIS worktree holds before claiming new work,
 # and claims fresh work once that issue is no longer held.

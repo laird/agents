@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_merge_requires_test_cmd.sh — merge-to-integration.sh must never push
 # an untested tree to the integration branch:
 #   - with no --test-cmd it resolves the command from AGENTS.md / CLAUDE.md
