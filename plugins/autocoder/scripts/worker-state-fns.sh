@@ -11,8 +11,8 @@
 #
 # A recorded issue is resumed only when ALL hold:
 #   - it is OPEN and still carries `working`;
-#   - it is still ours: the newest `🔒 claim` comment is the one we recorded, so an
-#     issue released and since re-claimed by another worker is not taken back;
+#   - it is still ours: no `🔒 claim` comment was posted after our claim's race
+#     window, so an issue released and since re-claimed elsewhere is not taken back;
 #   - this worktree is, or can be switched (clean tree) onto, feature/issue-N, or
 #     that branch does not exist yet (compacted before /fix created it). /fix treats
 #     a pre-claimed issue as a resume only from its own branch.
@@ -42,15 +42,19 @@ worker_state_clear() {
 }
 
 # _worker_still_ours <issue-json> <recorded-ms> → exit 0 when the issue is open,
-# `working`, and its newest claim comment is the one recorded (or none was recorded).
+# `working`, and nobody has claimed it since our claim's race settled. Racers that
+# lost to us posted within the gate's claim window (AUTOCODER_CLAIM_WINDOW_S) and
+# their comments stay on the issue, so only a claim AFTER that window — a re-claim
+# once ours was released — means it is no longer ours. With no recorded claim (the
+# file backend's atomic claim leaves no comment) the label alone decides.
 _worker_still_ours() {
-  printf '%s' "$1" | MS="$2" jq -e '
+  printf '%s' "$1" | MS="$2" WINDOW_MS="$(( ${AUTOCODER_CLAIM_WINDOW_S:-120} * 1000 ))" jq -e '
     ((.state | ascii_upcase) == "OPEN")
     and ([.labels[]?.name] | index("working") != null)
     and (env.MS == ""
          or ([.comments[]?.body // ""
               | capture("^\\s*🔒 claim \\S+ (?<ms>[0-9]+)\\s*$")?.ms | tonumber]
-             | max) == (env.MS | tonumber))
+             | all(. <= ((env.MS | tonumber) + (env.WINDOW_MS | tonumber)))))
   ' >/dev/null 2>&1
 }
 
@@ -79,7 +83,7 @@ worker_resume_plan() {
     git fetch -q origin "+refs/heads/${target}:refs/remotes/origin/${target}" 2>/dev/null && have_remote=1
     if [ "$have_local" -eq 0 ] && [ "$have_remote" -eq 0 ]; then
       : # Claimed, but compacted before /fix made the branch: resume, and /fix creates it.
-    elif [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    elif [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
       # Mid-edit on something else. Still ours, so neither resume nor claim new work.
       echo "worker-state: holding #${n} but the tree is dirty; not switching to ${target}" >&2
       return 2

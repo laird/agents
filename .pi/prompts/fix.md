@@ -626,10 +626,12 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
 
   # #182: this worktree's own claim, resumed after compaction or a restart. The gate
   # resumes only an issue it recorded for this worktree, still `working` and still
-  # ours, and switches to its branch first. Its pushed branch and earlier start
-  # comment are then ours, so neither lock check below may read them as a rival's.
+  # ours, and switches to its branch first (or finds none yet: compacted before the
+  # branch was made). Its pushed branch, start comment and claim marker are then ours,
+  # so none of the lock checks below may read them as a rival's.
   RESUMING=false
-  if [ "$(git branch --show-current 2>/dev/null)" = "feature/issue-${ISSUE_NUM}" ] && \
+  if { [ "$(git branch --show-current 2>/dev/null)" = "feature/issue-${ISSUE_NUM}" ] || \
+       ! git show-ref --verify -q "refs/heads/feature/issue-${ISSUE_NUM}"; } && \
      [ "$(cut -d' ' -f1 "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ] && \
      jq -e '[.labels[]?.name] | index("working") != null' /tmp/top-issue.json >/dev/null 2>&1; then
     RESUMING=true
@@ -652,7 +654,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
     START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
-    if [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+    if [ "$RESUMING" != "true" ] && [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
       echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
       echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
       exit 1

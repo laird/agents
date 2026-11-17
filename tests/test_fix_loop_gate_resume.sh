@@ -96,11 +96,11 @@ assert_eq "the clean tree is switched to feature/issue-11" "feature/issue-11" "$
 
 # ── 6. A dirty tree on another branch: not resumed this tick, record kept ───
 git checkout -q master
-echo wip > wip.txt
+echo wip >> README.md            # a tracked edit; untracked files do not count as dirty
 assert_eq "dirty tree: the tick idles rather than claim over held #11" "1" "$(gate)"
 [ -f "$ISSUE_DIR_PATH/open/012.md" ] && ok "dirty tree: #12 was not claimed" || bad "dirty tree: #12 was claimed over held #11"
 assert_eq "dirty tree: the record is kept for a later tick" "11" "$(cut -d' ' -f1 "$STATE" 2>/dev/null)"
-rm -f wip.txt
+git checkout -q -- README.md
 gate >/dev/null
 assert_eq "once clean, #11 resumes" "11" "$(plan .issue)"
 
@@ -119,10 +119,15 @@ git worktree remove --force "$TMP/sibling"
 # ── 8. Ownership: a newer claim comment than ours means someone else holds it ─
 # shellcheck source=../plugins/autocoder/scripts/worker-state-fns.sh
 source "$SCRIPT_DIR/worker-state-fns.sh"
-J='{"state":"OPEN","labels":[{"name":"working"}],"comments":[{"body":"🔒 claim hostA-1 1000"},{"body":"🔒 claim hostB-2 5000"}]}'
-_worker_still_ours "$J" 5000 && ok "the newest claim, recorded by us, is ours" || bad "newest claim not recognised as ours"
-_worker_still_ours "$J" 1000 && bad "an older claim was treated as ours after a re-claim" \
-  || ok "a re-claim by another worker (newer claim comment) is not ours"
+# We won a race at 1000; a loser posted at 1500, inside the 120 s window. Still ours.
+RACE='{"state":"OPEN","labels":[{"name":"working"}],"comments":[{"body":"🔒 claim hostA-1 1000"},{"body":"🔒 claim hostB-2 1500"}]}'
+_worker_still_ours "$RACE" 1000 && ok "a race loser's later comment does not take the claim from the winner" \
+  || bad "the race winner disowned its own claim"
+# Released, then re-claimed by another worker ten minutes later. No longer ours.
+RECLAIM='{"state":"OPEN","labels":[{"name":"working"}],"comments":[{"body":"🔒 claim hostA-1 1000"},{"body":"🔒 claim hostB-2 601000"}]}'
+_worker_still_ours "$RECLAIM" 1000 && bad "an older claim was treated as ours after a re-claim" \
+  || ok "a re-claim after the race window is not ours"
+_worker_still_ours "$RECLAIM" 601000 && ok "the re-claimer's own record is ours" || bad "re-claimer's record rejected"
 _worker_still_ours '{"state":"OPEN","labels":[{"name":"working"}],"comments":[]}' "" \
   && ok "file backend (no claim comments, none recorded) is ours" || bad "file-backend record rejected"
 _worker_still_ours '{"state":"CLOSED","labels":[{"name":"working"}],"comments":[]}' "" \
