@@ -75,8 +75,8 @@ for pos, rec in enumerate(sys.stdin.read().split("\x1e")):
             break  # the (N+1)th issue: the window is full
         landed.append(n)
     end = pos
-# With --last, a revert counts only when it is newer than the oldest issue commit in the window
-# commit and, when it names its issue, that issue is one of the landed issues in the window:
+# With --last, a revert counts only when it is newer than the oldest issue commit in the
+# window and, when it names its issue, that issue is one of the landed issues in the window:
 # a revert of an older issue says nothing about the issues in the window.
 if limit is not None:
     in_window = set(landed)
