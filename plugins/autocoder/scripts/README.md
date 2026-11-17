@@ -12,7 +12,7 @@ for the full design.
 <a id="script-dir"></a>
 ## Resolving `SCRIPT_DIR` in command files
 
-Every command that sources `issue-fns.sh` opens with the same loop, marked
+Commands that source `issue-fns.sh` resolve `SCRIPT_DIR` with the same loop, marked
 `# Resolve SCRIPT_DIR — see scripts/README.md#script-dir`. It tries, in order,
 `$(pwd)/.agent/scripts`, `$(pwd)/plugins/autocoder/scripts` and
 `$(pwd)/.claude-plugin/plugins/autocoder/scripts`, then falls back to the newest
