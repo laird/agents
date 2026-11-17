@@ -88,8 +88,8 @@ for f in issue-fns.sh issues-gh.sh issues-file.py issues-jira.sh issues-ado.sh i
     bad ".agent/scripts/$f missing or differs from plugins/autocoder/scripts/$f"
   fi
 done
-for f in start-parallel-agents.sh end-parallel-agents.sh regression-test.sh; do
-  if grep -qiE 'antigravity|GEMINI\.md' ".agent/scripts/$f" 2>/dev/null; then
+for f in start-parallel-agents.sh end-parallel-agents.sh regression-test.sh idle-sentinel.sh; do
+  if grep -qiE 'antigravity|GEMINI\.md|AGENT ADAPTATION' ".agent/scripts/$f" 2>/dev/null; then
     ok ".agent/scripts/$f keeps its Antigravity adaptation"
   else
     bad ".agent/scripts/$f lost its Antigravity adaptation (packager overwrote a 'local' script?)"

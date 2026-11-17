@@ -124,6 +124,11 @@ PLATFORMS = {
             "start-parallel-agents.sh",
             "end-parallel-agents.sh",
             "regression-test.sh",
+            # Wake prompts use bare command names for every agent here
+            # (.AGENT ADAPTATION #36): .agent/workflows are bare-named, so the
+            # plugin copy's `autocoder:` prefix for claude would type a command
+            # that does not exist. Hand-port upstream fixes (e.g. `merging`).
+            "idle-sentinel.sh",
         ],
         "entry_points": [
             "start-parallel-agents.sh",

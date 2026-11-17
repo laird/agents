@@ -64,7 +64,7 @@ Each backend is a self-contained script implementing the same 9-verb contract (l
 fills it, and `tests/test_script_packaging.sh` fails on drift. Edit the plugin copy
 and re-run the packager. The exceptions are the scripts listed as `local` for the
 `antigravity` platform (`start-parallel-agents.sh`, `end-parallel-agents.sh`,
-`regression-test.sh`), which carry Antigravity adaptations and are still synced by hand.
+`regression-test.sh`, `idle-sentinel.sh`), which carry Antigravity adaptations and are still synced by hand.
 
 ## Workflows
 
