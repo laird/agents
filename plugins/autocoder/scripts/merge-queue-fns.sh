@@ -102,9 +102,10 @@ merge_queue_acquire() {
       # description, so it stays ours after flock exits) and watch it, so a stopped or
       # killed owner never leaves an orphaned `flock -w` waiter holding a place in the
       # queue (#226). A TERM to this holder (merge_queue_release) stops the waiter too.
+      fpid=""
+      trap '[ -n "$fpid" ] && kill "$fpid" 2>/dev/null; exit 1' TERM   # before the launch: no window
       if [ "$wait" -eq 0 ]; then flock 8 & else flock -w "$wait" 8 & fi
       fpid=$!
-      trap 'kill "$fpid" 2>/dev/null; exit 1' TERM
       while kill -0 "$fpid" 2>/dev/null; do
         kill -0 "$owner" 2>/dev/null || { kill "$fpid" 2>/dev/null; exit 1; }
         sleep 0.5 8>&-

@@ -13,7 +13,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S="$ROOT/plugins/autocoder/scripts"
 ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
-command -v flock >/dev/null || { echo "SKIP: no flock"; echo "Tests: 0 failed, 0 passed, 0 total"; exit 0; }
+command -v flock >/dev/null && [ -d /proc/self/fd ] && command -v pgrep >/dev/null \
+  || { echo "SKIP: needs flock, pgrep and /proc"; echo "Tests: 0 failed, 0 passed, 0 total"; exit 0; }
 
 TMP=$(mktemp -d)
 cleanup() { [ -n "${EXT:-}" ] && kill "$EXT" 2>/dev/null; rm -rf "$TMP"; }
@@ -33,7 +34,7 @@ waiters() {
   done
 }
 hold_externally() {   # another job holds the lock
-  ( exec 9>>"$LOCK"; flock 9; : > "$TMP/ext.held"; sleep 300 ) & EXT=$!
+  ( exec 9>>"$LOCK"; flock 9; : > "$TMP/ext.held"; exec sleep 300 ) & EXT=$!
   for _ in $(seq 1 50); do [ -e "$TMP/ext.held" ] && break; sleep 0.1; done
   rm -f "$TMP/ext.held"
 }
