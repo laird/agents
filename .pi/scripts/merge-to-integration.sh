@@ -117,7 +117,15 @@
 #        → issue_park: `awaiting-integration` with a comment naming the landed commit
 #          and the gated trees. The post-merge sentinel closes a parked issue once its
 #          landed commit is on a green tip. Only `tested` and `docs-only` may close.
-#     exit 1 / exit 2 before anything was pushed (conflict, gate failure, publish failure)
+#     conflict (exit 1) or gate failure (exit 2) before anything was pushed
+#        → bounced back to the owning worker (#207): `merging` → `working`, with a
+#          comment naming the conflicting files or the failing suites and ending in
+#          `<!-- autocoder-bounce kind=<conflict|gate> worktree=<caller dir>
+#          sha=<feature sha> sig=<sha1 of the sorted list> -->`. Both are mechanical
+#          (rebase, re-test, relaunch), not questions for a human. Only an identical
+#          repeat (the newest earlier bounce has the same kind and sig) escalates to
+#          needs-clarification.
+#     any other failure before anything was pushed (unresolvable ref, publish failure)
 #        → issue_escalate --label needs-clarification, comment with the reason and the
 #          last 40 lines of gate output
 #     internal error AFTER the push succeeded
@@ -200,7 +208,8 @@ GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
-trap 'rm -f "$GATE_LOG"' EXIT
+GATE_LAST="${GATE_LOG}.integrated"   # output of the latest integrated-tree gate only
+trap 'rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 # Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
 # long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
@@ -242,11 +251,84 @@ _issue_has_label() {
 # not lost work, and the issue is parked instead of escalated.
 PUSHED=0
 
+# ── Bounce (#207) ──────────────────────────────────────────────────────────────
+# A conflict or a red gate is the owning worker's to fix (rebase, re-test, relaunch), so
+# under --own-issue it goes back to `working`, not to a human. The comment ends in one
+# machine-readable marker line; the worktree path identifies the owner because worker
+# ids (hostname-PID) change every tick.
+_sha1() {
+  if command -v sha1sum >/dev/null 2>&1; then sha1sum; else shasum -a 1; fi | cut -c1-40
+}
+# "<kind> <sig>" of the newest bounce marker already on the issue, or nothing. Reads the
+# body as well as the comments: the file backend folds comments into the body.
+_last_bounce() {
+  issue_get "$ISSUE_NUM" 2>/dev/null | python3 -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+texts = [d.get("body") or ""] + [(c or {}).get("body") or "" for c in (d.get("comments") or [])]
+hits = [m for t in texts for m in re.findall(r"<!-- autocoder-bounce kind=([a-z]+) [^>]*?sig=([0-9a-f]+) -->", t)]
+if hits:
+    print(" ".join(hits[-1]))
+' 2>/dev/null
+}
+# Names of the suites the latest integrated-tree gate reported failing, one per line:
+# run-shell-suite.sh's "Failing suites:" line, else "FAIL <name>" lines.
+_failing_suites() {
+  local f="$GATE_LAST" names
+  [ -s "$f" ] || f="$GATE_LOG"
+  [ -s "$f" ] || return 0
+  names=$(sed -n 's/^Failing suites://p' "$f" | tr ' ' '\n')
+  [ -n "$names" ] || names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
+  printf '%s\n' "$names" | sed '/^$/d' | sort -u
+}
+# _bounce <conflict|gate> <newline-separated items> <detail>. Returns 1, changing
+# nothing, when the newest earlier bounce has the same kind and sig: the caller escalates.
+_bounce() {
+  local kind="$1" items="$2" detail="$3" sig list what fixit
+  items=$(printf '%s\n' "$items" | sed '/^$/d' | sort -u)
+  sig=$(printf '%s' "$items" | _sha1)
+  [ "$(_last_bounce)" = "$kind $sig" ] && return 1
+  if [ -n "$items" ]; then
+    list=$(printf '%s\n' "$items" | sed 's/^/- `/; s/$/`/')
+  else
+    list="- (none reported; see the output below)"
+  fi
+  if [ "$kind" = conflict ]; then
+    what="hit a merge conflict"
+    fixit="Rebase \`${FEATURE}\` onto \`origin/${INTEGRATION_BRANCH}\`, resolve keeping both sides' behaviour, re-run the tests and relaunch the merge."
+    list="Conflicting files:
+${list}"
+  else
+    what="failed the gate on the integrated tree"
+    fixit="Rebase \`${FEATURE}\` onto \`origin/${INTEGRATION_BRANCH}\`, fix the failing tests, re-run them and relaunch the merge."
+    list="Failing suites:
+${list}"
+  fi
+  issue_comment "$ISSUE_NUM" --body "🔁 **Auto-merge to \`${INTEGRATION_BRANCH}\` ${what}; returned to the owning worker.**
+
+${list}
+
+Nothing from this run landed on \`${INTEGRATION_BRANCH}\`; the work is still on \`${FEATURE}\` (\`${FEATURE_SHA:0:12}\`). ${fixit} The issue is back in \`working\` for that worker. A second bounce with the same ${kind} signature escalates to \`needs-clarification\`.${detail}
+
+<!-- autocoder-bounce kind=${kind} worktree=${CALLER_DIR} sha=${FEATURE_SHA} sig=${sig} -->" 2>/dev/null || true
+  # Add before remove: both labels at once is still out of the claimable pool, while
+  # neither would put an issue with a live branch nowhere.
+  issue_update "$ISSUE_NUM" --add-label working 2>/dev/null || true
+  issue_update "$ISSUE_NUM" --remove-label merging 2>/dev/null || true
+  echo "🔁 Issue #${ISSUE_NUM} bounced back to its worker (${kind}, sig ${sig:0:12})."
+  return 0
+}
+
 # Terminal failure, exits with $1. Under --own-issue an issue someone already closed is
-# left alone; otherwise it is escalated (nothing landed) or parked (the push landed and
-# only this job's bookkeeping failed), with the reason and the gate's tail.
+# left alone. A gate failure (exit 2) before the push is bounced to the worker (#207)
+# unless it repeats identically. Anything else is escalated (nothing landed) or parked
+# (the push landed and only this job's bookkeeping failed), with the reason and the
+# gate's tail.
 _fail() {
-  local code="$1" reason="$2" tail=""
+  local code="$1" reason="$2" tail="" repeat=""
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
     [ -s "$GATE_LOG" ] && tail=$(tail -n 40 "$GATE_LOG")
     tail="${tail:+
@@ -255,6 +337,16 @@ Last gate output:
 \`\`\`
 ${tail}
 \`\`\`}"
+    if [ "$PUSHED" -eq 0 ] && [ "$code" -eq 2 ]; then
+      if _bounce gate "$(_failing_suites)" "
+
+Gate verdict: ${reason}${tail}"; then
+        exit "$code"
+      fi
+      repeat="
+
+This is the second identical gate bounce (same failing suites), so it is escalated instead of bounced again."
+    fi
     if [ "$PUSHED" -eq 1 ]; then
       issue_park "$ISSUE_NUM" --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` pushed, then hit an internal error** (exit ${code}): ${reason}
 
@@ -262,18 +354,27 @@ The work from \`${FEATURE}\` is on \`${INTEGRATION_BRANCH}\`; what failed was th
     else
       issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "❌ **Auto-merge to \`${INTEGRATION_BRANCH}\` failed** (exit ${code}): ${reason}
 
-The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${tail}" 2>/dev/null || true
+The fix is committed on \`${FEATURE}\`; nothing from this run landed on \`${INTEGRATION_BRANCH}\`. Labelled \`needs-clarification\` for a human to look at.${repeat}${tail}" 2>/dev/null || true
     fi
   fi
   exit "$code"
 }
 
 _escalate_conflict() {
+  local files
   echo "❌ Merge conflict integrating '${INTEGRATION_BRANCH}' into ${FEATURE}."
+  files=$(git diff --name-only --diff-filter=U 2>/dev/null)
   git merge --abort 2>/dev/null || true
   if [ "$OWN_ISSUE" -eq 1 ] && ! _issue_is_closed; then
-    echo "   Aborting the merge and escalating issue #${ISSUE_NUM} for human resolution."
-    issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit a conflict** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue." 2>/dev/null || true
+    if _bounce conflict "$files" ""; then
+      echo "   Aborted the merge; the worker rebases and relaunches."
+      exit 1
+    fi
+    echo "   Aborting the merge and escalating issue #${ISSUE_NUM}: second identical conflict."
+    issue_escalate "$ISSUE_NUM" --label needs-clarification --comment "⚠️ **Auto-merge to \`${INTEGRATION_BRANCH}\` hit the same conflict twice** on branch \`${FEATURE}\` and needs manual resolution. The fix is committed on \`${FEATURE}\`; resolve against \`${INTEGRATION_BRANCH}\` and push, then close this issue.
+
+Conflicting files:
+$(printf '%s\n' "$files" | sed '/^$/d' | sed 's/^/- `/; s/$/`/')" 2>/dev/null || true
   else
     echo "   Aborting the merge. The fix is committed on ${FEATURE}; resolve against ${INTEGRATION_BRANCH} by hand."
   fi
@@ -414,7 +515,7 @@ if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; 
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_cleanup_worktrees; rm -f "$GATE_LOG"' EXIT
+trap '_cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
@@ -514,7 +615,8 @@ _gate_integrated_tree() {
   local tree base_sha base_tree
   tree=$(git rev-parse "HEAD^{tree}")
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
-  if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  : > "$GATE_LAST"
+  if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" "$GATE_LAST"; then
     TESTED_TREE="$tree"
     PUBLISH_BASIS=tested
     return 0

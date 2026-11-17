@@ -6,8 +6,8 @@
 #     the --summary-file contents, every lock label gone;
 #   - landed on any other basis (disjoint re-sync, red base) or not on the ship branch:
 #     parked under `awaiting-integration`, never closed; the sentinel closes it later;
-#   - gate failure or conflict before anything was pushed: escalated to
-#     `needs-clarification` (file backend: blocked/), with the gate output;
+#   - gate failure or conflict before anything was pushed: bounced back to the worker
+#     (`merging` → `working`, #207; repeats and other failures: tests/test_merge_bounce.sh);
 #   - every transition converges: a second run on a closed issue is a no-op that retires a
 #     stale `merging`, a parked issue stays parked, and a feature commit already on the
 #     integration branch is closed without being merged again;
@@ -105,16 +105,15 @@ echo "$OUT" | grep -q "already closed" && ok "rerun says the issue is already cl
 [ "$(issue_labels)" = "bug" ] && [ "$(issue_bucket)" = closed ] && ok "rerun retired the stale merging label and left the issue closed" || bad "rerun state: $(issue_bucket) $(issue_labels)"
 [ "$(issue_body | grep -c "Issue Resolved")" -eq 1 ] && ok "rerun added no second resolution comment" || bad "duplicate resolution comment: $(issue_body)"
 
-# ── 3. gate failure: escalated to needs-clarification in blocked/, with the gate output ──
+# ── 3. gate failure: bounced back to the worker (#207), with the gate output ──
 setup
 BEFORE=$(origin_master)
 OUT=$(run_own 'echo GATE-SAYS-BOOM; test ! -f src/app.sh'); RC=$?
 [ "$RC" -eq 2 ] && ok "gate failure exits 2" || bad "rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "nothing pushed" || bad "master moved"
-[ "$(issue_bucket)" = blocked ] && [ "$(issue_labels)" = "bug needs-clarification" ] && ok "issue escalated: blocked/ bucket, only needs-clarification" || bad "escalation state: bucket=$(issue_bucket) labels=$(issue_labels)"
-python3 "$ISSUES_PY" list --state blocked | grep -q "\"number\": $ISSUE" && ok "escalated issue is visible to list --state blocked" || bad "escalated issue invisible to /review-blocked"
+[ "$(issue_bucket)" = working ] && [ "$(issue_labels)" = "bug working" ] && ok "issue bounced: working/ bucket, working label, merging retired" || bad "bounce state: bucket=$(issue_bucket) labels=$(issue_labels)"
 [ "$(issue_state)" = OPEN ] && ok "issue stays open" || bad "issue state $(issue_state)"
-issue_body | grep -q "Auto-merge to \`master\` failed" && ok "failure comment posted" || bad "no failure comment: $(issue_body)"
+issue_body | grep -q "failed the gate on the integrated tree; returned to the owning worker" && ok "bounce comment posted" || bad "no bounce comment: $(issue_body)"
 issue_body | grep -q "GATE-SAYS-BOOM" && ok "failure comment quotes the gate output" || bad "gate output missing from comment: $(issue_body)"
 issue_body | grep -q "this change broke it" && ok "failure comment carries the verdict" || bad "verdict missing from comment"
 [ -z "$(tips)" ] && ok "no tip ref published for a refused merge" || bad "tip ref published without a landing: $(tips)"
@@ -188,15 +187,15 @@ echo "$OUT" | grep -q "a documents-only re-sync (1 document files) then publishe
 [ "$(issue_state)" = CLOSED ] && [ "$(issue_bucket)" = closed ] && [ "$(issue_labels)" = "bug" ] && ok "docs-resync: issue closed (documents are not an input to the test stages)" || bad "docs-resync state: $(issue_state) $(issue_bucket) $(issue_labels)"
 issue_body | grep -q "Issue Resolved" && ok "docs-resync: resolution comment posted" || bad "docs-resync comment: $(issue_body)"
 
-# ── 9. conflict: escalated under --own-issue, untouched without ─────────────
+# ── 9. conflict: bounced under --own-issue (#207), untouched without ────────
 setup
 (cd "$TMP/sibling" && mkdir -p src && echo sibling > src/app.sh && git add -A && git commit -q -m clash && git push -q origin master)
 BEFORE=$(origin_master)
 OUT=$(run_own true); RC=$?
 [ "$RC" -eq 1 ] && ok "conflict exits 1" || bad "conflict rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "conflict pushed nothing" || bad "conflict moved master"
-[ "$(issue_bucket)" = blocked ] && [ "$(issue_labels)" = "bug needs-clarification" ] && ok "conflict: escalated to blocked/ with needs-clarification" || bad "conflict state: $(issue_bucket) $(issue_labels)"
-issue_body | grep -q "hit a conflict" && ok "conflict comment posted" || bad "conflict comment missing: $(issue_body)"
+[ "$(issue_bucket)" = working ] && [ "$(issue_labels)" = "bug working" ] && ok "conflict: bounced to working/ with working" || bad "conflict state: $(issue_bucket) $(issue_labels)"
+issue_body | grep -q "hit a merge conflict" && ok "conflict comment posted" || bad "conflict comment missing: $(issue_body)"
 
 setup
 (cd "$TMP/sibling" && mkdir -p src && echo sibling > src/app.sh && git add -A && git commit -q -m clash && git push -q origin master)
