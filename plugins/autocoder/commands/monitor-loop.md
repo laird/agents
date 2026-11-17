@@ -92,6 +92,27 @@ echo "  • Deploy to ey-staging when all work completes"
 echo ""
 ```
 
+### Register in the swarm manifest
+
+```bash
+# Record the manager in the swarm manifest (#217, part of #178), so the manifest names the live manager pane and pid, even when this
+# session was started by hand rather than by start-parallel-agents.sh.
+# Outside a swarm (no manifest) swarm-register.sh prints a note and exits 0.
+# Never fatal: a failed registration must not stop the loop.
+REGISTER_SH=$(
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
+  done
+  find "$HOME/.claude/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+)
+if [ -n "$REGISTER_SH" ]; then
+  bash "$REGISTER_SH" --manager || echo "⚠️  swarm-register.sh failed; continuing without updating the manifest" >&2
+fi
+```
+
 ### Detect /loop availability and choose mode
 
 **Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).

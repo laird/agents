@@ -285,6 +285,27 @@ fi
 mkdir -p .claude
 ```
 
+### Register in the swarm manifest
+
+```bash
+# Record this worker in the swarm manifest (#217, part of #178), so a worker started by hand (plain agent + this command) still appears
+# in .autocoder/swarm/<session>.json instead of "workers": [].
+# Outside a swarm (no manifest) swarm-register.sh prints a note and exits 0.
+# Never fatal: a failed registration must not stop the loop.
+REGISTER_SH=$(
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
+  done
+  find "$HOME/.agent/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+)
+if [ -n "$REGISTER_SH" ]; then
+  bash "$REGISTER_SH" || echo "⚠️  swarm-register.sh failed; continuing without updating the manifest" >&2
+fi
+```
+
 ### Detect /loop availability and choose mode
 
 **Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Antigravity supports the `/loop` command).
