@@ -81,9 +81,13 @@ worker_state_set() { :; }
 if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
   # shellcheck source=worker-state-fns.sh
   source "${SCRIPT_DIR}/worker-state-fns.sh"
-  if [ "${AUTOCODER_RESUME_OWN_CLAIM:-1}" = 1 ] && RESUME_PLAN="$(worker_resume_plan)"; then
-    printf '%s\n' "$RESUME_PLAN" > "$WORK_JSON"
-    exit 0
+  if [ "${AUTOCODER_RESUME_OWN_CLAIM:-1}" = 1 ]; then
+    RESUME_RC=0
+    RESUME_PLAN="$(worker_resume_plan)" || RESUME_RC=$?
+    case "$RESUME_RC" in
+      0) printf '%s\n' "$RESUME_PLAN" > "$WORK_JSON"; exit 0 ;;
+      2) exit 1 ;;   # holding an issue that cannot resume this tick: never claim over it
+    esac
   fi
 fi
 
@@ -194,6 +198,7 @@ claim_comment_wins() {
   local n="$1" now_ms issue_json
   now_ms="$(python3 -c 'import time; print(int(time.time() * 1000))')"
   issue_comment "$n" --body "🔒 claim $WORKER_ID $now_ms" 2>/dev/null || return 0
+  CLAIM_MS="$now_ms"   # recorded with the claim, so a resume can prove it is still ours (#182)
   issue_json="$(issue_get "$n" 2>/dev/null)" || return 0
   ISSUE_JSON="$issue_json" ME="$WORKER_ID" NOW_MS="$now_ms" \
     WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" python3 - <<'PY'
@@ -227,12 +232,13 @@ while read -r PHASE ISSUE_NUM PRIORITY <&3; do
   [ "$tries" -lt "$MAX_TRIES" ] || break
   tries=$((tries + 1))
 
+  CLAIM_MS=""
   issue_claim "$ISSUE_NUM" 2>/dev/null || continue
   if [ "$ISSUE_SOURCE" != file ]; then
     claim_comment_wins "$ISSUE_NUM" || continue
   fi
 
-  worker_state_set "$ISSUE_NUM"
+  worker_state_set "$ISSUE_NUM" "$CLAIM_MS"
   if [ "$PHASE" = "FIX" ]; then
     printf '{"phase":"fix","issue":%s,"priority":"%s"}\n' \
       "$ISSUE_NUM" "$PRIORITY" > "$WORK_JSON"

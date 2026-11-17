@@ -5,15 +5,20 @@
 #
 # The record lives in the worktree's own git dir (per worktree, never committed,
 # survives compaction and restarts):
-#   $(git rev-parse --absolute-git-dir)/autocoder-worker-state   →  "<issue-number>"
+#   $(git rev-parse --absolute-git-dir)/autocoder-worker-state  →  "<issue> [<claim-ms>]"
+# <claim-ms> is the timestamp of this worktree's `🔒 claim <id> <ms>` comment, written
+# by the gate on GitHub/Jira/ADO; the file backend's atomic claim leaves no comment.
 #
-# A claim this worktree holds is recognised from either source:
-#   1. the record above, written when the gate claims an issue;
-#   2. a checked-out feature/issue-N or enhancement/issue-N-auto branch, which
-#      covers claims made before this record existed, or by /fix N directly.
-# It is still held while the issue is OPEN and carries `working`. Anything else
-# (closed, handed to the merge job as `merging`, parked, blocked, or released)
-# means the claim ended, so the record is cleared and the next tick claims fresh.
+# A recorded issue is resumed only when ALL hold:
+#   - it is OPEN and still carries `working`;
+#   - it is still ours: the newest `🔒 claim` comment is the one we recorded, so an
+#     issue released and since re-claimed by another worker is not taken back;
+#   - this worktree is, or can be switched (clean tree) onto, feature/issue-N, or
+#     that branch does not exist yet (compacted before /fix created it). /fix treats
+#     a pre-claimed issue as a resume only from its own branch.
+# A checked-out branch alone is never enough: it cannot show who owns the issue now.
+# When the claim has ended (closed, `merging`, parked, blocked, released, re-claimed)
+# the record is cleared and the next tick claims fresh work.
 #
 # Requires issue-fns.sh to be sourced (issue_get).
 
@@ -23,10 +28,11 @@ worker_state_file() {
   printf '%s/autocoder-worker-state\n' "$gd"
 }
 
+# worker_state_set <issue> [<claim-ms>]
 worker_state_set() {
   local f
   f=$(worker_state_file) || return 0
-  printf '%s\n' "$1" > "$f" 2>/dev/null || true
+  printf '%s %s\n' "$1" "${2:-}" > "$f" 2>/dev/null || true
 }
 
 worker_state_clear() {
@@ -35,56 +41,68 @@ worker_state_clear() {
   rm -f "$f"
 }
 
-# _worker_issue_held <issue-json> → exit 0 when the issue is open and still `working`.
-_worker_issue_held() {
-  printf '%s' "$1" | jq -e \
-    '(.state | ascii_upcase) == "OPEN" and ([.labels[]?.name] | index("working") != null)' \
-    >/dev/null 2>&1
+# _worker_still_ours <issue-json> <recorded-ms> → exit 0 when the issue is open,
+# `working`, and its newest claim comment is the one recorded (or none was recorded).
+_worker_still_ours() {
+  printf '%s' "$1" | MS="$2" jq -e '
+    ((.state | ascii_upcase) == "OPEN")
+    and ([.labels[]?.name] | index("working") != null)
+    and (env.MS == ""
+         or ([.comments[]?.body // ""
+              | capture("^\\s*🔒 claim \\S+ (?<ms>[0-9]+)\\s*$")?.ms | tonumber]
+             | max) == (env.MS | tonumber))
+  ' >/dev/null 2>&1
 }
 
-# worker_resume_plan → prints a work-plan JSON line and exits 0 when this worktree
-# holds an open, `working` issue; exits 1 otherwise. Checks out the issue's local
-# branch when the tree is clean and a different branch is checked out, because
-# /fix treats a pre-claimed issue as a hand-off only from its own branch.
+# worker_resume_plan → exit 0 and print a work-plan JSON line when this worktree
+# holds an open, `working` issue it can resume now; exit 2 when it holds one but
+# cannot resume it this tick (dirty tree), so the caller must not claim new work
+# over it; exit 1 when it holds nothing.
 worker_resume_plan() {
-  local state_file recorded="" branch cur_num="" n json phase prio target
+  local state_file n="" ms="" json target phase prio
   state_file=$(worker_state_file) || return 1
-  [ -f "$state_file" ] && recorded=$(tr -dc '0-9' < "$state_file")
+  [ -f "$state_file" ] || return 1
+  read -r n ms < "$state_file" || true
+  n="${n//[^0-9]/}"; ms="${ms//[^0-9]/}"
+  [ -n "$n" ] || { worker_state_clear; return 1; }
 
-  branch=$(git branch --show-current 2>/dev/null || true)
-  if [[ "$branch" =~ ^feature/issue-([0-9]+)$ ]] || [[ "$branch" =~ ^enhancement/issue-([0-9]+)-auto$ ]]; then
-    cur_num="${BASH_REMATCH[1]}"
+  json=$(issue_get "$n" 2>/dev/null) || return 1   # backend hiccup: keep the record for the next tick
+  if ! _worker_still_ours "$json" "$ms"; then
+    worker_state_clear
+    return 1
   fi
 
-  for n in $recorded $cur_num; do
-    json=$(issue_get "$n" 2>/dev/null) || continue
-    if ! _worker_issue_held "$json"; then
-      [ "$n" = "$recorded" ] && worker_state_clear
-      continue
+  target="feature/issue-${n}"
+  if [ "$(git branch --show-current 2>/dev/null)" != "$target" ]; then
+    local have_local=0 have_remote=0
+    git show-ref --verify -q "refs/heads/${target}" && have_local=1
+    git fetch -q origin "+refs/heads/${target}:refs/remotes/origin/${target}" 2>/dev/null && have_remote=1
+    if [ "$have_local" -eq 0 ] && [ "$have_remote" -eq 0 ]; then
+      : # Claimed, but compacted before /fix made the branch: resume, and /fix creates it.
+    elif [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      # Mid-edit on something else. Still ours, so neither resume nor claim new work.
+      echo "worker-state: holding #${n} but the tree is dirty; not switching to ${target}" >&2
+      return 2
+    elif ! { [ "$have_local" -eq 1 ] && git checkout -q "$target" 2>/dev/null; } \
+         && ! { [ "$have_local" -eq 0 ] && git checkout -q -b "$target" "origin/${target}" 2>/dev/null; }; then
+      # The branch is checked out in another worktree: this worktree cannot carry
+      # the issue on, so let it go rather than retry it every tick.
+      echo "worker-state: cannot switch to ${target}; dropping the record for #${n}" >&2
+      worker_state_clear
+      return 1
     fi
+  fi
 
-    if printf '%s' "$json" | jq -e '[.labels[]?.name] | index("enhancement") != null' >/dev/null 2>&1; then
-      phase=enhance
-    else
-      phase=fix
-    fi
-    # /fix N works every gate-dispatched issue, enhancements included, on feature/issue-N.
-    target="feature/issue-${n}"
-    if [ "$n" != "$cur_num" ] && git show-ref --verify -q "refs/heads/${target}"; then
-      if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
-        git checkout -q "$target" 2>/dev/null || true
-      else
-        echo "worker-state: holding #${n} but the tree is dirty on '${branch}'; not switching to ${target}" >&2
-      fi
-    fi
-    worker_state_set "$n"
-    prio=$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(test("^P[0-3]$"))] | sort | .[0] // "P2"')
-    if [ "$phase" = fix ]; then
-      printf '{"phase":"fix","issue":%s,"priority":"%s","resume":true}\n' "$n" "$prio"
-    else
-      printf '{"phase":"enhance","issue":%s,"resume":true}\n' "$n"
-    fi
-    return 0
-  done
-  return 1
+  if printf '%s' "$json" | jq -e '[.labels[]?.name] | index("enhancement") != null' >/dev/null 2>&1; then
+    phase=enhance
+  else
+    phase=fix
+  fi
+  prio=$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(test("^P[0-3]$"))] | sort | .[0] // "P2"' 2>/dev/null || echo P2)
+  if [ "$phase" = fix ]; then
+    printf '{"phase":"fix","issue":%s,"priority":"%s","resume":true}\n' "$n" "$prio"
+  else
+    printf '{"phase":"enhance","issue":%s,"resume":true}\n' "$n"
+  fi
+  return 0
 }

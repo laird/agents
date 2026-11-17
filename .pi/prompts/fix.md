@@ -624,18 +624,29 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     exit 1
   fi
 
+  # #182: this worktree's own claim, resumed after compaction or a restart. The gate
+  # resumes only an issue it recorded for this worktree, still `working` and still
+  # ours, and switches to its branch first. Its pushed branch and earlier start
+  # comment are then ours, so neither lock check below may read them as a rival's.
+  RESUMING=false
+  if [ "$(git branch --show-current 2>/dev/null)" = "feature/issue-${ISSUE_NUM}" ] && \
+     [ "$(cut -d' ' -f1 "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ] && \
+     jq -e '[.labels[]?.name] | index("working") != null' /tmp/top-issue.json >/dev/null 2>&1; then
+    RESUMING=true
+    echo "🔁 Resuming this worktree's own claim on #$ISSUE_NUM. Re-read the issue's comments and the branch (git log origin/<integration>..HEAD) before continuing; do not redo finished work."
+  fi
+
   # Remote branch is the strongest lock — check it before the working label.
   # A peer may have pushed the branch before the label propagated, or a manager
   # may have cleared a stale label without realising work was still in flight.
   REMOTE_BRANCH_SPEC=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
+  if [ "$RESUMING" != "true" ] && [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
     echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — another agent owns this issue."
     echo "    To take over an abandoned branch, delete it from origin first."
     exit 1
   fi
 
   # Check if issue already has 'working' label (being worked on by another agent)
-  RESUMING=false
   IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
   if [ "$IS_WORKING" = "true" ]; then
     TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
@@ -647,14 +658,6 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
       exit 1
     fi
     echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
-    # #182: this worktree's own claim, resumed after compaction or a restart. The gate
-    # recorded it in the worktree's git dir; the earlier start comment is ours, so the
-    # race check below must not read it as a rival's and release the lock.
-    if [ "$CURRENT_BRANCH" = "$TARGET_BRANCH" ] && \
-       [ "$(cat "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ]; then
-      RESUMING=true
-      echo "🔁 Resuming this worktree's own claim on #$ISSUE_NUM. Re-read the issue's comments and the branch (git log origin/<integration>..HEAD) before continuing; do not redo finished work."
-    fi
   else
     issue_claim "$ISSUE_NUM" 2>/dev/null || {
       echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
