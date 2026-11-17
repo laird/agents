@@ -50,7 +50,8 @@ git -C "$TMPROOT/proj" init -q -b main .
 git -C "$TMPROOT/proj" commit -q --allow-empty -m init
 
 # ── 1. A live (non-paused) launch writes the manifest ──────────────────────
-OUT=$(cd "$TMPROOT/proj" && PATH="$TMPROOT/bin:$PATH" \
+# The stub agent never shows the manager marker; do not wait 15s for it.
+OUT=$(cd "$TMPROOT/proj" && PATH="$TMPROOT/bin:$PATH" AUTOCODER_MANAGER_PID_WAIT=1 \
   bash "$SP" 3 --mux tmux --agent claude --no-worktrees \
     --issue-source file --issue-dir "$TMPROOT/issues" 2>&1 </dev/null) || true
 SESSION="claude-proj"
@@ -89,11 +90,13 @@ AFTER=$(tmux list-panes -t "$SESSION:agents" -F '#{pane_id}' 2>/dev/null | wc -l
 [ "$AFTER" -eq $((BEFORE - 1)) ] && ok "remove-worker closed one pane ($BEFORE → $AFTER)" \
   || bad "pane count $BEFORE → $AFTER"
 if [ -f "$MANIFEST" ]; then
-  python3 -c '
+  # remove-worker deletes the entry (swarm-manifest-lib.sh); workers are keyed by
+  # "number". Worker 2 must be gone and 1 and 3 must remain.
+  NUMS=$(python3 -c '
 import json, sys
-ws = json.load(open(sys.argv[1]))["workers"]
-sys.exit(0 if not any(str(w.get("index")) == "2" and w.get("state") not in ("removed", "stopped") for w in ws) else 1)' "$MANIFEST" \
-    && ok "worker 2 deregistered in the manifest" || bad "worker 2 still live in the manifest"
+print(",".join(str(w.get("number")) for w in json.load(open(sys.argv[1]))["workers"]))' "$MANIFEST")
+  [ "$NUMS" = "1,3" ] && ok "worker 2 deregistered; 1 and 3 remain" \
+    || bad "manifest workers after remove-worker 2: '$NUMS' (want 1,3)"
 fi
 
 TOTAL=$((PASS + FAIL))
