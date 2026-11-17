@@ -135,18 +135,20 @@ pkill -P $SHELL_PID 2>/dev/null; sleep 0.3
 bash -c 'sleep 300; true' >/dev/null 2>&1 & STALE=$!
 MREG --pid $STALE >/dev/null
 TMUX_PANE=%8 MREG --pid $$ >/dev/null
-eq "pane shell whose agent exited replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
+eq "pane shell with no agent under it replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
 stop_tree $SHELL_PID; stop_tree $STALE
 
 "$TMP/bin/claude" 300 >/dev/null 2>&1 & LIVE=$!
 MREG --pid $LIVE >/dev/null; stop_tree $LIVE
 TMUX_PANE=%8 MREG --pid $$ >/dev/null
 eq "dead manager replaced" "$$ %8" "$(J "$M" 'str(m["manager"]["pid"])+" "+m["manager"]["tmuxTarget"]')"
-# The recorded pid ($$) is an ancestor of the registering helper: replaced.
+# The recorded pid ($$) is live (an agent runs under it) and is an ancestor of
+# the registering helper: the same manager re-registering, so it is replaced.
+"$TMP/bin/claude" 300 >/dev/null 2>&1 & UNDER=$!
 "$TMP/bin/claude" 300 >/dev/null 2>&1 & OTHER=$!
 MREG --pid $OTHER >/dev/null
-eq "recorded ancestor pid is replaced" "$OTHER" "$(J "$M" 'm["manager"]["pid"]')"
-stop_tree $OTHER
+eq "recorded live ancestor pid is replaced" "$OTHER" "$(J "$M" 'm["manager"]["pid"]')"
+stop_tree $OTHER; stop_tree $UNDER
 TMUX_PANE=%1 MREG --pid $$ >/dev/null
 
 # ── session selection ───────────────────────────────────────────────────────
