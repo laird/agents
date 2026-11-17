@@ -188,6 +188,8 @@ source "${_MTI_DIR}/test-cmd-fns.sh"
 source "${_MTI_DIR}/gate-cache-fns.sh"
 # shellcheck source=repo-id-fns.sh
 source "${_MTI_DIR}/repo-id-fns.sh"
+# shellcheck source=feature-ref-fns.sh
+source "${_MTI_DIR}/feature-ref-fns.sh"
 
 TMP_ROOT="${AUTOCODER_TMP:-/tmp}"
 REPO_ID=$(autocoder_repo_id "$CALLER_DIR")
@@ -357,8 +359,9 @@ fi
 
 # Resolve the exact commit to test/push. Prefer the SHA the caller pinned before we started;
 # fall back to resolving $FEATURE in CALLER_DIR for direct invocations that skip --feature-sha.
+# Resolve against the pushed origin/$FEATURE, not the shared local namespace (#143).
 if [ -z "$FEATURE_SHA" ]; then
-  FEATURE_SHA=$(git -C "$CALLER_DIR" rev-parse "$FEATURE" 2>/dev/null || echo "")
+  FEATURE_SHA=$(resolve_feature_sha "$CALLER_DIR" "$FEATURE" || echo "")
 fi
 if [ -z "$FEATURE_SHA" ]; then
   echo "❌ Could not resolve '${FEATURE}' to a commit (no --feature-sha given and the branch is not in ${CALLER_DIR})." >&2
@@ -439,7 +442,7 @@ fi
 # and pushing it again would only add an empty merge commit. Go straight to the outcome.
 if git merge-base --is-ancestor "$FEATURE_SHA" "$INT_SEEN_SHA"; then
   echo "ℹ️  ${FEATURE} (${FEATURE_SHA:0:8}) is already on origin/${INTEGRATION_BRANCH}; nothing to merge or gate."
-  git push origin --delete "$FEATURE" 2>/dev/null || true
+  delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
   if [ "$OWN_ISSUE" -eq 1 ] && _issue_has_label awaiting-integration; then
     # An earlier run parked it (disjoint, red base, or not shipped); landing nothing new
     # proves nothing new, so the sentinel keeps ownership.
@@ -762,8 +765,11 @@ else
   echo "⚠️  Could not publish ${TIP_REF} (not fatal; the sentinel will see the branch tip)."
 fi
 
-# 4. Clean up the feature branch now that its work is on the integration branch.
-git push origin --delete "$FEATURE" 2>/dev/null || true
+# 4. Clean up the feature branch now that its work is on the integration branch. Only
+# while it still points at FEATURE_SHA, the feature tip this job merged (re-sync merges
+# are never pushed to it): a branch that moved since, or that never held this commit,
+# carries work that has not landed (#143).
+delete_feature_branch_if_at "$CALLER_DIR" "$FEATURE" "$FEATURE_SHA" || true
 # The throwaway worktrees are removed by the EXIT trap. Any local $FEATURE branch ref
 # in $CALLER_DIR is untouched by this script; the caller's own cleanup (or the next /fix
 # run branching fresh from origin/<integration-branch>) handles it.
