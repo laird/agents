@@ -118,6 +118,17 @@ json_int() {
         | grep -oE '[0-9]+$' | head -1
 }
 
+# run_logged <log> <cmd...> — run a test command, tee its output to <log>, and
+# return the COMMAND's exit status. A bare `cmd | tee log` returns tee's status,
+# which is always 0: a failing suite read as a pass, and this script printed
+# "All tests passed" and exited 0 over a red run (issue #195). The command stays
+# unquoted at the call site because it is a configured command line, not a word.
+run_logged() {
+    local log="$1"; shift
+    "$@" 2>&1 | tee "$log"
+    return "${PIPESTATUS[0]}"
+}
+
 # ==========================================
 # STEP 1: Run Unit Tests
 # ==========================================
@@ -135,7 +146,7 @@ if [ -z "$UNIT_TEST_CMD" ]; then
     UNIT_EXIT=0
     UNIT_SUITE_SKIPPED=true
     : > "$UNIT_RESULTS"
-elif $UNIT_TEST_CMD 2>&1 | tee "$UNIT_RESULTS"; then
+elif run_logged "$UNIT_RESULTS" $UNIT_TEST_CMD; then
     UNIT_STATUS="✅ PASSED"
     UNIT_EXIT=0
 else
@@ -191,7 +202,7 @@ if [ -z "$E2E_TEST_CMD" ]; then
     E2E_EXIT=0
     E2E_SUITE_SKIPPED=true
     : > "$E2E_RESULTS"
-elif $E2E_TEST_CMD 2>&1 | tee "$E2E_RESULTS"; then
+elif run_logged "$E2E_RESULTS" $E2E_TEST_CMD; then
     E2E_STATUS="✅ PASSED"
     E2E_EXIT=0
 else
@@ -397,9 +408,32 @@ echo ""
 echo -e "  ${YELLOW}Report saved to:${NC} $REPORT_FILE"
 echo ""
 
+# A parsed failure count fails the run even if the runner exited 0: some
+# runners print "N failed" and still exit 0, and the count is what we report.
+TOTAL_FAILED=$((UNIT_FAILED + E2E_FAILED))
+if [ "$TOTAL_FAILED" -gt 0 ]; then
+    [ "$UNIT_FAILED" -gt 0 ] && UNIT_EXIT=1
+    [ "$E2E_FAILED" -gt 0 ] && E2E_EXIT=1
+fi
+# A configured suite that ran zero tests proved nothing (issue #73).
+NO_TESTS_RAN=false
+if [ "${UNIT_SUITE_SKIPPED:-false}" != "true" ] && [ "$UNIT_EXIT" -eq 0 ] && [ "$UNIT_TOTAL" -eq 0 ] && [ "$UNIT_PASSED" -eq 0 ]; then
+    NO_TESTS_RAN=true; UNIT_EXIT=1
+fi
+if [ "${E2E_SUITE_SKIPPED:-false}" != "true" ] && [ "$E2E_EXIT" -eq 0 ] && [ "$E2E_TOTAL" -eq 0 ]; then
+    NO_TESTS_RAN=true; E2E_EXIT=1
+fi
+
 # Exit with failure if any tests failed
 if [ "$UNIT_EXIT" -ne 0 ] || [ "$E2E_EXIT" -ne 0 ]; then
-    echo -e "${RED}⚠️  Some tests failed. Check GitHub issues for details.${NC}"
+    if [ "$TOTAL_FAILED" -gt 0 ]; then
+        echo -e "${RED}❌ ${TOTAL_FAILED} failed (unit: ${UNIT_FAILED}, E2E: ${E2E_FAILED}).${NC}"
+    elif [ "$NO_TESTS_RAN" = "true" ]; then
+        echo -e "${RED}❌ 0 tests ran — a configured suite reported no tests.${NC}"
+    else
+        echo -e "${RED}❌ Test run failed (unit: ${UNIT_STATUS}; E2E: ${E2E_STATUS}).${NC}"
+    fi
+    echo -e "${RED}   Check the report and GitHub issues for details.${NC}"
     exit 1
 elif [ "${UNIT_SUITE_SKIPPED:-false}" = "true" ] && [ "${E2E_SUITE_SKIPPED:-false}" = "true" ]; then
     # Both suites skipped means nothing ran. Reporting that as "all tests
