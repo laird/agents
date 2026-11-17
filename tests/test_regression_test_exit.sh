@@ -95,6 +95,28 @@ for script in "$ROOT/plugins/autocoder/scripts/regression-test.sh" \
     || bad "$label: passing suite missing success line"
 done
 
+# ── Concurrent runs keep their own results (#214) ──────────────────────────
+# Logs used to live at /tmp/*-<second>.log, so runs started in the same second
+# (concurrent merge gates on one host) read each other's results. Start four at
+# once, alternating failing and passing suites; each must get its own verdict.
+script="$ROOT/plugins/autocoder/scripts/regression-test.sh"
+for i in 1 2 3 4; do
+  if [ $((i % 2)) -eq 1 ]; then body='echo "Tests: 1 failed, 2 passed, 3 total"; exit 1'
+  else body='echo "Tests: 0 failed, 3 passed, 3 total"'; fi
+  ( label=concurrent; run_case "$script" "conc$i" "$body"; echo "$RC" > "$TMP/conc$i.rc"; printf '%s' "$OUT" > "$TMP/conc$i.out" ) &
+done
+wait
+for i in 1 2 3 4; do
+  rc=$(cat "$TMP/conc$i.rc" 2>/dev/null)
+  if [ $((i % 2)) -eq 1 ]; then
+    [ "$rc" = 1 ] && grep -q "1 failed (unit: 1" "$TMP/conc$i.out" \
+      && ok "concurrent run $i (failing) keeps its own verdict" || bad "concurrent run $i (failing): rc=$rc"
+  else
+    [ "$rc" = 0 ] && grep -q "All tests passed" "$TMP/conc$i.out" \
+      && ok "concurrent run $i (passing) keeps its own verdict" || bad "concurrent run $i (passing): rc=$rc"
+  fi
+done
+
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

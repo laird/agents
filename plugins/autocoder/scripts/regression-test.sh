@@ -24,6 +24,13 @@ NC='\033[0m' # No Color
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
+# Private scratch space for this run (#214). The logs used to be
+# /tmp/*-${TIMESTAMP}.log, and TIMESTAMP has one-second resolution, so two runs
+# that started in the same second on one host (concurrent merge gates) read each
+# other's results and failed at random.
+RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/regression-test.XXXXXX") || { echo "regression-test.sh: mktemp failed" >&2; exit 1; }
+trap 'rm -rf "$RUN_TMP"' EXIT
+
 # Load configuration from CLAUDE.md if it exists
 if [ -f "CLAUDE.md" ]; then
     echo -e "${BLUE}Loading configuration from CLAUDE.md${NC}"
@@ -133,7 +140,7 @@ run_logged() {
 # STEP 1: Run Unit Tests
 # ==========================================
 echo -e "${YELLOW}[1/2] Running Unit Tests...${NC}"
-UNIT_RESULTS="/tmp/unit-test-results-${TIMESTAMP}.log"
+UNIT_RESULTS="$RUN_TMP/unit-test-results.log"
 
 # Run unit tests from configured directory
 if [ "$UNIT_TEST_DIR" != "." ]; then
@@ -192,8 +199,8 @@ EOF
 # STEP 2: Run E2E Tests
 # ==========================================
 echo -e "${YELLOW}[2/2] Running E2E Tests...${NC}"
-E2E_RESULTS="/tmp/e2e-test-results-${TIMESTAMP}.log"
-E2E_JSON="/tmp/e2e-results-${TIMESTAMP}.json"
+E2E_RESULTS="$RUN_TMP/e2e-test-results.log"
+E2E_JSON="$RUN_TMP/e2e-results.json"
 
 # Run E2E tests with configured command
 if [ -z "$E2E_TEST_CMD" ]; then
@@ -302,7 +309,7 @@ fi
 echo -e "${YELLOW}Checking for existing GitHub issues...${NC}"
 
 # Fetch all open issues
-issue_list --state open --limit 100 > /tmp/gh-issues.json
+issue_list --state open --limit 100 > "$RUN_TMP/gh-issues.json"
 
 # Function to determine priority based on failure type
 determine_priority() {
@@ -339,7 +346,7 @@ find_matching_issue() {
     # Search for existing issue with similar title
     local issue_num=$(jq -r --arg desc "$test_desc" \
         '.[] | select(.title | ascii_downcase | contains(($desc | ascii_downcase)[0:30])) | .number' \
-        /tmp/gh-issues.json 2>/dev/null | head -1)
+        "$RUN_TMP/gh-issues.json" 2>/dev/null | head -1)
 
     echo "$issue_num"
 }
