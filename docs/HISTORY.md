@@ -730,6 +730,16 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-09-21 09:14:21 - Autocoder install audit
+
+**What Changed**: Checked dependencies and existing global command/alias installation; identified add-worker and remove-worker as missing; validated installer wrappers and worker scripts; global symlink creation was denied by the managed filesystem sandbox.
+
+**Why Changed**: User requested autocoder installation, and repository policy requires logging all agent work.
+
+**Impact**: No installer source changed. HISTORY.md records that two global links remain to be created outside the writable workspace.
+
+---
+
 ## 2026-09-27 22:36:35 - Add worker-auth-watchdog and bump autocoder to 4.29.0
 
 **What Changed**: Added plugins/autocoder/scripts/worker-auth-watchdog.sh: a zero-token herdr watchdog (--once/--loop/--dry-run/--ensure) that finds agent panes whose latest turn ended in an API credential error, notifies once per outage while credentials stay invalid, and once a credential probe (gcloud ADC token by default) passes, sends /compact to compaction-wedged panes and a resume prompt to the rest, with a per-pane cooldown. Documented as monitor-workers Step 4d, added tests/test_worker_auth_watchdog.sh (32 assertions, fixtures from a real outage), propagated to .pi via package-plugin-scripts.py, and bumped autocoder to 4.29.0 with marketplaces at 3.50.0.
