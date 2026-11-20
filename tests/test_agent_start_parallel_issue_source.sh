@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"
 # tests/test_agent_start_parallel_issue_source.sh — Antigravity's swarm launcher
 # (.agent/scripts/start-parallel-agents.sh) must honour the same issue-source
 # contract as the plugin copy (#88).
