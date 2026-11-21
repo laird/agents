@@ -343,10 +343,11 @@ fi
 # ── Step 0: unprioritized issues ─────────────────────────────────────────────
 # Review and prioritize any unprioritized issues
 echo "🔍 Checking for unprioritized issues..."
-issue_list --state open --limit 100 > /tmp/all-open-issues.json
+ALL_OPEN_JSON="${TMPDIR:-/tmp}/all-open-issues.json"  # TMPDIR keeps a test run off the shared file
+issue_list --state open --limit 100 > "$ALL_OPEN_JSON"
 
 # Find issues without any priority label (P0-P3), excluding issues already being worked on
-UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
+UNPRIORITIZED=$(cat "$ALL_OPEN_JSON" | python3 -c "
 import json, sys
 issues = json.load(sys.stdin)
 unprioritized = [i for i in issues
