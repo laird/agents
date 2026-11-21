@@ -75,6 +75,12 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
     ok "$F: needs-review-focus is not a blocking label"
   fi
 done
+# The claimable filter /fix uses lives in claim-issue.sh since #289.
+if grep -q 'needs-review-focus' "$ROOT/plugins/autocoder/scripts/claim-issue.sh"; then
+  bad "claim-issue.sh: needs-review-focus appears in the claimable filter"
+else
+  ok "claim-issue.sh: needs-review-focus is not a blocking label"
+fi
 
 LEGACY=$(grep -rn '\[Detailed explanation\|\[Detailed analysis\]\|\[What was implemented\]' \
   "$ROOT/plugins/autocoder/commands" "$ROOT/.agent/workflows" | wc -l)

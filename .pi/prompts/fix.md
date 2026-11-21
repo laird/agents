@@ -523,265 +523,19 @@ else
   echo "✅ All open issues have priority labels assigned"
 fi
 
-# Check if a specific issue number was provided as argument
-# Usage: /fix [issue_number]
-SPECIFIED_ISSUE="${1:-}"
-
-if [ -n "$SPECIFIED_ISSUE" ]; then
-  # Specific issue provided - fetch it directly
-  echo "🎯 Targeting specific issue #$SPECIFIED_ISSUE"
-  issue_get "$SPECIFIED_ISSUE" > /tmp/top-issue.json 2>/dev/null
-
-  if [ $? -ne 0 ] || [ ! -s /tmp/top-issue.json ]; then
-    echo "❌ Error: Issue #$SPECIFIED_ISSUE not found or not accessible"
-    exit 1
-  fi
-
-  ISSUE_NUM=$(cat /tmp/top-issue.json | jq -r '.number')
-  ISSUE_TITLE=$(cat /tmp/top-issue.json | jq -r '.title')
-  ISSUE_BODY=$(cat /tmp/top-issue.json | jq -r '.body // ""')
-
-  # Dependencies first: an issue whose "Depends on" / "Blocked by" issues (or
-  # GitHub's native blocked-by) are still open is not ready, even when named
-  # explicitly. Refuse before claiming, so no `working` label is left behind.
-  # AUTOCODER_IGNORE_DEPENDENCIES=1 overrides it on purpose.
-  if UNMET_DEPS=$(issue_unmet_dependencies "$ISSUE_NUM"); then :; else
-    echo "⏳ Issue #$ISSUE_NUM waits on $UNMET_DEPS, still open. Not starting it."
-    echo "   Work those first, or set AUTOCODER_IGNORE_DEPENDENCIES=1 to override."
-    exit 1
-  fi
-
-  # #182: this worktree's own claim, resumed after compaction or a restart. The gate
-  # resumes only an issue it recorded for this worktree, still `working` and still
-  # ours, and switches to its branch first (or finds none locally or on origin: compacted
-  # before the branch was made). Its pushed branch, start comment and claim marker are then ours,
-  # so none of the lock checks below may read them as a rival's.
-  RESUMING=false
-  if { [ "$(git branch --show-current 2>/dev/null)" = "feature/issue-${ISSUE_NUM}" ] || \
-       { ! git show-ref --verify -q "refs/heads/feature/issue-${ISSUE_NUM}" && \
-         [ -z "$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null)" ]; }; } && \
-     [ "$(cut -d' ' -f1 "$(git rev-parse --absolute-git-dir 2>/dev/null)/autocoder-worker-state" 2>/dev/null)" = "$ISSUE_NUM" ] && \
-     jq -e '[.labels[]?.name] | index("working") != null' /tmp/top-issue.json >/dev/null 2>&1; then
-    RESUMING=true
-    echo "🔁 Resuming this worktree's own claim on #$ISSUE_NUM. Re-read the issue's comments and the branch (git log origin/<integration>..HEAD) before continuing; do not redo finished work."
-  fi
-
-  # Remote branch is the strongest lock — check it before the working label.
-  # A peer may have pushed the branch before the label propagated, or a manager
-  # may have cleared a stale label without realising work was still in flight.
-  REMOTE_BRANCH_SPEC=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$RESUMING" != "true" ] && [ "$REMOTE_BRANCH_SPEC" -gt "0" ]; then
-    echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — another agent owns this issue."
-    echo "    To take over an abandoned branch, delete it from origin first."
-    exit 1
-  fi
-
-  # Check if issue already has 'working' label (being worked on by another agent)
-  IS_WORKING=$(cat /tmp/top-issue.json | jq -r '.labels | map(.name) | any(. == "working")')
-  if [ "$IS_WORKING" = "true" ]; then
-    TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
-    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
-    if [ "$RESUMING" != "true" ] && [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
-      echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
-      echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
-      exit 1
-    fi
-    echo "ℹ️  Issue #$SPECIFIED_ISSUE already has 'working' label; treating it as a pre-claimed handoff"
-  else
-    issue_claim "$ISSUE_NUM" 2>/dev/null || {
-      echo "⚠️  Could not claim issue #$ISSUE_NUM - another agent may have claimed it first"
-      exit 1
-    }
-  fi
-
-  # Extract priority from labels (default to P2 if no priority label)
-  ISSUE_PRIORITY=$(cat /tmp/top-issue.json | jq -r '
-    if (.labels | map(.name) | any(. == "P0")) then 0
-    elif (.labels | map(.name) | any(. == "P1")) then 1
-    elif (.labels | map(.name) | any(. == "P2")) then 2
-    elif (.labels | map(.name) | any(. == "P3")) then 3
-    else 2
-    end
-  ')
-
-  echo "✅ Found issue #$ISSUE_NUM: $ISSUE_TITLE"
-
-  # Claim-then-verify: the claim above (issue_claim or pre-claimed handoff check) is the
-  # primary lock. For GitHub backend (non-atomic), post an early marker comment and wait
-  # for competing workers to surface before proceeding. A resumed own claim (#182) has
-  # no race to settle: its earlier start comment is its own.
-  if [ "$RESUMING" = "true" ]; then
-    :
-  elif [ "${ISSUE_SOURCE:-}" = "github" ]; then
-    issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
-    sleep 3
-    CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-      '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
-      2>/dev/null || echo "0")
-    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
-      2>/dev/null || echo "0")
-    if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
-      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM. Releasing and aborting."
-      issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-      exit 1
-    fi
-  else
-    # File backend: check for orphaned start comments from prior abandoned runs.
-    sleep 1
-    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
-      2>/dev/null || echo "0")
-    if [ "$PRIOR_STARTED" -gt 0 ]; then
-      echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and aborting."
-      issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-      exit 1
-    fi
-  fi
-else
-  # No specific issue - get highest priority issue (using labels only)
-  issue_list --state open --limit 100 > /tmp/all-issues.json
-
-  # Branch-evidence exclusion (#48): a pushed branch is a claim that survives a lost label.
-  CLAIMED_BY_BRANCH=$("${SCRIPT_DIR}/claimed-issue-numbers.sh" origin)
-  [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
-  echo "ℹ️  Issues with a live remote branch (excluded from claiming): $CLAIMED_BY_BRANCH"
-
-  # issue_list --state open has already left out issues whose dependencies
-  # ("Depends on: #N" lines, GitHub blocked-by) are not closed (issue-deps.sh).
-  # Filter out issues with 'working' label (being worked on by another agent)
-  # Also filter out issues with blocking labels (needs human review)
-  # Also filter out decomposed parent issues (work on their sub-tasks instead)
-  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
-    .[] |
-    select(
-      (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
-      and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
-      and ((.number | IN($claimed[])) | not)
-    ) |
-    {
-      number: .number,
-      title: .title,
-      body: (.body // ""),
-      priority: (
-        if (.labels | map(.name) | any(. == "P0")) then 0
-        elif (.labels | map(.name) | any(. == "P1")) then 1
-        elif (.labels | map(.name) | any(. == "P2")) then 2
-        elif (.labels | map(.name) | any(. == "P3")) then 3
-        else 4
-        end
-      )
-    }
-  ' | jq -s 'sort_by(.priority) | .[0]' > /tmp/top-issue.json
-
-  # Build ranked list of all candidate issues (for retry on race conflict)
-  cat /tmp/top-issue.json > /tmp/top-issue-single.json
-  cat /tmp/all-issues.json | jq -r --argjson claimed "$CLAIMED_BY_BRANCH" '
-    [.[] |
-    select(
-      (.labels | map(.name) | any(. == "P0" or . == "P1" or . == "P2" or . == "P3"))
-      and (.labels | map(.name) | any(. == "working") | not)
-      and (.labels | map(.name) | any(. == "needs-approval" or . == "needs-design" or . == "needs-clarification" or . == "too-complex" or . == "future" or . == "decomposed" or . == "awaiting-integration" or . == "merging") | not)
-      and ((.number | IN($claimed[])) | not)
-    ) |
-    {
-      number: .number,
-      title: .title,
-      body: (.body // ""),
-      priority: (
-        if (.labels | map(.name) | any(. == "P0")) then 0
-        elif (.labels | map(.name) | any(. == "P1")) then 1
-        elif (.labels | map(.name) | any(. == "P2")) then 2
-        elif (.labels | map(.name) | any(. == "P3")) then 3
-        else 4
-        end
-      )
-    }] | sort_by(.priority)
-  ' > /tmp/candidate-issues.json
-
-  CANDIDATE_COUNT=$(cat /tmp/candidate-issues.json | jq 'length')
-
-  # Try each candidate issue in priority order until we successfully claim one
-  ISSUE_CLAIMED=false
-  for idx in $(seq 0 $((CANDIDATE_COUNT - 1))); do
-    ISSUE_NUM=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].number")
-    ISSUE_TITLE=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].title")
-    ISSUE_BODY=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].body")
-    ISSUE_PRIORITY=$(cat /tmp/candidate-issues.json | jq -r ".[$idx].priority")
-
-    if [ "$ISSUE_NUM" = "null" ] || [ -z "$ISSUE_NUM" ]; then
-      continue
-    fi
-
-    # Remote branch is a stronger lock than the working label: a worker may have pushed
-    # the branch before the label propagated, or the label may have been cleaned by a
-    # manager who thought the issue was stale. Skip immediately if the branch exists.
-    REMOTE_BRANCH_EXISTS=$(git ls-remote --heads origin "feature/issue-${ISSUE_NUM}" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$REMOTE_BRANCH_EXISTS" -gt "0" ]; then
-      echo "⚠️  Remote branch feature/issue-${ISSUE_NUM} already exists — skipping issue #$ISSUE_NUM"
-      continue
-    fi
-
-    # Claim-then-verify: claim IMMEDIATELY, then check for race
-    issue_claim "$ISSUE_NUM" 2>/dev/null
-    claim_rc=$?
-    if [ "$claim_rc" -ne 0 ]; then
-      echo "⚠️  Lost claim race on issue #$ISSUE_NUM (file backend: atomic rename lost). Trying next issue..."
-      continue
-    fi
-
-    # For file backend: the atomic rename above is the definitive lock — skip the
-    # extended race check. For GitHub backend (non-atomic label add), post an early
-    # marker comment NOW so concurrent workers can detect the collision within the
-    # settlement window, then sleep long enough for their markers to appear.
-    if [ "${ISSUE_SOURCE:-}" = "github" ]; then
-      issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
-      sleep 3
-
-      # Count autocoder-claim markers. If more than one exists, two workers raced.
-      # Both back off — the issue returns to open/ and gets claimed cleanly next tick.
-      CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-        '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
-        2>/dev/null || echo "0")
-      # Also check for existing work-started comments from a prior abandoned run.
-      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
-        2>/dev/null || echo "0")
-
-      if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
-        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED). Releasing and trying next..."
-        issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-        continue
-      fi
-    else
-      # File backend: brief pause to detect orphaned start comments from prior abandoned runs.
-      sleep 1
-      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started"))] | length' \
-        2>/dev/null || echo "0")
-      if [ "$PRIOR_STARTED" -gt 0 ]; then
-        echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and trying next..."
-        # File backend: release moves the file back from working/ to open/
-        issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-        continue
-      fi
-    fi
-
-    ISSUE_CLAIMED=true
-    break
-  done
-
-  if [ "$ISSUE_CLAIMED" != "true" ]; then
-    echo "ℹ️  No available priority issues found"
-    echo "   All issues may be: claimed by other agents, or blocked (needs human review)"
-    echo "   Use '/review-blocked' to review and approve blocked issues"
-
-    echo "IDLE_NO_WORK_AVAILABLE"
-    exit 0
-  fi
-fi
+# Claim, selection and branch setup live in claim-issue.sh (#289). It works the
+# issue named in /fix's argument, or picks the highest-priority claimable one;
+# takes the lock (dependency refusal, #182 resume, remote-branch and start-marker
+# locks, claim-then-verify); creates or switches to feature/issue-<N> from
+# origin/$INTEGRATION_BRANCH; and posts the work-started comment.
+# It hands its variables back in a file of printf-%q lines. Exit codes: see
+# "Claim exit codes" below this block.
+CLAIM_ENV=$(mktemp "${TMPDIR:-/tmp}/autocoder-claim.XXXXXX")
+INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-}" "${SCRIPT_DIR}/claim-issue.sh" --out "$CLAIM_ENV" "${1:-}"
+CLAIM_RC=$?
+source "$CLAIM_ENV"; rm -f "$CLAIM_ENV"
+[ "$CLAIM_RC" -eq 0 ] || exit "$CLAIM_RC"
+[ "$CLAIM_STATUS" = "claimed" ] || exit 0   # idle: IDLE_NO_WORK_AVAILABLE was printed
 
 echo ""
 echo "🎯 Highest Priority Issue to Fix"
@@ -804,7 +558,7 @@ echo "📋 Starting work on issue #$ISSUE_NUM..."
 echo ""
 
 # ── Task scope gate ──────────────────────────────────────────────────────────
-# MANDATORY: Before creating the branch, assess whether this task fits in one
+# MANDATORY: Before writing any code, assess whether this task fits in one
 # agent context window and whether it can run safely in a worktree swarm.
 #
 # Ask yourself:
@@ -830,88 +584,26 @@ echo ""
 #      finished work over the limit is published anyway, labelled
 #      `needs-review-focus` (see "Review Digest" below), never split after the fact.
 #
-# If this issue FAILS any test → DECOMPOSE IT NOW (before branch creation):
+# If this issue FAILS any test → DECOMPOSE IT NOW (before any implementation):
 #   - Decompose into 3-8 sub-tasks, each satisfying all three criteria above
 #   - Create each sub-task as a new issue with `subtask` label and a
 #     "Sub-task of #${ISSUE_NUM}" line in the body
 #   - Add the `decomposed` label to this parent issue and release the claim
 #   - Exit; workers will pick up the independent sub-tasks on the next tick
 #
-# If this issue PASSES all three tests → proceed to branch creation immediately.
+# If this issue PASSES all three tests → start the work on this branch.
 #
 # See .pi/skills/autocoder-references/fix-decomposition.md ("Ultra-Complex Issues - Decompose into Sub-Tasks")
 # for the full decomposition protocol including sub-task body template.
 # ────────────────────────────────────────────────────────────────────────────
-
-# Branch from the latest shared integration branch (NOT the worktree's current branch).
-# In a parallel-worktree swarm each worktree sits on its own main-wt-N; basing the fix
-# branch on origin/<integration> instead means every fix starts from — and merges back
-# to — the same shared branch, so work converges on main instead of stranding on main-wt-N.
-INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
-INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
-git fetch origin "$INTEGRATION_BRANCH" || {
-  echo "❌ Cannot fetch origin/${INTEGRATION_BRANCH} — refusing to start work from stale state."
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  exit 1
-}
-
-# Create (or switch to) the fix branch, then pull the latest integration state into it.
-# Never start work on the parent branch: a 'working' label with no matching
-# feature/issue-N branch looks like a stale/abandoned lock to peers and to
-# /monitor-workers, which then try to reclaim the issue out from under you.
-FIX_BRANCH="feature/issue-${ISSUE_NUM}"
-if git checkout -b "$FIX_BRANCH" "origin/${INTEGRATION_BRANCH}" 2>/dev/null; then
-  echo "✅ Created $FIX_BRANCH from origin/${INTEGRATION_BRANCH}"
-elif git checkout "$FIX_BRANCH" 2>/dev/null; then
-  # Branch already exists — pull latest integration changes into it before resuming
-  echo "ℹ️  Branch $FIX_BRANCH already exists; pulling latest from origin/${INTEGRATION_BRANCH}..."
-  git pull --rebase origin "$INTEGRATION_BRANCH" || {
-    if [ "${RESUMING:-false}" = "true" ]; then
-      # A resumed claim keeps its lock through a conflict. After a merge job bounced
-      # it back (#207/#208) the conflict IS the work: resolve it here, keeping both
-      # sides' behaviour, `git rebase --continue`, re-run the tests, and carry on to
-      # the review gate and relaunch. Releasing would strand the live branch.
-      echo "⚠️  Rebase of $FIX_BRANCH conflicts (resumed claim #${ISSUE_NUM}). Conflicting files:"
-      git diff --name-only --diff-filter=U
-      echo "   Resolve them keeping both sides' behaviour, run 'git rebase --continue', then continue this issue. Keeping 'working'."
-      exit 2
-    fi
-    echo "❌ Rebase of $FIX_BRANCH onto origin/${INTEGRATION_BRANCH} failed — resolve conflicts manually."
-    issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-    exit 1
-  }
-else
-  echo "❌ Could not create or switch to $FIX_BRANCH."
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  exit 1
-fi
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" != "$FIX_BRANCH" ]; then
-  echo "❌ Branch switch verification failed (still on $CURRENT_BRANCH)."
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  exit 1
-fi
-
-# 'working' label was already added during claim-then-verify above
-
-# Post the work-started comment. Together with the branch above, this is the durable
-# proof the lock is live — peers and /monitor-workers key off the branch + this comment
-# to tell an active lock apart from a stale one. Do not skip it for any issue type.
-issue_comment "$ISSUE_NUM" --body "🤖 **Automated Fix Started**
-
-Starting automated fix for this issue.
-
-**Branch**: \`feature/issue-${ISSUE_NUM}\`
-**Implementation Started**: $(date)
-
-Fix in progress..." 2>/dev/null || true
-
-echo "✅ Created branch: feature/issue-${ISSUE_NUM}"
-echo "✅ Added 'working' label (concurrency lock)"
-echo "✅ Posted GitHub comment"
-echo ""
-
 ```
+
+**Claim exit codes (`claim-issue.sh`).** The block above stops with the script's exit code; read the output to see which case you are in.
+
+- **0, claimed:** you hold the `working` lock, the worktree is on `feature/issue-$ISSUE_NUM`, and the work-started comment is posted. The block has set `ISSUE_NUM`, `ISSUE_TITLE`, `ISSUE_BODY`, `ISSUE_PRIORITY`, `RESUMING`, `FIX_BRANCH`, `INTEGRATION_BRANCH`; set the same values in every later block. `RESUMING=true` means this worktree resumed its own claim (#182): re-read the comments and `git log origin/$INTEGRATION_BRANCH..HEAD` and do not redo finished work.
+- **0 with `IDLE_NO_WORK_AVAILABLE`:** nothing is claimable. Stop; there is no issue to work.
+- **1, refused or failed:** the message says why (issue not found, dependencies still open, another agent's remote branch or start marker, a lost claim race, a fetch or branch failure). Any lock this run took has been released, and a lock held by another agent is left alone. Do not work the issue.
+- **2, resumed claim with a rebase conflict:** the worktree is mid-rebase on `feature/issue-$ISSUE_NUM` and keeps `working`. Resolve the conflicting files keeping both sides' behaviour, run `git rebase --continue`, re-run the tests, and carry on with this issue (the variables are set as for exit 0).
 
 **⚠️ The claim sequence above (working label → `feature/issue-<N>` branch → work-started comment) is mandatory and runs FIRST for every issue — bug OR enhancement.** Do not begin triage analysis, brainstorming, or implementation until all three exist. Priority-labeled enhancements (P0–P3) are handled by this standard path, **not** by the "No Priority Issues Found → 5C" flow (that flow only applies when there are no priority issues left). If you ever notice you are editing files while still on the parent branch (`main`, `main-wt-N`, etc.), stop immediately and run the claim sequence — committing on the parent branch strands the `working` lock with no matching branch and makes peers treat it as stale.
 
