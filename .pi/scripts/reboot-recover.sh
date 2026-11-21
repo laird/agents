@@ -111,11 +111,12 @@ MAX_BOOT_ATTEMPTS="${AUTOCODER_REBOOT_MAX_ATTEMPTS:-3}"
 # minus relative entries (".", "node_modules/.bin"), which would resolve
 # against whatever directory the trigger happens to start in.
 trigger_path() {
-  local IFS=: d out=""
-  for d in $PATH; do
+  local d out="" dirs
+  IFS=: read -ra dirs <<< "$PATH"
+  for d in ${dirs[@]+"${dirs[@]}"}; do
     case "$d" in /*) out="${out:+$out:}$d" ;; esac
   done
-  printf '%s\n' "$out"
+  printf '%s\n' "${out:-/usr/local/bin:/usr/bin:/bin}"
 }
 
 # boot_scheduler: launchd (macOS) | systemd-user | cron | none. systemd comes
@@ -309,6 +310,9 @@ if [ "$BOOT" = true ]; then
     # or power loss survives the reboot; a holder from another boot is stale
     # even when its pid has been reused by an unrelated process since.
     LOCK="$STATE_DIR/reboot-recover.lock"
+    MY_LOCK="$$ $BOOT_ID"
+    # A directory here is an older build's lock: ln -s would succeed inside it.
+    [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && rm -rf "$LOCK"
     if ! ln -s "$$ $BOOT_ID" "$LOCK" 2>/dev/null; then
       holder=$(readlink "$LOCK" 2>/dev/null)
       if [ "${holder#* }" = "$BOOT_ID" ] && kill -0 "${holder%% *}" 2>/dev/null; then
@@ -319,7 +323,8 @@ if [ "$BOOT" = true ]; then
       rm -f "$LOCK"
       ln -s "$$ $BOOT_ID" "$LOCK" 2>/dev/null || { echo "reboot-recover: another recovery took the lock; leaving it to finish"; exit 0; }
     fi
-    trap 'rm -f "$LOCK"' EXIT
+    # Remove the lock only while it is still ours.
+    trap '[ "$(readlink "$LOCK" 2>/dev/null)" = "$MY_LOCK" ] && rm -f "$LOCK"' EXIT
     # Re-read under the lock: the holder we waited out may have finished this boot.
     [ "$(boot_stamp_get)" = "$BOOT_ID" ] && { echo "reboot-recover: boot $BOOT_ID already recovered; nothing to do"; exit 0; }
   fi

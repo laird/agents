@@ -201,6 +201,13 @@ OUT=$(cd "$T" && boot "$T/tmuxbin")
 has "a lock from an earlier boot is stale even with a live pid" "removing a stale lock ($$ boot-x)" "$OUT"
 eq "...and recovery ran" "boot-x2" "$(cat "$STAMP")"
 
+# An older build's directory lock is replaced, not nested into.
+echo "boot-x3" > "$T/boot_id"
+mkdir -p "$T/state/reboot-recover.lock"; echo 999999 > "$T/state/reboot-recover.lock/pid"
+OUT=$(cd "$T" && boot "$T/tmuxbin")
+eq "a directory lock from an older build is replaced" "boot-x3" "$(cat "$STAMP")"
+[ ! -e "$T/state/reboot-recover.lock" ] && pass "...and nothing is left behind" || fail "lock left: $(ls -la "$T/state")"
+
 # A swarm that fails keeps the boot unrecorded; the retry covers only it.
 cat > "$T/sentinel-flaky" <<'EOF'
 #!/bin/bash
@@ -212,7 +219,7 @@ flaky() { PATH="$T/tmuxbin:$T/bin:$PATH" AUTOCODER_REBOOT_SENTINEL="$T/sentinel-
 echo "boot-f" > "$T/boot_id"
 OUT=$(cd "$T" && flaky)
 has "a failed swarm: boot left unrecorded" "1 swarm(s) not recovered (attempt 1 of 3)" "$OUT"
-eq "a failed swarm: stamp not written" "boot-x2" "$(cat "$STAMP")"
+eq "a failed swarm: stamp not written" "boot-x3" "$(cat "$STAMP")"
 OUT=$(cd "$T" && flaky)
 has "retry skips the swarm already recovered" "$T/alpha: recovered earlier this boot" "$OUT"
 eq "retry ran only the failed swarm" "1" "$(grep -c "SENTINEL $T/alpha" "$T/flaky.calls")"
