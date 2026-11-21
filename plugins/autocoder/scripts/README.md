@@ -710,6 +710,10 @@ plan it although its tip was already launched. `#` lines and blank lines are ign
 **Item states** printed by `queue`: `queue` (launchable), `launched` (this tip already launched), `hold`,
 `in-flight` (`--in-flight`), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
 again), `stale` (`staleDays`), `on-master` (the integration branch carries the branch's work: an ancestor, a patch-equivalent rebase, or the content itself after a squash landing; the note names the proof),
+`regenerate-only` (every path the branch changes is merged by one of `regeneratedMergeDrivers`, so a landing
+would regenerate them from their sources and land nothing; the note names the files and `regeneratedAdvice`; a
+cycle tells the issue once per tip and never plans it: measured on one project, three bot PRs that edited only a
+generated export each took a tracking issue, a READY and a train slot),
 `conflict` (the merge-tree prefilter, or a real merge),
 `driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
 (`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote).
@@ -748,8 +752,14 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
+             "regeneratedMergeDrivers": ["regenerate", "keep-ours"], "regeneratedAdvice": "Change the source and regenerate.",
              "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh" } } }
 ```
+
+`regeneratedMergeDrivers` names the merge drivers (the `merge=` attribute value in the integration branch's
+`.gitattributes`, read with `git check-attr --source`) of the files a landing regenerates from their sources;
+a branch whose every changed path has one is `regenerate-only`. A branch that also edits a source, or
+`.gitattributes` itself, is not. `regeneratedAdvice` is the project's remedy, appended to the note and the comment.
 
 `seedDirs` are hardlink-copied (never symlinked) from the repo into the scratch, and re-copied when the
 marker file's inode changed (a reinstall). `hooks.prepareScratch` runs in the scratch before any candidate is

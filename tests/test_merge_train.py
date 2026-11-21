@@ -595,3 +595,41 @@ def test_cli_reports_a_failed_fetch_with_the_remote_and_the_repo(tmp_path):
     sh("git", "remote", "set-url", "origin", str(tmp_path / "missing.git"), cwd=f.work)
     r = sh(sys.executable, str(CLI), "--repo", str(f.work), "queue", check=False)
     assert r.returncode == 1 and "git fetch origin failed" in r.stderr and str(f.work) in r.stderr
+
+
+# ── regenerate-only: a change to regenerated files alone lands nothing and is never planned ──────
+def test_a_branch_changing_only_regenerated_paths_is_regenerate_only_and_never_planned(tmp_path):
+    fx = Fixture(tmp_path, {"regeneratedMergeDrivers": ["regen", "keep-ours"], "regeneratedAdvice": "Land the change in the source instead."})
+    fx.commit_on("master", {".gitattributes": "registry.txt merge=union\ndata.bin merge=binary\ngen/* merge=regen\nexport.lock merge=keep-ours\n",
+                            "gen/a.txt": "0\n", "gen/b.txt": "0\n", "export.lock": "0\n"}, message="generated files")
+    fx.branch("feature/gen-only", {"gen/a.txt": "1\n", "export.lock": "1\n"})
+    fx.branch("feature/gen-and-source", {"gen/b.txt": "1\n", "src.txt": "1\n"})
+    fx.branch("feature/attrs-too", {"gen/a.txt": "2\n", ".gitattributes": "gen/* merge=regen\n"})
+    gen_only = fx.ready("gen only", "feature/gen-only")
+    mixed = fx.ready("gen and source", "feature/gen-and-source")
+    attrs = fx.ready("attrs too", "feature/attrs-too")
+    q = fx.queue()
+    assert q[gen_only]["state"] == "regenerate-only"
+    assert "`gen/a.txt`" in q[gen_only]["note"] and "`export.lock`" in q[gen_only]["note"]
+    assert "would land nothing. Land the change in the source instead." in q[gen_only]["note"]
+    assert q[mixed]["state"] == "queue" and q[attrs]["state"] == "queue"     # a source, or the attributes file itself, is a real change
+    rows, fault = fx.plan()
+    assert fault is None
+    assert [r.split("\t")[:2] for r in rows] == [["skip", str(gen_only)], ["train", str(mixed)], ["train", str(attrs)]]
+    assert rows[0].split("\t")[3].startswith("regenerate-only: changes only regenerated files")
+    assert "1 regenerate-only" in T.status_line(list(q.values()))
+
+
+def test_regenerate_only_needs_a_configured_driver_and_reads_the_integration_branch_s_attributes(fx):
+    fx.commit_on("master", {".gitattributes": "gen/* merge=regen\n", "gen/a.txt": "0\n"}, message="generated files")
+    fx.branch("feature/gen-only", {"gen/a.txt": "1\n"})
+    n = fx.ready("gen only", "feature/gen-only")
+    assert fx.queue()[n]["state"] == "queue"                                   # no regeneratedMergeDrivers: not classified
+    cfg = fx.cfg()
+    cfg.regenerated_drivers = ["regen"]
+    assert T.regenerate_only(cfg, cfg.remote_ref("feature/gen-only")) == ["gen/a.txt"]
+    # The attributes are the integration branch's, not the checkout's: a working tree without the row still classifies.
+    (fx.work / ".gitattributes").write_text("")
+    assert T.regenerate_only(cfg, cfg.remote_ref("feature/gen-only")) == ["gen/a.txt"]
+    sh("git", "checkout", "-q", ".gitattributes", cwd=fx.work)
+    assert T.regenerate_only(cfg, cfg.ref) is None                            # nothing changed: not this

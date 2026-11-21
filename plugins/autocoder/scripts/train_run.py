@@ -19,6 +19,14 @@ Red-batch rules (every one learned from a measured miss):
   * An INFRASTRUCTURE red (a line `::error::<stage>: INFRASTRUCTURE ...`, which the stage prints
     when the host, not the tree, failed) re-gates the same set once and never drops, holds out or
     bisects anyone. A second one ends the cycle with everyone back in the queue, unfaulted.
+  * An EMPTY landing (the gate's rebase dropped every commit as already upstream: the set changed
+    only regenerated files, which the regeneration put back, or work already on the integration
+    branch) is a terminal verdict, not a red: every member is marked `landed nothing`, told so once,
+    dropped at that tip, and nobody is bisected or re-gated. Measured: a train of two such members
+    bisected (held one out, re-gated the other alone) until it was killed by hand.
+  * A candidate the queue reads as `regenerate-only` (train_lib: every changed path carries one of
+    `regeneratedMergeDrivers`) is never planned; the cycle tells its issue ONCE per tip which files
+    and why, so it costs no train slot and no second comment.
   * Member accounting is in git and in `cycle.json`, never in the tracker: a failed tracker call
     is queued in `pending` and retried, and cannot change who is in a set, who landed or who was
     returned. A landing is proven by the member's commits being in the integration branch.
@@ -50,6 +58,12 @@ SCRIPTS = T.SCRIPTS
 LANDED_RE = re.compile(r"✅ Issue #\d+ merged into ")
 ERROR_LINE_RE = re.compile(r"^(::error::|❌)")
 INFRA_RE_DEFAULT = r"^::error::[A-Za-z0-9_-]+: INFRASTRUCTURE"
+# merge-to-integration.sh's lines for a rebase that left nothing to land (every commit dropped as
+# already upstream), matched at the start of a line with the gate's own marker, never a test's quote
+# of them; a gate that prints one and did not push landed nothing, whatever its exit code.
+EMPTY_RE_DEFAULT = (r"^(❌|ℹ️) +Rebasing \S+ \(\w+\) .*(dropped every commit as already upstream|left nothing to land)"
+                    r"|^ℹ️ +\S+ \(\w+\) is already on origin/\S+ as patch-equivalent commits .*nothing to land\.$")
+NOTHING_LANDED = "landed nothing (regenerate-only or already on the integration branch)"
 PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+")
 IDENT = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
 
@@ -71,6 +85,7 @@ class RunConfig:
     max_gates: int = 16            # gates one cycle may spend after its first (a safety bound, never an SLA)
     infra_regates: int = 1
     infra_pattern: str = INFRA_RE_DEFAULT
+    empty_pattern: str = EMPTY_RE_DEFAULT   # the gate's "nothing to land" line: terminal, never bisected
     report_issue: str = ""         # where batch-level notes go; empty = member issues only
     swarm: str = "merge-train"     # every tracker write starts with this
     timings_cmd: str = ""          # default: landing-timings.py beside this file, when present
@@ -81,7 +96,7 @@ class RunConfig:
 def load_run_config(repo, config_file=None, env=None) -> RunConfig:
     """Slice 1's Config plus the keys this slice reads from the same `train` object:
     gate, gateIssue, testCmd, batchStart, batchMin, batchMax, maxGates, infraRegates, infraPattern,
-    reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute, landed}."""
+    emptyPattern, reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute, landed}."""
     env = os.environ if env is None else env
     cfg = T.load_config(repo, config_file, env)
     path = Path(config_file) if config_file else T._main_worktree(cfg.repo) / ".autocoder.json"
@@ -99,6 +114,7 @@ def load_run_config(repo, config_file=None, env=None) -> RunConfig:
         max_gates=int(raw.get("maxGates") or 16),
         infra_regates=int(raw.get("infraRegates") if raw.get("infraRegates") is not None else 1),
         infra_pattern=raw.get("infraPattern") or INFRA_RE_DEFAULT,
+        empty_pattern=raw.get("emptyPattern") or EMPTY_RE_DEFAULT,
         report_issue=str(raw.get("reportIssue") or ""),
         swarm=raw.get("swarm") or "merge-train",
         timings_cmd=env.get("AUTOCODER_TRAIN_TIMINGS_CMD") or raw.get("timingsCmd") or "",
@@ -186,6 +202,14 @@ class State:
     def drop(self, issue, tip, reason):
         with open(self.dir / "dropped.tsv", "a") as f:
             f.write(f"{issue}\t{tip}\t{now_iso()}\t{reason}\n")
+
+    # regenerate-only items told once per tip
+    def regen_told(self, issue, tip):
+        return any(row[:2] == [str(issue), tip] for row in T.read_rows(self.dir / "regenerate-only.tsv"))
+
+    def regen_tell(self, issue, tip):
+        with open(self.dir / "regenerate-only.tsv", "a") as f:
+            f.write(f"{issue}\t{tip}\t{now_iso()}\n")
 
     def launched(self, issue, tip):
         p = self.rc.cfg.launched
@@ -372,6 +396,7 @@ class Cycle:
         limit = size or self.state.limit()
         t_plan = time.time()
         rows = T.plan_queue(c)
+        self.tell_regenerate_only(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
         # sum, beside the gate time in the landing report. The merges run hooks off; the project's
         # regeneration runs once, on the assembled tree (assemble -> regenerate).
@@ -403,6 +428,8 @@ class Cycle:
             self.log("infrastructure red twice: the cycle ends, every member stays in the queue unfaulted")
         elif first == "regen":
             self.log("the assembled tree could not be regenerated: the cycle ends, nobody blamed")
+        elif first == "empty":
+            self.log("nothing to land: the gate's rebase dropped every commit as already upstream; every member is marked landed nothing, no bisection")
         verdict = {"green": "green", "red": "red"}.get(first, first)
         cur, nxt = self.state.record_batch(len(members), "green" if first == "green" else "red" if first == "red" else "abort")
         self.log(f"batch limit {cur} -> {nxt} (first gate {verdict}); landed {len(self.landed_total)}, returned {len(self.returned_total)}")
@@ -416,6 +443,18 @@ class Cycle:
         r = T.git(self.cfg.repo, "rev-parse", "--verify", "--quiet", self.cfg.remote_ref(branch) + "^{commit}")
         full = r.stdout.strip()
         return full if full.startswith(tip) else (full or tip)
+
+    def tell_regenerate_only(self, rows):
+        """Each `regenerate-only` item of the queue is told ONCE per tip (regenerate-only.tsv) which files it
+        changes and why no train takes it. It is never planned at that tip (the queue state keeps it out),
+        so the record only stops a second comment."""
+        for r in rows:
+            if r["state"] != "regenerate-only" or self.state.regen_told(r["issue"], r["tip"]):
+                continue
+            self.say.say(r["issue"], f"not trained, `regenerate-only`: `{r['branch']}` @ `{r['tip']}` {r['note']} "
+                         f"No train takes this tip; a tip that also changes a source rejoins the queue with a new READY.")
+            self.state.regen_tell(r["issue"], r["tip"])
+            self.log(f"#{r['issue']} ({r['branch']} @ {r['tip']}) is regenerate-only: told once, never planned at this tip")
 
     # ----- preflight and reconcile -----
     def preflight(self):
@@ -434,7 +473,7 @@ class Cycle:
         self.log(f"reconciling a cycle left by a dead process (started {old.get('started')})")
         self.record = old
         for m in old.get("members", []):
-            if m["status"] in ("landed", "returned"):
+            if m["status"] in ("landed", "returned", "nothing"):
                 continue
             proof = T.landing_proof(self.cfg, m["tip"])
             if proof:
@@ -524,14 +563,18 @@ class Cycle:
         return r.returncode, log_path, int(time.time() - t0)
 
     def judge(self, rc_code, log_path, members):
-        """'green' | 'infra' | 'red' from the exit code, the log and git (a gate that pushed landed the
-        members whatever it printed afterwards)."""
+        """'green' | 'empty' | 'infra' | 'red' from the exit code, the log and git (a gate that pushed landed
+        the members whatever it printed afterwards; a gate whose rebase left nothing to land is `empty`, a
+        terminal verdict that blames nobody and is never bisected)."""
         text = log_path.read_text(errors="replace")
         T.git(self.cfg.repo, "fetch", self.cfg.remote, "-q")
         if rc_code == 0 and LANDED_RE.search(text):
             return "green", ""
         if members and all(tip_landed(self.cfg, m["tip"]) for m in members):
             return "green", ""
+        empty = re.compile(self.rc.empty_pattern, re.M).search(text)
+        if empty:
+            return "empty", empty.group(0)[:300]
         infra = re.compile(self.rc.infra_pattern, re.M).search(text)
         if infra:
             return "infra", infra.group(0)[:300]
@@ -539,7 +582,8 @@ class Cycle:
         return "red", first[:300] or f"gate exited {rc_code} with no ::error:: line"
 
     def gate_set(self, members, first=False):
-        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra' or 'regen'."""
+        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra', 'regen' or 'empty'
+        (nothing to land: the members are marked landed nothing and dropped at their tips)."""
         infra_left = self.rc.infra_regates
         while True:
             try:
@@ -561,12 +605,16 @@ class Cycle:
             verdict, line = self.judge(code, log_path, members)
             self.log(f"{train} ({' '.join('#' + m['issue'] for m in members)}): gate {verdict}" + (f" ({line})" if line else ""))
             self.timing("batch", "--batch", batch_id, "--members", ",".join(m["issue"] for m in members), "--gate-s", gate_s,
-                        "--verdict", {"green": "green", "red": "red", "infra": "infra"}[verdict], *(["--cause", "infra"] if verdict == "infra" else []))
+                        "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted"}[verdict],
+                        *(["--cause", "infra"] if verdict == "infra" else ["--cause", "other"] if verdict == "empty" else []))
             if verdict == "green":
                 landed = T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip()
                 self.publish(train, members, landed, log_path)
                 return "green"
             T.git(self.cfg.repo, "push", "-q", self.cfg.remote, "--delete", train)
+            if verdict == "empty":
+                self.land_nothing(train, members, line, log_path)
+                return "empty"
             kept = self.keep_log(log_path, train)
             self.record["lastRed"] = {"train": train, "line": line, "log": str(kept)}
             if verdict == "infra":
@@ -577,6 +625,27 @@ class Cycle:
                     continue
                 return "infra"
             return "red"
+
+    def land_nothing(self, train, members, line, log_path):
+        """The gate's rebase dropped every commit as already upstream: the set's net change against the
+        integration branch is nothing (regenerated files put back by the regeneration, or work already
+        there). Terminal: every member is marked `landed nothing`, told once, dropped at its tip (the queue
+        reads `train-dropped` and never plans that tip again); nothing is closed, nobody is bisected."""
+        kept = self.keep_log(log_path, train)
+        c = self.cfg
+        for m in members:   # dropped FIRST: a death between the two must not offer the tip again
+            self.state.drop(m["issue"], m["tip"][:10], NOTHING_LANDED)
+        self._set_status(members, "nothing", NOTHING_LANDED)
+        for m in members:
+            self.timing("change", "--issue", m["issue"], "--event", "returned", "--cause", "other")
+            self.say.say(m["issue"], f"{NOTHING_LANDED}: `{m['branch']}` @ `{m['tip'][:10]}` was in **{train}**, whose landing "
+                         f"left nothing to land (`{line[:160]}`). The train's net change against `{c.ref}` is empty: a change to a "
+                         f"regenerated file is put back by the regeneration, and work already on `{c.integration}` adds nothing. "
+                         f"Not closed, not bisected; no train takes this tip again. If the branch should change a source, "
+                         f"change it and post a new READY; otherwise close this issue by hand. Gate log: `{kept}` on the gate host.")
+        self.say.report(f"{train}: nothing to land ({' '.join('#' + m['issue'] for m in members)}; `{line[:160]}`): "
+                        f"every member marked landed nothing and dropped at its tip; no bisection.")
+        self.log(f"{train}: nothing to land; {len(members)} member(s) marked landed nothing, no bisection")
 
     def keep_log(self, log_path, train):
         dest = self.rc.cfg.state_dir / "logs" / f"{train.replace('/', '-')}.red.log"
@@ -638,8 +707,8 @@ class Cycle:
         if not self.budget():
             return
         va = self.gate_set(a)
-        if va == "green":
-            self.bisect(b)          # b is red by inference
+        if va in ("green", "empty"):
+            self.bisect(b)          # b is red by inference (an empty half carried none of the set's change)
         elif va == "red":
             self.bisect(a)
             if self.budget():

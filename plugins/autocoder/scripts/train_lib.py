@@ -73,6 +73,8 @@ class Config:
     seed_dirs: list = field(default_factory=list)
     seed_marker: str = ".package-lock.json"
     hooks: dict = field(default_factory=dict)
+    regenerated_drivers: list = field(default_factory=list)   # merge drivers of paths a landing regenerates
+    regenerated_advice: str = ""    # appended to a regenerate-only item's note and comment (the project's remedy)
 
     @property
     def ref(self):
@@ -105,7 +107,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
 
     keys: readyLabels, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
-    seedDirs, seedMarker, hooks{prepareScratch, mergeFault}; `enqueue` is enqueue.sh's (see there).
+    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, hooks{prepareScratch, mergeFault};
+    `enqueue` is enqueue.sh's (see there).
     """
     env = os.environ if env is None else env
     repo = Path(repo).resolve()
@@ -140,6 +143,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
         seed_dirs=list(raw.get("seedDirs") or []),
         seed_marker=raw.get("seedMarker") or ".package-lock.json",
         hooks=dict(raw.get("hooks") or {}),
+        regenerated_drivers=list(raw.get("regeneratedMergeDrivers") or []),
+        regenerated_advice=str(raw.get("regeneratedAdvice") or ""),
     )
     if cfg.size < 1:
         raise SystemExit(f"merge-train: train size must be a positive integer, got {cfg.size}")
@@ -193,6 +198,44 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
     if merged.returncode == 0 and merged.stdout.split("\n", 1)[0].strip() == git(cfg.repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip():
         return "content"
     return ""
+
+
+def regenerate_only(cfg: Config, ref, base=None):
+    """The paths <ref> changes against <base> (default: the integration branch) when EVERY one of them
+    is merged by one of `regeneratedMergeDrivers` (the `merge` attribute of <base>'s .gitattributes); None
+    when any path is not, or when nothing changed, or when no driver is configured.
+
+    A landing regenerates such a path from its sources (the project's regenerate step runs on the
+    assembled tree), so a change that touches only regenerated paths lands NOTHING: the regenerated
+    copy is what the sources say, whatever the branch wrote. Measured on one project: three bot PRs that
+    edited only a generated export each took a tracking issue, a READY and a train slot, and the train
+    landed an empty rebase. A branch that also edits a source (or .gitattributes itself) is not this.
+    """
+    if not cfg.regenerated_drivers:
+        return None
+    base = base or cfg.ref
+    mb = git(cfg.repo, "merge-base", base, ref).stdout.strip() or base
+    paths = [p for p in git(cfg.repo, "diff", "--name-only", "--no-renames", "-z", mb, ref).stdout.split("\0") if p]
+    if not paths:
+        return None
+    # The attributes of <base>'s tree (git 2.40+); an older git reads the working tree's .gitattributes.
+    stdin = "\0".join(paths) + "\0"   # on stdin, so a tree-wide diff never hits the argv limit
+    r = git(cfg.repo, "check-attr", "-z", "--stdin", f"--source={base}", "merge", input=stdin)
+    if r.returncode != 0:
+        r = git(cfg.repo, "check-attr", "-z", "--stdin", "merge", input=stdin)
+    if r.returncode != 0:
+        return None
+    fields = r.stdout.split("\0")
+    drivers = {fields[i]: fields[i + 2] for i in range(0, len(fields) - 2, 3)}
+    if all(drivers.get(p) in cfg.regenerated_drivers for p in paths):
+        return paths
+    return None
+
+
+def regenerate_only_note(cfg: Config, paths):
+    shown = ", ".join(f"`{p}`" for p in paths[:6]) + (f" and {len(paths) - 6} more" if len(paths) > 6 else "")
+    return (f"changes only regenerated files ({shown}), which a landing regenerates from their sources: it would land nothing."
+            + (f" {cfg.regenerated_advice}" if cfg.regenerated_advice else ""))
 
 
 # ── READY pickup ────────────────────────────────────────────────────────────────────────
@@ -491,6 +534,9 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     stale       the READY is older than staleDays
     unchecked   not merge-checked: classifyLimit launchable items were already found
     on-master   the branch has no commit the integration branch lacks
+    regenerate-only  every path it changes is merged by a `regeneratedMergeDrivers` driver, so a landing
+                would regenerate them from their sources and land nothing (note: the files); never planned
+                at this tip (a cycle tells the issue once per tip)
     conflict    master does not merge cleanly into it (prefilter in an unowned path, else a real merge)
     driver-fault / generator-failed   the project's mergeFault hook classified the real merge
     launched    this queue already launched this tip and no `retry <issue>` row says again
@@ -520,6 +566,9 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     proof = landing_proof(cfg, ref)
     if proof:
         return ("on-master", tip, f"landing proof: {proof}")
+    regen = regenerate_only(cfg, ref)
+    if regen:
+        return ("regenerate-only", tip, regenerate_only_note(cfg, regen))
     pre = merge_prefilter(cfg, cfg.repo, ref, cfg.ref)
     if pre[0] == "conflict":
         owned = f"; a merge driver owns the other conflicting path(s) {pre[2]}, which the real merge decides" if pre[2] else ""
@@ -590,7 +639,7 @@ def status_line(rows, when=None):
         if r["state"] == "no-branch":
             nob.append(f"#{r['issue']}")
     order = ["queue", "in-flight", "in-train", "launched", "hold", "conflict", "generator-failed", "driver-fault",
-             "stale", "train-dropped", "on-master", "unchecked", "no-branch"]
+             "stale", "train-dropped", "on-master", "regenerate-only", "unchecked", "no-branch"]
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     for s in order:
         if counts.get(s):
