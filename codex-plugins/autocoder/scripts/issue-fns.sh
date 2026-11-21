@@ -8,11 +8,13 @@
 #          issue_escalate --label L (-> blocked), issue_requeue (-> open),
 #          and issue_unmet_dependencies (issue-deps.sh).
 #
-# One policy lives here rather than in a backend: the claimable queue
+# Two policies live here rather than in a backend. The claimable queue
 # (`issue_list --state open`, the default) leaves out issues whose
 # dependencies are not closed yet (issue-deps.sh), so every caller (the
 # fix-loop gate, /fix, the manager, the idle sentinel) works issues in an
-# order their dependencies allow.
+# order their dependencies allow. It also leaves out `decomposed` parents
+# (#296): their work is the sub-tasks, and /fix and the gate never
+# take them, so a probe that counted them would wake a manager for nothing.
 #
 # Each function shells out to the configured backend script with the verb
 # name and the caller's arguments. No backend logic lives here — backends
@@ -66,12 +68,24 @@ _ifns_is_open_list() {
   return 0
 }
 
+# Drop `decomposed` parents from a list (#296). Input that is not a JSON array
+# of issues, or that has none, passes through unchanged.
+_ifns_drop_decomposed() {
+  local in
+  in=$(cat)
+  if printf '%s' "$in" | jq -e 'type == "array" and any(.[]; [(.labels // [])[] | if type == "object" then .name else . end] | index("decomposed"))' >/dev/null 2>&1; then
+    printf '%s' "$in" | jq '[.[] | select([(.labels // [])[] | if type == "object" then .name else . end] | index("decomposed") | not)]'
+  else
+    printf '%s\n' "$in"
+  fi
+}
+
 # Dispatch each verb through the configured backend.
 issue_list() {
   if _ifns_is_open_list "$@"; then
     local out
     out=$("$_ifns_BACKEND_BIN" list "$@") || return $?
-    printf '%s' "$out" | _ideps_filter
+    printf '%s' "$out" | _ideps_filter | _ifns_drop_decomposed
   else
     "$_ifns_BACKEND_BIN" list "$@"
   fi
