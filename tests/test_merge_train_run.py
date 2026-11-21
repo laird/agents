@@ -316,6 +316,23 @@ def test_the_regeneration_hook_runs_on_the_assembled_tree_and_is_committed(fx):
     assert "generated.txt" in fx.gates()[0]
 
 
+def test_the_regeneration_runs_once_on_the_assembled_tree_and_a_post_merge_hook_never_per_candidate(fx):
+    """The planner's probes and the assembly's merges run hooks off: a repository post-merge hook that
+    regenerates the tree would otherwise run per candidate (27 minutes of planning for a size-6 train,
+    measured); the project's regeneration runs ONCE, on the assembled tree."""
+    fx.members(3)
+    hooks = fx.root / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text('#!/bin/bash\necho hook >> "$FX_STATE/marker"\n')
+    (hooks / "post-merge").chmod(0o755)
+    sh("git", "config", "core.hooksPath", str(hooks), cwd=fx.work)
+    fx.train["hooks"] = {"regenerate": 'echo regen >> "$FX_STATE/marker"'}
+    fx.write_config()
+    code, _ = fx.run()
+    assert code == 0 and all(fx.on_master(i) for i in range(3))
+    assert (fx.state / "marker").read_text().split() == ["regen"]
+
+
 def test_a_failing_regeneration_blames_nobody_and_gates_nothing(fx):
     issues = fx.members(2)
     fx.train["hooks"] = {"regenerate": "echo 'generator exploded'; exit 3"}
@@ -333,6 +350,8 @@ def test_timing_rows_go_through_the_writer(fx):
     assert sum(r.startswith("change --issue") and "--event landed" in r for r in rows) == 3
     batch = [r for r in rows if r.startswith("batch ")]
     assert len(batch) == 1 and "--verdict green" in batch[0] and "--members" in batch[0]
+    plan = [r for r in rows if r.startswith("plan --issue")]
+    assert len(plan) == 3 and all("--verdict train --seconds" in r for r in plan)
 
 
 def test_the_gate_command_defaults_to_the_plugin_gate_contract(fx):

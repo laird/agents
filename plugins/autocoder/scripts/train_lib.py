@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,12 @@ BRANCH_SHAPE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$")
 FILE_EXT_RE = re.compile(r"(^|/)[^/]*\.[A-Za-z0-9]{1,6}$")
 ENV_BRANCHES = {"master", "main", "develop", "uat", "prod"}
 BLOCKQUOTE_COMMENT_RE = re.compile(r"^> \*\*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}[^*]*)\*\* ?(.*)$")
+# Every merge the planner or the assembly makes runs with the repository's HOOKS OFF. A project's
+# post-merge hook that regenerates the tree belongs to the ASSEMBLED tree, once (train_run's
+# `regenerate`), never to a candidate probe, whose only outputs are the verdict and the
+# driver-resolved tree. Measured on one project: the hook ran per accepted candidate, so a size-6
+# plan over 17 candidates took 27 minutes. Merge DRIVERS are not hooks and still run.
+HOOKS_OFF = ["-c", "core.hooksPath=/dev/null"]
 
 
 # ── configuration ───────────────────────────────────────────────────────────────────────
@@ -327,7 +334,7 @@ def _abort_merge(repo):
 
 
 def merge_into(cfg: Config, scratch, ref, message=None):
-    """A real merge of <ref> into the scratch HEAD (drivers honoured).
+    """A real merge of <ref> into the scratch HEAD (drivers honoured, hooks off: HOOKS_OFF).
 
     Returns (verdict, detail): 'clean' (kept as a commit when `message` is given, else aborted),
     'conflict' (detail = unmerged paths, comma-joined), 'driver-fault' or 'generator-failed' (the
@@ -336,7 +343,7 @@ def merge_into(cfg: Config, scratch, ref, message=None):
     """
     ident = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
     keep = message is not None
-    r = git(scratch, *ident, "merge", "--no-ff", *([] if keep else ["--no-commit"]), "-q", *(["-m", message] if keep else []), ref)
+    r = git(scratch, *ident, *HOOKS_OFF, "merge", "--no-ff", *([] if keep else ["--no-commit"]), "-q", *(["-m", message] if keep else []), ref)
     if r.returncode == 0:
         if not keep:
             _abort_merge(scratch)
@@ -559,7 +566,42 @@ def dropped_tip(cfg: Config, issue):
     return tip
 
 
-def plan_train(cfg: Config, rows, size=None):
+def judge_candidate(cfg: Config, scratch, r):
+    """One candidate against the scratch (the integration branch plus the train so far).
+
+    Returns (kind, text): kind 'train', 'skip' or 'drop' with text the planner's row, or 'fault' with
+    text the reason the plan cannot be trusted. Decisions, in order (each learned from a measured miss):
+      1. a tip a train already dropped is skipped;
+      2. a tip already contained in the train so far (a stack's lower slice carried by its tip) is a member
+         that needs no merge: stacks land at their tip;
+      3. the PREFILTER (merge-tree, no checkout) decides next: a conflict in a path no driver owns skips the
+         candidate at once, with no merge attempted;
+      4. otherwise ONE real merge, hooks off, both judges and accepts it (no separate verdict merge): a clean
+         merge is kept, so the next candidate is judged against the train so far;
+      5. a failed merge is CLEARED before the next candidate (a half-merged tree must never reach it), and a
+         conflict from a prefilter-clean candidate is the planner's fault, not the branch's.
+    """
+    issue, branch, tip = r["issue"], r["branch"], r["tip"]
+    if dropped_tip(cfg, issue) == tip:
+        return "skip", f"skip\t{issue}\t{branch}\tdropped from a train at this tip; re-bank to offer it again"
+    ref = cfg.remote_ref(branch)
+    if git(scratch, "merge-base", "--is-ancestor", ref, "HEAD").returncode == 0:
+        return "train", f"train\t{issue}\t{branch}\t{tip}\tcarried by an earlier member (a stack lands at its tip)"
+    pre = merge_prefilter(cfg, scratch, ref, "HEAD")
+    if pre[0] == "conflict":
+        return "skip", f"skip\t{issue}\t{branch}\tconflicts with {cfg.integration} plus the train so far in {pre[1]} (merge-tree prefilter; no merge driver owns the path)"
+    verdict, detail = merge_into(cfg, scratch, ref, message=f"candidate #{issue}")
+    if verdict == "clean":
+        return "train", f"train\t{issue}\t{branch}\t{tip}\t{r['note']}"
+    if verdict == "generator-failed":
+        return "drop", f"drop\t{issue}\t{branch}\t{tip}\ta generator failed on its merge with {cfg.integration} plus the train so far: {detail}"
+    if verdict == "driver-fault" or pre[0] == "clean":
+        why = detail if verdict == "driver-fault" else f"the prefilter says clean onto the train so far but the real merge failed in {detail} (a merge driver did not do its job)"
+        return "fault", f"#{issue} ({branch}): {why}"
+    return "skip", f"skip\t{issue}\t{branch}\tdoes not merge clean onto {cfg.integration} plus the train so far ({detail})"
+
+
+def plan_train(cfg: Config, rows, size=None, on_candidate=None):
     """Pick up to <size> members from the queue, each merged for real onto the integration branch
     plus the train so far, so the output is a train that assembles.
 
@@ -571,16 +613,11 @@ def plan_train(cfg: Config, rows, size=None):
     could not run, a merge the prefilter called clean that failed): the plan is then NOT trustworthy and
     no branch is blamed.
 
-    Decisions, in order, per candidate (each learned from a measured miss):
-      1. a tip a train already dropped is skipped;
-      2. the PREFILTER (merge-tree, no checkout) decides first, against the train so far: a conflict in a
-         path no driver owns skips the candidate at once, with no merge attempted;
-      3. a tip already contained in the train so far (a stack's lower slice carried by its tip) is a member
-         that needs no merge: stacks land at their tip;
-      4. otherwise ONE real merge both judges and accepts it (no separate verdict merge): a clean merge
-         is kept, so the next candidate is judged against the train so far;
-      5. a failed merge is CLEARED before the next candidate (a half-merged tree must never reach it), and a
-         conflict from a prefilter-clean candidate is the planner's fault, not the branch's.
+    `on_candidate(issue, kind, seconds)` is called for every launchable candidate the planner judged
+    (judge_candidate's decisions), with the seconds its probe took: the planning time of a cycle is
+    their sum; merge-train-run.py records them as `plan` rows of the landing timings.
+
+    Every merge runs hooks off (HOOKS_OFF): a project's regeneration runs ONCE on the assembled tree.
     """
     size = size or cfg.size
     out, members = [], 0
@@ -591,35 +628,21 @@ def plan_train(cfg: Config, rows, size=None):
     for r in rows:
         if members >= size:
             break
-        issue, branch, tip, state = r["issue"], r["branch"], r["tip"], r["state"]
+        issue, branch, state = r["issue"], r["branch"], r["state"]
         if state not in ("queue", "launched"):
             if state == "driver-fault":
                 return out, f"#{issue} ({branch}): {r['note']}"
             out.append(f"skip\t{issue}\t{branch}\t{state}: {r['note']}")
             continue
-        if dropped_tip(cfg, issue) == tip:
-            out.append(f"skip\t{issue}\t{branch}\tdropped from a train at this tip; re-bank to offer it again")
-            continue
-        ref = cfg.remote_ref(branch)
-        if git(scratch, "merge-base", "--is-ancestor", ref, "HEAD").returncode == 0:
-            out.append(f"train\t{issue}\t{branch}\t{tip}\tcarried by an earlier member (a stack lands at its tip)")
+        t0 = time.monotonic()
+        kind, text = judge_candidate(cfg, scratch, r)
+        if on_candidate:
+            on_candidate(issue, kind, round(time.monotonic() - t0, 1))
+        if kind == "fault":
+            return out, text
+        out.append(text)
+        if kind == "train":
             members += 1
-            continue
-        pre = merge_prefilter(cfg, scratch, ref, "HEAD")
-        if pre[0] == "conflict":
-            out.append(f"skip\t{issue}\t{branch}\tconflicts with {cfg.integration} plus the train so far in {pre[1]} (merge-tree prefilter; no merge driver owns the path)")
-            continue
-        verdict, detail = merge_into(cfg, scratch, ref, message=f"candidate #{issue}")
-        if verdict == "clean":
-            out.append(f"train\t{issue}\t{branch}\t{tip}\t{r['note']}")
-            members += 1
-        elif verdict == "generator-failed":
-            out.append(f"drop\t{issue}\t{branch}\t{tip}\ta generator failed on its merge with {cfg.integration} plus the train so far: {detail}")
-        elif verdict == "driver-fault" or pre[0] == "clean":
-            why = detail if verdict == "driver-fault" else f"the prefilter says clean onto the train so far but the real merge failed in {detail} (a merge driver did not do its job)"
-            return out, f"#{issue} ({branch}): {why}"
-        else:
-            out.append(f"skip\t{issue}\t{branch}\tdoes not merge clean onto {cfg.integration} plus the train so far ({detail})")
     return out, None
 
 

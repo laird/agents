@@ -689,7 +689,15 @@ worktree onto the integration branch plus the train so far, so the output is a t
 - a branch already contained in the train so far (the lower slice of a stack whose tip is a member) rides
   as a member without a merge: stacks land at their tip;
 - one real merge both judges and accepts a candidate; a failed merge is cleared before the next candidate;
-  a conflict from a prefilter-clean candidate is the planner's fault, not the branch's (exit 2, `fault` row).
+  a conflict from a prefilter-clean candidate is the planner's fault, not the branch's (exit 2, `fault` row);
+- every merge the planner (and the assembly) makes runs with the repository's HOOKS OFF
+  (`git -c core.hooksPath=/dev/null`): a candidate's merge yields the verdict and the driver-resolved tree,
+  nothing else. A post-merge hook that regenerates the tree runs ONCE, on the assembled tree, through
+  `hooks.regenerate` (merge-train-run.py), never per candidate: measured on one project, the hook ran per
+  accepted merge and a size-6 plan over 17 candidates took 27 minutes. Merge drivers are not hooks and still run;
+- each candidate's probe is timed: `plan` prints `# plan: #<issue> <kind> <seconds>s` on stderr, and a cycle
+  (merge-train-run.py) writes a `plan` row per candidate through the landing-timings writer, so the landing
+  report shows planning time beside gate time.
 
 Rows: `train <issue> <branch> <tip> <note>`, `skip <issue> <branch> <reason>`,
 `drop <issue> <branch> <tip> <reason>`, and a final `fault <reason>` with exit 2 when the plan cannot be
