@@ -1185,7 +1185,7 @@ build_wake_prompt() {
   local reason="$1" detail="$2" p
   p=$(wake_cmd_prefix)
   # Single prompt sequencing both commands (R2-F2 / CDR #9): in argv mode a
-  # fresh `claude --dangerously-skip-permissions <prompt>` — never --resume,
+  # fresh `claude [flags] <prompt>` — never --resume,
   # never post-spawn send-keys that the consent dialog would eat. Non-argv
   # interactive agents receive this SAME prompt typed after the TUI settles
   # (#27) — the resume-then-loop sequencing is required on every path.
@@ -1203,7 +1203,7 @@ resolve_manager_launch() {
   # Sentinel wakes are UNATTENDED: for claude, force argv mode on every mux
   # (R2-F2). worker-launch-lib switches herdr to agent-input for UI reasons
   # (clickable agent list), but text sent after spawn can be eaten by the
-  # --dangerously-skip-permissions consent dialog — the exact failure argv
+  # bypass-permissions consent dialog (when that mode is opted into, #283) — the exact failure argv
   # mode exists to prevent, and here nobody is watching the pane.
   if [ "$AGENT_NAME" = "claude" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
     MANAGER_COMMAND_MODE="argv"

@@ -154,6 +154,7 @@ if [ "$MUX" = "tmux" ]; then
       "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'" C-m
     tmux send-keys -t "$PANE" \
       "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" C-m
+    while IFS= read -r _cl; do tmux send-keys -t "$PANE" "$_cl" C-m; done < <(claude_env_exports)
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
@@ -230,6 +231,9 @@ elif [ "$MUX" = "cmux" ]; then
   if [ "$AGENT" = "claude" ]; then
     cmux send --workspace "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'" >/dev/null
     cmux send-key --workspace "$WS_REF" enter >/dev/null
+    while IFS= read -r _cl; do
+      cmux send --workspace "$WS_REF" "$_cl" >/dev/null; cmux send-key --workspace "$WS_REF" enter >/dev/null
+    done < <(claude_env_exports)
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then
@@ -295,6 +299,7 @@ for ws in data.get('result', {}).get('workspaces', []):
 
   if [ "$AGENT" = "claude" ]; then
     send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
+    while IFS= read -r _cl; do send_herdr_command "$PANE_ID" "$_cl"; done < <(claude_env_exports)
   fi
 
   if [ -n "$AGENT_LAUNCH_CMD" ]; then

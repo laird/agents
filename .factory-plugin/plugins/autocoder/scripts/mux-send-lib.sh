@@ -128,8 +128,11 @@ start_herdr_agent() {
   shift 3
   local err
   HERDR_START_ERROR=""
+  # No `--` without arguments after it (#283: a plain `claude` has none).
+  local -a extra=()
+  [ $# -gt 0 ] && extra=(-- "$@")
   if err=$(run_with_timeout "$AUTOCODER_HERDR_START_TIMEOUT_SECONDS" \
-      herdr agent start "$name" --kind "$kind" --pane "$pane" -- "$@" 2>&1 >/dev/null); then
+      herdr agent start "$name" --kind "$kind" --pane "$pane" ${extra[@]+"${extra[@]}"} 2>&1 >/dev/null); then
     return 0
   fi
   HERDR_START_ERROR=$(printf '%s' "$err" | python3 -c '

@@ -609,7 +609,7 @@ if [ "$MUX" = "tmux" ]; then
   if [ "$AGENT" = "claude" ]; then
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
     send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
-    send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-}'"
+    while IFS= read -r _cl; do send_tmux_command "$PANE_ID" "$_cl"; done < <(claude_env_exports)
   fi
   WORKER_JSONS+=("$(manifest_worker_json 1 "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" "$WORKER_STATE")")
 
@@ -632,7 +632,7 @@ if [ "$MUX" = "tmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_tmux_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
-      send_tmux_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-}'"
+      while IFS= read -r _cl; do send_tmux_command "$PANE_ID" "$_cl"; done < <(claude_env_exports)
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "$PANE_ID" "" "$WORKER_STATE")")
   done
@@ -711,7 +711,7 @@ if [ "$MUX" = "tmux" ]; then
     if [ "$MANAGER_LAUNCH_MODE" = "interactive" ] && [ -n "$MANAGER_LAUNCH_CMD" ]; then
       # MANAGER_COMMAND_MODE=argv passes the manager prompt as an argument to the
       # launch command instead of typing it into the TUI after a fixed sleep.
-      # `claude --dangerously-skip-permissions` opens a consent dialog whose
+      # A claude in bypass-permissions mode (opt-in since #283) opens a consent dialog whose
       # default selection is "No, exit". A blind post-launch Enter answers that
       # dialog rather than submitting the prompt, so the manager exits to a bare
       # shell and the review window looks like an unrelated login session. With
@@ -836,7 +836,7 @@ elif [ "$MUX" = "cmux" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_cmux_command "$WS_REF" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
-      send_cmux_command "$WS_REF" "export WORKER_MODEL='${WORKER_MODEL:-}'"
+      while IFS= read -r _cl; do send_cmux_command "$WS_REF" "$_cl"; done < <(claude_env_exports)
       sleep 0.5
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "$WS_REF" "$WORKER_STATE")")
@@ -1031,7 +1031,7 @@ elif [ "$MUX" = "herdr" ]; then
     if [ "$AGENT" = "claude" ]; then
       send_herdr_command "$PANE_ID" "export CLAUDE_CODE_TASK_LIST_ID='$TASK_LIST_ID'"
       send_herdr_command "$PANE_ID" "export CLAUDE_CODE_INTEGRATION_BRANCH='$CURRENT_BRANCH'"
-      send_herdr_command "$PANE_ID" "export WORKER_MODEL='${WORKER_MODEL:-}'"
+      while IFS= read -r _cl; do send_herdr_command "$PANE_ID" "$_cl"; done < <(claude_env_exports)
       sleep 0.5
     fi
     WORKER_JSONS+=("$(manifest_worker_json "$i" "$WORKER_DIR" "$WORKER_LAUNCH_MODE" "$WORKER_COMMAND_MODE" false "" "" "$WORKER_STATE" "$PANE_ID")")

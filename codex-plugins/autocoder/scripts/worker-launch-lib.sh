@@ -83,20 +83,23 @@ worker_marker_export() {
   printf 'export AUTOCODER_WORKER=%q\n' "$session:$number"
 }
 
-# claude_launch_args <role>: the flags a claude launch gets, as one shell-ready
-# string (#283). Nothing is forced: with no configuration the agent runs as plain
+# claude_launch_argv <role>: set CLAUDE_LAUNCH_ARGV to the flags a claude launch
+# gets (#283). Nothing is forced: with no configuration the agent runs as plain
 # `claude` and the user's own Claude Code settings decide permissions (defaultMode,
 # auto mode, allowlists) and the model. A forced --dangerously-skip-permissions
 # opened the bypass consent dialog on every spawn, and an unattended spawn (reboot
 # recovery, the sentinel) sat at it with nobody to answer.
 #   AUTOCODER_CLAUDE_PERMISSION_MODE  e.g. auto | acceptEdits | bypassPermissions
-#                                     → --permission-mode <mode> (opt-in only)
+#                                     -> --permission-mode <mode> (opt-in only)
 #   AUTOCODER_WORKER_MODEL / WORKER_MODEL    worker --model (none by default)
 #   AUTOCODER_MANAGER_MODEL / MANAGER_MODEL  manager --model (none by default)
-# Values must be plain words (letters, digits, . _ - [ ]): they are typed into a
-# pane's shell, so anything else is refused rather than quoted into a command.
-claude_launch_args() {
-  local role="$1" model mode out=""
+# A headless worker (`claude -p`) cannot answer a permission prompt: with no mode
+# here, its tools are allowed only as far as the user's settings allow them.
+# Values must be plain words (letters, digits, . _ - and [ ] for e.g. opus[1m]);
+# anything else is refused with a warning.
+claude_launch_argv() {
+  local role="$1" model mode
+  CLAUDE_LAUNCH_ARGV=()
   case "$role" in
     manager) model="${AUTOCODER_MANAGER_MODEL:-${MANAGER_MODEL:-}}" ;;
     *)       model="${AUTOCODER_WORKER_MODEL:-${WORKER_MODEL:-}}" ;;
@@ -105,16 +108,38 @@ claude_launch_args() {
   if [ -n "$mode" ]; then
     case "$mode" in
       *[!A-Za-z]*) echo "worker-launch-lib: ignoring AUTOCODER_CLAUDE_PERMISSION_MODE='$mode' (expected a mode name such as auto)" >&2 ;;
-      *) out="--permission-mode $mode" ;;
+      *) CLAUDE_LAUNCH_ARGV+=(--permission-mode "$mode") ;;
     esac
   fi
   if [ -n "$model" ]; then
     case "$model" in
       *[!A-Za-z0-9._\[\]-]*) echo "worker-launch-lib: ignoring model '$model' (unexpected characters)" >&2 ;;
-      *) out="${out:+$out }--model $model" ;;
+      *) CLAUDE_LAUNCH_ARGV+=(--model "$model") ;;
     esac
   fi
+}
+
+# claude_launch_args <role>: the same flags as one string for a command typed into
+# a pane's shell, each word %q-quoted (so opus[1m] is not a glob under zsh).
+claude_launch_args() {
+  local a out=""
+  claude_launch_argv "$1"
+  for a in ${CLAUDE_LAUNCH_ARGV[@]+"${CLAUDE_LAUNCH_ARGV[@]}"}; do
+    out="${out:+$out }$(printf '%q' "$a")"
+  done
   printf '%s' "$out"
+}
+
+# claude_env_exports: `export` lines carrying the launch configuration into a new
+# pane, one per variable that is set. A tmux/cmux/herdr pane's shell does not
+# inherit the caller's environment (an already-running tmux server keeps its own),
+# so without these the worker loop there would never see the opt-in.
+claude_env_exports() {
+  local v
+  for v in AUTOCODER_CLAUDE_PERMISSION_MODE AUTOCODER_WORKER_MODEL AUTOCODER_MANAGER_MODEL WORKER_MODEL MANAGER_MODEL; do
+    [ -n "${!v:-}" ] && printf 'export %s=%q\n' "$v" "${!v}"
+  done
+  return 0
 }
 
 resolve_worker_launch() {

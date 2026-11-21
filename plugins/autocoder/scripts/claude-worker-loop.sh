@@ -64,8 +64,8 @@ done
 # shellcheck source=worker-launch-lib.sh
 source "$SCRIPT_DIR/worker-launch-lib.sh"
 AUTOCODER_WORKER_MODEL="$WORKER_MODEL"
-# shellcheck disable=SC2206  # claude_launch_args emits plain words only
-CLAUDE_ARGS=($(claude_launch_args worker))
+claude_launch_argv worker
+CLAUDE_ARGS=(${CLAUDE_LAUNCH_ARGV[@]+"${CLAUDE_LAUNCH_ARGV[@]}"})
 
 RENDER="$SCRIPT_DIR/stream-render.sh"
 POST_METRICS="$SCRIPT_DIR/post-issue-metrics.sh"
@@ -102,6 +102,11 @@ run_claude() {
 echo "🔄 Worker loop starting"
 echo "   Model:      ${WORKER_MODEL:-(Claude Code default)}"
 echo "   Flags:      ${CLAUDE_ARGS[*]:-(none: your Claude Code settings decide)}"
+if [ "${#CLAUDE_ARGS[@]}" -eq 0 ]; then
+  echo "   ⚠️  Headless sessions cannot answer permission prompts: a tool your settings do not"
+  echo "      allow is refused. Allow what workers need (Bash, Edit, ...) in settings, or set"
+  echo "      AUTOCODER_CLAUDE_PERMISSION_MODE (e.g. acceptEdits, auto, bypassPermissions)."
+fi
 echo "   Idle sleep: ${IDLE_SLEEP_MINUTES}m"
 echo "   PID:        $$"
 echo "   Handoff:    $HANDOFF_FILE"

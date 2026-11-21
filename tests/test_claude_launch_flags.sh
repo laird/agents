@@ -56,7 +56,7 @@ case "$START" in
   *) pass "spawn passes no model: the user's Claude Code default applies" ;;
 esac
 case "$START" in
-  *"--kind claude --pane w9:p1 --") pass "spawn launches plain claude" ;;
+  *"--kind claude --pane w9:p1") pass "spawn launches plain claude (no args, no bare --)" ;;
   *) fail "unexpected launch: $START" ;;
 esac
 
@@ -65,6 +65,21 @@ case "$START" in
   *"-- --permission-mode auto --model claude-sonnet-5-5") pass "opt-in permission mode and model are passed through" ;;
   *) fail "opt-in flags not passed: $START" ;;
 esac
+
+# The opt-in reaches a new pane: its shell does not inherit our environment.
+LIB="$SCRIPTS/worker-launch-lib.sh"
+EXP=$(env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_MANAGER_MODEL AUTOCODER_CLAUDE_PERMISSION_MODE=auto \
+  AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]' bash -c "source '$LIB'; claude_env_exports")
+case "$EXP" in
+  *"export AUTOCODER_CLAUDE_PERMISSION_MODE=auto"*"export AUTOCODER_WORKER_MODEL="*) pass "claude_env_exports carries the opt-in into panes" ;;
+  *) fail "claude_env_exports: $EXP" ;;
+esac
+[ "$(env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_MANAGER_MODEL -u AUTOCODER_CLAUDE_PERMISSION_MODE bash -c "source '$LIB'; claude_env_exports")" = "" ] \
+  && pass "claude_env_exports prints nothing when nothing is configured" || fail "claude_env_exports not empty by default"
+ARGS=$(AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]' bash -c "source '$LIB'; claude_launch_args worker")
+mkdir -p "$T/globdir" && touch "$T/globdir/claude-opus-5-51"
+OUT=$(cd "$T/globdir" && bash -c "set -- $ARGS; printf '%s|' \"\$@\"")
+[ "$OUT" = "--model|claude-opus-5-5[1m]|" ] && pass "a model with [ ] stays one literal word in a pane shell" || fail "glob/quoting: '$ARGS' -> '$OUT'"
 
 # The headless worker loop (tmux/cmux) builds its claude -p call the same way.
 mkdir -p "$T/loopbin"
@@ -81,6 +96,10 @@ loop_args() {
      timeout 5 bash "$SCRIPTS/claude-worker-loop.sh" --sleep 0 >/dev/null 2>&1)
   head -1 "$T/claude.log"
 }
+BANNER=$(cd "$T/proj-wt-1" && env -u WORKER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_CLAUDE_PERMISSION_MODE \
+  PATH="$T/loopbin:$PATH" CLAUDE_LOG=/dev/null AUTOCODER_STREAM=0 AUTOCODER_LOG_DIR="$T/logs" \
+  timeout 5 bash "$SCRIPTS/claude-worker-loop.sh" --sleep 0 2>&1 | head -12)
+case "$BANNER" in *"Headless sessions cannot answer permission prompts"*) pass "worker loop warns when no permission mode is set" ;; *) fail "no headless warning: $BANNER" ;; esac
 ARGS=$(loop_args)
 case "$ARGS" in
   "-p "*) case "$ARGS" in *dangerously*|*--model*) fail "worker loop forces flags: $ARGS" ;; *) pass "worker loop runs claude -p with no forced flags" ;; esac ;;

@@ -264,10 +264,10 @@ NAME_OUT=$(bash -c "source '$LIB'; herdr_agent_name 'w$(printf 'x%.0s' $(seq 1 6
 # 9c. start_herdr_agent registers through `herdr agent start ... --kind ... --pane ... --`
 : > "$CAPTURE"
 HERDR_STUB_MODE=running HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$STUB_DIR:$PATH" \
-  bash -c "source '$LIB'; start_herdr_agent wt1-proj claude w1:p1 --dangerously-skip-permissions --model claude-sonnet-5" \
+  bash -c "source '$LIB'; start_herdr_agent wt1-proj claude w1:p1 --permission-mode auto --model claude-sonnet-5-5" \
   || fail "start_herdr_agent exited non-zero against a healthy stub"
 assert_contains "start_herdr_agent registers a NAMED agent in the pane" \
-  "agent start wt1-proj --kind claude --pane w1:p1 -- --dangerously-skip-permissions --model claude-sonnet-5" \
+  "agent start wt1-proj --kind claude --pane w1:p1 -- --permission-mode auto --model claude-sonnet-5-5" \
   "$(cat "$CAPTURE")"
 
 # 9d. prompt_herdr_agent submits through the agent surface (one ordered write)

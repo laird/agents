@@ -133,6 +133,9 @@ AUTOCODER_CLAUDE_PERMISSION_MODE=auto \
   start-parallel 4 --agent claude
 ```
 
+Headless workers (tmux and cmux run them as `claude -p`) cannot answer a
+permission prompt: a tool your settings do not allow is refused. Either allow
+what workers need (Bash, Edit, Write, ...) in your settings, or set a mode.
 `AUTOCODER_CLAUDE_PERMISSION_MODE` becomes `--permission-mode <mode>`
 (`auto`, `acceptEdits`, `bypassPermissions`, …). `WORKER_MODEL` / `MANAGER_MODEL`
 still work as before.
