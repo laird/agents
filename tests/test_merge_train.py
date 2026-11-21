@@ -210,7 +210,7 @@ def test_queue_takes_a_preflight_ready_as_a_first_class_item_and_says_so(fx):
     q = fx.queue()
     assert (q[pf]["state"], q[pf]["basis"], q[pf]["note"]) == ("queue", "preflight", T.PREFLIGHT_NOTE)
     assert (q[plain]["state"], q[plain]["basis"], q[plain]["note"]) == ("queue", "ready", "-")
-    assert (q[landed]["state"], q[landed]["basis"], q[landed]["note"]) == ("on-master", "preflight", "-")
+    assert (q[landed]["state"], q[landed]["basis"], q[landed]["note"]) == ("on-master", "preflight", "landing proof: ancestor")
     line = T.status_line(list(q.values()), when="W")
     assert "3 ready" in line and "| 2 preflight" in line
     out, fault = fx.plan(size=4)
