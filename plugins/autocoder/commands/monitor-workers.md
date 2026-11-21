@@ -42,6 +42,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 
 1. **Check worktree status** — For each worker worktree, report branch, last commit time, and whether actively working
 2. **Read worker screens** — Use the multiplexer (tmux/cmux/herdr) to check if agents are idle or active
+   - **Watch gate efficiency** (Step 2b) — Read every live or recent merge gate (duration, passes and re-gates, test-selection size, current stage) and name the remedy for each warning, so a train that is churning or testing too broadly is seen while it runs, not after
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove (claims whose owner process is dead and that have no branch are released at once by `sweep-abandoned-claims.sh`)
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
@@ -66,6 +67,29 @@ train's sha and close the ones the branches complete. A red train drops the memb
 failure names (else the newest), tells its owner, and re-trains the rest. The hotfix lane lands
 alone. Stacks are gated at their tip. The README's "Landing" section has the full model and the
 evidence behind it.
+
+**The pre-merge rule** (after a five-branch train took 65 minutes in three re-sync passes; the
+worker's side is in `fix.md` Step 3):
+
+1. A READY branch has already merged the freshly fetched integration branch with the merge
+   drivers installed, so the gate only tests. The project's queue tells a stale READY to
+   re-bank; do not launch a gate to find out whether a branch merges.
+2. When the planner reports `does not merge clean onto master plus the train so far (<file>)`,
+   the branch conflicts with a sibling on the train. The owner or the manager pre-merges it onto
+   the conflicting sibling's tip in a scratch worktree, resolves it there, pushes with lease and
+   re-READYs with **its own branch named first in backticks**: a queue that reads READY
+   comments takes the first backticked branch that exists on origin, and it can pick a sibling's
+   branch out of a manager comment that named the sibling first. After the sibling lands, a
+   rebase onto the integration branch drops the duplicate commits by patch-id. Such skips
+   (a shared generated section, a registry row) clear in minutes this way.
+3. A train launched for an operator-priority item is **small (3 to 4 members)** and goes out
+   **right after the hotfix landings, never before**: each landing under a running gate costs
+   the whole train a re-sync pass, so padding a priority train, or racing a hotfix, only adds
+   passes. Watch Step 2b's `re-gate churn` warning for the sign it happened anyway.
+4. **Stop-your-own-shell trap:** when killing a stale run, never `pgrep -f`/`pkill -f` a pattern
+   your own command line contains (the shell running `pkill -f merge-to-integration` matches
+   itself). Take the pid from `/tmp/autocoder-merge-<issue>.pid`, or bracket the pattern
+   (`merge-to-integratio[n]`).
 
 ## Unattended Mode (`AUTOCODER_UNATTENDED=1`)
 
@@ -239,6 +263,58 @@ Also check the integration-branch sentinel, if one runs beside the swarm
   non-empty `red_issue` is the open P0 for a red integration branch that it
   could not auto-revert, and `git rev-parse origin/<integration>-green` (for
   example `origin/master-green`) is the last tip that passed the gate.
+
+### Step 2b: Gate efficiency
+
+The operator's standard for the merge gate is "quick, just a narrow test of what's most
+relevant, not everything". A gate that is slow, that re-gates because the integration
+branch keeps moving under it, or that selects most of the test suite is a swarm-wide cost
+(every READY branch waits behind it), and nothing in the gate log says so while it runs.
+Read it every tick:
+
+```bash
+# The project's gate monitor, when it names one: `gateMonitor` in .autocoder.json (a command run
+# from the repository root), or the command AGENTS.md gives under its merge-gate section. It prints
+# one row per gate live or finished in the last six hours and a warning per sign the gating is not
+# quick or not moving; pass it the window it documents (for example --since 6h).
+MON=$(jq -r '.gateMonitor // empty' .autocoder.json 2>/dev/null)
+if [ -n "$MON" ]; then
+  bash -c "$MON"
+else
+  # Generic read: the plugin's merge script writes /tmp/autocoder-merge-<issue>.log per gate
+  # (truncated on every launch). Passes, re-gates, the last test selection and the stage timings:
+  for log in /tmp/autocoder-merge-*.log; do
+    [ -f "$log" ] || continue
+    [ -n "$(find "$log" -mmin -360)" ] || continue
+    printf '%s: passes %s, re-gates %s, selection %s, last write %s\n' "$log" \
+      "$(grep -c '^🧪 Gating the integrated tree' "$log")" \
+      "$(grep -c 'Re-sync brings in' "$log")" \
+      "$(grep -E 'running [0-9]+ .*test file' "$log" | tail -1)" \
+      "$(date -u -r "$log" +%H:%MZ)"
+    sed -n '/^=== gate stage timings/,/TOTAL of the stages/p' "$log" | tail -4
+  done
+fi
+```
+
+What a row says: **passes/re-gates** (`🧪 Gating the integrated tree` lines, and `Re-sync brings
+in … re-gating` lines: the integration branch moved under the gate and the merged tree was
+gated again), **selection** (the gate's last "running N ... test file(s)" line, when the project's gate prints one), **stage** and how long it has been there, and for a finished gate
+the `=== gate stage timings` TOTAL with its three largest stages.
+
+The warnings and their remedies (thresholds belong to the project's monitor; the generic read
+above applies these defaults, a 20-minute pass, 150 test files, two re-gates, a 15-minute stall):
+
+| Warning | Means | Remedy |
+|---|---|---|
+| `slow pass` (a pass over 20 min) | the gated tree is wide, or a stage is slow | read the three largest stages; split a UI-heavy train; a slow `before the gate command` is the host (worktree seed, disk), not the branch |
+| `wide selection` (over 150 test files) | the diff reaches a hub file, a lockfile or build config, or the train is too broad | split the train; land the hub change alone first |
+| `re-gate churn` (two or more re-gates) | hotfixes or the other swarm landed while the gate ran | land waiting hotfixes before launching a train; ask the other swarm on the coordination channel to hold landings while a priority train gates |
+| `stalled` (a live gate with no log write for 15 min) | a wedged stage, a full disk or an OOM | check the gate pid, `df -h /tmp`, the cgroup peak; relaunch once there is room |
+| `idle queue` (READY branches wait with no gate or train live) | the manager stopped landing | launch the project's train or queue |
+
+Carry the rows and every warning into the Step 8 summary and the Step 9 heartbeat line.
+Act on `idle queue` and `re-gate churn` this tick (launch or hold); a `slow pass` or `wide
+selection` on a finished gate is a note for the next train's composition.
 
 ### Step 3: Decide Which Workers Are Idle
 
@@ -957,7 +1033,15 @@ Actions taken:
 - Removed stale "working" label from #9999
 
 Deploy status: 21 commits since last deploy, waiting for workers to complete
+
+Gate efficiency (Step 2b): 1 live — train, pass 3, 2 re-gates, 262 files, 1h09m; 4 finished in 6h, 7–29 min
+  WARN re-gate churn (2 re-gates) → ask the other swarm to hold landings while it gates
+  WARN wide selection (262 files) → split the broad members off the next train
 ```
+
+The gate efficiency block is the Step 2b table in one or two lines plus every warning with
+its remedy; a tick with no gate live still says so (`Gate efficiency: no gate live, 3 READY
+waiting` is an `idle queue` warning, not a quiet line).
 
 ### Step 9: Write the Manager Heartbeat (LAST action, every iteration)
 
@@ -969,7 +1053,8 @@ printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<one-line outcome summary>" >
 ```
 
 The summary is this iteration's outcome, e.g. `dispatched #123 to wt-2, released 1
-stale label` or `quiescent (1/2)`. The idle sentinel monitors this file in observe
+stale label` or `quiescent (1/2)`, and ends with the gate efficiency state from Step 2b
+(`gates: 1 live 3/2 passes, 2 warnings` or `gates: none live, 0 READY`). The idle sentinel monitors this file in observe
 mode: a heartbeat older than 3× the monitor interval — with no gate/deploy in flight
 and a static pane — marks this manager as wedged, to be killed and respawned (R2-F3).
 
