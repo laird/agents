@@ -186,14 +186,44 @@ has "second trigger in the same boot does nothing" "already recovered; nothing t
 eq "second trigger started no manager" 2 "$(grep -c . "$T/sentinel.calls")"
 
 echo "boot-x" > "$T/boot_id"
-mkdir -p "$T/state/reboot-recover.lock"; echo $$ > "$T/state/reboot-recover.lock/pid"
+ln -s "$$ boot-x" "$T/state/reboot-recover.lock"
 OUT=$(cd "$T" && boot "$T/tmuxbin")
-has "a live lock holder: leave it to finish" "another recovery (pid $$) is running" "$OUT"
+has "a live lock holder this boot: leave it to finish" "another recovery (pid $$) is running" "$OUT"
 eq "locked out: stamp untouched" "new-boot" "$(cat "$STAMP")"
-echo 999999 > "$T/state/reboot-recover.lock/pid"
+rm -f "$T/state/reboot-recover.lock"; ln -s "999999 boot-x" "$T/state/reboot-recover.lock"
 OUT=$(cd "$T" && boot "$T/tmuxbin")
 eq "a dead holder's lock is taken over" "boot-x" "$(cat "$STAMP")"
-[ ! -e "$T/state/reboot-recover.lock" ] && pass "lock released after the run" || fail "lock left behind"
+[ ! -L "$T/state/reboot-recover.lock" ] && pass "lock released after the run" || fail "lock left behind"
+# A lock left by a crash before the reboot, its pid now reused by a live process.
+echo "boot-x2" > "$T/boot_id"
+ln -s "$$ boot-x" "$T/state/reboot-recover.lock"
+OUT=$(cd "$T" && boot "$T/tmuxbin")
+has "a lock from an earlier boot is stale even with a live pid" "removing a stale lock ($$ boot-x)" "$OUT"
+eq "...and recovery ran" "boot-x2" "$(cat "$STAMP")"
+
+# A swarm that fails keeps the boot unrecorded; the retry covers only it.
+cat > "$T/sentinel-flaky" <<'EOF'
+#!/bin/bash
+echo "SENTINEL $3" >> "$FAKE_DIR/flaky.calls"
+case "$3" in */beta) exit "${BETA_RC:-1}" ;; esac
+EOF
+chmod +x "$T/sentinel-flaky"
+flaky() { PATH="$T/tmuxbin:$T/bin:$PATH" AUTOCODER_REBOOT_SENTINEL="$T/sentinel-flaky" bash "$RR" --boot 2>&1; }
+echo "boot-f" > "$T/boot_id"
+OUT=$(cd "$T" && flaky)
+has "a failed swarm: boot left unrecorded" "1 swarm(s) not recovered (attempt 1 of 3)" "$OUT"
+eq "a failed swarm: stamp not written" "boot-x2" "$(cat "$STAMP")"
+OUT=$(cd "$T" && flaky)
+has "retry skips the swarm already recovered" "$T/alpha: recovered earlier this boot" "$OUT"
+eq "retry ran only the failed swarm" "1" "$(grep -c "SENTINEL $T/alpha" "$T/flaky.calls")"
+OUT=$(cd "$T" && flaky)
+has "after 3 failed attempts the boot is recorded anyway" "still not recovered after 3 attempts" "$OUT"
+eq "...stamp written" "boot-f" "$(cat "$STAMP")"
+OUT=$(cd "$T" && flaky)
+has "...and no more retries" "already recovered; nothing to do" "$OUT"
+echo "boot-g" > "$T/boot_id"; : > "$T/flaky.calls"
+OUT=$(cd "$T" && BETA_RC=0 flaky)
+eq "the next boot starts fresh (both swarms again)" "2" "$(grep -c SENTINEL "$T/flaky.calls")"
 
 # herdr is a user service here but does not answer: wait (0s in tests), report, go on.
 echo "boot-y" > "$T/boot_id"
@@ -269,6 +299,9 @@ has "systemd: oneshot" "Type=oneshot" "$(cat "$UNIT" 2>/dev/null)"
 has "systemd: wanted by default.target" "WantedBy=default.target" "$(cat "$UNIT" 2>/dev/null)"
 has "systemd: runs the shim with --boot" "ExecStart=\"$H/.local/bin/autocoder-reboot-recover\" --boot" "$(cat "$UNIT" 2>/dev/null)"
 has "systemd: PATH captured at install" "Environment=\"PATH=$HB:$SAFE\"" "$(cat "$UNIT" 2>/dev/null)"
+has "systemd: state dir carried (a custom XDG_STATE_HOME still finds the stamp)" "Environment=\"AUTOCODER_REBOOT_STATE_DIR=$T/state\"" "$(cat "$UNIT" 2>/dev/null)"
+OUT2=$(install_on "$HB:relative/bin:." -- --dry-run)
+hasnt "systemd: relative PATH entries are not baked into the unit" "relative/bin" "$OUT2"
 has "systemd: enabled" "--user enable autocoder-reboot-recover.service" "$(cat "$T/systemctl.calls")"
 has "systemd: linger off is warned, with the command" "loginctl enable-linger" "$OUT"
 eq "install stamps this boot" "inst-boot" "$(cat "$STAMP")"
@@ -296,7 +329,8 @@ HB=$(hostbin crontab)
 OUT=$(install_on "$HB")
 has "cron: detection line" "scheduler=cron" "$OUT"
 eq "cron: one @reboot line, other jobs kept" "2" "$(grep -c . "$T/crontab")"
-has "cron: @reboot runs the shim with --boot" "@reboot '$H/.local/bin/autocoder-reboot-recover' --boot >> '$T/state/reboot-recover.log' 2>&1 # autocoder-reboot-recover" "$(cat "$T/crontab")"
+has "cron: @reboot carries PATH, state dir and fallback, runs the shim with --boot" "@reboot PATH='$HB:$SAFE' AUTOCODER_REBOOT_STATE_DIR='$T/state' AUTOCODER_REBOOT_FALLBACK='$RR' '$H/.local/bin/autocoder-reboot-recover' --boot >> '$T/state/reboot-recover.log' 2>&1 # autocoder-reboot-recover" "$(cat "$T/crontab")"
+eq "state dir is private (0700)" "700" "$(stat -c %a "$T/state" 2>/dev/null || stat -f %Lp "$T/state")"
 install_on "$HB" >/dev/null
 eq "cron: second install adds nothing" "2" "$(grep -c . "$T/crontab")"
 [ ! -e "$H/.config/systemd" ] && pass "cron: no systemd unit" || fail "cron: unit written"
@@ -333,6 +367,18 @@ OUT=$(install_on "$HB" -- --dry-run)
 has "dry run prints the unit" "DRY-RUN would write $H/.config/systemd/user/autocoder-reboot-recover.service" "$OUT"
 [ ! -e "$H/.config" ] && [ ! -e "$H/.local" ] && [ ! -e "$T/state" ] && pass "dry run writes nothing" || fail "dry run wrote files"
 hasnt "dry run enables nothing" "enable" "$(cat "$T/systemctl.calls" 2>/dev/null)"
+
+# --ensure honours AUTOCODER_BOOT_TRIGGER=off.
+H="$T/home-off"; rm -rf "$T/state" "$T/systemctl.calls"; mkdir -p "$H" "$T/offproj"
+git init -q "$T/offproj"
+HB=$(hostbin systemctl loginctl)
+OUT=$(env -i HOME="$H" PATH="$HB:$SAFE" FAKE_DIR="$T" AUTOCODER_REBOOT_STATE_DIR="$T/state" AUTOCODER_BOOT_ID_FILE="$T/boot_id" \
+  AUTOCODER_BOOT_TRIGGER=off bash "$SENTINEL" --ensure --dry-run --project "$T/offproj" 2>&1)
+has "--ensure with AUTOCODER_BOOT_TRIGGER=off installs no boot trigger" "AUTOCODER_BOOT_TRIGGER=off: no host boot trigger installed" "$OUT"
+hasnt "...and does not plan one" "autocoder-reboot-recover.service" "$OUT"
+OUT=$(env -i HOME="$H" PATH="$HB:$SAFE" FAKE_DIR="$T" AUTOCODER_REBOOT_STATE_DIR="$T/state" AUTOCODER_BOOT_ID_FILE="$T/boot_id" \
+  bash "$SENTINEL" --ensure --dry-run --project "$T/offproj" 2>&1)
+has "--ensure plans the boot trigger by default" "DRY-RUN would write $H/.config/systemd/user/autocoder-reboot-recover.service" "$OUT"
 
 # ── 5. swarm creation registers the root ─────────────────────────────────────
 rm -rf "$T/state"

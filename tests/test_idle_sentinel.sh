@@ -74,7 +74,10 @@ cat > "$SHIM/crontab" <<'EOF'
 echo "TEST VIOLATION: crontab invoked" >&2
 exit 97
 EOF
-chmod +x "$SHIM/claude" "$SHIM/crontab"
+# No user manager, no loginctl, no launchd (#275): --ensure now also installs
+# the host boot trigger, and must never reach the real ones on this host.
+for _b in systemctl loginctl launchctl; do printf '#!/bin/bash\nexit 1\n' > "$SHIM/$_b"; done
+chmod +x "$SHIM/claude" "$SHIM/crontab" "$SHIM/systemctl" "$SHIM/loginctl" "$SHIM/launchctl"
 BASEPATH="$SHIM:$PATH"
 
 # gh shim, mode A: hard backend failure (issues-gh.sh maps any gh failure to

@@ -25,6 +25,14 @@ reboot_state_dir() {
   printf '%s\n' "${AUTOCODER_REBOOT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder}"
 }
 
+# reboot_state_mkdir: create the state dir private to this user (0700).
+reboot_state_mkdir() {
+  local dir
+  dir=$(reboot_state_dir)
+  [ -d "$dir" ] && return 0
+  (umask 077 && mkdir -p "$dir")
+}
+
 boot_id_file() { printf '%s\n' "${AUTOCODER_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"; }
 
 # boot_id_source: file:<path> | kern.boottime | none
@@ -42,6 +50,8 @@ boot_id_source() {
 }
 
 # boot_id_current: this boot's identity, or exit 1 when the host has none.
+# macOS: kern.boottime moves when the clock is stepped, which reads as a reboot;
+# the cost is one manager-resume prompt to managers that were already running.
 boot_id_current() {
   local src id
   src=$(boot_id_source)
@@ -60,7 +70,7 @@ boot_stamp_get() { cat "$(reboot_state_dir)/last-boot-id" 2>/dev/null | tr -d '[
 boot_stamp_set() {
   local dir
   dir=$(reboot_state_dir)
-  mkdir -p "$dir" || return 1
+  reboot_state_mkdir || return 1
   printf '%s\n' "$1" > "$dir/last-boot-id.tmp.$$" && mv -f "$dir/last-boot-id.tmp.$$" "$dir/last-boot-id"
 }
 
@@ -72,20 +82,23 @@ swarm_roots_register() {
   case "$root" in *$'\n'*) return 0 ;; esac
   dir=$(reboot_state_dir)
   file="$dir/swarm-roots"
-  mkdir -p "$dir" 2>/dev/null || return 0
+  reboot_state_mkdir 2>/dev/null || return 0
   grep -qxF -- "$root" "$file" 2>/dev/null && return 0
-  printf '%s\n' "$root" >> "$file" 2>/dev/null
+  printf '%s\n' "$root" >> "$file" 2>/dev/null || return 0
   # Appends from two processes can race; rewrite deduplicated, order kept.
   awk '!seen[$0]++' "$file" > "$file.tmp.$$" 2>/dev/null && mv -f "$file.tmp.$$" "$file" 2>/dev/null
   rm -f "$file.tmp.$$" 2>/dev/null
   return 0
 }
 
-# swarm_roots_list: registered roots that still exist, one per line.
+# swarm_roots_list: registered roots that still exist and belong to this user,
+# one per line. Ownership matters: recovery runs the root's sentinel, which
+# sources its .autocoder hooks, so a registered path deleted and recreated by
+# another user (a root under /tmp) must not be acted on.
 swarm_roots_list() {
   local r
   while IFS= read -r r; do
-    [ -n "$r" ] && [ -d "$r" ] && printf '%s\n' "$r"
+    [ -n "$r" ] && [ -d "$r" ] && [ -O "$r" ] && printf '%s\n' "$r"
   done < "$(reboot_state_dir)/swarm-roots" 2>/dev/null
   return 0
 }

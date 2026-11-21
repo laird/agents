@@ -64,6 +64,8 @@
 #   AUTOCODER_REBOOT_SENTINEL    sentinel to run for a spawn (default: the
 #                                idle-sentinel.sh beside this script)
 #   AUTOCODER_REBOOT_MUX_WAIT    seconds --boot waits for a herdr service (90)
+#   AUTOCODER_REBOOT_MAX_ATTEMPTS  --boot attempts per boot while a swarm fails (3);
+#                                each retry covers only the swarms not yet recovered
 #   AUTOCODER_REBOOT_SHIM        installed entry point
 #                                (default ~/.local/bin/autocoder-reboot-recover)
 #   AUTOCODER_REBOOT_STATE_DIR, AUTOCODER_BOOT_ID_FILE: see reboot-lib.sh
@@ -103,6 +105,18 @@ SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LAUNCHD_LABEL=com.autocoder.reboot-recover
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
 CRON_MARK="# autocoder-reboot-recover"
+MAX_BOOT_ATTEMPTS="${AUTOCODER_REBOOT_MAX_ATTEMPTS:-3}"
+
+# trigger_path: the PATH a boot trigger runs with: the one --install ran with,
+# minus relative entries (".", "node_modules/.bin"), which would resolve
+# against whatever directory the trigger happens to start in.
+trigger_path() {
+  local IFS=: d out=""
+  for d in $PATH; do
+    case "$d" in /*) out="${out:+$out:}$d" ;; esac
+  done
+  printf '%s\n' "$out"
+}
 
 # boot_scheduler: launchd (macOS) | systemd-user | cron | none. systemd comes
 # before cron: only a unit can be ordered after herdr.service.
@@ -134,7 +148,8 @@ After=herdr.service network-online.target
 Type=oneshot
 TimeoutStartSec=20min
 Environment=$(systemd_word "AUTOCODER_REBOOT_FALLBACK=$SELF_PATH")
-Environment=$(systemd_word "PATH=$PATH")
+Environment=$(systemd_word "AUTOCODER_REBOOT_STATE_DIR=$STATE_DIR")
+Environment=$(systemd_word "PATH=$(trigger_path)")
 ExecStart=$(systemd_word "$SHIM") --boot
 
 [Install]
@@ -159,7 +174,9 @@ render_plist() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>$(xml_escape "$PATH")</string>
+    <string>$(xml_escape "$(trigger_path)")</string>
+    <key>AUTOCODER_REBOOT_STATE_DIR</key>
+    <string>$(xml_escape "$STATE_DIR")</string>
     <key>AUTOCODER_REBOOT_FALLBACK</key>
     <string>$(xml_escape "$SELF_PATH")</string>
   </dict>
@@ -222,7 +239,7 @@ cmd_install() {
     return 0
   fi
   install_shim || { echo "❌ could not install $SHIM" >&2; return 1; }
-  mkdir -p "$STATE_DIR" || return 1
+  reboot_state_mkdir || return 1
   # The first boot after installing must count as a change: stamp this one now.
   [ -n "$(boot_stamp_get)" ] || { cur=$(boot_id_current) && boot_stamp_set "$cur"; }
   case "$sched" in
@@ -239,7 +256,9 @@ cmd_install() {
       fi ;;
     cron)
       local line
-      line="@reboot $(cron_escape "$(sh_quote "$SHIM") --boot >> $(sh_quote "$STATE_DIR/reboot-recover.log") 2>&1") $CRON_MARK"
+      # Cron runs @reboot with PATH=/usr/bin:/bin and nothing else: carry
+      # what the unit and the plist carry.
+      line="@reboot $(cron_escape "PATH=$(sh_quote "$(trigger_path)") AUTOCODER_REBOOT_STATE_DIR=$(sh_quote "$STATE_DIR") AUTOCODER_REBOOT_FALLBACK=$(sh_quote "$SELF_PATH") $(sh_quote "$SHIM") --boot >> $(sh_quote "$STATE_DIR/reboot-recover.log") 2>&1") $CRON_MARK"
       local current
       current=$(crontab -l 2>/dev/null)   # read fully before writing (no pipeline race)
       if ! printf '%s\n' "$current" | grep -qxF -- "$line"; then
@@ -249,7 +268,9 @@ cmd_install() {
       cron_daemon_running || echo "⚠️  crontab is installed but no cron daemon is running: @reboot will not fire until one does."
       echo "✅ Boot trigger: cron @reboot (runs $SHIM --boot)" ;;
     launchd)
-      if render_plist | write_if_changed "$LAUNCHD_PLIST"; then
+      # Rewritten, or written earlier but not loaded (e.g. booted out by hand): load it.
+      if render_plist | write_if_changed "$LAUNCHD_PLIST" ||
+         ! launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1; then
         launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1
         launchctl bootstrap "gui/$(id -u)" "$LAUNCHD_PLIST" 2>/dev/null || launchctl load -w "$LAUNCHD_PLIST" \
           || { echo "❌ launchctl could not load $LAUNCHD_PLIST" >&2; return 1; }
@@ -281,18 +302,24 @@ if [ "$BOOT" = true ]; then
     exit 0
   fi
   if [ "$DRY_RUN" != true ]; then
-    mkdir -p "$STATE_DIR"
-    LOCK_DIR="$STATE_DIR/reboot-recover.lock"
-    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-      holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)
-      if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
-        echo "reboot-recover: another recovery (pid $holder) is running; leaving it to finish"
+    reboot_state_mkdir
+    # The lock is a symlink whose target is "<pid> <boot id>": created
+    # atomically with its content, so no contender ever sees a lock without a
+    # holder. It lives in the persistent state dir, so a lock left by a crash
+    # or power loss survives the reboot; a holder from another boot is stale
+    # even when its pid has been reused by an unrelated process since.
+    LOCK="$STATE_DIR/reboot-recover.lock"
+    if ! ln -s "$$ $BOOT_ID" "$LOCK" 2>/dev/null; then
+      holder=$(readlink "$LOCK" 2>/dev/null)
+      if [ "${holder#* }" = "$BOOT_ID" ] && kill -0 "${holder%% *}" 2>/dev/null; then
+        echo "reboot-recover: another recovery (pid ${holder%% *}) is running; leaving it to finish"
         exit 0
       fi
-      rm -rf "$LOCK_DIR"; mkdir "$LOCK_DIR" 2>/dev/null || { echo "reboot-recover: cannot take $LOCK_DIR" >&2; exit 0; }
+      echo "reboot-recover: removing a stale lock ($holder)"
+      rm -f "$LOCK"
+      ln -s "$$ $BOOT_ID" "$LOCK" 2>/dev/null || { echo "reboot-recover: another recovery took the lock; leaving it to finish"; exit 0; }
     fi
-    echo "$$" > "$LOCK_DIR/pid"
-    trap 'rm -rf "$LOCK_DIR"' EXIT
+    trap 'rm -f "$LOCK"' EXIT
     # Re-read under the lock: the holder we waited out may have finished this boot.
     [ "$(boot_stamp_get)" = "$BOOT_ID" ] && { echo "reboot-recover: boot $BOOT_ID already recovered; nothing to do"; exit 0; }
   fi
@@ -430,14 +457,28 @@ $root
 done
 
 STARTED=0; PROMPTED=0; SKIPPED=0; FAILED=0
+# --boot: roots already recovered in an earlier attempt for this boot.
+DONE_FILE="$STATE_DIR/reboot-done"
+root_done() { [ "$BOOT" = true ] && grep -qxF -- "$BOOT_ID $1" "$DONE_FILE" 2>/dev/null; }
+mark_done() {
+  [ "$BOOT" = true ] && [ "$DRY_RUN" != true ] || return 0
+  printf '%s %s\n' "$BOOT_ID" "$1" >> "$DONE_FILE"
+}
+[ "$BOOT" = true ] && [ "$DRY_RUN" != true ] && [ -f "$DONE_FILE" ] && {
+  grep -F -- "$BOOT_ID " "$DONE_FILE" > "$DONE_FILE.tmp.$$"; mv -f "$DONE_FILE.tmp.$$" "$DONE_FILE"
+}
+
 while IFS= read -r root; do
   [ -n "$root" ] || continue
+  if root_done "$root"; then
+    echo "✔️  $root: recovered earlier this boot"; continue
+  fi
   wts=$(swarm_worktrees "$root")
   [ -n "$wts" ] || continue
   nwt=$(printf '%s\n' "$wts" | grep -c .)
   if swarm_paused "$root"; then
     echo "⏸️  $root: paused (manifest); skipped"
-    SKIPPED=$((SKIPPED + 1)); continue
+    SKIPPED=$((SKIPPED + 1)); mark_done "$root"; continue
   fi
   echo "🐝 swarm $root ($nwt worktree$([ "$nwt" -eq 1 ] || echo s))"
 
@@ -461,7 +502,7 @@ while IFS= read -r root; do
     if [ "$DRY_RUN" = true ]; then
       echo "   DRY-RUN would prompt restored manager pane $1"
     elif send_agent_prompt herdr "$1" "$prompt"; then
-      echo "   prompted restored manager pane $1"; PROMPTED=$((PROMPTED + 1))
+      echo "   prompted restored manager pane $1"; PROMPTED=$((PROMPTED + 1)); mark_done "$root"
     else
       echo "❌ could not prompt manager pane $1"; FAILED=$((FAILED + 1))
     fi
@@ -473,7 +514,7 @@ while IFS= read -r root; do
   fi
   mkdir -p "$root/.autocoder" && : > "$root/.autocoder/wake"
   if AUTOCODER_REBOOT_RECOVER=1 bash "$SENTINEL" --once --project "$root"; then
-    echo "   started a manager via the idle sentinel"; STARTED=$((STARTED + 1))
+    echo "   started a manager via the idle sentinel"; STARTED=$((STARTED + 1)); mark_done "$root"
   else
     echo "❌ the idle sentinel did not start a manager in $root (see $root/.autocoder/sentinel.log)"
     FAILED=$((FAILED + 1))
@@ -484,7 +525,22 @@ echo ""
 echo "reboot-recover: managers prompted=$PROMPTED started=$STARTED skipped(paused)=$SKIPPED problems=$FAILED$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
 # Stamp the boot only now that every swarm was attempted: a crash above leaves
 # the old stamp, and the next trigger (sentinel tick, next login) retries.
+# A swarm that failed keeps the boot unstamped, so the next trigger (the
+# sentinel's next tick) retries it, and only it: the others are in reboot-done.
+# After MAX_BOOT_ATTEMPTS failed attempts the boot is stamped anyway, so a
+# swarm that can never start does not retry forever.
 if [ "$BOOT" = true ] && [ "$DRY_RUN" != true ]; then
+  if [ "$FAILED" -gt 0 ]; then
+    attempts=$(grep -cxF -- "$BOOT_ID" "$STATE_DIR/reboot-attempts" 2>/dev/null)
+    attempts=$(( ${attempts:-0} + 1 ))
+    echo "$BOOT_ID" >> "$STATE_DIR/reboot-attempts"
+    if [ "$attempts" -lt "$MAX_BOOT_ATTEMPTS" ]; then
+      echo "reboot-recover: $FAILED swarm(s) not recovered (attempt $attempts of $MAX_BOOT_ATTEMPTS); boot left unrecorded so the next trigger retries them"
+      exit 0
+    fi
+    echo "reboot-recover: $FAILED swarm(s) still not recovered after $attempts attempts; recording the boot, no more retries"
+  fi
   boot_stamp_set "$BOOT_ID" && echo "reboot-recover: boot $BOOT_ID recorded"
+  rm -f "$DONE_FILE" "$STATE_DIR/reboot-attempts"
 fi
 exit 0

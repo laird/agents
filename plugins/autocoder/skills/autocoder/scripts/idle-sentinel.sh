@@ -115,6 +115,7 @@
 #   .autocoder/wake                            manual/external force-wake file
 #   AUTOCODER_REBOOT_RECOVER_SCRIPT            reboot recovery run by the boot
 #                                              wake (default reboot-recover.sh here)
+#   AUTOCODER_BOOT_TRIGGER=off                 --ensure installs no host boot trigger
 #   AUTOCODER_REBOOT_RECOVER=1                 set by reboot-recover.sh on the tick
 #                                              it runs: skip the boot wake
 #   .autocoder/stepped-down                    written by the manager's step-down
@@ -2279,7 +2280,9 @@ install_launchd_scheduler() {
 cmd_ensure() {
   ensure_scheduler || return $?
   [ "$DRY_RUN" = true ] || swarm_roots_register "$PROJECT_ROOT"
-  if [ -f "$SCRIPT_DIR/reboot-recover.sh" ]; then
+  if [ "${AUTOCODER_BOOT_TRIGGER:-on}" = off ]; then
+    echo "ℹ️  AUTOCODER_BOOT_TRIGGER=off: no host boot trigger installed (the sentinel's boot wake still runs)"
+  elif [ -f "$SCRIPT_DIR/reboot-recover.sh" ]; then
     bash "$SCRIPT_DIR/reboot-recover.sh" --install $([ "$DRY_RUN" = true ] && echo --dry-run) \
       || echo "⚠️  could not install the reboot boot trigger; the sentinel's boot wake still covers this project" >&2
   fi
