@@ -181,6 +181,21 @@ def test_queue_orders_first_then_lane_then_priority_then_age(fx):
     assert order == [pinned, hot, high, low]
 
 
+def test_any_labels_admits_an_item_carrying_one_of_them_and_no_other(tmp_path):
+    fx = Fixture(tmp_path, config={"anyLabels": ["host:a", "host:b"]})
+    fx.branch("feature/a", {"a.txt": "1\n"})
+    fx.branch("feature/b", {"b.txt": "1\n"})
+    fx.branch("feature/c", {"c.txt": "1\n"})
+    fx.branch("feature/d", {"d.txt": "1\n"})
+    a = fx.ready("a", "feature/a", labels=("ready-for-review", "host:a"))
+    b = fx.ready("b", "feature/b", labels=("ready-for-review", "host:b"))
+    c = fx.ready("c", "feature/c", labels=("ready-for-review",))
+    d = fx.ready("d", "feature/d", labels=("ready-for-review", "host:other"))
+    q = fx.queue()
+    assert sorted(q) == sorted([a, b])
+    assert c not in q and d not in q
+
+
 def test_queue_requires_every_ready_label_and_a_ready_comment(fx):
     fx.branch("feature/a", {"a.txt": "1\n"})
     fx.ready("no second label", "feature/a")
