@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # never write the real event logs
 # tests/test_merge_infrastructure_refusal.sh — the "merged onto a red base" path of
 # merge-to-integration.sh needs a real test verdict on both trees:
 #   - a gate stage the HOST stopped (a disk-space check over its threshold, ENOSPC, a
