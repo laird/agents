@@ -15,6 +15,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"; [ -n "${HOLDER:-}" ] && kill "$HOLDER" 2>/dev/null' EXIT
 export AUTOCODER_PUBLISH_STATE="$TMP/state" AUTOCODER_LANDING_TIMINGS="$TMP/timings.jsonl"
 export AUTOCODER_LANDING_WAIT_SECONDS=20 AUTOCODER_FASTLANE_CHECK_CMD=true
+export AUTOCODER_LANDING_LEASE_EMPTYCASE="$TMP/empty-case.lease"
 unset AUTOCODER_REF_LEASE AUTOCODER_FASTLANE_PATHS AUTOCODER_DOCS_PATHS AUTOCODER_DOCS_CODE_PATHS AUTOCODER_PUBLISH_MODE
 export GIT_AUTHOR_NAME=T GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=T GIT_COMMITTER_EMAIL=t@example.com
 
@@ -180,6 +181,14 @@ kill "$HOLDER"; wait "$HOLDER" 2>/dev/null; HOLDER=""
 AUTOCODER_FASTLANE_CHECK_CMD='test ! -e docs/bad2.md' pub drain >/dev/null; RC=$?
 eq "drain: lands the good entry past the bad one" 0 "$RC"
 git --git-dir "$ORIGIN" show master:docs/good1.md >/dev/null 2>&1 && ! git --git-dir "$ORIGIN" show master:docs/bad2.md >/dev/null 2>&1 && ok "drain: good1 landed, bad2 did not" || bad "drain landed the wrong set"
+# an empty lane is the usual case at a train's batch end: drain says so and takes no lease (a held
+# host lease would otherwise make it wait, then refuse with rc 5)
+( exec 9>>"$AUTOCODER_LANDING_LEASE_EMPTYCASE"; flock 9; sleep 300 ) & HOLDER=$!
+sleep 0.5
+AUTOCODER_LANDING_LEASE="$AUTOCODER_LANDING_LEASE_EMPTYCASE" AUTOCODER_LANDING_WAIT_SECONDS=2 pub drain >"$TMP/out"; RC=$?
+eq "drain: an empty lane is reported and takes no lease (rc 0 under a held lease)" 0 "$RC"
+grep -q '^fast lane empty' "$TMP/out" && ok "drain: says the lane is empty" || bad "empty drain: $(cat "$TMP/out") $(cat "$TMP/err")"
+kill "$HOLDER"; wait "$HOLDER" 2>/dev/null; HOLDER=""
 pub status | grep -q '#45 failed .*document checks failed' && ok "drain: the bad entry is failed with its reason" || bad "status: $(pub status)"
 
 pub batch-end >/dev/null; eq "batch-end clears the dead batch's marker" 0 "$?"

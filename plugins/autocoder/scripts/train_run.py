@@ -377,6 +377,10 @@ class Cycle:
             return self._run_locked(size)
         finally:
             self.publisher("batch-end", "--force")
+            # The fast lane rides behind the batch: an entry enqueued while this cycle was live waited for
+            # it, and no other writer is due, so this cycle lands the lane now, under the publisher's
+            # leases, whatever its own verdict. An empty lane costs nothing (drain takes no lease then).
+            self.publisher("drain", "--branch", self.cfg.integration)
             lease.release()
 
     def _run_locked(self, size):

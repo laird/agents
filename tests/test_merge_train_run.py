@@ -478,7 +478,8 @@ def test_the_publisher_batch_marker_brackets_a_cycle(fx, tmp_path, monkeypatch):
     fx.members(2)
     fx.run()
     rows = (fx.state / "publisher.log").read_text().splitlines()
-    assert rows[0].startswith("batch-begin --pid") and rows[-1].startswith("batch-end --force")
+    assert rows[0].startswith("batch-begin --pid") and rows[-2].startswith("batch-end --force")
+    assert rows[-1] == "drain --branch master"                     # the fast lane lands right behind the batch
     assert len(fx.gates()) == 1                                    # the cycle itself pushes nothing to the integration branch
 
 
