@@ -173,19 +173,24 @@ def test_pick_ready_note_pattern_skips_coordinator_notes_for_the_fallback(fx):
     assert T.pick_ready(cfg, cs)["body"] == "READY from the worker"
 
 
-PREFLIGHT_BODY = ("READY `{b}` @ abc1234 (enqueued from a host that does not gate: preflight only, no pre-check; the batch gate is the first full test).\n\n"
-                  "```\n=== preflight (enqueue.sh): PASS === tree abc1234 on origin/master 0123456789 === host h === 3s\n"
+PREFLIGHT_BODY = ("READY `{b}` @ {sha} (enqueued from a host that does not gate: preflight only, no pre-check; the batch gate is the first full test).\n\n"
+                  "```\n=== preflight (enqueue.sh): PASS === tree {sha} on origin/master 0123456789 === host h === 3s\n"
                   "PASS fetch   0s  origin/master at 0123456789\n=== preflight: PASS -- not gated on this host; the batch gate is the test ===\n```\nflag: none")
+
+
+def preflight_body(fx, b, sha=None):
+    """enqueue.sh's READY for branch <b>: it names the branch's tip (the real one unless a sha is given)."""
+    return PREFLIGHT_BODY.format(b=b, sha=sha or T.short_tip(fx.cfg(), b))
 
 
 def test_pick_ready_marks_a_preflight_ready_by_its_block_and_a_plain_one_as_ready(fx):
     fx.branch("feature/pf", {"pf.txt": "1\n"})
     cfg = fx.cfg()
-    pf = T.pick_ready(cfg, [{"body": PREFLIGHT_BODY.format(b="feature/pf"), "createdAt": None}])
+    pf = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf"), "createdAt": None}])
     assert (pf["branch"], pf["basis"]) == ("feature/pf", "preflight")
     plain = T.pick_ready(cfg, [{"body": "READY `feature/pf`, prebank PASS", "createdAt": None}])
     assert plain["basis"] == "ready"
-    failed = T.pick_ready(cfg, [{"body": PREFLIGHT_BODY.format(b="feature/pf").replace(": PASS ===", ": FAIL ==="), "createdAt": None}])
+    failed = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf").replace(": PASS ===", ": FAIL ==="), "createdAt": None}])
     assert failed["basis"] == "ready"   # only the PASS block is a preflight READY; a pasted FAIL block is a plain (and odd) READY
 
 
@@ -193,7 +198,7 @@ def test_preflight_pattern_is_configurable(fx):
     fx.root.joinpath("c.json").write_text(json.dumps({"train": {"preflightPattern": r"PREFLIGHTED BY HAND"}}))
     cfg = T.load_config(fx.work, fx.root / "c.json")
     assert T.ready_basis(cfg, "READY `a/b` PREFLIGHTED BY HAND") == "preflight"
-    assert T.ready_basis(cfg, PREFLIGHT_BODY.format(b="a/b")) == "ready"
+    assert T.ready_basis(cfg, preflight_body(fx, "a/b", "abc1234")) == "ready"
 
 
 def test_queue_takes_a_preflight_ready_as_a_first_class_item_and_says_so(fx):
@@ -203,9 +208,9 @@ def test_queue_takes_a_preflight_ready_as_a_first_class_item_and_says_so(fx):
     fx.branch("feature/pf", {"pf.txt": "1\n"})
     fx.branch("feature/plain", {"plain.txt": "1\n"})
     fx.branch("feature/pf-landed", {"pfl.txt": "1\n"})
-    pf = fx.issue("pf"); fx.comment(pf, PREFLIGHT_BODY.format(b="feature/pf"))
+    pf = fx.issue("pf"); fx.comment(pf, preflight_body(fx, "feature/pf"))
     plain = fx.ready("plain", "feature/plain")
-    landed = fx.issue("pf-landed"); fx.comment(landed, PREFLIGHT_BODY.format(b="feature/pf-landed"))
+    landed = fx.issue("pf-landed"); fx.comment(landed, preflight_body(fx, "feature/pf-landed"))
     fx.land("feature/pf-landed")
     q = fx.queue()
     assert (q[pf]["state"], q[pf]["basis"], q[pf]["note"]) == ("queue", "preflight", T.PREFLIGHT_NOTE)
@@ -676,3 +681,173 @@ def test_regenerate_only_needs_a_configured_driver_and_reads_the_integration_bra
     assert T.regenerate_only(cfg, cfg.remote_ref("feature/gen-only")) == ["gen/a.txt"]
     sh("git", "checkout", "-q", ".gitattributes", cwd=fx.work)
     assert T.regenerate_only(cfg, cfg.ref) is None                            # nothing changed: not this
+
+
+# ── the READY's named sha and the branch's current tip (readyTip) ──────────────────────
+def rebase_onto_master(fx, name):
+    """Rebase <name> onto origin/master and force-push it (the worker's move after a sibling lands)."""
+    sh("git", "checkout", "-q", "-B", name, f"origin/{name}", cwd=fx.work)
+    sh("git", "rebase", "-q", "origin/master", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", name, cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+
+
+def merge_master_into(fx, name):
+    """Merge origin/master into <name> (a fast-forward of the branch by a merge commit) and push."""
+    sh("git", "checkout", "-q", "-B", name, f"origin/{name}", cwd=fx.work)
+    sh("git", "merge", "-q", "--no-ff", "-m", "merge master", "origin/master", cwd=fx.work)
+    sh("git", "push", "-q", "origin", name, cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+
+
+def ready_at(fx, title, branch, sha=None, extra=""):
+    """A READY that names the branch AND its tip, as enqueue.sh and a prebank block do."""
+    n = fx.issue(title)
+    fx.comment(n, f"READY `{branch}` @ {sha or T.short_tip(fx.cfg(), branch)}{extra}")
+    return n
+
+
+def test_named_tip_reads_the_first_sha_after_the_branch_on_its_line():
+    assert T.named_tip("READY `feature/x` @ abc1234, rebased onto origin/master deadbee12 (prebank 5s)", "feature/x") == "abc1234"
+    assert T.named_tip("READY `feature/x` @ `0123456789abcdef0123456789abcdef01234567`", "feature/x") == "0123456789abcdef0123456789abcdef01234567"
+    assert T.named_tip("re-READY on `origin/feature/x` at 9f41624fee on master 0924702650", "feature/x") == "9f41624fee"
+    assert T.named_tip("READY on `feature/x`", "feature/x") is None                      # no sha: today's rule
+    assert T.named_tip("READY `feature/x`\ntree abc1234 on origin/master", "feature/x") is None   # another line is not this branch's tip
+    assert T.named_tip("READY `feature/x-2` @ abc1234", "feature/x") is None             # another branch's name
+    assert T.named_tip("READY `feature/x` @ abcdef (short)", "feature/x") is None        # 6 digits is not a sha
+    assert T.named_tip("READY `feature/x` @ 20261121T20 abc1234", "feature/x") == "abc1234"   # a timestamp is not a sha
+
+
+def test_queue_follows_a_rebased_tip_that_carries_the_readys_patches_and_says_so(fx):
+    """The worker posts READY naming the tip, a sibling lands, the worker rebases and force-pushes: the queue
+    classifies the NEW tip (same patches, another base), the row says which tip it took and why, and the
+    planner trains it. No second READY is needed."""
+    fx.branch("feature/rb", {"rb.txt": "1\n"})
+    fx.branch("feature/sibling", {"README.md": "sibling\n"})
+    old = T.short_tip(fx.cfg(), "feature/rb")
+    rb = ready_at(fx, "rb", "feature/rb")
+    fx.land("feature/sibling")
+    rebase_onto_master(fx, "feature/rb")
+    new = T.short_tip(fx.cfg(), "feature/rb")
+    assert new != old
+    q = fx.queue()
+    assert (q[rb]["state"], q[rb]["tip"], q[rb]["named"]) == ("queue", new, old)
+    assert q[rb]["note"] == q[rb]["followed"] == f"READY named `{old}`, taking the rebased tip `{new}`: same patches"
+    out, fault = fx.plan()
+    assert fault is None and kinds(out) == [("train", rb)]
+    assert any(r.startswith(f"train\t{rb}\tfeature/rb\t{new}\t") for r in out)
+
+
+def test_queue_follows_a_fast_forwarded_tip_and_a_conflict_resolved_rebase_is_other_work(fx):
+    fx.branch("feature/ff", {"ff.txt": "1\n"})
+    fx.branch("feature/cr", {"README.md": "cr\n"})
+    fx.branch("feature/sibling", {"README.md": "sibling\n"})
+    ff_old, cr_old = T.short_tip(fx.cfg(), "feature/ff"), T.short_tip(fx.cfg(), "feature/cr")
+    ff = ready_at(fx, "ff", "feature/ff")
+    cr = ready_at(fx, "cr", "feature/cr")
+    fx.land("feature/sibling")
+    merge_master_into(fx, "feature/ff")                          # a merge commit: the named sha is in the tip's history
+    # cr's own line conflicts with the sibling's: the rebase resolves it, which changes cr's patch
+    sh("git", "checkout", "-q", "-B", "feature/cr", "origin/feature/cr", cwd=fx.work)
+    sh("git", "rebase", "origin/master", cwd=fx.work, check=False)
+    (fx.work / "README.md").write_text("sibling and cr\n")
+    sh("git", "add", "README.md", cwd=fx.work)
+    sh("git", "-c", "core.editor=true", "rebase", "--continue", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", "feature/cr", cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    q = fx.queue()
+    ff_new, cr_new = T.short_tip(fx.cfg(), "feature/ff"), T.short_tip(fx.cfg(), "feature/cr")
+    assert q[ff]["state"] == "queue" and q[ff]["followed"] == f"READY named `{ff_old}`, taking the fast-forwarded tip `{ff_new}`: same patches"
+    assert q[cr]["state"] == "tip-moved" and q[cr]["followed"] == ""
+    assert q[cr]["note"] == (f"the tip `{cr_new}` carries work the READY at `{cr_old}` did not name (the patches differ); "
+                             "re-post READY at this tip (a rebase or fast-forward of the same patches is taken without one)")
+    assert "1 tip-moved" in T.status_line(list(q.values()))
+
+
+def test_a_tip_with_a_new_commit_is_tip_moved_until_a_ready_names_it(fx):
+    fx.branch("feature/nw", {"nw.txt": "1\n"})
+    old = T.short_tip(fx.cfg(), "feature/nw")
+    nw = ready_at(fx, "nw", "feature/nw")
+    fx.commit_on("feature/nw", {"nw.txt": "2\n"}, message="a fix nobody banked")
+    new = T.short_tip(fx.cfg(), "feature/nw")
+    q = fx.queue()
+    assert (q[nw]["state"], q[nw]["tip"], q[nw]["named"]) == ("tip-moved", new, old)
+    out, fault = fx.plan()
+    assert fault is None and kinds(out) == [("skip", nw)] and "tip-moved" in out[0]
+    fx.comment(nw, f"READY `feature/nw` @ {new} (prebank PASS)")      # the owner banks the new tip
+    q = fx.queue()
+    assert (q[nw]["state"], q[nw]["named"], q[nw]["note"]) == ("queue", new, "-")
+
+
+def test_a_ready_naming_no_sha_or_ready_tip_current_takes_whatever_tip_the_branch_has(tmp_path):
+    fx = Fixture(tmp_path)
+    fx.branch("feature/plain", {"p.txt": "1\n"})
+    plain = fx.ready("plain", "feature/plain")                                    # "READY on `feature/plain`": no sha
+    fx.commit_on("feature/plain", {"p.txt": "2\n"})
+    fx.branch("feature/named", {"n.txt": "1\n"})
+    named = ready_at(fx, "named", "feature/named")
+    fx.commit_on("feature/named", {"n.txt": "2\n"})
+    q = fx.queue()
+    assert (q[plain]["state"], q[plain]["named"], q[plain]["note"]) == ("queue", "-", "-")
+    assert q[named]["state"] == "tip-moved"
+    cfg = json.loads((fx.work / ".autocoder.json").read_text())
+    cfg["train"]["readyTip"] = "current"
+    (fx.work / ".autocoder.json").write_text(json.dumps(cfg))
+    q = fx.queue()
+    assert (q[named]["state"], q[named]["note"], q[named]["followed"]) == ("queue", "-", "")   # the named sha is not consulted
+    cfg["train"]["readyTip"] = "latest"
+    (fx.work / ".autocoder.json").write_text(json.dumps(cfg))
+    with pytest.raises(SystemExit, match=r"train\.readyTip in .*\.autocoder\.json must be one of \['named', 'current'\]; got 'latest'"):
+        fx.cfg()
+
+
+def test_a_base_sha_names_no_tip_and_an_unknown_sha_is_noted_but_the_tip_is_taken(fx):
+    fx.branch("feature/b", {"b.txt": "1\n"})
+    master = T.git(fx.work, "rev-parse", "--short=10", "origin/master").stdout.strip()
+    tip = T.short_tip(fx.cfg(), "feature/b")
+    base = ready_at(fx, "base", "feature/b", sha=master)         # the READY line names the base it was rebased onto, not the tip
+    fx.branch("feature/u", {"u.txt": "1\n"})
+    unknown = ready_at(fx, "unknown", "feature/u", sha="abc1234abc")
+    q = fx.queue()
+    assert (q[base]["state"], q[base]["note"], q[base]["named"]) == ("queue", "-", master)
+    assert q[unknown]["state"] == "queue" and q[unknown]["followed"] == ""
+    assert q[unknown]["note"] == f"READY names `abc1234abc`, which this clone cannot resolve; taking the branch's current tip `{T.short_tip(fx.cfg(), 'feature/u')}`"
+    assert T.tip_relation(fx.cfg(), "feature/b", tip) == ("same", T.git(fx.work, "rev-parse", "origin/feature/b").stdout.strip())
+
+
+def test_a_preflight_ready_keeps_its_note_beside_the_followed_tip_note(fx):
+    fx.branch("feature/pf2", {"pf2.txt": "1\n"})
+    fx.branch("feature/sibling", {"README.md": "sibling\n"})
+    old = T.short_tip(fx.cfg(), "feature/pf2")
+    pf = fx.issue("pf2"); fx.comment(pf, preflight_body(fx, "feature/pf2"))
+    fx.land("feature/sibling")
+    rebase_onto_master(fx, "feature/pf2")
+    q = fx.queue()
+    assert q[pf]["state"] == "queue" and q[pf]["basis"] == "preflight"
+    assert q[pf]["note"] == f"{T.PREFLIGHT_NOTE}; READY named `{old}`, taking the rebased tip `{T.short_tip(fx.cfg(), 'feature/pf2')}`: same patches"
+
+
+def test_the_trains_own_comments_are_never_readys(fx):
+    """A told-once comment (`tip-moved`, a drop) quotes the branch, its tip and the word READY; read as a READY
+    it would name the very tip the queue refused. Every tracker write of the train starts with `<swarm>: `."""
+    fx.branch("feature/own", {"own.txt": "1\n"})
+    old = T.short_tip(fx.cfg(), "feature/own")
+    n = ready_at(fx, "own", "feature/own")
+    fx.commit_on("feature/own", {"own.txt": "2\n"})
+    new = T.short_tip(fx.cfg(), "feature/own")
+    fx.comment(n, f"merge-train: not trained, `tip-moved`: `feature/own` @ `{new}`: re-post READY at this tip")
+    q = fx.queue()
+    assert (q[n]["state"], q[n]["named"]) == ("tip-moved", old)
+    picked = T.pick_ready(fx.cfg(), [{"body": "[swarm] train: landed `feature/own`, post READY elsewhere", "createdAt": None}])
+    assert picked is not None and picked["branch"] == "feature/own"                  # another prefix: a worker's words
+    cfg = json.loads((fx.work / ".autocoder.json").read_text()); cfg["train"]["swarm"] = "[swarm] train"
+    (fx.work / ".autocoder.json").write_text(json.dumps(cfg))
+    fx.branch("feature/own2", {"own2.txt": "1\n"})
+    old2 = T.short_tip(fx.cfg(), "feature/own2")
+    n2 = ready_at(fx, "own2", "feature/own2")
+    fx.commit_on("feature/own2", {"own2.txt": "2\n"})
+    fx.comment(n2, f"[swarm] train: dropped at planning: `feature/own2` @ `{T.short_tip(fx.cfg(), 'feature/own2')}`: a reason. Fix, push, post READY")
+    assert (fx.queue()[n2]["state"], fx.queue()[n2]["named"]) == ("tip-moved", old2)   # the configured prefix is skipped too

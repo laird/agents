@@ -37,6 +37,10 @@ DEFAULT_READY_RE = r"(^|[^A-Za-z])READY([^A-Za-z]|$)"
 # pre-checked, so the batch gate is its first full test. The queue takes it like any other READY and says so.
 DEFAULT_PREFLIGHT_RE = r"=== preflight \(enqueue\.sh\): PASS ==="
 READY_STATES = ("open", "working", "blocked", "all")   # the `issue_list --state` values a READY may be found under
+READY_TIPS = ("named", "current")   # `readyTip`: hold the branch's tip to the sha the READY names, or take whatever tip it has
+# The sha a READY names for its branch: the first hex word after the branch's name on the same line
+# (`READY `feat/x` @ abc1234`, enqueue.sh's line, a prebank block's `tree abc1234 on origin/master ...`).
+NAMED_SHA_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])")
 PREFLIGHT_NOTE = "preflight READY (enqueued from a host that does not gate): the batch gate is its first full test"
 # `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
@@ -66,6 +70,8 @@ class Config:
     ready_pattern: str = DEFAULT_READY_RE
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
     preflight_pattern: str = DEFAULT_PREFLIGHT_RE   # a READY matching this was preflighted, not pre-checked (enqueue.sh)
+    ready_tip: str = "named"        # `named`: a tip is held to the sha the READY names (same patches pass); `current`: any tip
+    swarm: str = "merge-train"      # the train's own comments start with `<swarm>: `; the queue never reads them as READYs
     size: int = 4
     stale_days: int = 0             # 0 = a READY never goes stale
     classify_limit: int = 0         # 0 = merge-check every launchable item
@@ -121,10 +127,19 @@ def _ready_states(raw, path) -> list:
     return states
 
 
+def _ready_tip(raw, path) -> str:
+    """`readyTip`: `named` (default) holds a branch's tip to the sha its READY names, taking a later tip only when
+    it carries the same patches (a rebase or a fast-forward); `current` takes whatever tip the branch has."""
+    value = str(raw or "named")
+    if value not in READY_TIPS:
+        raise SystemExit(f"merge-train: train.readyTip in {path} must be one of {list(READY_TIPS)}; got {value!r}")
+    return value
+
+
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, anyLabels, readyStates, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, readyStates, readyTip, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, hooks{prepareScratch, mergeFault};
     `enqueue` is enqueue.sh's (see there).
@@ -154,6 +169,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
         note_pattern=raw.get("notePattern") or "",
         preflight_pattern=raw.get("preflightPattern") or DEFAULT_PREFLIGHT_RE,
+        ready_tip=_ready_tip(raw.get("readyTip"), path),
+        swarm=str(raw.get("swarm") or "merge-train"),
         size=int(env.get("AUTOCODER_TRAIN_SIZE") or raw.get("size") or 4),
         stale_days=int(raw.get("staleDays") or 0),
         classify_limit=int(raw.get("classifyLimit") or 0),
@@ -316,8 +333,60 @@ def ready_basis(cfg: Config, body: str) -> str:
     return "preflight" if cfg.preflight_pattern and re.search(cfg.preflight_pattern, body or "") else "ready"
 
 
+def named_tip(body: str, branch: str):
+    """The sha a READY names for <branch>: the first hex word (7 to 40 digits) after the branch's backticked
+    name on the same line, or None. Only that line counts: a sha elsewhere in the comment (a base the
+    branch was rebased onto, another branch of a stack, a landed commit) is not this branch's tip."""
+    for line in (body or "").splitlines():
+        for token in (f"`{branch}`", f"`origin/{branch}`"):
+            at = line.find(token)
+            if at >= 0:
+                m = NAMED_SHA_RE.search(line, at + len(token))
+                return m.group(0) if m else None
+    return None
+
+
+def branch_patch_id(cfg: Config, rev) -> str:
+    """One patch id for the whole work of <rev> against its merge base with the integration branch,
+    with no context lines, so a rebase over a neighbouring edit keeps it and a change to the branch's own
+    lines (new work, a conflict resolved) changes it. "" when <rev> adds nothing."""
+    base = git(cfg.repo, "merge-base", cfg.ref, rev).stdout.strip()
+    if not base:
+        return ""
+    diff = git(cfg.repo, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", base, rev).stdout
+    out = git(cfg.repo, "patch-id", "--stable", input=diff).stdout.split()
+    return out[0] if out else ""
+
+
+def tip_relation(cfg: Config, branch: str, named: str):
+    """How the branch's current remote tip relates to the sha its READY named: (relation, named_full).
+
+    same          the tip is the named sha
+    fast-forward  the named sha is in the tip's history and the tip carries the same patches (the branch
+                  merged the integration branch in, or an empty commit)
+    rebase        the tip carries the same patches on another base (a rebase, a squash, a reword)
+    moved         the tip carries other work: its patches against the integration branch differ
+    base          the named sha is in the integration branch's history (a base the READY mentioned,
+                  or landed work): it names no tip of this branch
+    unknown       this clone has no such commit (a force-push never fetched here, a typo)
+    """
+    r = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{named}^{{commit}}")
+    if r.returncode != 0:
+        return ("unknown", named)
+    full = r.stdout.strip()
+    tip = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{cfg.remote_ref(branch)}^{{commit}}").stdout.strip()
+    if full == tip:
+        return ("same", full)
+    if git(cfg.repo, "merge-base", "--is-ancestor", full, cfg.ref).returncode == 0:
+        return ("base", full)
+    if branch_patch_id(cfg, full) != branch_patch_id(cfg, tip):
+        return ("moved", full)
+    ff = git(cfg.repo, "merge-base", "--is-ancestor", full, cfg.remote_ref(branch)).returncode == 0
+    return ("fast-forward" if ff else "rebase", full)
+
+
 def pick_ready(cfg: Config, comments: list):
-    """The READY an item is read from: {createdAt, body, branch|None, candidates, basis}, or None.
+    """The READY an item is read from: {createdAt, body, branch|None, candidates, named, basis}, or None.
 
     Of the comments that say READY, newest first, the first that names a branch existing on the
     remote wins. A comment naming no branch is passed over, so a coordinator's later "rebase and
@@ -325,10 +394,14 @@ def pick_ready(cfg: Config, comments: list):
     READY that is not a coordinator's note stands (else the newest), so the no-branch report still
     quotes what the worker said. `basis` is ready_basis() of the comment picked: a preflight READY
     (enqueue.sh) is a first-class item, taken and gated like any other, and the row says what it is.
+    `named` is the sha the READY names for the branch (named_tip), or None. The train's own comments
+    (every one starts with `<swarm>: `) are never READYs: a `tip-moved` or drop comment quotes the branch,
+    its tip and the word READY, and read as a READY it would name the very tip it refused.
     """
     ready_re = re.compile(cfg.ready_pattern)
     note_re = re.compile(cfg.note_pattern) if cfg.note_pattern else None
-    ready = [c for c in reversed(comments) if ready_re.search(c["body"])]
+    own = f"{cfg.swarm}:"
+    ready = [c for c in reversed(comments) if ready_re.search(c["body"]) and not c["body"].lstrip().startswith(own)]
     if not ready:
         return None
     newest_worker = next((c for c in ready if not (note_re and note_re.search(c["body"]))), ready[0])
@@ -336,9 +409,9 @@ def pick_ready(cfg: Config, comments: list):
         cands = branch_candidates(c["body"], {cfg.integration})
         for b in cands:
             if branch_exists(cfg, b):
-                return {**c, "branch": b, "candidates": cands, "basis": ready_basis(cfg, c["body"])}
+                return {**c, "branch": b, "candidates": cands, "named": named_tip(c["body"], b), "basis": ready_basis(cfg, c["body"])}
     return {**newest_worker, "branch": None, "candidates": branch_candidates(newest_worker["body"], {cfg.integration}),
-            "basis": ready_basis(cfg, newest_worker["body"])}
+            "named": None, "basis": ready_basis(cfg, newest_worker["body"])}
 
 
 # ── overrides, launched tips, train state ───────────────────────────────────────────────
@@ -559,7 +632,8 @@ def list_items(cfg: Config):
 
 
 def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None):
-    """(state, tip, note) of one item. States:
+    """(state, tip, note, named) of one item; `named` is followed_tip()'s (kind, text) for a tip that is not
+    the sha the READY named (("", "") when there is nothing to say); plan_queue appends the text to the note. States:
 
     no-branch   the READY names nothing on the remote (note: the names it tried)
     hold        a `hold <issue>` row
@@ -569,6 +643,10 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     stale       the READY is older than staleDays
     unchecked   not merge-checked: classifyLimit launchable items were already found
     on-master   the branch has no commit the integration branch lacks
+    tip-moved   the READY named a sha and the branch's tip carries other work (`readyTip: named`): not READY
+                until one is posted at this tip. A tip that carries the SAME patches as the named sha (a
+                rebase onto a moved integration branch, a merge of it into the branch) is classified as any
+                other, and the note says which tip was taken and why; a cycle tells the issue once per tip.
     regenerate-only  every path it changes is merged by a `regeneratedMergeDrivers` driver, so a landing
                 would regenerate them from their sources and land nothing (note: the files); never planned
                 at this tip (a cycle tells the issue once per tip)
@@ -580,27 +658,61 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     branch = picked["branch"] if picked else None
     if not branch:
         tried = ",".join(picked["candidates"]) if picked else ""
-        return ("no-branch", "-", tried)
+        return ("no-branch", "-", tried, ("", ""))
     tip = short_tip(cfg, branch)
     if str(issue) in ov.hold:
-        return ("hold", tip, ov.hold[str(issue)])
+        return ("hold", tip, ov.hold[str(issue)], ("", ""))
     if issue in in_flight:
-        return ("in-flight", tip, "-")
+        return ("in-flight", tip, "-", ("", ""))
     ts = train_state(cfg, issue, tip)
     if ts == "in-train":
-        return ("in-train", tip, "in the live train")
+        return ("in-train", tip, "in the live train", ("", ""))
     if ts == "train-dropped":
-        return ("train-dropped", tip, "dropped from a train at this tip; re-bank to offer it again")
+        return ("train-dropped", tip, "dropped from a train at this tip; re-bank to offer it again", ("", ""))
     if cfg.stale_days and picked.get("createdAt"):
         age = ((now or datetime.now(timezone.utc)) - datetime.fromisoformat(picked["createdAt"].replace("Z", "+00:00"))).days
         if age >= cfg.stale_days:
-            return ("stale", tip, f"READY is {age} days old (limit {cfg.stale_days}); re-bank to offer it again")
+            return ("stale", tip, f"READY is {age} days old (limit {cfg.stale_days}); re-bank to offer it again", ("", ""))
     if skip_merge_check:
-        return ("unchecked", tip, "not merge-checked: enough launchable items were found ahead of it (classifyLimit)")
+        return ("unchecked", tip, "not merge-checked: enough launchable items were found ahead of it (classifyLimit)", ("", ""))
     ref = cfg.remote_ref(branch)
     proof = landing_proof(cfg, ref)
     if proof:
-        return ("on-master", tip, f"landing proof: {proof}")
+        return ("on-master", tip, f"landing proof: {proof}", ("", ""))
+    named = followed_tip(cfg, branch, picked.get("named"), tip)
+    if named[0] == "moved":
+        return ("tip-moved", tip, named[1], ("", ""))
+    state, tip, note = _classify_merge(cfg, ov, issue, ref, tip)
+    return (state, tip, note, named)
+
+
+def followed_tip(cfg: Config, branch, named, tip):
+    """The named-tip verdict for a classified item: (kind, text).
+
+    ("", "")            nothing to say: the READY names no sha, `readyTip` is `current`, the tip is the named sha,
+                        or the sha names a base of the integration branch rather than a tip of this branch
+    ("taken", note)     the tip carries the named sha's patches on another base or ahead of it: taken, the
+                        note says which tip and why (the cycle tells the issue once per tip)
+    ("unknown", note)   this clone cannot resolve the sha: the current tip is taken and the note says so
+    ("moved", why)      the tip carries other work: refused as `tip-moved` until a READY names it
+    """
+    if cfg.ready_tip != "named" or not named:
+        return ("", "")
+    relation, full = tip_relation(cfg, branch, named)
+    short = full[:10]
+    if relation in ("same", "base"):
+        return ("", "")
+    if relation == "unknown":
+        return ("unknown", f"READY names `{short}`, which this clone cannot resolve; taking the branch's current tip `{tip}`")
+    if relation == "moved":
+        return ("moved", f"the tip `{tip}` carries work the READY at `{short}` did not name (the patches differ); "
+                         f"re-post READY at this tip (a rebase or fast-forward of the same patches is taken without one)")
+    kind = "fast-forwarded" if relation == "fast-forward" else "rebased"
+    return ("taken", f"READY named `{short}`, taking the {kind} tip `{tip}`: same patches")
+
+
+def _classify_merge(cfg: Config, ov: Overrides, issue, ref, tip):
+    """The merge-dependent tail of classify(): regenerate-only, the prefilter, the real merge, launched, queue."""
     regen = regenerate_only(cfg, ref)
     if regen:
         return ("regenerate-only", tip, regenerate_only_note(cfg, regen))
@@ -627,10 +739,12 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
 
 
 def plan_queue(cfg: Config, in_flight=(), now=None):
-    """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis}].
+    """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis, named, followed}].
 
     `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
-    its first full test; a launchable one's note says so), else `ready`.
+    its first full test; a launchable one's note says so), else `ready`. `named` is the sha the READY names
+    for the branch (or `-`); `followed` is the note of a tip taken in its place (same patches, rebased or
+    fast-forwarded), else "" (the note carries it too; the cycle tells the issue once per tip).
 
     Order: `first` rows in file order, then the lane (lane-labelled items), then priority rank, then
     age (the tracker's createdAt when it reports one, else the issue number), then number. The order
@@ -652,14 +766,14 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         if picked is None:
             continue   # labelled ready-for-review but says READY nowhere: not an item
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
-        state, tip, note = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now)
+        state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now)
         if not skip and state in ("queue", "launched"):
             found += 1
         basis = picked.get("basis") or "ready"
-        if basis == "preflight" and state == "queue" and note == "-":
-            note = PREFLIGHT_NOTE
+        parts = ([PREFLIGHT_NOTE] if basis == "preflight" and state == "queue" else []) + ([note] if note != "-" else []) + ([named_text] if named_text else [])
         rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or "-", "tip": tip,
-                     "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": note, "basis": basis})
+                     "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
+                     "named": (picked.get("named") or "-"), "followed": named_text if named_kind == "taken" else ""})
     return rows
 
 
@@ -674,7 +788,7 @@ def status_line(rows, when=None):
         if r["state"] == "no-branch":
             nob.append(f"#{r['issue']}")
     order = ["queue", "in-flight", "in-train", "launched", "hold", "conflict", "generator-failed", "driver-fault",
-             "stale", "train-dropped", "on-master", "regenerate-only", "unchecked", "no-branch"]
+             "stale", "train-dropped", "tip-moved", "on-master", "regenerate-only", "unchecked", "no-branch"]
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     for s in order:
         if counts.get(s):

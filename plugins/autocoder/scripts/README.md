@@ -705,7 +705,18 @@ blocking label. A project whose convention keeps the claim label on an issue unt
 closes it sets `["open", "working"]`, or every READY a worker posts while holding the issue is
 invisible to the queue. The values are `open`, `working`, `blocked` and `all`; anything else refuses
 to load, naming the file. The branch is the first backticked branch-shaped name of the newest READY comment that
-exists on the remote; a later comment naming no branch never shadows it. Comment timestamps are used when
+exists on the remote; a later comment naming no branch never shadows it, and the train's own comments (every
+one starts with `<swarm>: `) are never READYs. The queue classifies the branch's CURRENT remote tip (the
+run cycle fetches again right before it plans, since a preflight can take minutes). The READY may also name
+that tip (`READY `feat/x` @ abc1234`, the line enqueue.sh posts: the first hex word after the branch on its
+line). With `readyTip: named` (the default) a tip other than the named sha is taken when it carries the
+SAME patches (one zero-context patch id of the branch's whole diff against its merge base, so a rebase onto
+the moved integration branch or a merge of it into the branch passes, and a change to the branch's own
+lines, a conflict resolved included, does not); the row's note and a once-per-tip comment say `READY named
+abc, taking the rebased tip def: same patches`. A tip that carries other work is `tip-moved`: not READY
+until a READY names it. A READY naming no sha, a sha this clone cannot resolve (noted) or a sha in the
+integration branch's history (a base, not a tip) takes the current tip; `readyTip: current` ignores the
+named sha altogether. Comment timestamps are used when
 the backend reports them (GitHub) and are `None` otherwise (ADO and Jira report only a body; the file
 backend keeps comments as blockquotes in the issue body, which are read back with their time). The queue
 orders by `first` overrides, then lane labels (`laneLabels`), then priority (`priorityLabels`), then age
@@ -722,6 +733,9 @@ again), `stale` (`staleDays`), `on-master` (the integration branch carries the b
 would regenerate them from their sources and land nothing; the note names the files and `regeneratedAdvice`; a
 cycle tells the issue once per tip and never plans it: measured on one project, three bot PRs that edited only a
 generated export each took a tracking issue, a READY and a train slot),
+`tip-moved` (`readyTip: named`: the branch's tip carries work the READY's named sha did not; a cycle tells the
+issue once per tip; a rebased or fast-forwarded tip with the same patches is not this, it is classified as any
+other and its note says which tip was taken),
 `conflict` (the merge-tree prefilter, or a real merge),
 `driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
 (`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote).
@@ -757,7 +771,7 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
 
 ```json
 { "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
-             "readyStates": ["open", "working"], "priorityLabels": ["P0","P1","P2","P3"],
+             "readyStates": ["open", "working"], "readyTip": "named", "priorityLabels": ["P0","P1","P2","P3"],
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",

@@ -27,6 +27,12 @@ Red-batch rules (every one learned from a measured miss):
   * A candidate the queue reads as `regenerate-only` (train_lib: every changed path carries one of
     `regeneratedMergeDrivers`) is never planned; the cycle tells its issue ONCE per tip which files
     and why, so it costs no train slot and no second comment.
+  * The plan reads each branch's CURRENT remote tip, fetched again right before planning (the
+    preflight can take minutes). With `readyTip: named` (the default) a tip other than the sha its
+    READY names is taken when it carries the same patches (a rebase onto the moved integration
+    branch, a merge of it into the branch), told once per tip, and refused as `tip-moved` when it
+    carries other work, told once per tip, until a READY names it. Measured on one project: a worker
+    who rebased after a sibling landed waited a cycle, or a hand nudge, for a new READY to be read.
   * A RED-BASE refusal (merge-to-integration.sh's `merge-to-integration: RED-BASE -- ...` line:
     the files that failed on the integrated tree fail on the integration branch alone too, and
     landing on a red base is off) is the integration branch's red, nobody's to own: the cycle ends
@@ -210,12 +216,12 @@ class State:
         with open(self.dir / "dropped.tsv", "a") as f:
             f.write(f"{issue}\t{tip}\t{now_iso()}\t{reason}\n")
 
-    # regenerate-only items told once per tip
-    def regen_told(self, issue, tip):
-        return any(row[:2] == [str(issue), tip] for row in T.read_rows(self.dir / "regenerate-only.tsv"))
+    # queue verdicts told once per (issue, tip): regenerate-only.tsv, tip-moved.tsv, followed-tip.tsv
+    def told(self, kind, issue, tip):
+        return any(row[:2] == [str(issue), tip] for row in T.read_rows(self.dir / f"{kind}.tsv"))
 
-    def regen_tell(self, issue, tip):
-        with open(self.dir / "regenerate-only.tsv", "a") as f:
+    def tell(self, kind, issue, tip):
+        with open(self.dir / f"{kind}.tsv", "a") as f:
             f.write(f"{issue}\t{tip}\t{now_iso()}\n")
 
     def launched(self, issue, tip):
@@ -402,8 +408,14 @@ class Cycle:
             return 1, []
         limit = size or self.state.limit()
         t_plan = time.time()
+        # Fetch again right before the plan: the preflight can take minutes, and a tip pushed meanwhile (a
+        # rebase after a sibling landed) is the tip the plan should classify, not the one the cycle opened on.
+        f = T.git(c.repo, "fetch", c.remote, "-q")
+        if f.returncode != 0:
+            self.log(f"ABORT: git fetch {c.remote} failed in {c.repo} before the plan: {f.stderr.strip()}")
+            return 3, []
         rows = T.plan_queue(c)
-        self.tell_regenerate_only(rows)
+        self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
         # sum, beside the gate time in the landing report. The merges run hooks off; the project's
         # regeneration runs once, on the assembled tree (assemble -> regenerate).
@@ -453,17 +465,28 @@ class Cycle:
         full = r.stdout.strip()
         return full if full.startswith(tip) else (full or tip)
 
-    def tell_regenerate_only(self, rows):
-        """Each `regenerate-only` item of the queue is told ONCE per tip (regenerate-only.tsv) which files it
-        changes and why no train takes it. It is never planned at that tip (the queue state keeps it out),
-        so the record only stops a second comment."""
+    def tell_queue_verdicts(self, rows):
+        """Three queue verdicts are told to the issue ONCE per tip (a `<kind>.tsv` record in the state dir), so
+        the owner learns them without a train slot and never twice:
+          regenerate-only  which files it changes and why no train takes it; never planned at that tip
+          tip-moved        the tip carries work the READY did not name; not READY until one names it
+          followed         a rebased or fast-forwarded tip was taken in the named sha's place (same patches)
+        The queue state keeps the first two out of the plan; the record only stops a second comment."""
         for r in rows:
-            if r["state"] != "regenerate-only" or self.state.regen_told(r["issue"], r["tip"]):
-                continue
-            self.say.say(r["issue"], f"not trained, `regenerate-only`: `{r['branch']}` @ `{r['tip']}` {r['note']} "
-                         f"No train takes this tip; a tip that also changes a source rejoins the queue with a new READY.")
-            self.state.regen_tell(r["issue"], r["tip"])
-            self.log(f"#{r['issue']} ({r['branch']} @ {r['tip']}) is regenerate-only: told once, never planned at this tip")
+            issue, tip = r["issue"], r["tip"]
+            if r["state"] == "regenerate-only" and not self.state.told("regenerate-only", issue, tip):
+                self.say.say(issue, f"not trained, `regenerate-only`: `{r['branch']}` @ `{tip}` {r['note']} "
+                             f"No train takes this tip; a tip that also changes a source rejoins the queue with a new READY.")
+                self.state.tell("regenerate-only", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}) is regenerate-only: told once, never planned at this tip")
+            elif r["state"] == "tip-moved" and not self.state.told("tip-moved", issue, tip):
+                self.say.say(issue, f"not trained, `tip-moved`: `{r['branch']}` @ `{tip}`: {r['note']}.")
+                self.state.tell("tip-moved", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}) is tip-moved: told once, not READY until a READY names this tip")
+            elif r.get("followed") and not self.state.told("followed-tip", issue, tip):
+                self.say.say(issue, f"`{r['branch']}`: {r['followed']}. No new READY is needed for a rebase or fast-forward of the same work.")
+                self.state.tell("followed-tip", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}): {r['followed']}")
 
     # ----- preflight and reconcile -----
     def preflight(self):

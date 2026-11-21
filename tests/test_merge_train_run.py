@@ -612,3 +612,92 @@ def test_a_regenerate_only_item_is_told_once_per_tip_and_never_planned(fx):
     assert fx.dropped() == []                                      # never trained, so never dropped: the queue state keeps it out
     q = {r["issue"]: r for r in T.plan_queue(fx.rc().cfg)}
     assert q[gen]["state"] == "regenerate-only"
+
+
+# ── the READY's named sha and the branch's current tip (readyTip, train_lib.followed_tip) ──
+def named_member(fx, n, body_extra=""):
+    """fx.member(n), but the READY names the branch's tip as enqueue.sh and a prebank block do."""
+    issue = fx.member(n)
+    tip = T.git(fx.work, "rev-parse", "--short=10", f"origin/feature/m{n}").stdout.strip()
+    sh(sys.executable, str(ISSUES_FILE), "comment", str(issue), "--body", f"READY `feature/m{n}` @ {tip}{body_extra}", cwd=fx.work)
+    return issue, tip
+
+
+def land_sibling(fx, path="README.md", text="sibling\n"):
+    sh("git", "checkout", "-q", "-B", "master", "origin/master", cwd=fx.work)
+    (fx.work / path).write_text(text)
+    sh("git", "add", "-A", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", "sibling", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+
+
+def rebase_member(fx, n):
+    name = f"feature/m{n}"
+    sh("git", "checkout", "-q", "-B", name, f"origin/{name}", cwd=fx.work)
+    sh("git", "rebase", "-q", "origin/master", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", name, cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    return T.git(fx.work, "rev-parse", "--short=10", f"origin/{name}").stdout.strip()
+
+
+def test_a_rebased_tip_with_the_readys_patches_is_trained_and_the_issue_is_told_once(fx):
+    issue, old = named_member(fx, 0)
+    land_sibling(fx)
+    new = rebase_member(fx, 0)
+    code, cyc = fx.run()
+    assert code == 0 and fx.on_master(0) and fx.state_of(issue) == "CLOSED"
+    assert [m["tip"][:10] for m in cyc.record["members"]] == [new]
+    told = fx.comments(issue)
+    assert told.count(f"READY named `{old}`, taking the rebased tip `{new}`: same patches") == 1
+    assert "No new READY is needed for a rebase or fast-forward of the same work." in told
+    assert (fx.rc().cfg.state_dir / "followed-tip.tsv").read_text().startswith(f"{issue}\t{new}\t")
+
+
+def test_a_tip_with_other_work_is_told_tip_moved_once_and_never_trained_until_a_ready_names_it(fx):
+    moved, old = named_member(fx, 0)
+    ok = fx.member(1)
+    sh("git", "checkout", "-q", "-B", "feature/m0", "origin/feature/m0", cwd=fx.work)
+    (fx.work / "files/m0.txt").write_text("fixed\n")
+    sh("git", "commit", "-q", "-am", "an unbanked fix", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "feature/m0", cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    new = T.git(fx.work, "rev-parse", "--short=10", "origin/feature/m0").stdout.strip()
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1 and fx.gates()[0] == ["files/m1.txt"]    # m0 is not in the train
+    assert fx.state_of(ok) == "CLOSED" and fx.state_of(moved) == "OPEN" and not fx.on_master(0)
+    told = fx.comments(moved)
+    assert told.count("`tip-moved`") == 1 and f"carries work the READY at `{old}` did not name" in told and "re-post READY at this tip" in told
+    fx.run()                                                       # a second cycle: no second comment, still not planned
+    assert fx.comments(moved).count("`tip-moved`") == 1 and len(fx.gates()) == 1 and fx.dropped() == []
+    sh(sys.executable, str(ISSUES_FILE), "comment", str(moved), "--body", f"READY `feature/m0` @ {new} (banked)", cwd=fx.work)
+    code, _ = fx.run()
+    assert code == 0 and fx.on_master(0) and fx.state_of(moved) == "CLOSED"
+    assert T.git(fx.work, "cat-file", "-p", "origin/master:files/m0.txt").stdout == "fixed\n"   # the banked tip, not the READY's
+
+
+def test_the_plan_reads_a_tip_pushed_while_the_preflight_ran(fx):
+    """The cycle fetches once when it opens, then runs the project's preflight, which can take minutes. A
+    push in that window (the worker's rebase after a sibling landed) must be the tip the plan classifies,
+    so the plan fetches again right before it: here the preflight hook itself pushes the rebase."""
+    issue, old = named_member(fx, 0)
+    land_sibling(fx)
+    hook = fx.root / "preflight-pushes-a-rebase.sh"
+    hook.write_text(f"""#!/bin/bash
+set -e
+cd "{fx.work}"
+git checkout -q -B feature/m0 origin/feature/m0 && git rebase -q origin/master && git push -q -f origin feature/m0
+git rev-parse --short=10 HEAD > "{fx.state}/pushed-tip"
+git checkout -q master
+""")
+    fx.train["hooks"] = {"preflight": f"bash {hook}"}
+    fx.write_config()
+    fetched_before = T.git(fx.work, "rev-parse", "--short=10", "origin/feature/m0").stdout.strip()
+    assert fetched_before == old                                   # the clone still holds the old tip when the cycle opens
+    code, cyc = fx.run()
+    new = (fx.state / "pushed-tip").read_text().strip()         # the branch is deleted once landed, so read the hook's record
+    assert new != old and code == 0
+    assert [m["tip"][:10] for m in cyc.record["members"]] == [new]     # the plan took the rebased tip, not the one fetched at open
+    assert fx.on_master(0) and fx.state_of(issue) == "CLOSED"
+    assert f"taking the rebased tip `{new}`" in fx.comments(issue)
