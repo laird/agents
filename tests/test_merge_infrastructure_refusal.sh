@@ -161,6 +161,25 @@ setup
 OUT=$(run "$RECORD; echo 'HOST-BROKEN: docker is not running'; false"); RC=$?
 [ "$RC" -eq 2 ] && ok "(g') without the override the line is not infrastructure" || bad "(g') rc=$RC: $OUT"
 
+# ── (h) a host line QUOTED by a failing test is that test's verdict, never a refusal ──────
+# The default patterns are grepped over the whole run output. A failing test whose assertion
+# quotes "command not found" (or ENOSPC, a heap death, a strerror) must read as a plain red
+# of this change (exit 2 against a green base), not as "the gate did not reach a verdict".
+setup
+BEFORE=$(origin_master)
+QUOTED='echo "FAIL  tests/driver.test.sh > the driver names the missing tool"; echo "AssertionError: expected '"'"'fault'"'"' to match /the generator command is not installed \(bash: tsx: command not found\)/"; echo "AssertionError: expected '"'"'npm ERR! code ENOSPC'"'"' to be '"'"'ok'"'"'"; echo "+   \"FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\","; echo "- \"fatal: write error: No space left on device\""; false'
+OUT=$(run "$RECORD; if [ -f src/app.sh ]; then $QUOTED; fi"); RC=$?
+[ "$RC" -eq 2 ] && ok "(h) a quoted host line is this change's own red (exit 2)" || bad "(h) rc=$RC: $OUT"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(h) nothing pushed" || bad "(h) master moved"
+echo "$OUT" | grep -q "INFRASTRUCTURE" && bad "(h) read as an infrastructure refusal: $OUT" || ok "(h) never read as infrastructure"
+echo "$OUT" | grep -q "tests/driver.test.sh" && ok "(h) the failing test is named" || bad "(h) failing test not named: $OUT"
+# and the shell's own line, unquoted, is still the host's refusal
+for real in 'bash: tsx: command not found' 'scripts/gen.sh: line 3: tsx: command not found' 'Error: ENOSPC: no space left on device, write' 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory' 'fatal: write error: No space left on device' 'bash: fork: retry: Cannot allocate memory'; do
+  setup
+  OUT=$(run "$RECORD; echo '$real'; false"); RC=$?
+  [ "$RC" -eq 3 ] && ok "(h) the real line is a refusal: $real" || bad "(h) rc=$RC for '$real': $OUT"
+done
+
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
 [ "$FAIL" -eq 0 ]

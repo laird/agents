@@ -78,7 +78,10 @@
 #         AUTOCODER_GATE_INFRA_PATTERNS  extended regex (grep -E) over the run's output;
 #           the default covers the `::error::<stage>: INFRASTRUCTURE` marker,
 #           `::error::check-disk-space:`, ENOSPC / "No space left on device", a heap or
-#           memory death and "command not found". A repo appends its own stage names.
+#           memory death and "command not found", EACH ANCHORED to the line the shell,
+#           node, npm, python or the kernel prints (never the same words quoted inside a
+#           failing test's assertion, which is a verdict on the tree). A repo appends its
+#           own stage names, anchored the same way.
 #       * both runs named what failed, and the sets are the same. Named failures are the
 #         run's output lines matching AUTOCODER_GATE_FAILURE_PATTERNS (default: GitHub
 #         `::error::` annotations, lines opening with ❌, vitest/jest/go `FAIL`, pytest
@@ -331,7 +334,26 @@ _gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is t
 # every run to it): the byte offset before the run, and the log from there afterwards.
 # Two readers: an INFRASTRUCTURE line means the host could not run the gate, so the run
 # is no verdict at all; the named-failure lines are what a red-base comparison compares.
-GATE_INFRA_PATTERNS_DEFAULT='^::error::[^:]*: INFRASTRUCTURE|INFRASTRUCTURE --|^::error::check-disk-space:|ENOSPC|No space left on device|JavaScript heap out of memory|Cannot allocate memory|command not found'
+# EVERY ALTERNATIVE IS ANCHORED TO THE LINE THE SHELL, NODE, NPM, PYTHON OR THE KERNEL PRINTS.
+# The patterns are grepped over the WHOLE run output, so a free-text alternative (`command not
+# found`, `ENOSPC`) also matched the text a failing test QUOTED in its own assertion
+# (`AssertionError: expected '...' to match /...(bash: tsx: command not found)/`), and a plain
+# red became "did not reach a verdict": no push, no attribution, a relaunch of the same work.
+# The shapes, one per alternative:
+#   ^::error::<stage>: INFRASTRUCTURE                   the marker (a stage's own refusal, or this script's)
+#   ^<one space-free token> ::error::<stage>: INFRASTRUCTURE --   the marker behind a log prefix
+#   ^::error::check-disk-space:                         a disk stage from before it carried the marker
+#   ^[Error: ENOSPC: ...                                node (`Error:`, `SystemError:`, `[Error:`)
+#   ^npm ERR! code ENOSPC / ^npm error nospc ENOSPC:    npm's rows
+#   ^OSError: [Errno 28] No space left on device, [Errno 12] Cannot allocate memory   python
+#   ...: No space left on device$ / ...: Cannot allocate memory$   libc's strerror ending a line
+#        (git's `fatal: write error:`, cp's `error writing 'x':`, bash's `fork:`)
+#   ^FATAL ERROR: ... JavaScript heap out of memory$    V8's abort, no quote anywhere on the line
+#   ^[bash: ][line N: ]<word>: command not found$       bash's two shapes; dash's `sh: 1: x: not found`
+# An assertion line quotes the text or ends in `'` or `/`, a snapshot diff row ends in `"` or
+# `",`, so none of them matches. A test printing a raw host line verbatim still would.
+GATE_INFRA_PATTERNS_DEFAULT='^::error::[^:]*: INFRASTRUCTURE|^[^ '"'"'"]+ ::error::[^:]*: INFRASTRUCTURE --|^::error::check-disk-space:|^[[:space:]]*\[?[A-Za-z]*Error: ENOSPC: |^npm (ERR!|error) [a-z]+ ENOSPC( |:|$)|^[A-Za-z]*Error: \[Errno [0-9]+\] (No space left on device|Cannot allocate memory)|: (No space left on device|Cannot allocate memory)[[:space:]]*$|^[^'"'"'"]*FATAL ERROR: [^'"'"'"]*JavaScript heap out of memory[[:space:]]*$|^([^ :]+: )?((line )?[0-9]+: )?[^ :]+: (command )?not found[[:space:]]*$'
+
 GATE_INFRA_PATTERNS="${AUTOCODER_GATE_INFRA_PATTERNS:-$GATE_INFRA_PATTERNS_DEFAULT}"
 GATE_FAILURE_PATTERNS_DEFAULT='^::error::|^❌|^[[:space:]]*FAIL[[:space:]]|^FAILED[[:space:]]|^--- FAIL:|^test .* \.\.\. FAILED$|^[[:space:]]*(✗|×)[[:space:]]'
 GATE_FAILURE_PATTERNS="${AUTOCODER_GATE_FAILURE_PATTERNS:-$GATE_FAILURE_PATTERNS_DEFAULT}"
