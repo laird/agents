@@ -160,6 +160,40 @@ systemd_user_available() {
   command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
 }
 
+# The systemd user unit reboot-recover.sh --install writes.
+REBOOT_UNIT_NAME=autocoder-reboot-recover.service
+
+# boot_trigger_missed: 0, printing why, when this host's systemd boot unit is
+# enabled but did not do its job this boot: user-manager startup has finished
+# (default.target is active, which waits for the oneshot unit to exit) and the
+# unit never started (systemd dropped its start job, e.g. to break an ordering
+# cycle, #280) or ran and failed. 1 otherwise, including "not run yet" and
+# hosts with no systemd user manager, where nothing can be said for certain.
+boot_trigger_missed() {
+  local props state="" result="" started=0 line
+  systemd_user_available || return 1
+  systemctl --user is-enabled "$REBOOT_UNIT_NAME" >/dev/null 2>&1 || return 1
+  [ "$(systemctl --user is-active default.target 2>/dev/null)" = active ] || return 1
+  props=$(systemctl --user show "$REBOOT_UNIT_NAME" -p ActiveState -p Result -p ExecMainStartTimestampMonotonic 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      ActiveState=*) state=${line#*=} ;;
+      Result=*) result=${line#*=} ;;
+      ExecMainStartTimestampMonotonic=*) started=${line#*=} ;;
+    esac
+  done <<< "$props"
+  case "$state" in activating|active|reloading|deactivating|"") return 1 ;; esac
+  if [ "${started:-0}" = 0 ]; then
+    echo "$REBOOT_UNIT_NAME is enabled but did not start this boot (systemd dropped its start job; check: systemd-analyze --user verify default.target)"
+    return 0
+  fi
+  if [ -n "$result" ] && [ "$result" != success ]; then
+    echo "$REBOOT_UNIT_NAME ran this boot and failed (Result=$result; see: journalctl --user -u $REBOOT_UNIT_NAME -b)"
+    return 0
+  fi
+  return 1
+}
+
 # systemd_word <s> [arg]: <s> as one double-quoted word in a unit file: \ and
 # " are backslash-escaped and % (specifiers) doubled. Pass "arg" for an
 # ExecStart= ARGUMENT, the only place systemd expands $ (doubled there). The

@@ -50,7 +50,7 @@
 #   Options: --interval N (seconds, --loop only; default 120)
 #
 # Environment:
-#   AUTH_WATCHDOG_STATE_DIR   default ~/.local/state/autocoder/auth-watchdog
+#   AUTH_WATCHDOG_STATE_DIR   default ${XDG_STATE_HOME:-~/.local/state}/autocoder/auth-watchdog
 #   AUTH_WATCHDOG_COOLDOWN    per-pane re-nudge cooldown, seconds (default 600)
 #   AUTH_WATCHDOG_PROBE_CMD   credential probe, run with bash -c; exit 0 = valid
 #   AUTH_WATCHDOG_ERROR_RE    extended regex of auth-error signatures
@@ -73,7 +73,7 @@ SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
 # shellcheck source=mux-send-lib.sh
 source "$SCRIPT_DIR/mux-send-lib.sh"
 
-STATE_DIR="${AUTH_WATCHDOG_STATE_DIR:-$HOME/.local/state/autocoder/auth-watchdog}"
+STATE_DIR="${AUTH_WATCHDOG_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/auth-watchdog}"
 COOLDOWN="${AUTH_WATCHDOG_COOLDOWN:-600}"
 ERROR_RE="${AUTH_WATCHDOG_ERROR_RE:-Could not load Google Cloud credentials|invalid_rapt|reauth related error|OAuth token has expired|Please run /login|authentication_error|Invalid API key}"
 COMPACT_RE='Prompt is too long|automatic compaction failed'
