@@ -66,6 +66,12 @@ case "$START" in
   *) fail "opt-in flags not passed: $START" ;;
 esac
 
+START=$(spawn AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]')
+case "$START" in
+  *"-- --model claude-opus-5-5[1m]") pass "herdr gets a [1m] model unescaped" ;;
+  *) fail "herdr model argv: $START" ;;
+esac
+
 # The opt-in reaches a new pane: its shell does not inherit our environment.
 LIB="$SCRIPTS/worker-launch-lib.sh"
 EXP=$(env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_MANAGER_MODEL AUTOCODER_CLAUDE_PERMISSION_MODE=auto \
@@ -76,7 +82,7 @@ case "$EXP" in
 esac
 [ "$(env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_MANAGER_MODEL -u AUTOCODER_CLAUDE_PERMISSION_MODE bash -c "source '$LIB'; claude_env_exports")" = "" ] \
   && pass "claude_env_exports prints nothing when nothing is configured" || fail "claude_env_exports not empty by default"
-ARGS=$(AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]' bash -c "source '$LIB'; claude_launch_args worker")
+ARGS=$(env -u AUTOCODER_CLAUDE_PERMISSION_MODE AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]' bash -c "source '$LIB'; claude_launch_args worker")
 mkdir -p "$T/globdir" && touch "$T/globdir/claude-opus-5-51"
 OUT=$(cd "$T/globdir" && bash -c "set -- $ARGS; printf '%s|' \"\$@\"")
 [ "$OUT" = "--model|claude-opus-5-5[1m]|" ] && pass "a model with [ ] stays one literal word in a pane shell" || fail "glob/quoting: '$ARGS' -> '$OUT'"

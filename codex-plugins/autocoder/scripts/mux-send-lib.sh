@@ -165,6 +165,10 @@ launch_herdr_agent() {
   local name="$1" kind="$2" pane="$3" launch_cmd="$4"
   local -a argv
   read -r -a argv <<< "$launch_cmd"
+  # The launch command was built for a shell (claude_launch_args %q-quotes, #283),
+  # but here it is split without one: drop the quoting backslashes. Launch words
+  # are validated plain words, so a literal backslash never belongs in them.
+  argv=("${argv[@]//\\/}")
 
   if start_herdr_agent "$name" "$kind" "$pane" "${argv[@]:1}"; then
     echo "   ✓ Registered herdr agent '$name'"
