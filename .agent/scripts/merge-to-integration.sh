@@ -361,12 +361,12 @@ _gate_unpath() {
 }
 # The test files a gate run's output (stdin) names as failing, relative to its worktree.
 _gate_failed_files() {
-  local t rc=0
+  local t
   t=$(mktemp "${TMP_ROOT:-/tmp}/autocoder-gate-failed.XXXXXX") || return 1
   _gate_unpath | sed 's|<worktree>/||g' > "$t"
-  gate_log_failed_tests "$t" files || rc=$?
+  # Plain path-shaped names only: they cross into the gate command's environment.
+  gate_log_failed_tests "$t" files | grep -E '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*$' | grep -vF '..' || true
   rm -f "$t"
-  return "$rc"
 }
 _gate_named_failures() {  # <offset>: the run's failure names, one per line, sorted unique
   _gate_slice "$1" | grep -aE "$GATE_FAILURE_PATTERNS" | _gate_unpath \
@@ -1148,7 +1148,7 @@ _gate_integrated_tree() {
   # The test files that failed, relative to the worktree (#298). A gate command that
   # selects tests by the tree's diff selects nothing on the base, whose diff is empty, so
   # the base run is told which files to re-run. The command may honour the variable.
-  retest_files=$(_gate_failed_files < "$GATE_LAST" | paste -sd' ' -)
+  retest_files=$(sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g' "$GATE_LAST" | _gate_failed_files | paste -sd' ' -)
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."

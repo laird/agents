@@ -135,7 +135,7 @@ gate_log_failed_tests() {  # <log> [files]
     names=$(sed -nE 's/^[[:space:]]+FAIL[[:space:]]+([^ ]+).*/\1/p; s/^FAILED[[:space:]]+([^ ]+).*/\1/p' "$f")
     if [ "${2:-}" = files ]; then
       names=$(printf '%s\n' "$names" | sed 's/::.*//' \
-        | grep -E '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z][A-Za-z0-9]*$' | awk -F/ 'tolower($NF) ~ /test|spec/')
+        | grep -E '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z][A-Za-z0-9]*$' | awk -F/ 'tolower($NF) ~ /test|spec/' || true)
     fi
   fi
   printf '%s\n' "$names" | sed '/^$/d' | sort -u | head -n 50
