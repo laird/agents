@@ -5,7 +5,8 @@ The scripted gate (`gate.sh`, written per fixture) stands in for merge-to-integr
 contract: exit 0 plus a `merged into` line mean the tree landed (here: a fast-forward push to master);
 anything else is red, with an `::error::` line. A member is bad when it adds a file under `bad/`; the red
 line names no path unless the fixture asks it to. `infra.script` lists outcomes consumed one per gate
-(`infra` = an INFRASTRUCTURE refusal). `gates.log` records, per gate, the files the tree adds to master.
+(`infra` = an INFRASTRUCTURE refusal). A tree with no change against master gets the real gate's empty-rebase
+line ("dropped every commit as already upstream") and exit 1, as merge-to-integration.sh prints it. `gates.log` records, per gate, the files the tree adds to master.
 With `squash` present the gate lands the way merge-to-integration.sh lands a branch that holds merge
 commits (every train does): ONE squash commit on master, no member tip in its history; `squash-omit`
 lists paths left out of that commit (a landing that did not carry a member's work).
@@ -39,6 +40,11 @@ printf '%s\n' "$changed" >> "$FX_STATE/gates.log"
 if [ -s "$FX_STATE/infra.script" ]; then
   first=$(head -1 "$FX_STATE/infra.script"); sed -i 1d "$FX_STATE/infra.script"
   if [ "$first" = infra ]; then echo "::error::check-disk-space: INFRASTRUCTURE -- full disk (/tmp)"; exit 1; fi
+fi
+if [ -z "$changed" ]; then
+  # merge-to-integration.sh's own line for a rebase that drops every commit as already upstream
+  echo "❌ Rebasing $1 (${TIP:0:8}) dropped every commit as already upstream, but origin/master ($(git rev-parse --short=8 origin/master)) does not carry its change. NOT closing."
+  exit 1
 fi
 bad=$(git diff --name-only origin/master "$TIP" | grep '^bad/' | head -1)
 if [ -n "$bad" ]; then
@@ -474,3 +480,92 @@ def test_the_publisher_batch_marker_brackets_a_cycle(fx, tmp_path, monkeypatch):
     rows = (fx.state / "publisher.log").read_text().splitlines()
     assert rows[0].startswith("batch-begin --pid") and rows[-1].startswith("batch-end --force")
     assert len(fx.gates()) == 1                                    # the cycle itself pushes nothing to the integration branch
+
+
+# ── an empty landing is terminal: nothing to land, nobody bisected ──────────────────────
+def gen_member(fx, n, paths):
+    """A READY issue whose branch changes only <paths> (generated files on master)."""
+    name = f"feature/g{n}"
+    sh("git", "checkout", "-q", "-B", name, "origin/master", cwd=fx.work)
+    for p in paths:
+        (fx.work / p).write_text(f"edited by g{n}\n")
+    sh("git", "add", "-A", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", f"gen work {n}", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", name, cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", f"g{n}", "--body", "", "--label", "ready-for-review", cwd=fx.work)
+    issue = json.loads(r.stdout)["number"]
+    sh(sys.executable, str(ISSUES_FILE), "comment", str(issue), "--body", f"READY on `{name}`", cwd=fx.work)
+    return issue
+
+
+def generated_on_master(fx, attrs=True):
+    """gen/a.txt and gen/b.txt on master, merged by the `regen` driver when <attrs>, and a regenerate hook
+    that puts them back from the base (what a project's regeneration does to a hand edit of a generated file)."""
+    sh("git", "checkout", "-q", "-B", "master", "origin/master", cwd=fx.work)
+    (fx.work / "gen").mkdir(exist_ok=True)
+    (fx.work / "gen/a.txt").write_text("generated\n")
+    (fx.work / "gen/b.txt").write_text("generated\n")
+    if attrs:
+        (fx.work / ".gitattributes").write_text("gen/* merge=regen\n")
+    sh("git", "add", "-A", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", "generated files", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    hook = fx.root / "regen.sh"
+    hook.write_text("#!/bin/bash\ngit checkout -q \"$AUTOCODER_TRAIN_BASE\" -- gen/\n")
+    fx.train["hooks"] = {**fx.train.get("hooks", {}), "regenerate": f"bash {hook}"}
+    fx.write_config()
+
+
+def test_an_empty_rebase_ends_the_train_as_nothing_to_land_without_a_bisect(fx):
+    generated_on_master(fx, attrs=False)          # not classified at the queue: the gate is where it shows
+    issues = [gen_member(fx, 0, ["gen/a.txt"]), gen_member(fx, 1, ["gen/b.txt"])]
+    code, cyc = fx.run()
+    assert code == 0
+    assert len(fx.gates()) == 1 and fx.gates()[0] == []          # one gate, of a tree with no change; never a second
+    assert [fx.state_of(i) for i in issues] == ["OPEN"] * 2       # nothing closed
+    assert all("landed nothing (regenerate-only or already on the integration branch)" in fx.comments(i) for i in issues)
+    assert all("not bisected" in fx.comments(i) for i in issues)
+    assert sorted(d[0] for d in fx.dropped()) == sorted(str(i) for i in issues)
+    assert all(d[3].startswith("landed nothing") for d in fx.dropped())
+    assert R.State(fx.rc()).limit() == 8                           # an empty landing says nothing about the batch size
+    assert cyc.returned_total == [] and cyc.landed_total == []
+    rows = [ln.split() for ln in (fx.state / "timings.log").read_text().splitlines()]
+    assert any(r[:1] == ["batch"] and "aborted" in r and "other" in r for r in rows)
+    # the queue never offers these tips again: a train dropped them
+    q = {r["issue"]: r for r in T.plan_queue(fx.rc().cfg)}
+    assert {q[i]["state"] for i in issues} == {"train-dropped"}
+    # and a second cycle plans nothing and gates nothing
+    fx.run()
+    assert len(fx.gates()) == 1
+
+
+def test_an_empty_half_in_a_bisection_puts_the_other_half_red_by_inference(fx):
+    generated_on_master(fx, attrs=False)
+    g = [gen_member(fx, 0, ["gen/a.txt"]), gen_member(fx, 1, ["gen/b.txt"])]
+    bad = fx.member(2, bad=True)
+    fx.run()
+    gates = fx.gates()
+    assert gates[0] and gates[1] == []                             # the set is red; the first half (the two gen members) is empty
+    assert fx.state_of(bad) == "OPEN" and "returned" in fx.comments(bad)
+    assert {d[0]: d[3].split(" (")[0].split(" with")[0] for d in fx.dropped()} == {str(g[0]): "landed nothing", str(g[1]): "landed nothing", str(bad): "the gate failed"}
+    assert len(gates) == 2                                         # the bad member alone is red by inference, no third gate
+
+
+def test_a_regenerate_only_item_is_told_once_per_tip_and_never_planned(fx):
+    fx.train["regeneratedMergeDrivers"] = ["regen"]
+    fx.train["regeneratedAdvice"] = "Change the source and regenerate."
+    generated_on_master(fx)
+    gen = gen_member(fx, 0, ["gen/a.txt"])
+    ok = fx.member(1)
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1 and fx.gates()[0] == ["files/m1.txt"]   # the gen member is not in the train
+    assert fx.on_master(1) and fx.state_of(ok) == "CLOSED" and fx.state_of(gen) == "OPEN"
+    told = fx.comments(gen)
+    assert told.count("regenerate-only") == 1 and "`gen/a.txt`" in told and "Change the source and regenerate." in told
+    fx.run()                                                       # a second cycle: no second comment, still not planned
+    assert fx.comments(gen).count("regenerate-only") == 1 and len(fx.gates()) == 1
+    assert fx.dropped() == []                                      # never trained, so never dropped: the queue state keeps it out
+    q = {r["issue"]: r for r in T.plan_queue(fx.rc().cfg)}
+    assert q[gen]["state"] == "regenerate-only"
