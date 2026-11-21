@@ -15,11 +15,12 @@
 #   --loop      run ticks forever, sleeping the interval between them
 #   --ensure    idempotent scheduler install/check: inspects crontab, systemd
 #               user timers, and running --loop processes; installs a cron
-#               entry (preferred), else a systemd user timer that calls the
-#               version-independent idle-sentinel-shim.sh (#273), else starts
-#               a loop, only when NOTHING is scheduled yet (a loop running an
-#               older plugin version's script is replaced); records the
-#               scheduler mode in the state file
+#               entry, a systemd user timer, or (macOS) a launchd agent, the
+#               last two calling the version-independent idle-sentinel-shim.sh
+#               (#273); starts a loop only when none of them works, and only
+#               when NOTHING is scheduled yet (a loop running an older plugin
+#               version's script is replaced). It detects the host at run time
+#               and prints what it found; records the scheduler mode
 #   --dry-run   evaluate the predicate read-only and print, for the detected
 #               (or AUTOCODER_MUX-forced) multiplexer, the exact spawn
 #               commands a wake WOULD run. No side effects: no lock, no
@@ -59,7 +60,7 @@
 # never pane/process ownership):
 #   {
 #     "version": 1,
-#     "scheduler_mode": "cron" | "systemd" | "loop" | "none",
+#     "scheduler_mode": "cron" | "systemd" | "launchd" | "loop" | "none",
 #     "last_tick_at": "<iso8601>",
 #     "last_tick_result": "quiescent"|"wake:<reason>"|"observe"|"error"|
 #                         "backoff:<reason>"|"wake-failed:<reason>"|
@@ -1893,13 +1894,18 @@ detect_scheduler() {
     # The .timer suffix anchors the name so …-agents.timer never matches
     # …-agents-tui.timer.
     local unit_tag esc_name
-    unit_tag=$(sha256_of "$PROJECT_ROOT" | cut -c1-12)
+    unit_tag=$(sentinel_unit_tag)
     esc_name=$(printf '%s' "$PROJECT_NAME" | sed 's/[][\\.*^$()+?{}|]/\\&/g')
     if systemctl --user list-timers --all 2>/dev/null |
        grep -Eq "autocoder-(idle-)?sentinel-($esc_name|$unit_tag)\.timer"; then
       echo systemd
       return 0
     fi
+  fi
+  if command -v launchctl >/dev/null 2>&1 &&
+     launchctl list 2>/dev/null | awk -v l="$(launchd_label)" '$NF == l { f = 1 } END { exit f ? 0 : 1 }'; then
+    echo launchd
+    return 0
   fi
   if [ -n "$(find_project_loop)" ]; then
     echo loop
@@ -1993,6 +1999,74 @@ replace_stale_loop() {
   return 0
 }
 
+# ── host detection (#271, #273) ─────────────────────────────────────────────
+# Nothing about the host is assumed: Arch/Omarchy (systemd user, no crontab),
+# Ubuntu/Debian/Fedora (cron and systemd user), WSL or a container (cron, often
+# no user manager), macOS (launchd; cron needs Full Disk Access). --ensure
+# probes each scheduler, prints what it found, and picks the first that works.
+
+# sentinel_unit_tag: first 12 hex of sha256(project root). Names the systemd
+# units and the launchd label, collision-free across sibling checkouts.
+sentinel_unit_tag() {
+  [ -n "${_SENTINEL_TAG:-}" ] || _SENTINEL_TAG=$(sha256_of "$PROJECT_ROOT" | cut -c1-12)
+  printf '%s' "$_SENTINEL_TAG"
+}
+launchd_label() { printf 'com.autocoder.idle-sentinel.%s' "$(sentinel_unit_tag)"; }
+
+# host_os: macos | linux/<os-release ID>[+wsl] | <kernel name> | unknown
+host_os() {
+  local kernel id
+  kernel=$(uname -s 2>/dev/null)
+  case "$kernel" in
+    Darwin) echo macos ;;
+    Linux)
+      id=$(sed -nE 's/^ID="?([^"]*)"?$/\1/p' "${AUTOCODER_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -1)
+      if [ -n "${WSL_DISTRO_NAME:-}" ] ||
+         grep -qi microsoft "${AUTOCODER_PROC_VERSION:-/proc/version}" 2>/dev/null; then
+        echo "linux/${id:-unknown}+wsl"
+      else
+        echo "linux/${id:-unknown}"
+      fi ;;
+    "") echo unknown ;;
+    *) printf '%s\n' "$kernel" | tr 'A-Z' 'a-z' ;;
+  esac
+}
+
+cron_available() { command -v crontab >/dev/null 2>&1; }
+
+# cron_daemon_running: crontab(1) can exist with no daemon to run the entries
+# (WSL without the cron service, minimal containers). Unknown counts as yes.
+cron_daemon_running() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1
+}
+
+# A launchd agent is the macOS scheduler; launchctl elsewhere is not launchd.
+launchd_available() {
+  [ "$(uname -s 2>/dev/null)" = Darwin ] && command -v launchctl >/dev/null 2>&1
+}
+
+# linger_state: yes | no | n/a (no loginctl, or it cannot tell)
+linger_state() {
+  command -v loginctl >/dev/null 2>&1 || { echo n/a; return; }
+  case "$(loginctl show-user "$(id -un 2>/dev/null)" -p Linger 2>/dev/null)" in
+    Linger=yes) echo yes ;;
+    Linger=no) echo no ;;
+    *) echo n/a ;;
+  esac
+}
+
+yes_no() { if "$@"; then echo yes; else echo no; fi; }
+
+print_host_detection() {
+  local sd linger=n/a cron
+  sd=$(yes_no systemd_user_available)
+  [ "$sd" = yes ] && linger=$(linger_state)
+  cron=$(yes_no cron_available)
+  [ "$cron" = yes ] && ! cron_daemon_running && cron="yes(no daemon running)"
+  echo "host: os=$(host_os) cron=$cron systemd-user=$sd launchd=$(yes_no launchd_available) linger=$linger"
+}
+
 # ── systemd user timer (#273) ───────────────────────────────────────────────
 # Used when crontab is missing (Arch/Omarchy ship without it) and the user
 # manager answers. The detached --loop it replaces dies on reboot, and it
@@ -2070,13 +2144,11 @@ install_sentinel_shim() {
 # warn_if_no_linger: without lingering the user manager, and the timer with
 # it, stops when the user's last session ends and does not start at boot.
 warn_if_no_linger() {
-  command -v loginctl >/dev/null 2>&1 || return 0
-  local user linger
+  local user
   user=$(id -un 2>/dev/null) || return 0
-  linger=$(loginctl show-user "$user" -p Linger 2>/dev/null)
-  if [ "$linger" = "Linger=no" ]; then
+  if [ "$(linger_state)" = no ]; then
     echo "⚠️  Lingering is off for $user: the timer runs only while $user is logged in, and not after a reboot until they log in."
-    echo "    To keep it running: loginctl enable-linger $user"
+    echo "    To keep it running: loginctl enable-linger $user  (may need sudo; never done for you)"
   fi
 }
 
@@ -2124,9 +2196,92 @@ install_systemd_scheduler() {
   return 0
 }
 
+# ── launchd agent (macOS, #271/#273) ─────────────────────────────────────────
+# RunAtLoad runs a tick at login/boot, StartInterval repeats it. Like the
+# systemd unit it runs the shim, with the PATH --ensure ran with (launchd's
+# own PATH is /usr/bin:/bin:/usr/sbin:/sbin, without Homebrew or mise).
+
+LAUNCHD_DIR="$HOME/Library/LaunchAgents"
+
+xml_escape() {
+  local s=${1//&/&amp;}
+  s=${s//</&lt;}
+  s=${s//>/&gt;}
+  printf '%s' "$s"
+}
+
+# The XML comment below must never contain "--" (invalid XML; launchd rejects it).
+render_launchd_plist() {
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Installed by the idle sentinel ensure step (#273): one tick at load and every ${INTERVAL_S}s. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$(launchd_label)</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_escape "$SENTINEL_SHIM")</string>
+    <string>--once</string>
+    <string>--project</string>
+    <string>$(xml_escape "$PROJECT_ROOT")</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$(xml_escape "$PATH")</string>
+    <key>AUTOCODER_SENTINEL_FALLBACK</key>
+    <string>$(xml_escape "$SELF_PATH")</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>${INTERVAL_S}</integer>
+  <key>StandardOutPath</key>
+  <string>$(xml_escape "$AC_DIR/sentinel.cron.log")</string>
+  <key>StandardErrorPath</key>
+  <string>$(xml_escape "$AC_DIR/sentinel.cron.log")</string>
+</dict>
+</plist>
+PLIST
+}
+
+# install_launchd_scheduler: write + load the agent. 0 = scheduled.
+install_launchd_scheduler() {
+  local _p
+  for _p in "$PROJECT_ROOT" "$SELF_PATH" "$SENTINEL_SHIM" "$PATH"; do
+    case "$_p" in *$'\n'*|*$'\r'*)
+      echo "❌ Refusing to write a launchd agent: a path (or PATH) contains a newline ($(printf '%q' "$_p"))." >&2
+      return 1 ;;
+    esac
+  done
+  [ -f "$SENTINEL_SHIM_SRC" ] || { echo "❌ $SENTINEL_SHIM_SRC is missing" >&2; return 1; }
+  local plist="$LAUNCHD_DIR/$(launchd_label).plist"
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN would install the version-independent entry point: $SENTINEL_SHIM (from $SENTINEL_SHIM_SRC)"
+    echo "DRY-RUN would write $plist:"
+    render_launchd_plist | sed 's/^/  /'
+    echo "DRY-RUN would run: launchctl bootstrap gui/$(id -u) $plist"
+    return 0
+  fi
+  install_sentinel_shim || { echo "❌ could not install $SENTINEL_SHIM" >&2; return 1; }
+  mkdir -p "$LAUNCHD_DIR" || return 1
+  render_launchd_plist > "$plist" || { echo "❌ could not write $plist" >&2; return 1; }
+  # bootstrap is the current interface; load -w is what older macOS knows.
+  if ! launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null && ! launchctl load -w "$plist"; then
+    echo "❌ launchctl could not load $plist" >&2
+    return 1
+  fi
+  state_merge "{\"scheduler_mode\": \"launchd\"}"
+  log_event "ENSURE installed launchd agent $(launchd_label) (every ${INTERVAL_S}s)"
+  echo "✅ Sentinel scheduled via launchd: $(launchd_label) (at load and every ${INTERVAL_S}s, runs $SENTINEL_SHIM)"
+  return 0
+}
+
 cmd_ensure() {
   mkdir -p "$AC_DIR"
-  SENTINEL_UNIT="autocoder-idle-sentinel-$(sha256_of "$PROJECT_ROOT" | cut -c1-12)"
+  SENTINEL_UNIT="autocoder-idle-sentinel-$(sentinel_unit_tag)"
   local existing
   existing=$(detect_scheduler)
   if [ "$existing" = loop ] && replace_stale_loop; then
@@ -2137,8 +2292,9 @@ cmd_ensure() {
   if [ "$existing" != none ]; then
     # Keep the shim behind our own timer current: it is the one file the timer
     # does not re-resolve on its own.
-    if [ "$existing" = systemd ] && [ "$DRY_RUN" != true ] &&
-       [ -f "$SYSTEMD_USER_DIR/$SENTINEL_UNIT.timer" ] && [ -f "$SENTINEL_SHIM_SRC" ]; then
+    if [ "$DRY_RUN" != true ] && [ -f "$SENTINEL_SHIM_SRC" ] &&
+       { { [ "$existing" = systemd ] && [ -f "$SYSTEMD_USER_DIR/$SENTINEL_UNIT.timer" ]; } ||
+         { [ "$existing" = launchd ] && [ -f "$LAUNCHD_DIR/$(launchd_label).plist" ]; }; }; then
       install_sentinel_shim || echo "⚠️  could not refresh $SENTINEL_SHIM" >&2
     fi
     echo "✅ Sentinel already scheduled via $existing — nothing to install"
@@ -2146,7 +2302,17 @@ cmd_ensure() {
     return 0
   fi
 
-  if command -v crontab >/dev/null 2>&1; then
+  print_host_detection
+
+  # macOS: launchd is the native scheduler (cron there needs Full Disk Access).
+  if launchd_available; then
+    install_launchd_scheduler && return 0
+    echo "⚠️  launchd agent install failed — trying the next scheduler" >&2
+  fi
+
+  # cron, unless its daemon is not running and a systemd user manager is (a
+  # crontab with no daemon never fires).
+  if cron_available && { cron_daemon_running || ! systemd_user_available; }; then
     # A newline cannot be escaped in a crontab line: it would start a second line,
     # i.e. a cron job of the path's choosing. Refuse rather than install (#235).
     local _p
@@ -2167,6 +2333,10 @@ cmd_ensure() {
     # Every path is quoted for /bin/sh and %-escaped for cron (#235): a ' or % in the
     # project path used to break the line, or run part of it as shell.
     local line="$sched $(cron_escape "cd $(sh_quote "$PROJECT_ROOT") && $(sh_quote "$SELF_PATH") --once >> $(sh_quote "$AC_DIR/sentinel.cron.log") 2>&1 $CRON_MARK")"
+    cron_daemon_running || {
+      echo "⚠️  crontab is installed but no cron daemon is running: the entry will not fire until one starts"
+      echo "    (e.g. sudo service cron start, or enable systemd in WSL)."
+    }
     if [ "$DRY_RUN" = true ]; then
       echo "DRY-RUN would install crontab entry:"
       echo "  $line"
@@ -2182,16 +2352,17 @@ cmd_ensure() {
     return 0
   fi
 
-  # No crontab: a systemd user timer survives a reboot and follows plugin
-  # upgrades (#273), so it comes before the loop.
+  # A systemd user timer survives a reboot and follows plugin upgrades (#273),
+  # so it comes before the loop.
   if systemd_user_available; then
     install_systemd_scheduler && return 0
     echo "⚠️  systemd user timer install failed — falling back to a detached --loop" >&2
   fi
 
-  # Last resort, neither cron nor a systemd user manager: a detached loop
-  # (recorded, so a later --ensure will find it and not double-install).
+  # Last resort, no scheduler works: a detached loop (recorded, so a later
+  # --ensure will find it and not double-install). Say so: it dies at reboot.
   if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN found no scheduler (cron, systemd user, launchd); would fall back to a detached --loop"
     echo "DRY-RUN would start: nohup $(sh_quote "$SELF_PATH") --loop --project $(sh_quote "$PROJECT_ROOT") &"
     return 0
   fi
@@ -2199,7 +2370,8 @@ cmd_ensure() {
   disown
   state_merge "{\"scheduler_mode\": \"loop\"}"
   log_event "ENSURE started detached --loop (pid $!)"
-  echo "✅ No cron available — started a detached --loop (pid $!)"
+  echo "⚠️  No scheduler found (no crontab, systemd user manager or launchd) — started a detached --loop (pid $!)."
+  echo "    It does not survive a reboot or logout: re-run idle-sentinel.sh --ensure after one."
 }
 
 # ── main ────────────────────────────────────────────────────────────────────
@@ -2214,7 +2386,7 @@ case "$MODE" in
     ;;
   loop)
     existing=$(detect_scheduler)
-    if [ "$existing" = cron ] || [ "$existing" = systemd ]; then
+    if [ "$existing" = cron ] || [ "$existing" = systemd ] || [ "$existing" = launchd ]; then
       echo "❌ Refusing --loop: sentinel already scheduled via $existing (never both)" >&2
       exit 1
     fi

@@ -1,15 +1,18 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
-# tests/test_idle_sentinel_systemd.sh — idle-sentinel --ensure on a host with
-# no crontab (#273): systemd user timer + version-independent shim, the
-# Linger warning, stale-loop replacement, and the detached-loop last resort.
+# tests/test_idle_sentinel_systemd.sh — idle-sentinel --ensure scheduler choice
+# per host (#273, portability per #271): systemd user timer + version-independent
+# shim, launchd on macOS, cron on WSL/containers (and a cron with no daemon), the
+# Linger warning, the printed host detection, stale-loop replacement, and the
+# detached-loop last resort.
 #
 # Isolation rules (hard):
 #   - the sentinel runs under `env -i` with HOME in a scratch dir, so units
 #     and the shim land under $TMP, never in the operator's ~/.config;
 #   - PATH is a curated symlink farm of the real PATH MINUS crontab,
-#     systemctl and loginctl, with fakes for the last two in front: nothing
-#     here can reach the real user manager or crontab.
+#     systemctl, loginctl and launchctl, with fakes in front (systemctl,
+#     loginctl, uname, pgrep; crontab and launchctl only where a test adds
+#     them): nothing here can reach the real user manager, crontab or launchd.
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
@@ -49,7 +52,7 @@ for _d in "${_dirs[@]}"; do
   [ -d "$_d" ] || continue
   for _f in "$_d"/*; do
     _n=${_f##*/}
-    case "$_n" in crontab|systemctl|loginctl) continue ;; esac
+    case "$_n" in crontab|systemctl|loginctl|launchctl|uname|pgrep) continue ;; esac
     [ -e "$SAFEBIN/$_n" ] && continue
     [ -x "$_f" ] && [ ! -d "$_f" ] && ln -s "$_f" "$SAFEBIN/$_n" 2>/dev/null
   done
@@ -80,8 +83,58 @@ cat > "$FAKESYS/loginctl" <<'EOF'
 #!/bin/bash
 echo "Linger=${FAKE_LINGER:-yes}"
 EOF
-chmod +x "$FAKESYS/systemctl" "$FAKESYS/loginctl"
+REAL_UNAME=$(command -v uname)
+REAL_PGREP=$(command -v pgrep)
+# uname -s answers $FAKE_UNAME when set; pgrep -x cron|crond answers $FAKE_CROND.
+cat > "$FAKESYS/uname" <<EOF
+#!/bin/bash
+if [ "\$1" = -s ] && [ -n "\${FAKE_UNAME:-}" ]; then echo "\$FAKE_UNAME"; exit 0; fi
+exec "$REAL_UNAME" "\$@"
+EOF
+cat > "$FAKESYS/pgrep" <<EOF
+#!/bin/bash
+if [ "\$1" = -x ] && { [ "\$2" = cron ] || [ "\$2" = crond ]; }; then
+  [ "\${FAKE_CROND:-yes}" = yes ]; exit
+fi
+exec "$REAL_PGREP" "\$@"
+EOF
+chmod +x "$FAKESYS/systemctl" "$FAKESYS/loginctl" "$FAKESYS/uname" "$FAKESYS/pgrep"
 TESTPATH="$FAKESYS:$SAFEBIN"
+
+CRONBIN="$TMP/cronbin"     # temp-file-backed crontab (as in test_idle_sentinel.sh)
+mkdir -p "$CRONBIN"
+cat > "$CRONBIN/crontab" <<'EOF'
+#!/bin/bash
+STORE="${CRONTAB_STORE:?CRONTAB_STORE not set}"
+case "${1:-}" in
+  -l) [ -f "$STORE" ] && cat "$STORE"; exit 0 ;;
+  -r) rm -f "$STORE"; exit 0 ;;
+  -|"") tmp="$STORE.tmp.$$"; cat > "$tmp"; mv "$tmp" "$STORE"; exit 0 ;;
+esac
+EOF
+LDBIN="$TMP/ldbin"         # fake launchctl: bootstrap/load record the label, list prints them
+mkdir -p "$LDBIN"
+cat > "$LDBIN/launchctl" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$SYSD/launchctl.calls"
+case "$1" in
+  bootstrap|load)
+    plist="${!#}"
+    python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["Label"])' "$plist" \
+      >> "$SYSD/launchd.loaded" || exit 5 ;;
+  list)
+    printf 'PID\tStatus\tLabel\n'
+    [ -f "$SYSD/launchd.loaded" ] && sed 's/^/-\t0\t/' "$SYSD/launchd.loaded" ;;
+esac
+exit 0
+EOF
+chmod +x "$CRONBIN/crontab" "$LDBIN/launchctl"
+
+OSREL="$TMP/osrel"; mkdir -p "$OSREL"
+printf 'NAME="Arch Linux"\nID=arch\n' > "$OSREL/arch"
+printf 'NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n' > "$OSREL/ubuntu"
+printf 'Linux version 5.15.153.1-microsoft-standard-WSL2\n' > "$OSREL/procver-wsl"
+printf 'Linux version 6.12.1-arch1-1\n' > "$OSREL/procver-plain"
 
 new_project() {
   local dir
@@ -98,8 +151,9 @@ run_sentinel_at() {
   local envs=()
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  env -i HOME="$FAKEHOME" PATH="$TESTPATH" SYSD="$SYSD" TERM=xterm "${envs[@]}" \
-    bash "$script" "$@"
+  env -i HOME="$FAKEHOME" PATH="$TESTPATH" SYSD="$SYSD" TERM=xterm \
+    AUTOCODER_OS_RELEASE="$OSREL/arch" AUTOCODER_PROC_VERSION="$OSREL/procver-plain" \
+    "${envs[@]}" bash "$script" "$@"
 }
 
 state_mode() {
@@ -113,7 +167,10 @@ unit_for() {
     "$(printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])')"
 }
 
-reset_sysd() { rm -f "$SYSD/calls" "$SYSD/enabled"; rm -rf "$FAKEHOME/.config" "$FAKEHOME/.local"; }
+reset_sysd() {
+  rm -f "$SYSD/calls" "$SYSD/enabled" "$SYSD/launchctl.calls" "$SYSD/launchd.loaded"
+  rm -rf "$FAKEHOME/.config" "$FAKEHOME/.local" "$FAKEHOME/Library"
+}
 
 command -v crontab >/dev/null 2>&1 && PATH="$TESTPATH" command -v crontab >/dev/null 2>&1 \
   && bad "test PATH still has a crontab" || ok "test PATH has no crontab"
@@ -126,6 +183,9 @@ UDIR="$FAKEHOME/.config/systemd/user"
 OUT=$(run_sentinel_at "$SENTINEL" -- --ensure --project "$P" 2>&1)
 echo "$OUT" | grep -q "scheduled via systemd" \
   && ok "--ensure reports scheduled via systemd" || bad "no systemd report: $OUT"
+echo "$OUT" | grep -qx "host: os=linux/arch cron=no systemd-user=yes launchd=no linger=yes" \
+  && ok "--ensure names what it detected (os, cron, systemd-user, launchd, linger)" \
+  || bad "host line: $(echo "$OUT" | grep '^host:')"
 [ -f "$UDIR/$UNIT.timer" ] && [ -f "$UDIR/$UNIT.service" ] \
   && ok "timer and service written under ~/.config/systemd/user" \
   || bad "unit files missing in $UDIR: $(ls "$UDIR" 2>&1)"
@@ -217,8 +277,87 @@ LPID=$(echo "$OUT" | sed -nE 's/.*started a detached --loop \(pid ([0-9]+)\).*/\
 [ -n "$LPID" ] && CLEANUP_PIDS+=("$LPID")
 echo "$OUT" | grep -q "started a detached --loop" \
   && ok "no cron + no systemd → detached --loop" || bad "loop fallback: $OUT"
+echo "$OUT" | grep -q "No scheduler found" && echo "$OUT" | grep -q "does not survive a reboot" \
+  && ok "the loop fallback says why and that it dies at reboot" || bad "loop not explained: $OUT"
 [ ! -e "$FAKEHOME/.config/systemd" ] && ok "no unit written without a user manager" || bad "units written"
 if [ -n "$LPID" ]; then pkill -P "$LPID" 2>/dev/null; kill "$LPID" 2>/dev/null; fi
+
+# ── 5b. macOS: launchd agent (preferred over a crontab that is also there) ──
+reset_sysd
+P=$(new_project mac)
+LABEL="com.autocoder.idle-sentinel.$(unit_for "$P" | sed 's/^autocoder-idle-sentinel-//')"
+PLIST="$FAKEHOME/Library/LaunchAgents/$LABEL.plist"
+MACPATH="$LDBIN:$CRONBIN:$TESTPATH"
+run_mac() { TESTPATH="$MACPATH" run_sentinel_at "$SENTINEL" FAKE_UNAME=Darwin SYSTEMCTL_DOWN=1 \
+  CRONTAB_STORE="$TMP/cron-mac" "$@"; }
+OUT=$(run_mac -- --ensure --project "$P" 2>&1)
+echo "$OUT" | grep -q "^host: os=macos cron=yes systemd-user=no launchd=yes linger=n/a" \
+  && ok "macOS: host line names launchd" || bad "macOS host line: $(echo "$OUT" | grep '^host:')"
+echo "$OUT" | grep -q "scheduled via launchd" && [ -f "$PLIST" ] \
+  && ok "macOS: launchd agent written and reported" || bad "macOS launchd: $OUT"
+PL=$(python3 - "$PLIST" <<'PY2'
+import plistlib, sys
+d = plistlib.load(open(sys.argv[1], "rb"))
+print(d["RunAtLoad"], d["StartInterval"], d["ProgramArguments"][0].endswith("/.local/bin/autocoder-idle-sentinel"),
+      d["ProgramArguments"][1:3], "PATH" in d["EnvironmentVariables"])
+PY2
+)
+[ "$PL" = "True 900 True ['--once', '--project'] True" ] \
+  && ok "macOS: plist parses; RunAtLoad, StartInterval, runs the shim, carries PATH" || bad "plist: $PL"
+grep -q "^bootstrap gui/" "$SYSD/launchctl.calls" && ok "macOS: launchctl bootstrap gui/<uid>" \
+  || bad "launchctl calls: $(cat "$SYSD/launchctl.calls" 2>&1)"
+[ ! -s "$TMP/cron-mac" ] && ok "macOS: no cron entry when launchd works" || bad "cron entry on macOS: $(cat "$TMP/cron-mac")"
+[ "$(state_mode "$P")" = launchd ] && ok "macOS: scheduler_mode=launchd" || bad "mode=$(state_mode "$P")"
+OUT=$(run_mac -- --ensure --project "$P" 2>&1)
+echo "$OUT" | grep -q "already scheduled via launchd" && [ "$(grep -c '^bootstrap' "$SYSD/launchctl.calls")" = 1 ] \
+  && ok "macOS: second --ensure is idempotent" || bad "macOS second run: $OUT"
+reset_sysd
+P=$(new_project macdry)
+OUT=$(run_mac -- --ensure --dry-run --project "$P" 2>&1)
+echo "$OUT" | grep -q "<key>RunAtLoad</key>" && [ ! -e "$FAKEHOME/Library" ] \
+  && ! grep -qE "^(bootstrap|load)" "$SYSD/launchctl.calls" 2>/dev/null \
+  && ok "macOS: --dry-run prints the plist, loads nothing" || bad "macOS dry-run: $OUT"
+
+# ── 5c. WSL / container: cron, no user manager ───────────────────────────────
+reset_sysd
+P=$(new_project wsl)
+STORE="$TMP/cron-wsl"
+OUT=$(TESTPATH="$CRONBIN:$TESTPATH" run_sentinel_at "$SENTINEL" SYSTEMCTL_DOWN=1 FAKE_CROND=no \
+  AUTOCODER_OS_RELEASE="$OSREL/ubuntu" AUTOCODER_PROC_VERSION="$OSREL/procver-wsl" \
+  CRONTAB_STORE="$STORE" -- --ensure --project "$P" 2>&1)
+echo "$OUT" | grep -qx "host: os=linux/ubuntu+wsl cron=yes(no daemon running) systemd-user=no launchd=no linger=n/a" \
+  && ok "WSL: host line names WSL, cron without a daemon, no user manager" \
+  || bad "WSL host line: $(echo "$OUT" | grep '^host:')"
+[ "$(grep -c -- "# autocoder-idle-sentinel:$P\$" "$STORE" 2>/dev/null)" = 1 ] \
+  && ok "WSL: cron entry installed (no systemd user manager)" || bad "WSL cron: $OUT"
+echo "$OUT" | grep -q "no cron daemon is running" \
+  && ok "WSL: warns the entry will not fire without a cron daemon" || bad "no daemon warning: $OUT"
+[ ! -e "$FAKEHOME/.config/systemd" ] && ok "WSL: no systemd unit written" || bad "unit written on WSL"
+
+# Cron with a daemon is still preferred on a host that also has systemd user.
+reset_sysd
+P=$(new_project cronsd)
+STORE="$TMP/cron-cronsd"
+OUT=$(TESTPATH="$CRONBIN:$TESTPATH" run_sentinel_at "$SENTINEL" FAKE_CROND=yes \
+  CRONTAB_STORE="$STORE" -- --ensure --project "$P" 2>&1)
+[ "$(grep -c -- "# autocoder-idle-sentinel:$P\$" "$STORE" 2>/dev/null)" = 1 ] && [ ! -e "$FAKEHOME/.config/systemd" ] \
+  && ok "cron + daemon + systemd user → cron, as before" || bad "cron+systemd: $OUT"
+
+# A crontab with no daemon loses to a working systemd user manager.
+reset_sysd
+P=$(new_project crondead)
+STORE="$TMP/cron-crondead"
+OUT=$(TESTPATH="$CRONBIN:$TESTPATH" run_sentinel_at "$SENTINEL" FAKE_CROND=no \
+  CRONTAB_STORE="$STORE" -- --ensure --project "$P" 2>&1)
+echo "$OUT" | grep -q "scheduled via systemd" && [ ! -s "$STORE" ] \
+  && ok "crontab without a daemon + systemd user → systemd timer, no dead cron entry" || bad "crondead: $OUT"
+
+# An unfamiliar kernel is reported as itself, and nothing breaks.
+reset_sysd
+P=$(new_project bsd)
+OUT=$(run_sentinel_at "$SENTINEL" FAKE_UNAME=FreeBSD SYSTEMCTL_DOWN=1 -- --ensure --dry-run --project "$P" 2>&1)
+echo "$OUT" | grep -q "^host: os=freebsd " && echo "$OUT" | grep -q "found no scheduler" \
+  && ok "unknown host: reported as-is, dry-run plans the loop" || bad "freebsd: $OUT"
 
 # ── 6. a --loop from an older plugin version is replaced ────────────────────
 CACHE="$TMP/cache/mkt/autocoder"
