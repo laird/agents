@@ -698,7 +698,13 @@ merge-train.py ...                                           reopen --issue N --
 backend works. An item is an open issue carrying every `readyLabels` label (and, when `anyLabels` is
 set, at least one of those: a scope, such as the host or team labels whose READYs this queue takes
 when several feed one tracker) whose comments say READY
-(`readyPattern`). The branch is the first backticked branch-shaped name of the newest READY comment that
+(`readyPattern`). The queue lists the tracker states named by `readyStates` (default `["open"]`, one
+`issue_list --state` call each, an issue under two states counted once). A tracker's `open` is its
+CLAIMABLE queue: the GitHub backend's leaves out any issue carrying `working` or another lock or
+blocking label. A project whose convention keeps the claim label on an issue until its landing
+closes it sets `["open", "working"]`, or every READY a worker posts while holding the issue is
+invisible to the queue. The values are `open`, `working`, `blocked` and `all`; anything else refuses
+to load, naming the file. The branch is the first backticked branch-shaped name of the newest READY comment that
 exists on the remote; a later comment naming no branch never shadows it. Comment timestamps are used when
 the backend reports them (GitHub) and are `None` otherwise (ADO and Jira report only a body; the file
 backend keeps comments as blockquotes in the issue body, which are read back with their time). The queue
@@ -747,7 +753,7 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
 
 ```json
 { "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
-             "priorityLabels": ["P0","P1","P2","P3"],
+             "readyStates": ["open", "working"], "priorityLabels": ["P0","P1","P2","P3"],
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",

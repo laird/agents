@@ -36,6 +36,7 @@ DEFAULT_READY_RE = r"(^|[^A-Za-z])READY([^A-Za-z]|$)"
 # The block enqueue.sh prints: a READY carrying it was preflighted on a host that does not gate, never
 # pre-checked, so the batch gate is its first full test. The queue takes it like any other READY and says so.
 DEFAULT_PREFLIGHT_RE = r"=== preflight \(enqueue\.sh\): PASS ==="
+READY_STATES = ("open", "working", "blocked", "all")   # the `issue_list --state` values a READY may be found under
 PREFLIGHT_NOTE = "preflight READY (enqueued from a host that does not gate): the batch gate is its first full test"
 # `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
@@ -59,6 +60,7 @@ class Config:
     integration: str = "master"
     ready_labels: list = field(default_factory=lambda: ["ready-for-review"])
     any_labels: list = field(default_factory=list)   # non-empty: an item must ALSO carry at least one of these
+    ready_states: list = field(default_factory=lambda: ["open"])   # the tracker states a READY is listed under
     priority_labels: list = field(default_factory=lambda: ["P0", "P1", "P2", "P3"])
     lane_labels: list = field(default_factory=lambda: ["hotfix"])
     ready_pattern: str = DEFAULT_READY_RE
@@ -101,10 +103,26 @@ def _default_integration(repo: Path, remote: str) -> str:
     return "master"
 
 
+def _ready_states(raw, path) -> list:
+    """`readyStates`: the tracker states (`issue_list --state`) the queue lists for READYs; default `["open"]`.
+
+    A tracker's `open` is its CLAIMABLE queue, so the GitHub backend's `open` leaves out an issue
+    carrying `working` (and every other lock or blocking label): a project whose convention keeps the
+    claim label on an issue until its landing closes it lists `["open", "working"]`, or a READY posted
+    while the issue is held is never an item. An absent or empty value is the default, like every
+    other key; a value outside READY_STATES is a misspelling the tracker would refuse at list time,
+    so it is refused here, naming the file."""
+    states = list(raw or ["open"])
+    bad = [s for s in states if s not in READY_STATES]
+    if bad:
+        raise SystemExit(f"merge-train: train.readyStates in {path} must be a list of {list(READY_STATES)}; got {states!r}")
+    return states
+
+
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, anyLabels, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, readyStates, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, hooks{prepareScratch, mergeFault}; `enqueue` is enqueue.sh's (see there).
     """
@@ -127,6 +145,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         repo=repo, remote=remote, integration=integration,
         ready_labels=list(raw.get("readyLabels") or ["ready-for-review"]),
         any_labels=list(raw.get("anyLabels") or []),
+        ready_states=_ready_states(raw.get("readyStates"), path),
         priority_labels=list(raw.get("priorityLabels") or ["P0", "P1", "P2", "P3"]),
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
@@ -472,20 +491,27 @@ def priority_rank(cfg: Config, labels):
 
 def list_items(cfg: Config):
     """Open issues carrying every ready label, and at least one `anyLabels` label when any are
-    configured: [{number, labels[], createdAt|None}].
+    configured, listed under each `readyStates` tracker state: [{number, labels[], createdAt|None}].
 
     `readyLabels` is "all of" (the READY state); `anyLabels` is "at least one of" (a scope: several
     hosts or teams feed one queue, each tagging its READYs with its own label, and a queue takes the
-    union it is configured for). An item carrying none of the `anyLabels` is not this queue's."""
-    r = tracker(cfg, "issue_list", "--state", "open", "--label", cfg.ready_labels[0], "--limit", "500")
-    items = []
-    for it in json.loads(r.stdout or "[]"):
-        labels = [(lb["name"] if isinstance(lb, dict) else lb) for lb in it.get("labels") or []]
-        if str(it.get("state", "OPEN")).upper() != "OPEN" or not all(x in labels for x in cfg.ready_labels):
-            continue
-        if cfg.any_labels and not any(x in labels for x in cfg.any_labels):
-            continue
-        items.append({"number": int(it["number"]), "labels": labels, "createdAt": it.get("createdAt")})
+    union it is configured for). An item carrying none of the `anyLabels` is not this queue's.
+    `readyStates` is the tracker states the queue lists (default `["open"]`): a backend's `open` is
+    its claimable queue, which leaves out a claimed (`working`) issue, so a project whose claim label
+    stays on the issue until it lands lists `["open", "working"]`. An issue listed under two states
+    is one item; one the tracker itself reports closed is none."""
+    items, seen = [], set()
+    for state in cfg.ready_states:
+        r = tracker(cfg, "issue_list", "--state", state, "--label", cfg.ready_labels[0], "--limit", "500")
+        for it in json.loads(r.stdout or "[]"):
+            number = int(it["number"])
+            labels = [(lb["name"] if isinstance(lb, dict) else lb) for lb in it.get("labels") or []]
+            if number in seen or str(it.get("state", "OPEN")).upper() != "OPEN" or not all(x in labels for x in cfg.ready_labels):
+                continue
+            if cfg.any_labels and not any(x in labels for x in cfg.any_labels):
+                continue
+            seen.add(number)
+            items.append({"number": number, "labels": labels, "createdAt": it.get("createdAt")})
     return items
 
 

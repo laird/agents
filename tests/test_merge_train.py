@@ -265,6 +265,31 @@ def test_queue_any_labels_takes_an_item_carrying_at_least_one_of_them(fx):
     assert {r["issue"] for r in T.plan_queue(fx.cfg())} == {mac, linux, unscoped}
 
 
+def test_queue_ready_states_lists_a_claimed_issue_when_configured(fx):
+    """`readyStates` is the tracker states the queue lists. A tracker's `open` is its claimable queue, so
+    with the default `["open"]` a READY on a claimed (`working`) issue is no item; `["open", "working"]`
+    lists both, an issue under two states is one item, and an unknown state refuses to load."""
+    fx.branch("feature/free", {"free.txt": "1\n"})
+    fx.branch("feature/held", {"held.txt": "1\n"})
+    free = fx.ready("free", "feature/free")
+    held = fx.ready("held", "feature/held")
+    sh(sys.executable, str(ISSUES_FILE), "claim", str(held), cwd=fx.work)   # working/ until it lands
+    assert fx.cfg().ready_states == ["open"]
+    assert [r["issue"] for r in T.plan_queue(fx.cfg())] == [free]
+    fx.root.joinpath("both.json").write_text(json.dumps({"train": {"readyStates": ["open", "working"]}}))
+    cfg = T.load_config(fx.work, fx.root / "both.json")
+    assert cfg.ready_states == ["open", "working"]
+    assert {r["issue"] for r in T.plan_queue(cfg)} == {free, held}
+    fx.root.joinpath("twice.json").write_text(json.dumps({"train": {"readyStates": ["all", "open", "working"]}}))
+    rows = T.plan_queue(T.load_config(fx.work, fx.root / "twice.json"))
+    assert sorted(r["issue"] for r in rows) == sorted([free, held])   # once each
+    fx.root.joinpath("typo.json").write_text(json.dumps({"train": {"readyStates": ["open", "wroking"]}}))
+    with pytest.raises(SystemExit, match=r"train\.readyStates in .*typo\.json .*wroking"):
+        T.load_config(fx.work, fx.root / "typo.json")
+    fx.root.joinpath("empty.json").write_text(json.dumps({"train": {"readyStates": []}}))
+    assert T.load_config(fx.work, fx.root / "empty.json").ready_states == ["open"]   # empty = the default
+
+
 def test_queue_states(fx):
     fx.branch("feature/ok", {"ok.txt": "1\n"})
     fx.branch("feature/held", {"held.txt": "1\n"})
