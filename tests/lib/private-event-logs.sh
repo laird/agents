@@ -20,9 +20,10 @@
 _pel_mk() { mktemp "${TMPDIR:-/tmp}/$1.XXXXXX" 2>/dev/null || mktemp "/tmp/$1.XXXXXX"; }
 [ -n "${AUTOCODER_ISSUE_EVENTS:-}" ] || AUTOCODER_ISSUE_EVENTS=$(_pel_mk test-issue-events)
 [ -n "${AUTOCODER_MERGE_EVENTS:-}" ] || AUTOCODER_MERGE_EVENTS=$(_pel_mk test-merge-events)
+[ -n "${AUTOCODER_LANDING_TIMINGS:-}" ] || AUTOCODER_LANDING_TIMINGS=$(_pel_mk test-landing-timings)
 unset -f _pel_mk
-if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ]; then
+if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ] || [ -z "${AUTOCODER_LANDING_TIMINGS:-}" ]; then
   echo "private-event-logs.sh: cannot create a private event log; refusing to run against the real one" >&2
   exit 1
 fi
-export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS
+export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS AUTOCODER_LANDING_TIMINGS

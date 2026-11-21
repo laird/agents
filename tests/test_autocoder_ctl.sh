@@ -154,7 +154,7 @@ grep -q 'released\*\* by dashboard-ui' <<<"$TEXT" && grep -q 'Reason\*\*: worker
   && ok "a comment names the actor and the reason" || bad "comment: $J"
 
 run 1 false "releasing an unclaimed issue fails" -- "$CTL" release "$N"
-run 0 true "release without --reason uses \$USER" -- env -u AUTOCODER_CTL_ACTOR USER=someone sh -c \
+run 0 true "release without --reason uses \$USER" -- env -u AUTOCODER_CTL_ACTOR USER=someone bash -c \
   "cd '$TMP/repo' && ( . '$SCRIPTS/issue-fns.sh' >/dev/null 2>&1; issue_claim $N >/dev/null 2>&1 ) ; '$CTL' release $N"
 jq -e '.detail.actor == "someone" and .detail.reason == null' <<<"$OUT" >/dev/null && ok "actor falls back to \$USER" || bad "fallback: $OUT"
 

@@ -117,14 +117,14 @@ eq "manager update keeps the herdr pane" "h-mgr %1" "$(J "$M" 'm["manager"]["her
 # A live manager recorded under another pid is not displaced (#217); a dead
 # one is, and so is a recycled pid, a pane shell whose agent has exited, and a
 # recorded pid that is this process's ancestor. "Live" means an agent CLI runs
-# at or under the recorded pid, so the stand-in agent is a copy of sleep named
-# claude (one process, so killing it leaves nothing holding the output pipe).
+# at or under the recorded pid, so the stand-in agent is a copy of bash named
+# claude (blocked in a builtin read: one process, so killing it leaves nothing holding the output pipe).
 mkdir -p "$TMP/bin"
-cp "$(command -v sleep)" "$TMP/bin/claude"
+cp "$(command -v bash)" "$TMP/bin/claude"; mkfifo "$TMP/hold"  # a copy of sleep is a multicall-binary applet name on some hosts; bash blocking in `read` is one process on any
 stop_tree() { pkill -P "$1" 2>/dev/null; kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; }
 MREG() { (cd "$P" && bash "$REG" --manager "$@" 2>&1); }
 
-"$TMP/bin/claude" 300 >/dev/null 2>&1 & LIVE=$!
+"$TMP/bin/claude" -c 'read -t 300 <&3' 3<>"$TMP/hold" >/dev/null 2>&1 & LIVE=$!
 MREG --pid $LIVE >/dev/null
 OUT=$(TMUX_PANE=%8 MREG --pid $$); RC=$?
 eq "live manager kept: exit 0" "0" "$RC"
@@ -140,7 +140,7 @@ TMUX_PANE=%8 MREG --pid $$ >/dev/null
 eq "recycled pid replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
 stop_tree $LIVE
 
-bash -c '"$0" 300; true' "$TMP/bin/claude" >/dev/null 2>&1 & SHELL_PID=$!
+bash -c '"$0" -c "read -t 300 <&3" 3<>"$1"; true' "$TMP/bin/claude" "$TMP/hold" >/dev/null 2>&1 & SHELL_PID=$!
 sleep 0.3
 MREG --pid $SHELL_PID >/dev/null
 TMUX_PANE=%8 MREG --pid $$ >/dev/null
@@ -152,14 +152,14 @@ TMUX_PANE=%8 MREG --pid $$ >/dev/null
 eq "pane shell with no agent under it replaced" "$$" "$(J "$M" 'm["manager"]["pid"]')"
 stop_tree $SHELL_PID; stop_tree $STALE
 
-"$TMP/bin/claude" 300 >/dev/null 2>&1 & LIVE=$!
+"$TMP/bin/claude" -c 'read -t 300 <&3' 3<>"$TMP/hold" >/dev/null 2>&1 & LIVE=$!
 MREG --pid $LIVE >/dev/null; stop_tree $LIVE
 TMUX_PANE=%8 MREG --pid $$ >/dev/null
 eq "dead manager replaced" "$$ %8" "$(J "$M" 'str(m["manager"]["pid"])+" "+m["manager"]["tmuxTarget"]')"
 # The recorded pid ($$) is live (an agent runs under it) and is an ancestor of
 # the registering helper: the same manager re-registering, so it is replaced.
-"$TMP/bin/claude" 300 >/dev/null 2>&1 & UNDER=$!
-"$TMP/bin/claude" 300 >/dev/null 2>&1 & OTHER=$!
+"$TMP/bin/claude" -c 'read -t 300 <&3' 3<>"$TMP/hold" >/dev/null 2>&1 & UNDER=$!
+"$TMP/bin/claude" -c 'read -t 300 <&3' 3<>"$TMP/hold" >/dev/null 2>&1 & OTHER=$!
 MREG --pid $OTHER >/dev/null
 eq "recorded live ancestor pid is replaced" "$OTHER" "$(J "$M" 'm["manager"]["pid"]')"
 stop_tree $OTHER; stop_tree $UNDER
