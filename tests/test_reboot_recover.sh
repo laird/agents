@@ -91,7 +91,9 @@ manifest() {  # manifest <repo> <state> [agent]
   mkdir -p "$T/$1/.autocoder/swarm"
   printf '{"session":"s","state":"%s","agent":"%s"}\n' "$2" "${3:-claude}" > "$T/$1/.autocoder/swarm/s.json"
 }
-run() { local bin="$1"; shift; PATH="$bin:$PATH" bash "$SCRIPT" "$@" 2>&1; }
+# Run from the temp dir (#292): a case that names no swarm must never fall back
+# to this checkout. stdin is not a terminal, so the script does not use $PWD anyway.
+run() { local bin="$1"; shift; (cd "$T" && PATH="$bin:$PATH" bash "$SCRIPT" "$@" 2>&1 </dev/null); }
 
 # ── 1. herdr: two swarms, one restored manager, one non-swarm repo ───────────
 setup
@@ -247,6 +249,15 @@ OUT=$(run "$T/nobin" --project "$T/gamma")
 [ ! -s "$HERDR_DIR/sentinel" ] && pass "repo without <repo>-wt-* worktrees: nothing started" || fail "started: $(cat "$HERDR_DIR/sentinel")"
 OUT=$(run "$T/nobin" --project /nonexistent-dir); RC=$?
 [ "$RC" -eq 0 ] && [ ! -s "$HERDR_DIR/sentinel" ] && pass "a non-repo directory is ignored" || fail "rc=$RC: $OUT"
+# ── 9. Nothing names a swarm, not at a terminal: $PWD is not used (#292) ─────
+setup
+OUT=$(cd "$T/alpha" && PATH="$T/nobin:$PATH" bash "$SCRIPT" 2>&1 </dev/null); RC=$?
+[ "$RC" -eq 0 ] && [ ! -s "$HERDR_DIR/sentinel" ] && pass "no named swarm: nothing started from \$PWD" || fail "rc=$RC sentinel=$(cat "$HERDR_DIR/sentinel"): $OUT"
+[ ! -e "$T/alpha/.autocoder/wake" ] && pass "no named swarm: no wake file in \$PWD's repo" || fail "wake file written in \$PWD's repo"
+has "no named swarm: says so" "nothing names a swarm" "$OUT"
+OUT=$(cd "$T/alpha" && PATH="$T/nobin:$PATH" bash "$SCRIPT" --project . 2>&1 </dev/null)
+has "an explicit --project . still works non-interactively" "SENTINEL --once --project $T/alpha" "$(cat "$HERDR_DIR/sentinel")"
+
 OUT=$(bash "$SCRIPT" --bogus 2>&1); RC=$?
 [ "$RC" -eq 1 ] && pass "unknown argument exits 1" || fail "rc=$RC"
 

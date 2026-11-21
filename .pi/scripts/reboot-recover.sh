@@ -55,7 +55,8 @@
 # Usage: reboot-recover.sh [--project DIR]... [--all] [--boot] [--dry-run]
 #        reboot-recover.sh --install [--dry-run]
 #   --project DIR  a directory inside a swarm's repository (repeatable; default:
-#                  $PWD when nothing else names a swarm)
+#                  $PWD when nothing else names a swarm and stdin is a terminal;
+#                  a non-interactive run with nothing named does nothing, #292)
 #   --all          also every root in the swarm-roots registry
 #   --boot         once per boot: skip when this boot was already recovered;
 #                  implies --all
@@ -600,10 +601,18 @@ if [ "$ALL" = true ]; then
 fi
 while IFS='	' read -r _ cwd _; do [ -n "${cwd:-}" ] && CANDIDATES+=("$cwd"); done <<< "$PANES"
 while IFS= read -r cwd; do [ -n "$cwd" ] && CANDIDATES+=("$cwd"); done <<< "${WS_CWDS:-}"
-[ "${#CANDIDATES[@]}" -gt 0 ] || CANDIDATES+=("$PWD")
+# $PWD stands in only for a person at a terminal (#292): a script or test run from
+# inside a checkout, with nothing naming a swarm, must not wake that checkout's swarm.
+if [ "${#CANDIDATES[@]}" -eq 0 ]; then
+  if [ -t 0 ]; then
+    CANDIDATES+=("$PWD")
+  else
+    echo "reboot-recover: nothing names a swarm (no --project, no herdr panes or workspaces, no registered roots) and stdin is not a terminal, so \$PWD is not used; pass --project DIR"
+  fi
+fi
 
 ROOTS=""   # newline-separated, unique
-for c in "${CANDIDATES[@]}"; do
+for c in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do
   root=$(main_checkout "$c") || continue
   case "
 $ROOTS" in *"
