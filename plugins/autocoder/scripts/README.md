@@ -771,3 +771,29 @@ runs still count as gate paths for the scoped re-gate. Full manifest reference: 
 
 Tests: `tests/test_stage_runner.py` (scripted stages) and the manifest case of
 `tests/test_merge_scoped_regate.sh`.
+
+## Reboot recovery: `reboot-recover.sh` and `worktree-issue.sh` (#274)
+
+After a host reboot herdr restores panes and resumes each agent's session, but no
+turn restarts. tmux restores nothing. The worktrees, their branches and their
+uncommitted edits are still on disk. Recovery is split in two:
+
+- `reboot-recover.sh [--project DIR]... [--dry-run]` starts **one manager per
+  swarm**, and nothing else. A swarm is a repo main checkout with at least one
+  `<repo>-wt-*` worktree. Swarms are found from `--project` and from the working
+  directories of herdr's panes and workspaces. A swarm whose manifests all say
+  `paused` is skipped. A restored manager pane in the repo root is prompted with
+  the sentinel's wake prompt. Two or more such panes are reported, and none is
+  prompted. With none, the script writes `.autocoder/wake` and runs
+  `idle-sentinel.sh --once` for that root, so the sentinel does the spawn: it
+  detects the multiplexer, checks no manager is alive, and records the manager in
+  the manifest. The run prints what it detected (`host mux=...`). The sentinel's
+  `reboot` wake calls it (#275), and it marks the nested sentinel run with
+  `AUTOCODER_REBOOT_RECOVER=1` so that wake does not recurse.
+- The manager does the worktrees (`manager-resume`, Step 4b). `worktree-issue.sh`
+  prints, per `<repo>-wt-*` worktree, the issue its branch names
+  (`feature/issue-N`, `enhancement/issue-N-auto`), whether it is open and claimed,
+  and the command its worker should get: `/autocoder:fix N`, or
+  `/autocoder:fix-loop` when the issue is closed or the branch names none.
+  `--orphan-claims` lists the `working` claims whose worktree is gone; only those
+  are released.

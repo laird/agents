@@ -215,6 +215,58 @@ Ready. Run /autocoder:monitor-workers to dispatch work.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
+### Step 4b: Reboot recovery (one worker per worktree, on its own issue)
+
+Run this step when you were woken with `reason: reboot` (sent by `reboot-recover.sh`,
+#274), or when any `<repo>-wt-*` worktree has no live worker agent. After a reboot every
+worktree still has its branch, its commits and its uncommitted edits. The goal is one
+worker per worktree, continuing the issue that worktree already holds, not re-triaging
+the queue.
+
+```bash
+# Resolve SCRIPT_DIR — see scripts/README.md#script-dir
+SCRIPT_DIR=$(
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/issue-fns.sh" ] && [ -f "$d/worktree-issue.sh" ]; then echo "$d"; exit 0; fi
+  done
+  find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | while read -r d; do if [ -f "$d/worktree-issue.sh" ]; then echo "$d"; fi; done \
+    | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+)
+bash "$SCRIPT_DIR/worktree-issue.sh"              # <path> <branch> <issue> <state> <command>
+bash "$SCRIPT_DIR/worktree-issue.sh" --orphan-claims   # claims whose worktree is gone
+```
+
+For each worktree row:
+
+1. **Exactly one worker.** Find the agents whose working directory is in that worktree
+   (herdr: `herdr agent list` plus `herdr pane get <pane>`; tmux and cmux: the pane's
+   current path). Never adopt tmux panes after a reboot, because tmux restores none.
+   - One agent → adopt it. If its status line shows `ctx` at or above 85%, send `/clear`
+     first.
+   - Two or more → keep one and close the others (herdr: `herdr pane close <pane>`).
+   - None → spawn one with `bash "$SCRIPT_DIR/restart-worker.sh" --worktree <path>`. It
+     opens the pane or workspace and starts the worker on that worktree's branch.
+2. **Send its command** (the row's last column) to the adopted worker:
+   `/autocoder:fix <N>` when the state is `claimed`, `open` or `unknown`. That continues the
+   same issue on its branch with its edits. Send `/autocoder:fix-loop` when the issue is
+   `closed` or the branch names none (`none`). A spawned worker's loop resumes its own
+   claim by itself, so it needs no prompt.
+3. **Claims.** Release a `working` claim only when its worktree is gone, i.e. a row from
+   `--orphan-claims`. Comment first, then remove the label. In this step do NOT release
+   claims for worktrees that still exist, even if they look stale; Step 5's 60-minute
+   rule does not apply to them after a reboot.
+4. **Housekeeping.** Run `git worktree prune`. For each
+   `<state-dir>/autocoder-merge-<repo-id>-<N>.pid` (the root `autocoder_tmp_root`
+   prints) whose process is dead and that has no `.exit`, the merge job died with the
+   host. Rebase that issue's branch and launch `merge-launch.sh` again, or report it if
+   the branch is gone.
+
+**Non-interactive mode:** do all of the above without asking; it changes no issue except
+the orphaned claims' labels.
+
 ### Step 5: Handle stale working labels
 
 If any stale "working" labels were found (issue marked working but worker idle >60min), ask the manager:
