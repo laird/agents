@@ -10,8 +10,8 @@
 # A record is kept when its "repo" is the repo id (repo-id-fns.sh) of a known
 # repo: every root in the swarm-roots registry (reboot-lib.sh), every --root,
 # and every --keep-repo. Everything else is dropped, including a record with no
-# "repo" or a null one. Lines that are not JSON are kept and counted, so nothing
-# this script cannot read is lost. landing-timings.jsonl carries no repo, so it
+# "repo" or a null one. Lines that are not JSON, or whose "repo" is not a
+# string, are kept and counted, so nothing this script cannot judge is lost. landing-timings.jsonl carries no repo, so it
 # cannot be sorted this way and is left alone.
 #
 # Usage: prune-test-events.sh [--apply] [--state-dir DIR] [--root PATH]... [--keep-repo ID]...
@@ -66,6 +66,9 @@ fi
 echo "Keeping records for: $(printf '%s\n' "${KEEP[@]}" | sort -u | tr '\n' ' ')"
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+# The summary goes outside the state dir, so a dry run writes nothing there.
+SUMMARY=$(mktemp "${TMPDIR:-/tmp}/prune-test-events.XXXXXX") || exit 1
+trap 'rm -f "$SUMMARY"' EXIT
 rc=0
 for name in merge-events.jsonl issue-events.jsonl; do
   f="$STATE_DIR/$name"
@@ -86,6 +89,9 @@ with open(src, "rb") as fh:
             rec = json.loads(raw)
             repo = rec.get("repo") if isinstance(rec, dict) else None
         except ValueError:
+            repo = ...
+        if not (repo is None or isinstance(repo, str)):
+            # not JSON, or a repo that is not a string: keep what we cannot judge
             unreadable += 1
             lines.append(raw)
             continue
@@ -102,9 +108,8 @@ top = ", ".join(f"{k} {v}" for k, v in gone.most_common(5))
 print(f"keep {kept}, drop {dropped}" + (f", unreadable (kept) {unreadable}" if unreadable else "")
       + (f"; dropped repos: {top}" if top else ""))
 PY
-  ) > "$out.summary" || { echo "$name: could not read it" >&2; rm -f "$out" "$out.summary"; rc=1; continue; }
-  echo "$name: $(cat "$out.summary")"
-  rm -f "$out.summary"
+  ) > "$SUMMARY" || { echo "$name: could not read it" >&2; rm -f "$out"; rc=1; continue; }
+  echo "$name: $(cat "$SUMMARY")"
   [ "$APPLY" = true ] && [ -f "$out" ] || { rm -f "$out"; continue; }
   if [ "$(wc -c < "$f" | tr -d ' ')" != "$size_before" ]; then
     echo "$name: grew while being pruned (a live writer); left unchanged, re-run when it is quiet" >&2

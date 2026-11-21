@@ -50,8 +50,11 @@ SUITE_LOG=$(mktemp "${TMPDIR:-/tmp}/shell-suite.XXXXXX")
 # script) ignoring XDG_STATE_HOME. A scratch HOME rather than a before/after
 # comparison of the real dir, because live workers on this host keep appending
 # to the real logs while the suite runs (a merge gate always has neighbours).
-# Config, data and cache stay where they were, so git identity, gh and pip
-# user installs behave as before.
+# The user's git config, ~/.config, ~/.cache, ~/.local/{share,lib,bin} and any
+# HOME-rooted toolchain (pyenv, asdf, nvm, rustup, cargo) are linked in, so git
+# identity, gh and shimmed interpreters still resolve. Not linked: ~/.claude
+# (tests that read the installed plugin cache fall back to their built-in data)
+# and macOS ~/Library (launchd tests must not reach the real LaunchAgents).
 REAL_HOME="${HOME:-}"
 SUITE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/suite-home.XXXXXX")
 SUITE_STATE=$(mktemp -d "${TMPDIR:-/tmp}/suite-state.XXXXXX")
@@ -61,7 +64,7 @@ trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LANDING" "$SUITE_LOG";
 # to the real one.
 if [ -n "$REAL_HOME" ] && [ -d "$REAL_HOME" ]; then
     mkdir -p "$SUITE_HOME/.local"
-    for p in .gitconfig .config .cache .local/share .local/lib .local/bin; do
+    for p in .gitconfig .config .cache .local/share .local/lib .local/bin .pyenv .asdf .nvm .rustup .cargo; do
         [ -e "$REAL_HOME/$p" ] && ln -s "$REAL_HOME/$p" "$SUITE_HOME/$p"
     done
 fi

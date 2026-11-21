@@ -25,6 +25,7 @@ reset() {
     printf '{"repo":null,"issue":2}\n'
     printf '{"issue":3}\n'
     printf 'not json\n'
+    printf '{"repo":{"odd":1},"issue":7}\n'
     printf '{"repo":"other-5678","issue":4}\n'
   } > "$STATE/merge-events.jsonl"
   printf '{"repo":"worker-1","issue":5}\n{"repo":"%s","issue":6}\n' "$REAL_ID" > "$STATE/issue-events.jsonl"
@@ -47,14 +48,14 @@ printf '%s\n' "$TMP/realrepo" > "$AUTOCODER_REBOOT_STATE_DIR/swarm-roots"
 BEFORE=$(cat "$STATE/merge-events.jsonl")
 OUT=$(bash "$PRUNE" --state-dir "$STATE" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "dry run exits 0" || bad "dry run rc=$RC: $OUT"
-echo "$OUT" | grep -q "merge-events.jsonl: keep 1, drop 4, unreadable (kept) 1" && ok "dry run counts (registry root kept)" || bad "dry-run counts: $OUT"
+echo "$OUT" | grep -q "merge-events.jsonl: keep 1, drop 4, unreadable (kept) 2" && ok "dry run counts (registry root kept)" || bad "dry-run counts: $OUT"
 [ "$(cat "$STATE/merge-events.jsonl")" = "$BEFORE" ] && ok "dry run leaves the file alone" || bad "dry run changed the file"
-[ -z "$(ls "$STATE" | grep bak)" ] && ok "dry run makes no backup" || bad "dry run backed up: $(ls "$STATE")"
+[ "$(ls -A "$STATE" | tr '\n' ' ')" = "issue-events.jsonl landing-timings.jsonl merge-events.jsonl " ] && ok "dry run writes nothing in the state dir" || bad "dry run left: $(ls -A "$STATE")"
 
 echo "=== --apply rewrites with a backup ==="
 OUT=$(bash "$PRUNE" --state-dir "$STATE" --apply 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "apply exits 0" || bad "apply rc=$RC: $OUT"
-[ "$(issues_in "$STATE/merge-events.jsonl")" = "1 bad " ] && ok "kept the real repo's record and the unreadable line" || bad "merge-events now: $(issues_in "$STATE/merge-events.jsonl")"
+[ "$(issues_in "$STATE/merge-events.jsonl")" = "1 bad 7 " ] && ok "kept the real repo's record, the non-JSON line and the non-string repo" || bad "merge-events now: $(issues_in "$STATE/merge-events.jsonl")"
 [ "$(issues_in "$STATE/issue-events.jsonl")" = "6 " ] && ok "issue-events pruned too" || bad "issue-events now: $(issues_in "$STATE/issue-events.jsonl")"
 BAK=$(ls "$STATE"/merge-events.jsonl.bak-* 2>/dev/null | head -1)
 [ -n "$BAK" ] && [ "$(cat "$BAK")" = "$BEFORE" ] && ok "backup holds the original" || bad "backup missing or wrong: $BAK"
