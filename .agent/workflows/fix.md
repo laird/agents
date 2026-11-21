@@ -920,7 +920,7 @@ agent activity and reclaims them with human confirmation.
 
 ## Pre-Landing Review Gate (MANDATORY)
 
-**Order: trial-rebase first, then review (#222).** Every landing block below rebases onto
+**Order: trial-rebase first, then review (#222).** The shared landing section ("Landing the Work") rebases onto
 the integration branch before its review check. A rebase that moves HEAD invalidates the
 review record, so run that trial rebase *before* this gate. Reviewing first and rebasing
 after means reviewing twice.
@@ -1157,7 +1157,7 @@ git fetch -q origin "$PARENT_BRANCH" && git rebase "origin/${PARENT_BRANCH}" \
   || { git diff --name-only --diff-filter=U; echo "resolve, git rebase --continue, re-run the targeted tests"; }
 ```
 
-Every landing block below also does a trial rebase right before its review check.
+The shared landing section also does a trial rebase right before its review check.
 
 **Declare the areas you edit: keep `Touches:` current (#229).** The fix-loop gate
 steers other workers away from files a claimed issue holds (`claims.avoid_overlap`,
@@ -1192,7 +1192,7 @@ For simple issues, proceed directly:
 2. Implement a complete fix (not partial)
 3. Run targeted tests to verify the fix works
 4. Create a git commit with the changes
-5. Trial-rebase onto the integration branch (the landing block below does it), then run the Pre-Landing Review Gate (above) on the rebased HEAD and resolve its findings
+5. Trial-rebase onto the integration branch ("Landing the Work", after Step 3, does it), then run the Pre-Landing Review Gate (above) on the rebased HEAD and resolve its findings
 6. Mark as complete
 
 ```bash
@@ -1207,7 +1207,7 @@ Detailed explanation of what was fixed and how.
 
 Co-Authored-By: Antigravity <noreply@antigravity.ai>"
 
-# Land it: "Landing the Work" below runs the rebase, review check, push and merge.
+# Land it: skip Step 3 and go straight to "Landing the Work", which runs the rebase, review check, push and merge.
 LAND_NUM="$ISSUE_NUM"; LAND_BRANCH="feature/issue-${ISSUE_NUM}"; LAND_TITLE="$ISSUE_TITLE"; LAND_BODY="$ISSUE_BODY"
 ```
 
@@ -1254,6 +1254,7 @@ work and set four variables. Run its commit block first, then this one:
 ```bash
 : "${LAND_NUM:?set LAND_NUM, LAND_BRANCH, LAND_TITLE and LAND_BODY in the flow's commit block first}"
 : "${LAND_BRANCH:?set LAND_BRANCH in the flow's commit block first}"
+: "${LAND_TITLE:?set LAND_TITLE in the flow's commit block first}"
 
 # Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
 TRIAL_BASE="${PARENT_BRANCH:?PARENT_BRANCH unset — re-run the branch setup block above}"
