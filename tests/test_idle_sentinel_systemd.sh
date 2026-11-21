@@ -263,24 +263,25 @@ echo "$OUT" | grep -q "DRY-RUN would stop the --loop (pid $LOOPPID)" && kill -0 
 pkill -P "$LOOPPID" 2>/dev/null; kill "$LOOPPID" 2>/dev/null
 
 # ── 7. the shim resolves the sentinel at run time ───────────────────────────
-SC="$TMP/shimcache/mkt/autocoder"
-for v in 1.9.0 1.10.0; do
-  mkdir -p "$SC/$v/scripts"
-  printf '#!/bin/bash\necho "cache %s $*"\n' "$v" > "$SC/$v/scripts/idle-sentinel.sh"
-done
+SC="$TMP/shimcache"
+mkcached() {  # mkcached <marketplace> <version>
+  mkdir -p "$SC/$1/autocoder/$2/scripts"
+  printf '#!/bin/bash\necho "cache %s %s $*"\n' "$1" "$2" > "$SC/$1/autocoder/$2/scripts/idle-sentinel.sh"
+}
+mkcached zzz-mkt 1.9.0
+mkcached aaa-mkt 1.10.0
+mkcached zzz-mkt not-a-version
 SP="$TMP/shimproj"
 mkdir -p "$SP/.agent/scripts"
 printf '#!/bin/bash\necho "project $*"\n' > "$SP/.agent/scripts/idle-sentinel.sh"
+: > "$SP/.agent/scripts/issue-fns.sh"
 run_shim() { env -i HOME="$FAKEHOME" PATH="$SAFEBIN" "$@"; }
 
-OUT=$(run_shim AUTOCODER_PLUGIN_CACHE="$TMP/shimcache" bash "$SHIM_SRC" --once --project "$SP")
-[ "$OUT" = "cache 1.10.0 --once --project $SP" ] \
-  && ok "shim: incomplete project tree (no issue-fns.sh) → newest cached version by sort -V" \
+OUT=$(run_shim AUTOCODER_PLUGIN_CACHE="$SC" bash "$SHIM_SRC" --once --project "$SP")
+[ "$OUT" = "cache aaa-mkt 1.10.0 --once --project $SP" ] \
+  && ok "shim: newest version by sort -V on the version, whatever the marketplace name" \
   || bad "shim newest: $OUT"
-: > "$SP/.agent/scripts/issue-fns.sh"
-OUT=$(run_shim AUTOCODER_PLUGIN_CACHE="$TMP/shimcache" bash "$SHIM_SRC" --once --project "$SP")
-[ "$OUT" = "project --once --project $SP" ] \
-  && ok "shim: a complete project tree wins over the plugin cache" || bad "shim project: $OUT"
+case "$OUT" in project*) bad "shim ran the project's vendored copy" ;; *) ok "shim: a project's vendored tree is never run" ;; esac
 printf '#!/bin/bash\necho "override $*"\n' > "$TMP/override.sh"
 OUT=$(run_shim AUTOCODER_SENTINEL_SCRIPT="$TMP/override.sh" AUTOCODER_PLUGIN_CACHE="$TMP/shimcache" \
   bash "$SHIM_SRC" --once --project "$SP")

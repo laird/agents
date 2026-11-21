@@ -1966,6 +1966,9 @@ loop_script_is_stale() {
   local theirs="$1" vt vm
   [ -n "$theirs" ] || return 1
   [ "$theirs" = "$SELF_PATH" ] && return 1
+  # A relative argv word (`bash idle-sentinel.sh --loop` from another cwd)
+  # cannot be checked from here: never kill on it.
+  [[ "$theirs" == /* ]] || return 1
   [ -f "$theirs" ] || return 0
   vt=$(plugin_version_of "$theirs")
   vm=$(plugin_version_of "$SELF_PATH")

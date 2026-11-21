@@ -12,15 +12,15 @@
 #
 # Resolution order, first hit wins:
 #   1. $AUTOCODER_SENTINEL_SCRIPT, an explicit override.
-#   2. The project's own complete script tree (the --project argument):
-#      .agent/scripts, plugins/autocoder/scripts, then
-#      .claude-plugin/plugins/autocoder/scripts. A tree counts only if it also
-#      has issue-fns.sh, the same rule the commands' SCRIPT_DIR resolver uses,
-#      so the sentinel runs the code the project's workers run.
-#   3. The newest installed plugin: sort -V over
-#      ${AUTOCODER_PLUGIN_CACHE:-~/.claude/plugins/cache}/*/autocoder/<version>/scripts/idle-sentinel.sh
-#   4. $AUTOCODER_SENTINEL_FALLBACK: the script that installed the timer,
-#      used only when nothing above exists.
+#   2. The newest installed plugin: the highest <version> (sort -V on the
+#      version alone, so the marketplace directory name cannot outrank it) among
+#      ${AUTOCODER_PLUGIN_CACHE:-~/.claude/plugins/cache}/<marketplace>/autocoder/<version>/scripts/idle-sentinel.sh
+#   3. $AUTOCODER_SENTINEL_FALLBACK: the script that installed the timer,
+#      used only when no plugin is installed (e.g. a checkout-only host).
+#
+# A project's own vendored tree is deliberately NOT consulted: a stale vendored
+# copy would pin an old sentinel on every tick, the failure this shim exists to
+# prevent, and an unattended timer should not run whatever a checkout contains.
 #
 # All arguments are passed through unchanged.
 
@@ -43,21 +43,14 @@ if [ -n "${AUTOCODER_SENTINEL_SCRIPT:-}" ]; then
   run_sentinel "$AUTOCODER_SENTINEL_SCRIPT" "$@"
 fi
 
-if [ -n "$project" ]; then
-  for d in "$project/.agent/scripts" \
-           "$project/plugins/autocoder/scripts" \
-           "$project/.claude-plugin/plugins/autocoder/scripts"; do
-    if [ -f "$d/idle-sentinel.sh" ] && [ -f "$d/issue-fns.sh" ]; then
-      run_sentinel "$d/idle-sentinel.sh" "$@"
-    fi
-  done
-fi
-
 cache="${AUTOCODER_PLUGIN_CACHE:-${HOME:-}/.claude/plugins/cache}"
 newest=""
 if [ -d "$cache" ]; then
-  newest=$(find "$cache" -type f -path '*/autocoder/*/scripts/idle-sentinel.sh' 2>/dev/null \
-    | sort -V | tail -1)
+  # "<version><TAB><path>" for <marketplace>/autocoder/<version>/scripts/idle-sentinel.sh
+  # exactly (the version must start with a digit), sorted on the version only.
+  newest=$(find "$cache" -mindepth 5 -maxdepth 5 -type f -path '*/autocoder/*/scripts/idle-sentinel.sh' 2>/dev/null \
+    | sed -nE 's#^.*/autocoder/([0-9][^/]*)/scripts/idle-sentinel\.sh$#\1\t&#p' \
+    | sort -t "$(printf '\t')" -k1,1V | tail -1 | cut -f2-)
 fi
 if [ -n "$newest" ]; then
   run_sentinel "$newest" "$@"
