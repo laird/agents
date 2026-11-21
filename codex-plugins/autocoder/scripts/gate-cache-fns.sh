@@ -52,7 +52,8 @@
 # hermetic run never writes the host key, so this cannot borrow a host pass for it). A
 # tree whose hermetic config cannot be parsed (python3 missing) has no usable key: get
 # misses and put records nothing, so no host-mode pass can stand in for it.
-# Host-mode keys are unchanged.
+# Host-mode keys are unchanged. A run with AUTOCODER_GATE_RETEST_FILES set (the merge
+# job's red-base re-run of named files, #298) gets a further suffix hashing that list.
 
 # shellcheck source=gate-env-fns.sh
 source "$(dirname "${BASH_SOURCE[0]}")/gate-env-fns.sh"
@@ -69,6 +70,11 @@ _gate_cache_key() {  # <tree> "<cmd>" [git-dir]
     suffix="-envunreadable"     # never written, never read: no verdict while the mode is unknown
   elif [ "$rc" -eq 0 ] && [ -n "$env_cfg" ]; then
     suffix="-h$(printf '%s' "$env_cfg" | sha1sum | cut -c1-12)"
+  fi
+  # A run told to re-run named files (#298) is a different run of the command: its pass
+  # says nothing about the plain command on that tree, nor the plain run's about it.
+  if [ -n "${AUTOCODER_GATE_RETEST_FILES:-}" ]; then
+    suffix+="-rt$(printf '%s' "$AUTOCODER_GATE_RETEST_FILES" | sha1sum | cut -c1-12)"
   fi
   printf '%s-%s%s' "$tree" "${cmd_hash:0:12}" "$suffix"
 }
@@ -106,7 +112,8 @@ gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir] [gate-log]
 }
 
 # Failing test names in a gate log, one per line: run-shell-suite.sh's "Failing suites:"
-# line, else "FAIL <name>" lines (both the suite's and per-assertion "FAIL: <name>").
+# line, else "FAIL <name>" lines (both the suite's and per-assertion "FAIL: <name>"),
+# else vitest's indented "FAIL <file>" and pytest's "FAILED <file>::<test>" lines.
 # With "files", the fallback takes only file-shaped names (test_x.sh, spec/a_test.rb):
 # free-text assertion lines ("FAIL: expected 3") name nothing a later run can match, so
 # flaky detection must not read them as tests.
@@ -121,6 +128,15 @@ gate_log_failed_tests() {  # <log> [files]
       | awk -F/ 'tolower($NF) ~ /test|spec/')
   elif [ -z "$names" ]; then
     names=$(sed -nE 's/^FAIL[: ]+([^ ]+).*/\1/p' "$f")
+  fi
+  # vitest indents its "FAIL  <file> > <test>" lines and pytest prints "FAILED <file>::<test>"
+  # (#298); with "files", a pytest id is cut to its file.
+  if [ -z "$names" ]; then
+    names=$(sed -nE 's/^[[:space:]]+FAIL[[:space:]]+([^ ]+).*/\1/p; s/^FAILED[[:space:]]+([^ ]+).*/\1/p' "$f")
+    if [ "${2:-}" = files ]; then
+      names=$(printf '%s\n' "$names" | sed 's/::.*//' \
+        | grep -E '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z][A-Za-z0-9]*$' | awk -F/ 'tolower($NF) ~ /test|spec/')
+    fi
   fi
   printf '%s\n' "$names" | sed '/^$/d' | sort -u | head -n 50
 }

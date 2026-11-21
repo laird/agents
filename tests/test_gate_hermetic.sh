@@ -95,6 +95,12 @@ gate_cache_run . "$READS_HOME" >/dev/null 2>&1; H=$(git rev-parse 'HEAD^{tree}')
 [ "$(cd "$TMP/other" && gate_cache_get "$H" "$READS_HOME")" = pass ] && ok "an unknown tree uses the host key (cross-clone reuse kept)" \
   || bad "cross-clone host record not found"
 
+# #298: the red-base retest's file list crosses a hermetic gate though it is not declared.
+cd "$TMP/repo" || exit 1
+printf '{"gate": {"hermetic": true}}\n' > .autocoder.json; git add .autocoder.json; git commit -qm "hermetic for retest"
+OUT=$(AUTOCODER_GATE_RETEST_FILES="t_a.test t_b.test" gate_env_run . 'echo "retest=$AUTOCODER_GATE_RETEST_FILES"' 2>/dev/null)
+echo "$OUT" | grep -q '^gate-env: hermetic' && echo "$OUT" | grep -qx 'retest=t_a.test t_b.test' && ok "hermetic: AUTOCODER_GATE_RETEST_FILES crosses" || bad "retest files did not cross the hermetic env"
+
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

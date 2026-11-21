@@ -64,7 +64,13 @@
 #     second throwaway worktree. If the base passes, this change broke it: exit 2. If the
 #     base fails too WITH THE SAME NAMED FAILURES, the integration branch is red independent
 #     of this change, so the work is pushed anyway and the issue is told so (the post-merge
-#     sentinel owns red main). Two things are required before that comparison counts:
+#     sentinel owns red main). The base run re-runs THE FILES THAT FAILED on the integrated
+#     tree (#298): their names (the gate cache's failed-test parser, worktree path cut)
+#     cross as AUTOCODER_GATE_RETEST_FILES, space-separated, which a gate command that
+#     selects tests by the tree's diff should honour, since on the base that diff is empty
+#     and selects nothing. The run's cache record is keyed by the list, and the log says,
+#     per file, whether it fails on the base too or passes there (this change's).
+#     Two things are required before that comparison counts:
 #       * neither run was an INFRASTRUCTURE refusal. A gate that stopped because the host
 #         could not run it (a disk-space stage over its threshold, ENOSPC, a tool that is
 #         missing, a stage reporting itself as INFRASTRUCTURE because its tool died) says
@@ -83,7 +89,8 @@
 #         run's output lines matching AUTOCODER_GATE_FAILURE_PATTERNS (default: GitHub
 #         `::error::` annotations, lines opening with ❌, vitest/jest/go `FAIL`, pytest
 #         `FAILED`, go `--- FAIL:`, cargo `... FAILED`, ✗/× bullets), trimmed, durations
-#         and 7+ hex-digit ids blanked, sorted unique. A failure named on the integrated
+#         and 7+ hex-digit ids blanked, each run's own worktree path read as <worktree>,
+#         sorted unique. A failure named on the integrated
 #         tree only is this change's: exit 2, naming it. A run that names nothing is not a
 #         verdict either: exit 2, saying so. The base run still happens whenever the
 #         integrated run was not refused, so "the base passes alone" keeps its attribution.
@@ -342,8 +349,27 @@ _gate_slice() {  # <offset>: the gate log written since <offset>, ANSI colour st
 _gate_infra_line() {  # <offset>: the first INFRASTRUCTURE line of the run (rc 0), or nothing (rc 1)
   _gate_slice "$1" | grep -aE -m1 "$GATE_INFRA_PATTERNS"
 }
+# A failure line may quote its own worktree's path; the integrated and base runs use
+# different worktrees, so the path is replaced by <worktree> before the sets are compared
+# (#298). The -base worktree's path is the longer one and goes first.
+_gate_unpath() {
+  awk -v a="${BASE_WORKTREE_DIR:-}" -v b="${WORKTREE_DIR:-}" '
+    function rep(s, p,    i, o) { if (p == "") return s; o = ""
+      while ((i = index(s, p)) > 0) { o = o substr(s, 1, i - 1) "<worktree>"; s = substr(s, i + length(p)) }
+      return o s }
+    { print rep(rep($0, a), b) }'
+}
+# The test files a gate run's output (stdin) names as failing, relative to its worktree.
+_gate_failed_files() {
+  local t rc=0
+  t=$(mktemp "${TMP_ROOT:-/tmp}/autocoder-gate-failed.XXXXXX") || return 1
+  _gate_unpath | sed 's|<worktree>/||g' > "$t"
+  gate_log_failed_tests "$t" files || rc=$?
+  rm -f "$t"
+  return "$rc"
+}
 _gate_named_failures() {  # <offset>: the run's failure names, one per line, sorted unique
-  _gate_slice "$1" | grep -aE "$GATE_FAILURE_PATTERNS" \
+  _gate_slice "$1" | grep -aE "$GATE_FAILURE_PATTERNS" | _gate_unpath \
     | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*\(?[0-9]+(\.[0-9]+)?[[:space:]]?(ms|s|m|min)\)?$//; s/[0-9a-f]{7,40}/<sha>/g' \
     | sort -u
 }
@@ -1060,6 +1086,23 @@ _refuse_infrastructure() {
   _fail 3 "INFRASTRUCTURE: the gate did not reach a verdict on ${where} (${line}). A host condition, not a test failure: nothing about this change is in doubt and nothing landed. Relaunch the merge once the host is fixed; branch \`${FEATURE}\` is intact"
 }
 
+# One line per re-run file (#298): fails on the base too (red base, not this change's) or
+# passes on the base (this change's). <green> is 1 when the base run passed.
+_retest_report() {  # <base-offset> <green> <files>
+  local f base_failed
+  [ -n "$3" ] || return 0
+  base_failed=$(_gate_slice "$1" | _gate_failed_files)
+  for f in $3; do
+    if [ "$2" != 1 ] && printf '%s\n' "$base_failed" | grep -qxF -- "$f"; then
+      echo "   ${f}: fails on origin/${INTEGRATION_BRANCH} too (red base, not this change's)"
+    elif [ "$2" = 1 ] || [ -n "$base_failed" ]; then
+      echo "   ${f}: passes on origin/${INTEGRATION_BRANCH} (this change's)"
+    else
+      echo "   ${f}: not named on origin/${INTEGRATION_BRANCH}, whose run failed without naming a test file"
+    fi
+  done
+}
+
 _gate_integrated_tree() {
   if [ "$DOCS_ONLY" -eq 1 ]; then
     PUBLISH_BASIS=docs-only
@@ -1067,8 +1110,9 @@ _gate_integrated_tree() {
   fi
   local tree head_before after base_sha base_tree base_left at base_at infra
   local -a integrated_failures base_failures
-  local only_integrated only_base
+  local only_integrated only_base retest_files
   MERGE_RED_BASE=0   # a re-gate on a new tip measures the base again
+  unset AUTOCODER_GATE_RETEST_FILES   # set only for the base run below (#298)
   head_before=$(git rev-parse HEAD)
   tree=$(git rev-parse "HEAD^{tree}")
   at=$(_gate_log_size)
@@ -1101,10 +1145,18 @@ _gate_integrated_tree() {
   fi
   tree="$after"
   mapfile -t integrated_failures < <(_gate_named_failures "$at")
+  # The test files that failed, relative to the worktree (#298). A gate command that
+  # selects tests by the tree's diff selects nothing on the base, whose diff is empty, so
+  # the base run is told which files to re-run. The command may honour the variable.
+  retest_files=$(_gate_failed_files < "$GATE_LAST" | paste -sd' ' -)
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."
   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
+  if [ -n "$retest_files" ]; then
+    echo "   Re-running the files that failed: AUTOCODER_GATE_RETEST_FILES=\"${retest_files}\""
+    export AUTOCODER_GATE_RETEST_FILES="$retest_files"
+  fi
   _remove_worktree "$BASE_WORKTREE_DIR"
   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
     echo "❌ Could not create a worktree for origin/${INTEGRATION_BRANCH}; cannot tell whose failure this is. NOT pushing."
@@ -1116,7 +1168,9 @@ _gate_integrated_tree() {
   base_at=$(_gate_log_size)
   _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" && _base_green=1
   _landing_gate_done $((SECONDS - _g0))
+  _retest_report "$base_at" "$_base_green" "$retest_files"
   if [ "$_base_green" -eq 1 ]; then
+    unset AUTOCODER_GATE_RETEST_FILES
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
     GATE_BOUNCE=1
@@ -1127,6 +1181,7 @@ _gate_integrated_tree() {
   if infra=$(_gate_infra_line "$base_at"); then
     _refuse_infrastructure "origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8})" "$base_tree" "$base_left" "$infra"
   fi
+  unset AUTOCODER_GATE_RETEST_FILES
   # The base failed alone, as tests, on the same command: whatever follows (refused,
   # landed anyway, or charged to this change for extra failures) happened on a red base.
   MERGE_RED_BASE=1

@@ -13,6 +13,7 @@
 # A hermetic gate runs `env -i` with PATH = the declared dirs + /usr/bin:/bin, a fresh
 # temporary HOME (XDG_* under it, removed afterwards), LANG=C.UTF-8, and only the declared
 # variables. PATH, HOME, XDG_* and LANG are always ours: a declared name cannot override them.
+# AUTOCODER_GATE_RETEST_FILES, when set, always crosses (#298).
 #
 # The mode is a property of the TREE being gated: the config is read from the
 # .autocoder.json committed in that tree, never from the working directory, so the gate
@@ -89,6 +90,8 @@ gate_env_run() {
     for n in ${names[@]+"${names[@]}"}; do
       [ -n "${!n+x}" ] && args+=("$n=${!n}")
     done
+    # The files a red-base re-run is told to re-run (#298) always cross.
+    [ -n "${AUTOCODER_GATE_RETEST_FILES:-}" ] && args+=(AUTOCODER_GATE_RETEST_FILES="$AUTOCODER_GATE_RETEST_FILES")
     args+=(PATH="$path" HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
            XDG_CACHE_HOME="$home/.cache" XDG_STATE_HOME="$home/.local/state" LANG=C.UTF-8)
     cd "$dir" && env -i "${args[@]}" "$BASH" -c "$cmd"

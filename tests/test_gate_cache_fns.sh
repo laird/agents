@@ -47,6 +47,23 @@ gate_cache_put "$TREE" "$CMD" fail
 [ "$(gate_cache_get "$TREE" "$CMD")" = fail ] && ok "put overwrites atomically" || bad "put did not overwrite"
 [ -z "$(ls -A "$TMP/cache" | grep '^\.tmp')" ] && ok "no temp files left behind" || bad "temp files left in cache dir"
 
+# #298: a run told to re-run named files is keyed apart from the plain command.
+gate_cache_put "$TREE" "$CMD" pass
+AUTOCODER_GATE_RETEST_FILES="t_a.test" gate_cache_get "$TREE" "$CMD" >/dev/null \
+  && bad "a plain pass satisfies a retest run" || ok "a retest run misses the plain record"
+AUTOCODER_GATE_RETEST_FILES="t_a.test" gate_cache_put "$TREE" "$CMD" pass
+gate_cache_put "$TREE" "$CMD" fail
+[ "$(AUTOCODER_GATE_RETEST_FILES="t_a.test" gate_cache_get "$TREE" "$CMD")" = pass ] \
+  && [ "$(AUTOCODER_GATE_RETEST_FILES="t_b.test" gate_cache_get "$TREE" "$CMD" || echo miss)" = miss ] \
+  && ok "the retest key carries the file list" || bad "retest key does not carry the file list"
+
+# #298: vitest's indented FAIL lines and pytest's FAILED lines name their files.
+printf ' FAIL  src/a.test.ts > suite > x\n ✓ src/b.test.ts\n' > "$TMP/vitest.log"
+[ "$(gate_log_failed_tests "$TMP/vitest.log" files)" = src/a.test.ts ] && ok "vitest FAIL lines are named" || bad "vitest: $(gate_log_failed_tests "$TMP/vitest.log" files)"
+printf 'FAILED tests/test_x.py::test_a - AssertionError\nFAILED tests/test_x.py::test_b\n' > "$TMP/pytest.log"
+[ "$(gate_log_failed_tests "$TMP/pytest.log" files)" = tests/test_x.py ] && ok "pytest FAILED ids are cut to their file" || bad "pytest files: $(gate_log_failed_tests "$TMP/pytest.log" files)"
+[ "$(gate_log_failed_tests "$TMP/pytest.log" | wc -l)" -eq 2 ] && ok "pytest ids are kept whole without files" || bad "pytest names: $(gate_log_failed_tests "$TMP/pytest.log")"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
