@@ -252,10 +252,47 @@ case "$EXEC" in
   *) bad "escaped ExecStart: $EXEC" ;;
 esac
 
+# systemd-analyze verify also warns about the host's own units (on the GitHub
+# runner: CPUAccounting= in /usr/lib/systemd/system/xfs_scrub*). Judge only what
+# concerns the unit under test: a non-zero exit, or a line naming its path or its
+# unit name (#284). Prints the offending lines; returns 1 when the unit is rejected.
+verify_unit() {
+  local unit="$1" out rc
+  out=$(systemd-analyze verify "$unit" 2>&1); rc=$?
+  ANALYZE_LINES=$(printf '%s\n' "$out" | grep -F -e "$unit" -e "$(basename "$unit")")
+  [ "$rc" -eq 0 ] && [ -z "$ANALYZE_LINES" ] && return 0
+  [ -n "$ANALYZE_LINES" ] || ANALYZE_LINES="exit $rc: $out"
+  return 1
+}
+
+QUNIT="$FAKEHOME/.config/systemd/user/$(unit_for "$QDIR").service"
 if command -v systemd-analyze >/dev/null 2>&1; then
-  V=$(systemd-analyze verify "$FAKEHOME/.config/systemd/user/$(unit_for "$QDIR").service" 2>&1)
-  [ -z "$V" ] && ok "systemd-analyze verify accepts the escaped service" || bad "systemd-analyze: $V"
+  verify_unit "$QUNIT" && ok "systemd-analyze verify accepts the escaped service" \
+    || bad "systemd-analyze: $ANALYZE_LINES"
 fi
+
+# The judge itself, against stubbed systemd-analyze output.
+ANALYZE_STUB="$TMP/analyze-stub"; mkdir -p "$ANALYZE_STUB"
+stub_analyze() {  # $1 = exit status, $2 = the output it prints (verbatim, from a file)
+  printf '%s\n' "$2" > "$ANALYZE_STUB/out"
+  printf '#!/bin/sh\ncat "%s" >&2\nexit %s\n' "$ANALYZE_STUB/out" "$1" > "$ANALYZE_STUB/systemd-analyze"
+  chmod +x "$ANALYZE_STUB/systemd-analyze"
+}
+stub_analyze 0 "/usr/lib/systemd/system/xfs_scrub_all.service:26: Support for option CPUAccounting= has been removed and it is ignored"
+PATH="$ANALYZE_STUB:$PATH" verify_unit "$QUNIT" \
+  && ok "a warning about an unrelated host unit does not fail the verify" \
+  || bad "unrelated-unit warning failed the verify: $ANALYZE_LINES"
+stub_analyze 0 "/usr/lib/systemd/system/xfs_scrub_all.service:26: Support for option CPUAccounting= has been removed and it is ignored
+$QUNIT:7: Failed to resolve unit specifiers in ExecStart, ignoring"
+PATH="$ANALYZE_STUB:$PATH" verify_unit "$QUNIT" \
+  && bad "an error in the unit under test passed the verify" \
+  || { printf '%s' "$ANALYZE_LINES" | grep -q 'ExecStart' && ! printf '%s' "$ANALYZE_LINES" | grep -q xfs_scrub \
+         && ok "an error naming the unit under test fails the verify, and only it is reported" \
+         || bad "verify reported: $ANALYZE_LINES"; }
+stub_analyze 1 "$(basename "$QUNIT"): Command /nonexistent is not executable"
+PATH="$ANALYZE_STUB:$PATH" verify_unit "$QUNIT" \
+  && bad "a non-zero exit naming the unit by name passed the verify" \
+  || ok "an error naming the unit by its unit name fails the verify"
 
 # A shim path systemd will not execute (' " or \) is refused; --ensure falls
 # back to the loop instead of enabling a timer that can never start.
