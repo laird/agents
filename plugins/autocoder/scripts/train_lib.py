@@ -58,6 +58,7 @@ class Config:
     remote: str = "origin"
     integration: str = "master"
     ready_labels: list = field(default_factory=lambda: ["ready-for-review"])
+    any_labels: list = field(default_factory=list)   # non-empty: an item must ALSO carry at least one of these
     priority_labels: list = field(default_factory=lambda: ["P0", "P1", "P2", "P3"])
     lane_labels: list = field(default_factory=lambda: ["hotfix"])
     ready_pattern: str = DEFAULT_READY_RE
@@ -105,7 +106,7 @@ def _default_integration(repo: Path, remote: str) -> str:
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, hooks{prepareScratch, mergeFault};
     `enqueue` is enqueue.sh's (see there).
@@ -128,6 +129,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
     cfg = Config(
         repo=repo, remote=remote, integration=integration,
         ready_labels=list(raw.get("readyLabels") or ["ready-for-review"]),
+        any_labels=list(raw.get("anyLabels") or []),
         priority_labels=list(raw.get("priorityLabels") or ["P0", "P1", "P2", "P3"]),
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
@@ -512,12 +514,19 @@ def priority_rank(cfg: Config, labels):
 
 
 def list_items(cfg: Config):
-    """Open issues carrying every ready label: [{number, labels[], createdAt|None}]."""
+    """Open issues carrying every ready label, and at least one `anyLabels` label when any are
+    configured: [{number, labels[], createdAt|None}].
+
+    `readyLabels` is "all of" (the READY state); `anyLabels` is "at least one of" (a scope: several
+    hosts or teams feed one queue, each tagging its READYs with its own label, and a queue takes the
+    union it is configured for). An item carrying none of the `anyLabels` is not this queue's."""
     r = tracker(cfg, "issue_list", "--state", "open", "--label", cfg.ready_labels[0], "--limit", "500")
     items = []
     for it in json.loads(r.stdout or "[]"):
         labels = [(lb["name"] if isinstance(lb, dict) else lb) for lb in it.get("labels") or []]
         if str(it.get("state", "OPEN")).upper() != "OPEN" or not all(x in labels for x in cfg.ready_labels):
+            continue
+        if cfg.any_labels and not any(x in labels for x in cfg.any_labels):
             continue
         items.append({"number": int(it["number"]), "labels": labels, "createdAt": it.get("createdAt")})
     return items
