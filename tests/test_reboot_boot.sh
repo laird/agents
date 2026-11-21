@@ -155,7 +155,7 @@ SLOG="$P/.autocoder/sentinel.log"
 missed() { FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET="${DT:-active}" FAKE_RR_RC=1 tick >/dev/null; grep -c "boot trigger did not recover boot boot-5" "$SLOG"; }
 echo "boot-5" > "$T/boot_id"
 eq "startup not finished: no report (the unit may still run)" 0 "$(DT=activating missed)"
-FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active FAKE_UNIT_STATE=activating FAKE_UNIT_START=12345 FAKE_RR_RC=1 tick >/dev/null
+FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active FAKE_UNIT_STATE=activating FAKE_UNIT_START=0 FAKE_RR_RC=1 tick >/dev/null
 eq "unit still running (activating): no report" 0 "$(grep -c "boot trigger did not recover boot boot-5" "$SLOG")"
 OUT=$(FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active tick --dry-run)
 has "--dry-run names the missed trigger" "DRY-RUN would notify: the boot trigger did not recover boot boot-5" "$OUT"
