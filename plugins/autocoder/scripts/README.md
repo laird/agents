@@ -827,8 +827,15 @@ The triggers:
    `idle-sentinel.sh --ensure` once the sentinel is scheduled). It detects the
    host and picks the first that works: a launchd agent with `RunAtLoad` on
    macOS; a systemd user unit `autocoder-reboot-recover.service` (`Type=oneshot`,
-   `After=herdr.service network-online.target`, `WantedBy=default.target`, with
-   a warning and the `loginctl enable-linger` command when lingering is off);
+   `After=network-online.target`, `WantedBy=default.target`, with a warning
+   and the `loginctl enable-linger` command when lingering is off). The unit is
+   ordered on no unit autocoder does not own (#280): a host `herdr.service`
+   with `After=default.target` would close a cycle through `WantedBy=`, and
+   systemd breaks it by silently deleting the boot job. `--boot` waits for
+   herdr itself. `--install` enables the unit, then runs
+   `systemd-analyze --user verify default.target` and fails, disabling the unit
+   again, when it reports an ordering cycle through it. `--dry-run` prints the
+   ordering;
    a cron `@reboot` line; or none, which it says. Each runs
    `~/.local/bin/autocoder-reboot-recover --boot`: the same version-independent
    shim as the sentinel's (#273), which resolves `reboot-recover.sh` from the
@@ -840,6 +847,11 @@ The triggers:
    same stamp; on a change it runs one `reboot` wake (a duty wake, exempt from
    dedup): `reboot-recover.sh --boot --project <root>`. A tick that
    `reboot-recover.sh` itself started (`AUTOCODER_REBOOT_RECOVER=1`) skips it.
+   When it finds the stamp still old although the systemd boot unit is enabled
+   and user-manager startup has finished, the unit did not do its job: it never
+   started (its job was dropped) or it failed. The sentinel notifies once per
+   boot, naming which (#280). On cron and launchd hosts it cannot tell "missed"
+   from "not run yet", so it says nothing.
 
 Tests: `tests/test_reboot_boot.sh` runs every path against fakes: systemd user,
 cron only, launchd, no scheduler, no boot id, macOS `kern.boottime`, a tmux-only

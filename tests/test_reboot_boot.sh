@@ -41,7 +41,9 @@ STAMP="$T/state/last-boot-id"
 mkdir -p "$T/bin"
 
 # Fakes shared by every section. systemctl: user manager up unless
-# SYSTEMCTL_DOWN=1; is-enabled herdr.service only with HERDR_SERVICE=1.
+# SYSTEMCTL_DOWN=1; is-enabled herdr.service only with HERDR_SERVICE=1, our
+# boot unit only with FAKE_UNIT_ENABLED=1; default.target is FAKE_DEFAULT_TARGET
+# (inactive); `show` reports FAKE_UNIT_STATE / _RESULT / _START for the unit.
 cat > "$T/bin/systemctl" <<'EOF'
 #!/bin/bash
 echo "$*" >> "$FAKE_DIR/systemctl.calls"
@@ -49,10 +51,18 @@ echo "$*" >> "$FAKE_DIR/systemctl.calls"
 [ "${SYSTEMCTL_DOWN:-0}" = 1 ] && exit 1
 case "$2" in
   show-environment) echo "HOME=$HOME" ;;
-  is-enabled) [ "${HERDR_SERVICE:-0}" = 1 ] ;;
+  is-enabled) case "$3" in
+                herdr.service) [ "${HERDR_SERVICE:-0}" = 1 ] ;;
+                *) [ "${FAKE_UNIT_ENABLED:-0}" = 1 ] ;;
+              esac ;;
+  is-active) echo "${FAKE_DEFAULT_TARGET:-inactive}"; [ "${FAKE_DEFAULT_TARGET:-inactive}" = active ] ;;
+  show) printf 'ActiveState=%s\nResult=%s\nExecMainStartTimestampMonotonic=%s\n' \
+          "${FAKE_UNIT_STATE:-inactive}" "${FAKE_UNIT_RESULT:-success}" "${FAKE_UNIT_START:-0}" ;;
   *) exit 0 ;;
 esac
 EOF
+# systemd-analyze: prints FAKE_VERIFY_OUT (a cycle report, or nothing), exits 0 like the real one.
+printf '#!/bin/bash\necho "$*" >> "$FAKE_DIR/analyze.calls"\n[ -n "${FAKE_VERIFY_OUT:-}" ] && echo "$FAKE_VERIFY_OUT" >&2\nexit 0\n' > "$T/bin/systemd-analyze"
 printf '#!/bin/bash\necho "Linger=${FAKE_LINGER:-yes}"\n' > "$T/bin/loginctl"
 printf '#!/bin/bash\necho "${FAKE_UNAME:-Linux}"\n' > "$T/bin/uname"
 printf '#!/bin/bash\n[ "$2" = kern.boottime ] && echo "{ sec = 1700000000, usec = 42 } Tue Nov 14 22:13:20 2023"\n' > "$T/bin/sysctl"
@@ -139,10 +149,27 @@ has "--dry-run names the reboot wake" "DRY-RUN boot id changed (boot-2 -> boot-4
 eq "--dry-run runs no recovery" 3 "$(calls)"
 eq "--dry-run leaves the stamp" "boot-2" "$(cat "$STAMP")"
 
+# #280: the boot unit is enabled, startup has finished, and it never started
+# (systemd dropped its job): the boot wake says so, once per boot.
+SLOG="$P/.autocoder/sentinel.log"
+missed() { FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET="${DT:-active}" FAKE_RR_RC=1 tick >/dev/null; grep -c "boot trigger did not recover boot boot-5" "$SLOG"; }
+echo "boot-5" > "$T/boot_id"
+eq "startup not finished: no report (the unit may still run)" 0 "$(DT=activating missed)"
+eq "unit enabled, startup done, never started: reported" 1 "$(missed)"
+has "...naming the dropped job and how to check" "did not start this boot (systemd dropped its start job; check: systemd-analyze --user verify default.target)" "$(cat "$SLOG")"
+eq "...once per boot, not every retry tick" 1 "$(missed)"
+echo "boot-6" > "$T/boot_id"
+FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active FAKE_UNIT_START=12345 FAKE_UNIT_RESULT=exit-code FAKE_RR_RC=1 tick >/dev/null
+has "unit ran and failed: reported with its result" "ran this boot and failed (Result=exit-code" "$(cat "$SLOG")"
+echo "boot-7" > "$T/boot_id"
+FAKE_DEFAULT_TARGET=active FAKE_RR_RC=1 tick >/dev/null
+hasnt "unit not enabled (cron/launchd/no trigger): nothing reported" "recover boot boot-7" "$(cat "$SLOG")"
+
 rm -f "$T/boot_id"
+N0=$(calls)
 OUT=$(tick); RC=$?
 eq "no boot id: tick exits 0" 0 "$RC"
-eq "no boot id: no reboot wake" 3 "$(calls)"
+eq "no boot id: no reboot wake" "$N0" "$(calls)"
 tick >/dev/null
 eq "no boot id: logged once, not every tick" 1 "$(grep -c 'REBOOT check off' "$P/.autocoder/sentinel.log")"
 
@@ -277,7 +304,7 @@ for _d in "${_dirs[@]}"; do
   [ -d "$_d" ] || continue
   for _f in "$_d"/*; do
     _n=${_f##*/}
-    case "$_n" in crontab|systemctl|loginctl|launchctl|uname|pgrep|herdr|tmux|cmux|sysctl) continue ;; esac
+    case "$_n" in crontab|systemctl|systemd-analyze|loginctl|launchctl|uname|pgrep|herdr|tmux|cmux|sysctl) continue ;; esac
     [ -e "$SAFE/$_n" ] || { [ -x "$_f" ] && [ ! -d "$_f" ] && ln -s "$_f" "$SAFE/$_n" 2>/dev/null; }
   done
 done
@@ -296,12 +323,14 @@ echo "inst-boot" > "$T/boot_id"
 
 # systemd user (Arch, Ubuntu, Fedora...), lingering off.
 H="$T/home-sd"; rm -rf "$T/state" "$T/systemctl.calls"; mkdir -p "$H"
-HB=$(hostbin systemctl loginctl)
+HB=$(hostbin systemctl systemd-analyze loginctl)
 OUT=$(install_on "$HB" FAKE_LINGER=no)
 UNIT="$H/.config/systemd/user/autocoder-reboot-recover.service"
 has "systemd: detection line" "scheduler=systemd-user linger=no mux=- boot_id=file:$T/boot_id state=$T/state" "$OUT"
 [ -f "$UNIT" ] && pass "systemd: unit written" || fail "systemd: no unit: $OUT"
-has "systemd: ordered after herdr" "After=herdr.service network-online.target" "$(cat "$UNIT" 2>/dev/null)"
+eq "systemd: no ordering on a unit we do not own (#280)" "After=network-online.target" "$(grep '^After=' "$UNIT" 2>/dev/null)"
+hasnt "systemd: not ordered after herdr.service" "herdr.service" "$(grep -E '^(After|Before|Requires|BindsTo|PartOf)=' "$UNIT" 2>/dev/null)"
+has "systemd: install checks default.target for ordering cycles" "--user verify default.target" "$(cat "$T/analyze.calls" 2>/dev/null)"
 has "systemd: oneshot" "Type=oneshot" "$(cat "$UNIT" 2>/dev/null)"
 has "systemd: wanted by default.target" "WantedBy=default.target" "$(cat "$UNIT" 2>/dev/null)"
 has "systemd: runs the shim with --boot" "ExecStart=\"$H/.local/bin/autocoder-reboot-recover\" --boot" "$(cat "$UNIT" 2>/dev/null)"
@@ -328,6 +357,32 @@ eq "the same shim under the sentinel name still resolves idle-sentinel.sh" "CACH
 N=$(grep -c daemon-reload "$T/systemctl.calls")
 OUT=$(install_on "$HB")
 eq "systemd: second install rewrites nothing (no daemon-reload)" "$N" "$(grep -c daemon-reload "$T/systemctl.calls")"
+
+# An ordering cycle through our unit fails the install and disables the unit.
+OUT=$(install_on "$HB" "FAKE_VERIFY_OUT=herdr.service: Found ordering cycle: default.target/start after autocoder-reboot-recover.service/start after herdr.service/start - after default.target"); RC=$?
+eq "systemd: an ordering cycle fails --install" 1 "$RC"
+has "...and says which" "is in an ordering cycle, so systemd would drop it at boot" "$OUT"
+has "...and disables the unit again" "--user disable autocoder-reboot-recover.service" "$(cat "$T/systemctl.calls")"
+OUT=$(install_on "$HB" "FAKE_VERIFY_OUT=foo.service: Found ordering cycle: foo.service/start after bar.service/start - after foo.service"); RC=$?
+eq "systemd: a cycle not involving our unit does not fail --install" 0 "$RC"
+
+# Acceptance (#280): a host herdr.service ordered After=default.target and our
+# unit, both enabled, make no cycle. Checked with the real systemd-analyze
+# against a private unit path; the unit as #275 wrote it does, which proves
+# the check can see one.
+if command -v systemd-analyze >/dev/null 2>&1; then
+  UD="$T/unitdir"; mkdir -p "$UD/default.target.wants"
+  printf '[Unit]\nAfter=default.target\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' > "$UD/herdr.service"
+  cp "$UNIT" "$UD/autocoder-reboot-recover.service"
+  ln -s ../herdr.service "$UD/default.target.wants/herdr.service"
+  ln -s ../autocoder-reboot-recover.service "$UD/default.target.wants/autocoder-reboot-recover.service"
+  verify() { SYSTEMD_UNIT_PATH="$UD:" systemd-analyze --user verify default.target 2>&1 | grep -F "ordering cycle"; }
+  eq "real systemd-analyze: herdr After=default.target + our unit → no cycle" "" "$(verify)"
+  sed -i.bak 's/^After=.*/After=herdr.service network-online.target/' "$UD/autocoder-reboot-recover.service"
+  has "real systemd-analyze: the old After=herdr.service unit → cycle (check is live)" "ordering cycle" "$(verify)"
+else
+  pass "systemd-analyze not installed: the no-foreign-After assertions above cover the unit"
+fi
 
 # cron only: WSL without systemd, containers.
 H="$T/home-cron"; rm -rf "$T/state"; mkdir -p "$H"
@@ -372,6 +427,8 @@ H="$T/home-dry"; rm -rf "$T/state" "$T/systemctl.calls"; mkdir -p "$H"
 HB=$(hostbin systemctl loginctl)
 OUT=$(install_on "$HB" -- --dry-run)
 has "dry run prints the unit" "DRY-RUN would write $H/.config/systemd/user/autocoder-reboot-recover.service" "$OUT"
+has "dry run prints the ordering it will use" "ordering: After=network-online.target, WantedBy=default.target; no ordering on herdr.service" "$OUT"
+has "dry run names the cycle check" "DRY-RUN would check for ordering cycles" "$OUT"
 [ ! -e "$H/.config" ] && [ ! -e "$H/.local" ] && [ ! -e "$T/state" ] && pass "dry run writes nothing" || fail "dry run wrote files"
 hasnt "dry run enables nothing" "enable" "$(cat "$T/systemctl.calls" 2>/dev/null)"
 
