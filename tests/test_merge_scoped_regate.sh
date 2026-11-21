@@ -156,6 +156,14 @@ setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && true" 2>&1); RC=$?
 [ "$(gate_runs)" -eq 1 ] && ok "(c') the same edit is disjoint when the gate does not run that file" || bad "(c') re-gated without reason ($(gate_runs) runs): $OUT"
 
+# ── (c''') a stage manifest names the scripts the gate runs, so they are gate paths too ──
+setup
+mkdir -p ci
+printf '%s\n' '{"version": 1, "stages": [{"name": "helper", "cmd": "bash scripts/helper.sh"}]}' > ci/stages.json
+git add -A; git commit -q -m "manifest"
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && python3 $SCRIPT_DIR/stage-runner.py --manifest ci/stages.json" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "scripts/helper.sh (a path the gate command runs)" && ok "(c''') a sibling editing a script a stage manifest runs re-gates" || bad "(c''') rc=$RC runs=$(gate_runs): $OUT"
+
 # ── (c'') a sibling renaming a file this change edits is an overlap, not a new path ──
 setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'git mv README.md README.rst')" 2>&1); RC=$?
