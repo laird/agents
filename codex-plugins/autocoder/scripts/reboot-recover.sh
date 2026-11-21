@@ -39,7 +39,8 @@
 # service here, recovers every known swarm, and only then writes the stamp, so
 # a crash mid-recovery is retried by the next trigger. Callers:
 #   - the boot trigger --install sets up for this host, detected at run time:
-#     a systemd user unit ordered after herdr, else a cron @reboot line, else
+#     a systemd user unit (wanted by default.target, ordered on no unit it does
+#     not own, #280), else a cron @reboot line, else
 #     (macOS) a launchd agent with RunAtLoad, else none (said so);
 #   - idle-sentinel.sh's boot wake, a backstop on hosts with no boot trigger.
 # Swarms are found from herdr (as above) and, with --all or --boot, from the
@@ -100,7 +101,7 @@ SHIM_SRC="$SCRIPT_DIR/idle-sentinel-shim.sh"
 SHIM="${AUTOCODER_REBOOT_SHIM:-$HOME/.local/bin/autocoder-reboot-recover}"
 SELF_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 STATE_DIR=$(reboot_state_dir)
-UNIT_NAME=autocoder-reboot-recover.service
+UNIT_NAME=$REBOOT_UNIT_NAME
 SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LAUNCHD_LABEL=com.autocoder.reboot-recover
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
@@ -120,7 +121,7 @@ trigger_path() {
 }
 
 # boot_scheduler: launchd (macOS) | systemd-user | cron | none. systemd comes
-# before cron: only a unit can be ordered after herdr.service.
+# before cron: a unit reports its result (journalctl, boot_trigger_missed).
 boot_scheduler() {
   if launchd_available; then echo launchd
   elif systemd_user_available; then echo systemd-user
@@ -136,14 +137,36 @@ print_detection() {
   echo "reboot-recover: host os=$(host_os) scheduler=$sched linger=$linger mux=$1 boot_id=$(boot_id_source) state=$STATE_DIR$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
 }
 
+# The unit's only ordering. network-online.target is not a user-manager unit;
+# ordering on a unit that does not exist is a no-op, never a cycle.
+UNIT_AFTER=network-online.target
+
+# unit_ordering: one line naming the ordering the unit uses (--dry-run).
+unit_ordering() {
+  echo "ordering: After=$UNIT_AFTER, WantedBy=default.target; no ordering on herdr.service (--boot waits up to ${AUTOCODER_REBOOT_MUX_WAIT:-90}s for herdr when it is a user service)"
+}
+
+# unit_cycle_check: the ordering cycles systemd reports for default.target that
+# involve our unit, one per line; empty when none or systemd-analyze is
+# missing. verify on the unit alone misses a cycle that runs through
+# default.target's Wants= (it needs the enable symlink), and verify exits 0
+# even when it finds one, so read its output.
+unit_cycle_check() {
+  command -v systemd-analyze >/dev/null 2>&1 || return 0
+  systemd-analyze --user verify default.target 2>&1 | grep -F "ordering cycle" | grep -F "$UNIT_NAME"
+}
+
 render_unit() {
   cat <<UNIT
 # Installed by reboot-recover.sh --install (#275). At boot, starts one manager
 # per swarm; once per boot (the stamp in $STATE_DIR is shared with the idle
 # sentinel's boot wake). PATH is the one --install ran with.
+# No After= on herdr.service or any unit we do not own (#280): a host unit
+# ordered After=default.target closes a cycle through this unit's WantedBy, and
+# systemd breaks it by deleting this start job. --boot waits for herdr itself.
 [Unit]
 Description=autocoder: start one manager per swarm after a reboot
-After=herdr.service network-online.target
+After=$UNIT_AFTER
 
 [Service]
 Type=oneshot
@@ -232,7 +255,8 @@ cmd_install() {
   if [ "$DRY_RUN" = true ]; then
     echo "DRY-RUN would install the version-independent entry point: $SHIM (from $SHIM_SRC)"
     case "$sched" in
-      systemd-user) echo "DRY-RUN would write $SYSTEMD_USER_DIR/$UNIT_NAME:"; render_unit | sed 's/^/  /'
+      systemd-user) echo "DRY-RUN would write $SYSTEMD_USER_DIR/$UNIT_NAME ($(unit_ordering)):"; render_unit | sed 's/^/  /'
+                    echo "DRY-RUN would check for ordering cycles: systemd-analyze --user verify default.target"
                     echo "DRY-RUN would run: systemctl --user daemon-reload && systemctl --user enable $UNIT_NAME" ;;
       cron)         echo "DRY-RUN would install crontab entry: @reboot $(sh_quote "$SHIM") --boot ... $CRON_MARK" ;;
       launchd)      echo "DRY-RUN would write $LAUNCHD_PLIST:"; render_plist | sed 's/^/  /' ;;
@@ -250,7 +274,17 @@ cmd_install() {
       fi
       systemctl --user enable "$UNIT_NAME" >/dev/null 2>&1 \
         || { echo "❌ systemctl --user could not enable $UNIT_NAME" >&2; return 1; }
-      echo "✅ Boot trigger: systemd user unit $UNIT_NAME (after herdr.service; runs $SHIM --boot)"
+      # A cycle makes systemd delete the start job at boot, silently (#280).
+      local cycles
+      cycles=$(unit_cycle_check)
+      if [ -n "$cycles" ]; then
+        systemctl --user disable "$UNIT_NAME" >/dev/null 2>&1
+        echo "❌ $UNIT_NAME is in an ordering cycle, so systemd would drop it at boot; disabled it again:" >&2
+        printf '   %s\n' "$cycles" >&2
+        echo "   Remove the After= that loops back (often After=default.target in another user unit), then re-run --install." >&2
+        return 1
+      fi
+      echo "✅ Boot trigger: systemd user unit $UNIT_NAME (wanted by default.target; runs $SHIM --boot)"
       if [ "$(linger_state)" = no ]; then
         echo "⚠️  Lingering is off for $(id -un): the unit runs at boot only once $(id -un) logs in."
         echo "    To run it at boot: loginctl enable-linger $(id -un)  (may need sudo; never done for you)"

@@ -90,7 +90,9 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
   summary per file and the report then quotes a single test's numbers as the suite's.
 - Every `tests/test_*.sh` sources `tests/lib/private-event-logs.sh` on line 2, so a
   test run on its own never appends to the real issue/merge event logs that `/retro`
-  reads. `test_private_event_logs.sh` fails for a test file without it.
+  reads. `test_private_event_logs.sh` fails for a test file without it. The same
+  prelude gives each test a private `XDG_STATE_HOME`, and the suite runs under a
+  scratch `HOME` and fails if anything lands in its `.local/state` (#282).
 - Note: the Python tests require `pytest`, which is not installed in all environments.
 - The Jira and Azure DevOps backends each have two complementary shell tests,
   all hermetic (no network): `test_issues_jira.sh` / `test_issues_ado.sh` stub

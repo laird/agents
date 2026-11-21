@@ -47,3 +47,13 @@ export AUTOCODER_TMP
 AUTOCODER_REBOOT_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/test-reboot-state.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-reboot-state.XXXXXX") \
   || { echo "private-event-logs.sh: cannot create a private AUTOCODER_REBOOT_STATE_DIR; refusing to run against the real one" >&2; exit 1; }
 export AUTOCODER_REBOOT_STATE_DIR
+
+# Everything else in the per-user state dir (#282): the gate cache and gate.jsonl,
+# sentinel and publisher state, train state, the auth watchdog, release.log. Each
+# resolves ${XDG_STATE_HOME:-$HOME/.local/state}/autocoder, so pointing
+# XDG_STATE_HOME at a fresh private directory keeps a test that forgets a
+# script-specific override out of the real one. run-shell-suite.sh also runs the
+# suite under a scratch HOME and fails if anything is written to its state dir.
+XDG_STATE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-state-home.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-state-home.XXXXXX") \
+  || { echo "private-event-logs.sh: cannot create a private XDG_STATE_HOME; refusing to run against the real one" >&2; exit 1; }
+export XDG_STATE_HOME
