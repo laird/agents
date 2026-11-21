@@ -247,6 +247,24 @@ def test_queue_requires_every_ready_label_and_a_ready_comment(fx):
     assert quiet not in {r["issue"] for r in T.plan_queue(fx.cfg())}
 
 
+def test_queue_any_labels_takes_an_item_carrying_at_least_one_of_them(fx):
+    """`anyLabels` is a scope ("at least one of"), beside `readyLabels` ("all of")."""
+    for b in "abc":
+        fx.branch(f"feature/{b}", {f"{b}.txt": "1\n"})
+    mac = fx.ready("from the mac", "feature/a", ("ready-for-review", "host:mac"))
+    linux = fx.ready("from the linux host", "feature/b", ("ready-for-review", "host:linux-a"))
+    unscoped = fx.ready("no host label", "feature/c")
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"anyLabels": ["host:linux-a", "host:mac"]}}))
+    cfg = T.load_config(fx.work, fx.root / "c.json")
+    assert cfg.any_labels == ["host:linux-a", "host:mac"]
+    assert {r["issue"] for r in T.plan_queue(cfg)} == {mac, linux}
+    fx.root.joinpath("one.json").write_text(json.dumps({"train": {"anyLabels": ["host:mac"]}}))
+    assert [r["issue"] for r in T.plan_queue(T.load_config(fx.work, fx.root / "one.json"))] == [mac]
+    # no anyLabels: no scope, every READY is an item (the default is unchanged)
+    assert fx.cfg().any_labels == []
+    assert {r["issue"] for r in T.plan_queue(fx.cfg())} == {mac, linux, unscoped}
+
+
 def test_queue_states(fx):
     fx.branch("feature/ok", {"ok.txt": "1\n"})
     fx.branch("feature/held", {"held.txt": "1\n"})

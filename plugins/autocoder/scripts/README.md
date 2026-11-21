@@ -695,7 +695,9 @@ merge-train.py ...                                           reopen --issue N --
 ```
 
 **READY pickup** goes through the issue-source abstraction (`issue_list`, `issue_get`), so every
-backend works. An item is an open issue carrying every `readyLabels` label whose comments say READY
+backend works. An item is an open issue carrying every `readyLabels` label (and, when `anyLabels` is
+set, at least one of those: a scope, such as the host or team labels whose READYs this queue takes
+when several feed one tracker) whose comments say READY
 (`readyPattern`). The branch is the first backticked branch-shaped name of the newest READY comment that
 exists on the remote; a later comment naming no branch never shadows it. Comment timestamps are used when
 the backend reports them (GitHub) and are `None` otherwise (ADO and Jira report only a body; the file
@@ -744,7 +746,8 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
 `AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`):
 
 ```json
-{ "train": { "readyLabels": ["ready-for-review"], "priorityLabels": ["P0","P1","P2","P3"],
+{ "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
+             "priorityLabels": ["P0","P1","P2","P3"],
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
