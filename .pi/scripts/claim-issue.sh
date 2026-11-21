@@ -43,8 +43,10 @@ BASE_MODE="integration"
 SPECIFIED_ISSUE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --out) OUT="$2"; shift 2 ;;
-    --base) BASE_MODE="$2"; shift 2 ;;
+    --out|--base)
+      [ $# -ge 2 ] || { echo "claim-issue.sh: $1 needs a value" >&2; exit 1; }
+      if [ "$1" = --out ]; then OUT="$2"; else BASE_MODE="$2"; fi
+      shift 2 ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     -*) echo "claim-issue.sh: unknown option $1" >&2; exit 1 ;;
     *) SPECIFIED_ISSUE="$1"; shift ;;
@@ -64,7 +66,7 @@ source "${SCRIPT_DIR}/issue-fns.sh"
 
 CLAIM_STATUS="refused"
 ISSUE_NUM="" ISSUE_TITLE="" ISSUE_BODY="" ISSUE_PRIORITY="" RESUMING=false FIX_BRANCH="" PARENT_BRANCH=""
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/claim-issue.XXXXXX")
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/claim-issue.XXXXXX") || { echo "claim-issue.sh: cannot create a temp dir" >&2; exit 1; }
 write_handback() {
   local rc=$? v
   {

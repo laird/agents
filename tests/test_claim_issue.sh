@@ -119,6 +119,8 @@ OUTPUT=$(bash "$CLAIM" 2>&1); RC=$?
 assert_eq "no --out: exit 1" 1 "$RC"
 OUTPUT=$(bash "$CLAIM" --out "$TMP/x.env" --base sideways 2>&1); RC=$?
 assert_eq "bad --base: exit 1" 1 "$RC"
+OUTPUT=$(timeout 10 bash "$CLAIM" --out 2>&1); RC=$?
+assert_eq "--out with no value: exit 1, no hang" 1 "$RC"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
