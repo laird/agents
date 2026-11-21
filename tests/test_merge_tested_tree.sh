@@ -1,4 +1,5 @@
 #!/bin/bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"
 # tests/test_merge_tested_tree.sh — the tree merge-to-integration.sh publishes under the
 # `tested` basis is the tree the gate command LEFT, and nothing else is ever pushed as it:
 #   - a gate command that commits inside its worktree before its test stages (a
