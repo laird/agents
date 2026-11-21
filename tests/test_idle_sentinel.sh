@@ -233,9 +233,10 @@ echo "$OUT" | grep -q "DRY-RUN wake plan (mux=tmux, session=claude-$(basename "$
 echo "$OUT" | grep -q "export AUTOCODER_MANAGER=claude-$(basename "$P") AUTOCODER_UNATTENDED=1" \
   && ok "dry-run: spawn env exports marker + unattended policy" \
   || bad "dry-run: marker/unattended export line missing"
-echo "$OUT" | grep -q -- "claude --dangerously-skip-permissions" \
-  && ok "dry-run: claude launches argv-mode with --dangerously-skip-permissions" \
-  || bad "dry-run: claude launch line missing"
+echo "$OUT" | grep -qE -- "^  claude .*Run /autocoder:manager-resume" \
+  && ! echo "$OUT" | grep -q -- "--dangerously-skip-permissions" \
+  && ok "dry-run: claude launches argv-mode with no forced bypass flag (#283)" \
+  || bad "dry-run: claude launch line missing or forces --dangerously-skip-permissions: $OUT"
 echo "$OUT" | grep -q "manager-resume.*--non-interactive" \
   && ok "dry-run: wake prompt sequences manager-resume --non-interactive" \
   || bad "dry-run: wake prompt lacks manager-resume --non-interactive"

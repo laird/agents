@@ -19,10 +19,15 @@
 # gets the full transcript.
 #
 # Usage:
-#   WORKER_MODEL=claude-sonnet-5 bash claude-worker-loop.sh [--sleep MINUTES] [--model MODEL]
+#   bash claude-worker-loop.sh [--sleep MINUTES] [--model MODEL]
 #
 # Environment:
-#   WORKER_MODEL          Claude model for this worker (default: claude-sonnet-5)
+#   AUTOCODER_WORKER_MODEL / WORKER_MODEL
+#                         Claude model for this worker (default: none, so the
+#                         user's own Claude Code default applies; #283)
+#   AUTOCODER_CLAUDE_PERMISSION_MODE
+#                         --permission-mode for each session (default: none, so
+#                         the user's settings decide; never bypass unless asked)
 #   IDLE_SLEEP_MINUTES    Minutes to sleep when no work is found (default: 4)
 #   ISSUE_SOURCE          Issue backend (file|github|jira|ado), passed through to Claude
 #   ISSUE_DIR_PATH        Path to .issues/ directory, passed through to Claude
@@ -34,7 +39,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
+WORKER_MODEL="${AUTOCODER_WORKER_MODEL:-${WORKER_MODEL:-}}"
 IDLE_SLEEP_MINUTES="${IDLE_SLEEP_MINUTES:-4}"
 # Unique handoff file per worker process to avoid collisions in parallel swarms
 HANDOFF_FILE="/tmp/autocoder-next-fix-$$.txt"
@@ -50,10 +55,17 @@ STREAM="${AUTOCODER_STREAM:-1}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --sleep)   IDLE_SLEEP_MINUTES="$2"; shift 2 ;;
-    --model)   WORKER_MODEL="$2"; shift 2 ;;
+    --model)   WORKER_MODEL="$2"; AUTOCODER_WORKER_MODEL="$2"; shift 2 ;;
     *)         shift ;;
   esac
 done
+
+# Flags from the shared lib (#283): only what the user configured.
+# shellcheck source=worker-launch-lib.sh
+source "$SCRIPT_DIR/worker-launch-lib.sh"
+AUTOCODER_WORKER_MODEL="$WORKER_MODEL"
+# shellcheck disable=SC2206  # claude_launch_args emits plain words only
+CLAUDE_ARGS=($(claude_launch_args worker))
 
 RENDER="$SCRIPT_DIR/stream-render.sh"
 POST_METRICS="$SCRIPT_DIR/post-issue-metrics.sh"
@@ -80,15 +92,16 @@ run_claude() {
     LAST_TRANSCRIPT="$log"
     echo "   ⤷ transcript: $log"
     claude -p --output-format stream-json --verbose \
-      --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null \
+      ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"} "$@" < /dev/null \
       | tee "$log" | "$RENDER" || true
   else
-    claude -p --dangerously-skip-permissions --model "$WORKER_MODEL" "$@" < /dev/null || true
+    claude -p ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"} "$@" < /dev/null || true
   fi
 }
 
 echo "🔄 Worker loop starting"
-echo "   Model:      $WORKER_MODEL"
+echo "   Model:      ${WORKER_MODEL:-(Claude Code default)}"
+echo "   Flags:      ${CLAUDE_ARGS[*]:-(none: your Claude Code settings decide)}"
 echo "   Idle sleep: ${IDLE_SLEEP_MINUTES}m"
 echo "   PID:        $$"
 echo "   Handoff:    $HANDOFF_FILE"

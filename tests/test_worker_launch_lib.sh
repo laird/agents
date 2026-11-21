@@ -38,8 +38,24 @@ case "$WORKER_CMD" in
   *claude-worker-loop.sh*) ;;
   *) echo "FAIL: Claude worker should run claude-worker-loop.sh, got '$WORKER_CMD'" >&2; exit 1 ;;
 esac
-assert_eq "${WORKER_MODEL}" "claude-sonnet-5" "Claude worker defaults to the sonnet tier"
-assert_eq "${MANAGER_MODEL}" "claude-opus-5" "Claude manager defaults to the opus tier"
+# #283: nothing forced by default: no bypass flag, no hard-coded model, so the
+# user's own Claude Code settings decide (an unattended spawn must not open the
+# bypass-permissions consent dialog).
+_launch() {  # _launch <env...>: MANAGER|AGENT launch commands for claude under herdr
+  env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_MANAGER_MODEL \
+    -u AUTOCODER_CLAUDE_PERMISSION_MODE "$@" bash -c \
+    'source "$1"; resolve_worker_launch claude "$2" herdr; printf "%s|%s" "$MANAGER_LAUNCH_CMD" "$AGENT_LAUNCH_CMD"' \
+    _ "$LIB_PATH_283" "$TMP" 2>/dev/null
+}
+LIB_PATH_283="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/autocoder/scripts/worker-launch-lib.sh"
+assert_eq "$(_launch)" "claude|claude" "Claude launches with no flags by default (no bypass, no model)"
+case "$(_launch)" in *dangerously*|*--model*) echo "FAIL: default claude launch forces a flag" >&2; exit 1 ;; esac
+assert_eq "$(_launch AUTOCODER_CLAUDE_PERMISSION_MODE=auto)" "claude --permission-mode auto|claude --permission-mode auto" \
+  "AUTOCODER_CLAUDE_PERMISSION_MODE=auto -> --permission-mode auto"
+assert_eq "$(_launch AUTOCODER_WORKER_MODEL=claude-sonnet-5-5 AUTOCODER_MANAGER_MODEL=claude-opus-5-5)" \
+  "claude --model claude-opus-5-5|claude --model claude-sonnet-5-5" "AUTOCODER_*_MODEL set the model per role"
+assert_eq "$(_launch WORKER_MODEL=w MANAGER_MODEL=m)" "claude --model m|claude --model w" "legacy WORKER_MODEL / MANAGER_MODEL still honoured"
+assert_eq "$(_launch 'AUTOCODER_CLAUDE_PERMISSION_MODE=auto; rm -rf x')" "claude|claude" "a permission mode that is not a plain word is refused"
 
 # The worker-loop path must resolve to a file that EXISTS, not just to a
 # plausible-looking string. Installed plugins live at

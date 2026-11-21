@@ -83,6 +83,40 @@ worker_marker_export() {
   printf 'export AUTOCODER_WORKER=%q\n' "$session:$number"
 }
 
+# claude_launch_args <role>: the flags a claude launch gets, as one shell-ready
+# string (#283). Nothing is forced: with no configuration the agent runs as plain
+# `claude` and the user's own Claude Code settings decide permissions (defaultMode,
+# auto mode, allowlists) and the model. A forced --dangerously-skip-permissions
+# opened the bypass consent dialog on every spawn, and an unattended spawn (reboot
+# recovery, the sentinel) sat at it with nobody to answer.
+#   AUTOCODER_CLAUDE_PERMISSION_MODE  e.g. auto | acceptEdits | bypassPermissions
+#                                     → --permission-mode <mode> (opt-in only)
+#   AUTOCODER_WORKER_MODEL / WORKER_MODEL    worker --model (none by default)
+#   AUTOCODER_MANAGER_MODEL / MANAGER_MODEL  manager --model (none by default)
+# Values must be plain words (letters, digits, . _ - [ ]): they are typed into a
+# pane's shell, so anything else is refused rather than quoted into a command.
+claude_launch_args() {
+  local role="$1" model mode out=""
+  case "$role" in
+    manager) model="${AUTOCODER_MANAGER_MODEL:-${MANAGER_MODEL:-}}" ;;
+    *)       model="${AUTOCODER_WORKER_MODEL:-${WORKER_MODEL:-}}" ;;
+  esac
+  mode="${AUTOCODER_CLAUDE_PERMISSION_MODE:-}"
+  if [ -n "$mode" ]; then
+    case "$mode" in
+      *[!A-Za-z]*) echo "worker-launch-lib: ignoring AUTOCODER_CLAUDE_PERMISSION_MODE='$mode' (expected a mode name such as auto)" >&2 ;;
+      *) out="--permission-mode $mode" ;;
+    esac
+  fi
+  if [ -n "$model" ]; then
+    case "$model" in
+      *[!A-Za-z0-9._\[\]-]*) echo "worker-launch-lib: ignoring model '$model' (unexpected characters)" >&2 ;;
+      *) out="${out:+$out }--model $model" ;;
+    esac
+  fi
+  printf '%s' "$out"
+}
+
 resolve_worker_launch() {
   local agent="$1"
   local repo_root="$2"
@@ -101,9 +135,11 @@ resolve_worker_launch() {
     claude)
       # Workers: shell loop that restarts Claude per issue (fresh context per fix).
       # Each worker is visible as its own tmux pane running claude-worker-loop.sh.
-      # Manager: interactive Claude session using the smarter opus model for coordination.
-      WORKER_MODEL="${WORKER_MODEL:-claude-sonnet-5}"
-      MANAGER_MODEL="${MANAGER_MODEL:-claude-opus-5}"
+      # Manager: interactive Claude session. Model and permission mode come from the
+      # user's own settings unless configured (claude_launch_args, #283).
+      local worker_args manager_args
+      worker_args=$(claude_launch_args worker)
+      manager_args=$(claude_launch_args manager)
       AGENT_LAUNCH_CMD=""
       local worker_loop="$WORKER_LAUNCH_LIB_DIR/claude-worker-loop.sh"
       if [ ! -f "$worker_loop" ]; then
@@ -113,7 +149,7 @@ resolve_worker_launch() {
       WORKER_CMD="bash '$worker_loop'"
       WORKER_LAUNCH_MODE="shell"
       WORKER_COMMAND_MODE="shell"
-      MANAGER_LAUNCH_CMD="claude --dangerously-skip-permissions --model $MANAGER_MODEL"
+      MANAGER_LAUNCH_CMD="claude${manager_args:+ $manager_args}"
       MANAGER_CMD="/autocoder:monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       MANAGER_COMMAND_MODE="argv"
@@ -124,7 +160,7 @@ resolve_worker_launch() {
         # an interactive claude driven by /autocoder:fix-loop (the same shape
         # the gemini path uses), and the manager takes its prompt through
         # `herdr agent prompt` instead of an argv-appended one.
-        AGENT_LAUNCH_CMD="claude --dangerously-skip-permissions --model $WORKER_MODEL"
+        AGENT_LAUNCH_CMD="claude${worker_args:+ $worker_args}"
         WORKER_CMD="/autocoder:fix-loop"
         WORKER_LAUNCH_MODE="interactive"
         WORKER_COMMAND_MODE="agent-input"

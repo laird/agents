@@ -118,15 +118,24 @@ tmux ls
 
 ---
 
-## Override Models
+## Override Models and Permissions
+
+By default workers and the manager run plain `claude`: your own Claude Code
+settings choose the model and the permission mode (`defaultMode`, auto mode,
+allowlists). Nothing passes `--dangerously-skip-permissions` unless you ask (#283).
 
 **In your terminal:**
 
 ```bash
-WORKER_MODEL=claude-haiku-4-5-20251001 \
-MANAGER_MODEL=claude-opus-5 \
+AUTOCODER_WORKER_MODEL=claude-sonnet-5-5 \
+AUTOCODER_MANAGER_MODEL=claude-opus-5-5 \
+AUTOCODER_CLAUDE_PERMISSION_MODE=auto \
   start-parallel 4 --agent claude
 ```
+
+`AUTOCODER_CLAUDE_PERMISSION_MODE` becomes `--permission-mode <mode>`
+(`auto`, `acceptEdits`, `bypassPermissions`, …). `WORKER_MODEL` / `MANAGER_MODEL`
+still work as before.
 
 ---
 

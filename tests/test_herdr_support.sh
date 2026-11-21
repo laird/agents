@@ -349,7 +349,7 @@ WLL="$ROOT/plugins/autocoder/scripts/worker-launch-lib.sh"
 HERDR_RESOLVE=$(bash -c "source '$WLL'; resolve_worker_launch claude '$ROOT' herdr >/dev/null 2>&1; \
   printf '%s|%s|%s|%s|%s' \"\$WORKER_LAUNCH_MODE\" \"\$WORKER_COMMAND_MODE\" \"\$WORKER_CMD\" \"\$AGENT_LAUNCH_CMD\" \"\$MANAGER_COMMAND_MODE\"")
 case "$HERDR_RESOLVE" in
-  "interactive|agent-input|/autocoder:fix-loop|claude "*"|agent-input")
+  "interactive|agent-input|/autocoder:fix-loop|claude"*"|agent-input")
     pass "claude+herdr resolves to an interactive fix-loop worker" ;;
   *)
     fail "claude+herdr resolved to '$HERDR_RESOLVE'" ;;

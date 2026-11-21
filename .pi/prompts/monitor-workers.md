@@ -489,7 +489,7 @@ done
 # 2. the pane drops to its shell; relaunch a FRESH agent — never `claude --resume`
 #    (herdr helpfully prints a --resume hint on exit; resuming restores the very
 #    session that wedged, 100%-full context and all)
-herdr pane send-text <pane_id> "claude --dangerously-skip-permissions --model <model>"
+herdr pane send-text <pane_id> "claude"   # plus --model / --permission-mode only if configured (#283)
 herdr pane send-keys <pane_id> Enter          # separate call
 # 3. wait ~10s for the TUI, confirm the status line rendered, then dispatch via
 herdr agent prompt <pane_id> "/autocoder:fix <issue_number>"   # or /autocoder:fix-loop
@@ -574,7 +574,7 @@ tmux send-keys -t <session>:<window>.<pane> Enter    # separate call, or it neve
 
    # Option B — exit + relaunch fresh (often faster; loads updated plugins)
    herdr agent prompt <pane_id> "/exit"    # or the Step 4b cwd-verified kill
-   herdr pane send-text <pane_id> "claude --dangerously-skip-permissions --model <model>"
+   herdr pane send-text <pane_id> "claude"   # plus --model / --permission-mode only if configured (#283)
    herdr pane send-keys <pane_id> enter    # separate call, same rule as tmux
    # never `claude --resume` — it restores the full session you just retired
    ```
