@@ -229,10 +229,14 @@ SCRIPT_DIR=$(
   for d in "$(pwd)/.agent/scripts" \
            "$(pwd)/plugins/autocoder/scripts" \
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
-    if [ -f "$d/issue-fns.sh" ] && [ -f "$d/worktree-issue.sh" ]; then echo "$d"; exit 0; fi
+    if [ -f "$d/issue-fns.sh" ] && [ -f "$d/fix-loop-gate.sh" ]; then echo "$d"; exit 0; fi
   done
+  # Fallback: the installed plugin. Only <ver>/scripts is a complete tree;
+  # <ver>/skills/autocoder/scripts is a subset that sorts after it (#142).
+  # Rank by the <ver> directory alone, not the whole path: with two marketplaces
+  # in the cache, a whole-path sort lets the marketplace name decide (#201).
   find "$HOME/.claude/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
-    | while read -r d; do if [ -f "$d/worktree-issue.sh" ]; then echo "$d"; fi; done \
+    | while read -r d; do if [ -f "$d/issue-fns.sh" ] && [ -f "$d/fix-loop-gate.sh" ]; then echo "$d"; fi; done \
     | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 bash "$SCRIPT_DIR/worktree-issue.sh"              # <path> <branch> <issue> <state> <command>
