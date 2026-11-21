@@ -24,6 +24,13 @@ MIRRORS = [
     REPO / "plugins" / "autocoder" / "commands" / "fix.md",
     REPO / ".agent" / "workflows" / "fix.md",
 ]
+# #289 moved /fix's claim, selection and branch setup out of fix.md into
+# claim-issue.sh, which both fix.md copies call. The selection code is checked
+# there, in the plugin source and the Antigravity mirror.
+CLAIM_SCRIPTS = [
+    REPO / "plugins" / "autocoder" / "scripts" / "claim-issue.sh",
+    REPO / ".agent" / "scripts" / "claim-issue.sh",
+]
 
 
 def sh(cmd, cwd):
@@ -94,36 +101,51 @@ def test_output_is_valid_json_array(remote_repo):
 
 
 @pytest.mark.parametrize("mirror", MIRRORS, ids=lambda p: str(p.parent.name))
-def test_fix_md_excludes_claimed_issues(mirror):
-    text = mirror.read_text()
+def test_fix_md_delegates_claim_to_claim_issue_sh(mirror):
+    """The selection checks below read claim-issue.sh; that only protects /fix
+    while fix.md actually calls it."""
+    assert '/claim-issue.sh" --' in mirror.read_text(), (
+        f"{mirror} no longer runs claim-issue.sh, so the claimed-issue "
+        "exclusion tested below is not what /fix runs (issue #48)"
+    )
+
+
+@pytest.mark.parametrize("script", CLAIM_SCRIPTS, ids=lambda p: str(p.parent.parent.name))
+def test_claim_issue_excludes_claimed_issues(script):
+    text = script.read_text()
     assert "claimed-issue-numbers.sh" in text, (
-        f"{mirror.name} no longer consults branch evidence — a dropped "
+        f"{script} no longer consults branch evidence — a dropped "
         "`working` label would re-expose in-flight issues (issue #48)"
     )
-    assert text.count("IN($claimed[])") == 2, (
-        f"{mirror.name} must exclude claimed issues in BOTH the top-issue and "
-        "candidate-list selects; found "
-        f"{text.count('IN($claimed[])')}"
+    # Every select that picks claimable issues (it drops `working`) must also
+    # drop issues with a live remote branch. #289 merged the top-issue and
+    # candidate-list selects into one; a select added later must exclude too.
+    selects = text.count('any(. == "working") | not')
+    excludes = text.count("IN($claimed[])")
+    assert selects >= 1, f"{script}: found no claimable-issue select"
+    assert excludes == selects, (
+        f"{script}: {selects} claimable-issue select(s) but {excludes} "
+        "exclude claimed issues"
     )
-    assert text.count('--argjson claimed "$CLAIMED_BY_BRANCH"') == 2
+    assert text.count('--argjson claimed "$CLAIMED_BY_BRANCH"') == selects
 
 
-@pytest.mark.parametrize("mirror", MIRRORS, ids=lambda p: str(p.parent.name))
-def test_claimed_var_defined_before_use(mirror):
+@pytest.mark.parametrize("script", CLAIM_SCRIPTS, ids=lambda p: str(p.parent.parent.name))
+def test_claimed_var_defined_before_use(script):
     """`jq --argjson` with an unset var is a hard error, not a soft skip."""
-    text = mirror.read_text()
+    text = script.read_text()
     define = text.index("CLAIMED_BY_BRANCH=$(")
     first_use = text.index('--argjson claimed "$CLAIMED_BY_BRANCH"')
     assert define < first_use, (
-        f"{mirror.name}: CLAIMED_BY_BRANCH is used before it is defined"
+        f"{script}: CLAIMED_BY_BRANCH is used before it is defined"
     )
 
 
-@pytest.mark.parametrize("mirror", MIRRORS, ids=lambda p: str(p.parent.name))
-def test_post_selection_arbitration_retained(mirror):
+@pytest.mark.parametrize("script", CLAIM_SCRIPTS, ids=lambda p: str(p.parent.parent.name))
+def test_post_selection_arbitration_retained(script):
     """Branch evidence narrows the race; it does not replace the check."""
-    text = mirror.read_text()
+    text = script.read_text()
     assert "autocoder-claim" in text, (
-        f"{mirror.name} dropped the #15 arbitration. Branch evidence cannot see "
+        f"{script} dropped the #15 arbitration. Branch evidence cannot see "
         "unpushed claims or branches with no issue number in the name."
     )
