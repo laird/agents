@@ -1855,6 +1855,10 @@ reboot_wake() {
   # broken trigger goes unnoticed (#280).
   local missed
   if missed=$(boot_trigger_missed) && [ "$(state_get boot_trigger_missed_reported)" != "$cur" ]; then
+    # A dry run reports nothing to anyone and records nothing.
+    [ "$DRY_RUN" = true ] && echo "DRY-RUN would notify: the boot trigger did not recover boot $cur: $missed"
+  fi
+  if [ "$DRY_RUN" != true ] && [ -n "${missed:-}" ] && [ "$(state_get boot_trigger_missed_reported)" != "$cur" ]; then
     notify "idle-sentinel: the boot trigger did not recover boot $cur: $missed. The sentinel's boot wake recovers instead."
     state_merge "{\"boot_trigger_missed_reported\": \"$cur\"}"
   fi

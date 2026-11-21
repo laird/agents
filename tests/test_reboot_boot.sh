@@ -155,7 +155,13 @@ SLOG="$P/.autocoder/sentinel.log"
 missed() { FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET="${DT:-active}" FAKE_RR_RC=1 tick >/dev/null; grep -c "boot trigger did not recover boot boot-5" "$SLOG"; }
 echo "boot-5" > "$T/boot_id"
 eq "startup not finished: no report (the unit may still run)" 0 "$(DT=activating missed)"
+FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active FAKE_UNIT_STATE=activating FAKE_UNIT_START=12345 FAKE_RR_RC=1 tick >/dev/null
+eq "unit still running (activating): no report" 0 "$(grep -c "boot trigger did not recover boot boot-5" "$SLOG")"
+OUT=$(FAKE_UNIT_ENABLED=1 FAKE_DEFAULT_TARGET=active tick --dry-run)
+has "--dry-run names the missed trigger" "DRY-RUN would notify: the boot trigger did not recover boot boot-5" "$OUT"
+eq "--dry-run notifies nothing" 0 "$(grep -c "boot trigger did not recover boot boot-5" "$SLOG")"
 eq "unit enabled, startup done, never started: reported" 1 "$(missed)"
+eq "...and records the boot as reported" "boot-5" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("boot_trigger_missed_reported",""))' "$P/.autocoder/sentinel-state.json")"
 has "...naming the dropped job and how to check" "did not start this boot (systemd dropped its start job; check: systemd-analyze --user verify default.target)" "$(cat "$SLOG")"
 eq "...once per boot, not every retry tick" 1 "$(missed)"
 echo "boot-6" > "$T/boot_id"
@@ -376,7 +382,9 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   cp "$UNIT" "$UD/autocoder-reboot-recover.service"
   ln -s ../herdr.service "$UD/default.target.wants/herdr.service"
   ln -s ../autocoder-reboot-recover.service "$UD/default.target.wants/autocoder-reboot-recover.service"
-  verify() { SYSTEMD_UNIT_PATH="$UD:" systemd-analyze --user verify default.target 2>&1 | grep -F "ordering cycle"; }
+  # Stock units come from the default path (the trailing colon); count only
+  # cycles through our unit, so one among the host's own units is not ours.
+  verify() { SYSTEMD_UNIT_PATH="$UD:" systemd-analyze --user verify default.target 2>&1 | grep -F "ordering cycle" | grep -F autocoder-reboot-recover; }
   eq "real systemd-analyze: herdr After=default.target + our unit → no cycle" "" "$(verify)"
   sed -i.bak 's/^After=.*/After=herdr.service network-online.target/' "$UD/autocoder-reboot-recover.service"
   has "real systemd-analyze: the old After=herdr.service unit → cycle (check is live)" "ordering cycle" "$(verify)"
