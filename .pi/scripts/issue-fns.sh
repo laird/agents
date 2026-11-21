@@ -74,7 +74,7 @@ _ifns_drop_decomposed() {
   local in
   in=$(cat)
   if printf '%s' "$in" | jq -e 'type == "array" and any(.[]; [(.labels // [])[] | if type == "object" then .name else . end] | index("decomposed"))' >/dev/null 2>&1; then
-    printf '%s' "$in" | jq '[.[] | select([(.labels // [])[] | if type == "object" then .name else . end] | index("decomposed") | not)]'
+    printf '%s' "$in" | jq -c '[.[] | select([(.labels // [])[] | if type == "object" then .name else . end] | index("decomposed") | not)]'
   else
     printf '%s\n' "$in"
   fi
