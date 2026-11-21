@@ -107,9 +107,10 @@ done
   && ok ".agent/scripts carries an identical issue-spec.sh" || bad ".agent/scripts/issue-spec.sh missing or stale"
 
 # ── Parent sub-task list comes from the decomposition comment ─────────────
-# Mirrors the jq in fix.md's "Monitoring Decomposed Issues" block.
+# Mirrors the jq in the "Monitoring Decomposed Issues" block, which moved from
+# fix.md into the fix-decomposition reference (#293).
 SUBTASK_JQ='([(.comments // [])[] | (.body // "") | select(test("Issue Decomposed into Sub-Tasks"))] | last) // (.body // "")'
-for f in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
+for f in skills/autocoder/references/fix-decomposition.md .agent/shared/fix-decomposition.md; do
   grep -qF 'select(test("Issue Decomposed into Sub-Tasks"))] | last)' "$ROOT/$f" \
     && ok "$f reads sub-tasks from the decomposition comment" || bad "$f sub-task jq drifted from this test"
 done

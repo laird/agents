@@ -259,262 +259,18 @@ esac
 ```
 
 ```bash
-# Load project-specific configuration from CLAUDE.md
-if [ -f "CLAUDE.md" ]; then
-  echo "📋 Reading project configuration from CLAUDE.md"
-
-  # Check if autocoder configuration exists
-  if ! grep -q "## Automated Testing & Issue Management" CLAUDE.md; then
-    echo "⚠️  No autocoder configuration found in CLAUDE.md"
-    echo "📝 Adding autocoder configuration section to CLAUDE.md..."
-
-    # Auto-detect the repo's default branch (works for main, master, integration, etc.)
-    DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-    DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-
-    # Append autocoder configuration to CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
-
-## Automated Testing & Issue Management
-
-This section configures the `/fix` command for autonomous issue resolution.
-
-### Regression Test Suite
-```bash
-npm test
-```
-
-### Build Verification
-```bash
-npm run build
-```
-
-### Test Framework Details
-
-**Unit Tests**:
-- Framework: (Configure your test framework)
-- Location: (Configure test file locations)
-
-**E2E Tests**:
-- Framework: (Configure E2E test framework)
-- Location: (Configure E2E test locations)
-
-**Test Reports**:
-- Location: `docs/test/regression-reports/`
-
-### Merge Mode
-```
-merge
-```
-Options: `merge` (auto-merge to the integration branch and push) or `pr` (push feature branch and create a pull request, then stop).
-
-### Integration Branch
-```
-AUTOCODER_CONFIG
-    echo "${DEFAULT_BRANCH}" >> CLAUDE.md
-    cat >> CLAUDE.md << 'AUTOCODER_CONFIG'
-```
-The shared branch all completed work is merged into. In a parallel-worktree swarm this MUST be the real shared branch (e.g. `main`), never a per-worktree branch — otherwise fixes strand on `main-wt-N` and never converge.
-
-AUTOCODER_CONFIG
-
-    echo "✅ Added autocoder configuration to CLAUDE.md - please update with project-specific details"
-  fi
-
-  # Extract test command
-  if grep -q "### Regression Test Suite" CLAUDE.md; then
-    TEST_COMMAND=$(sed -n "/### Regression Test Suite/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
-    echo "✅ Regression test command: $TEST_COMMAND"
-  else
-    TEST_COMMAND="npm test"
-    echo "⚠️  No regression test command found, using default: $TEST_COMMAND"
-  fi
-
-  # Extract build command
-  if grep -q "### Build Verification" CLAUDE.md; then
-    BUILD_COMMAND=$(sed -n "/### Build Verification/,/^###/{/^\`\`\`bash$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
-    echo "✅ Build command: $BUILD_COMMAND"
-  else
-    BUILD_COMMAND="npm run build"
-    echo "⚠️  No build command found, using default: $BUILD_COMMAND"
-  fi
-  # Extract merge mode (merge or pr)
-  if grep -q "### Merge Mode" CLAUDE.md; then
-    MERGE_MODE=$(sed -n "/### Merge Mode/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
-    echo "✅ Merge mode: $MERGE_MODE"
-  else
-    MERGE_MODE=""
-    echo "MERGE_MODE_NOT_CONFIGURED=true"
-  fi
-  # Extract the integration branch (the shared branch all work merges into).
-  # Falls back to auto-detecting the repo default branch (supports main, master, integration, etc.)
-  if grep -q "### Integration Branch" CLAUDE.md; then
-    INTEGRATION_BRANCH=$(sed -n "/### Integration Branch/,/^###/{/^\`\`\`$/n;p;}" CLAUDE.md | grep -v "^#" | grep -v "^\`\`\`" | grep -v "^$" | head -1)
-  fi
-  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')}"
-  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
-  echo "✅ Integration branch: $INTEGRATION_BRANCH"
-else
-  echo "⚠️  No CLAUDE.md found in project, using defaults"
-  TEST_COMMAND="npm test"
-  BUILD_COMMAND="npm run build"
-  MERGE_MODE="merge"
-  INTEGRATION_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-main}"
-fi
-
-# Ensure gh is authenticated as the correct user for this repo (GitHub backend only)
-if [ "$ISSUE_SOURCE" = "github" ]; then
-  REPO_OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || echo "")
-  if [ -n "$REPO_OWNER" ]; then
-    CURRENT_GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
-    if [ -n "$CURRENT_GH_USER" ] && [ "$CURRENT_GH_USER" != "$REPO_OWNER" ]; then
-      echo "🔄 Switching gh identity to match repo owner ($REPO_OWNER)..."
-      gh auth switch --user "$REPO_OWNER" 2>/dev/null || echo "⚠️  Could not switch to $REPO_OWNER — ensure 'gh auth login' has been run for this account"
-    fi
-  fi
-fi
-
-# ── Model configuration ──────────────────────────────────────────────────────
-# Resolve model tiers: env vars → .autocoder.json → built-in defaults.
-# If nothing is configured, ask the user to confirm defaults before proceeding.
-_DEFAULT_MANAGER_MODEL="opus"
-_DEFAULT_WORKER_MODEL="sonnet"
-_DEFAULT_FAST_MODEL="haiku"
-
-# Load from .autocoder.json if present and not already set via env
-if [ -f ".autocoder.json" ] && command -v python3 >/dev/null 2>&1; then
-  _JSON_MANAGER=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('managerModel',''))" 2>/dev/null || echo "")
-  _JSON_WORKER=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('workerModel',''))" 2>/dev/null || echo "")
-  _JSON_FAST=$(python3 -c "import json,sys; d=json.load(open('.autocoder.json')); print(d.get('fastModel',''))" 2>/dev/null || echo "")
-  MANAGER_MODEL="${MANAGER_MODEL:-${_JSON_MANAGER:-$_DEFAULT_MANAGER_MODEL}}"
-  WORKER_MODEL="${WORKER_MODEL:-${_JSON_WORKER:-$_DEFAULT_WORKER_MODEL}}"
-  FAST_MODEL="${FAST_MODEL:-${_JSON_FAST:-$_DEFAULT_FAST_MODEL}}"
-else
-  MANAGER_MODEL="${MANAGER_MODEL:-$_DEFAULT_MANAGER_MODEL}"
-  WORKER_MODEL="${WORKER_MODEL:-$_DEFAULT_WORKER_MODEL}"
-  FAST_MODEL="${FAST_MODEL:-$_DEFAULT_FAST_MODEL}"
-fi
-
-# Detect whether this is the first run (no models were pre-configured)
-_MODELS_PRECONFIGURED=false
-if [ -n "${MANAGER_MODEL_PRECONFIG:-}" ] || [ -n "${WORKER_MODEL_PRECONFIG:-}" ]; then
-  _MODELS_PRECONFIGURED=true
-elif grep -q '"managerModel"\|"workerModel"\|"fastModel"' .autocoder.json 2>/dev/null; then
-  _MODELS_PRECONFIGURED=true
-fi
-
-if [ "$_MODELS_PRECONFIGURED" = "false" ]; then
-  echo ""
-  echo "⚙️  Model configuration — no custom models detected."
-  echo ""
-  echo "   Default tiers:"
-  echo "     Deep (manager/complex): $MANAGER_MODEL"
-  echo "     Balanced (worker/standard): $WORKER_MODEL"
-  echo "     Fast (labels/comments): $FAST_MODEL"
-  echo ""
-  echo "   To keep these defaults, reply: confirm"
-  echo "   To override, set env vars before running /fix:"
-  echo "     export MANAGER_MODEL=\"opus\""
-  echo "     export WORKER_MODEL=\"sonnet\""
-  echo "     export FAST_MODEL=\"haiku\""
-  echo "   Or add to .autocoder.json:"
-  echo "     {\"managerModel\": \"opus\", \"workerModel\": \"sonnet\", \"fastModel\": \"haiku\"}"
-  echo ""
-  # Ask the user to confirm or override using AskUserQuestion.
-  # Present this as a blocking confirmation — do NOT proceed until the user responds.
-  echo "ACTION_REQUIRED: Ask the user now using AskUserQuestion:"
-  echo "  Question: 'Autocoder will use these model tiers — confirm or override?'"
-  echo "  Options:"
-  echo "    1. Use defaults ($MANAGER_MODEL / $WORKER_MODEL / $FAST_MODEL)"
-  echo "    2. Override — I will set MANAGER_MODEL / WORKER_MODEL / FAST_MODEL env vars"
-  echo "       (use tier shorthand: opus/sonnet/haiku for Claude Code, pro/flash for Gemini)"
-  echo "    3. Save defaults to .autocoder.json (so this prompt doesn't appear again)"
-  echo ""
-  echo "  Agents inherit credentials from the running session — no API keys needed."
-  echo ""
-  echo "  If the user chooses option 3, write the following to .autocoder.json (merging"
-  echo "  with any existing keys):"
-  echo "    managerModel: $MANAGER_MODEL"
-  echo "    workerModel:  $WORKER_MODEL"
-  echo "    fastModel:    $FAST_MODEL"
-  echo "  Then continue."
-  echo "  If the user overrides, update MANAGER_MODEL / WORKER_MODEL / FAST_MODEL to"
-  echo "  the values they provide before continuing."
-fi
-
+# Configuration and setup live in fix-config.sh (#293): the project config
+# (TEST_COMMAND, BUILD_COMMAND, MERGE_MODE, INTEGRATION_BRANCH),
+# appending the autocoder section to CLAUDE.md when it is missing; the gh identity
+# check; model tiers (MANAGER/WORKER/FAST_MODEL); superpowers/quint detection
+# (SUPERPOWERS_AVAILABLE, QUINT_AVAILABLE); label reconciliation; and the
+# unprioritized-issue scan. It hands its variables back in a file of printf-%q
+# lines. Act on what it prints: see "Configuration markers" below this block.
+FIX_CONFIG_ENV=$(mktemp "${TMPDIR:-/tmp}/autocoder-config.XXXXXX")
+MANAGER_MODEL="${MANAGER_MODEL:-}" WORKER_MODEL="${WORKER_MODEL:-}" FAST_MODEL="${FAST_MODEL:-}" \
+  INTEGRATION_BRANCH="${INTEGRATION_BRANCH:-}" "${SCRIPT_DIR}/fix-config.sh" --out "$FIX_CONFIG_ENV" || exit 1
+source "$FIX_CONFIG_ENV"; rm -f "$FIX_CONFIG_ENV"
 export MANAGER_MODEL WORKER_MODEL FAST_MODEL
-echo "✅ Models: manager=$MANAGER_MODEL  worker=$WORKER_MODEL  fast=$FAST_MODEL"
-
-# Detect available plugins for enhanced capabilities
-echo "🔌 Detecting available plugins..."
-
-# Check for superpowers plugin (structured problem-solving skills)
-SUPERPOWERS_AVAILABLE=false
-if claude plugins list 2>/dev/null | grep -q "superpowers"; then
-  SUPERPOWERS_AVAILABLE=true
-  echo "✅ superpowers plugin detected - will use for complex issues"
-else
-  echo "ℹ️  superpowers plugin not installed - will use direct problem-solving"
-fi
-
-# Check for quint plugin (structured reasoning for ultra-complex decisions)
-QUINT_AVAILABLE=false
-if claude plugins list 2>/dev/null | grep -q "quint"; then
-  QUINT_AVAILABLE=true
-  echo "✅ quint plugin detected - will use for ultra-complex decisions requiring human guidance"
-else
-  echo "ℹ️  quint plugin not installed - will escalate ultra-complex issues for manual review"
-fi
-
-# Ensure the labels this workflow relies on exist (GitHub backend only — the file
-# backend creates labels on demand).
-#
-# This reconciles against `gh label list` on EVERY run rather than gating on a
-# marker file. A marker was used here previously and it was committed to git, so
-# `[ ! -f .github/.priority-labels-configured ]` was false in every clone,
-# worktree and fork — the block had not run for anyone since 2026-02-02, and
-# this repo was missing all seven blocking labels as a result. Reconciling
-# against reality costs one API call, is idempotent, and cannot be defeated by
-# a file landing in the repo.
-if [ "$ISSUE_SOURCE" = "github" ]; then
-  EXISTING_LABELS=$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || echo "")
-
-  for label in "P0:Critical priority issue:d73a4a" "P1:High priority issue:ff9800" "P2:Medium priority issue:ffeb3b" "P3:Low priority issue:4caf50" "proposal:AI-generated proposal awaiting human approval:c5def5" "working:Issue currently being worked on by an agent:1d76db" "needs-approval:Architectural decisions, major changes, security implications:e99695" "needs-design:Requirements unclear, multiple approaches, needs design:fbca04" "needs-clarification:Incomplete information, missing context, questions needed:d4c5f9" "too-complex:Beyond autonomous capability, requires deep expertise:b60205" "future:Idea for future consideration, not ready for implementation:bfd4f2" "decomposed:Complex issue broken into sub-tasks:9c27b0" "subtask:Part of a larger decomposed issue:ba68c8" "awaiting-integration:Work is complete but has not reached the integration branch:0e8a16" "needs-review-focus:Larger than the review-fit limit; the digest names every hunk to read:fef2c0" "merging:A detached merge job is landing this issue on the integration branch:5319e7" "spot-check:Closed merge-mode work sampled for human review (see /spot-check):c2e0c6"; do
-    IFS=':' read -r name desc color <<< "$label"
-    if ! echo "$EXISTING_LABELS" | grep -qFx "$name"; then
-      echo "Creating label: $name"
-      gh label create "$name" --description "$desc" --color "$color" 2>/dev/null || true
-    fi
-  done
-fi
-
-# Step 0: Review and prioritize any unprioritized issues
-echo "🔍 Checking for unprioritized issues..."
-issue_list --state open --limit 100 > /tmp/all-open-issues.json
-
-# Find issues without any priority label (P0-P3), excluding issues already being worked on
-UNPRIORITIZED=$(cat /tmp/all-open-issues.json | python3 -c "
-import json, sys
-issues = json.load(sys.stdin)
-unprioritized = [i for i in issues
-                 if not any(l['name'] in ['P0','P1','P2','P3'] for l in i.get('labels',[]))
-                 and not any(l['name'] == 'working' for l in i.get('labels',[]))]
-for issue in unprioritized:
-    print(f\"{issue['number']}|{issue['title']}|{issue.get('body', '')[:500]}\")
-")
-
-if [ -n "$UNPRIORITIZED" ]; then
-  UNPRIORITIZED_COUNT=$(echo "$UNPRIORITIZED" | grep -c "^" || echo "0")
-  echo "⚠️  Found $UNPRIORITIZED_COUNT unprioritized issue(s). Reviewing and assigning priorities..."
-  echo ""
-  echo "UNPRIORITIZED_ISSUES_FOUND=true"
-  echo "UNPRIORITIZED_DATA<<EOF"
-  echo "$UNPRIORITIZED"
-  echo "EOF"
-else
-  echo "✅ All open issues have priority labels assigned"
-fi
 
 # Claim, selection and branch setup live in claim-issue.sh (#289). It works the
 # issue named in /fix's argument, or picks the highest-priority claimable one;
@@ -590,6 +346,12 @@ echo ""
 # for the full decomposition protocol including sub-task body template.
 # ────────────────────────────────────────────────────────────────────────────
 ```
+
+**Configuration markers (`fix-config.sh`).** The block above prints these lines; act on each one you see:
+
+- `MERGE_MODE_NOT_CONFIGURED=true`: CLAUDE.md has no Merge Mode section. Follow "First-Run: Configure Merge Mode" below.
+- `ACTION_REQUIRED: Ask the user now`: no model tiers are configured. Ask the printed question using AskUserQuestion and do not proceed until the user answers; then export their values, or save the defaults to `.autocoder.json`, as the printed text says.
+- `UNPRIORITIZED_ISSUES_FOUND=true`: the issues listed between `UNPRIORITIZED_DATA<<EOF` and `EOF` need a priority. Follow "Unprioritized Issue Triage" above.
 
 **Claim exit codes (`claim-issue.sh`).** The block above stops with the script's exit code; read the output to see which case you are in.
 
@@ -1192,72 +954,7 @@ Moved to `autocoder:references/fix-blocking.md` (#240). Read it when an issue ma
 
 Moved to `autocoder:references/fix-decomposition.md` (#240). Read it when the task scope gate or Step 1 says the issue is too large: it has the decomposition rules, the sub-task body template and the `too-complex` fallback.
 
-**Monitoring Decomposed Issues**:
-
-When processing issues in the main loop, check for decomposed issues where all sub-tasks are complete:
-
-```bash
-# After fixing each issue, check if it was a sub-task that completes a decomposed issue
-# Get parent issue if this was a subtask
-PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body // ""' | sed -nE 's/.*Sub-task of #([0-9]+).*/\1/p' | head -1)
-
-if [ -n "$PARENT_ISSUE" ]; then
-  echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
-
-  # Check if all sub-tasks of parent are closed. The sub-task list lives in the
-  # "Issue Decomposed into Sub-Tasks" COMMENT, not the body (#134): take the
-  # checklist from the latest such comment, so a list corrected by a later
-  # re-decomposition wins. Fall back to the body only when no such comment exists
-  # (older decompositions, and the file backend, which folds comments into the body).
-  PARENT_JSON=$(issue_get "$PARENT_ISSUE")
-  PARENT_SUBTASKS=$(printf '%s' "$PARENT_JSON" | jq -r '
-    ([(.comments // [])[] | (.body // "") | select(test("Issue Decomposed into Sub-Tasks"))] | last)
-      // (.body // "")' | tr -d '\r' | grep -oE '^- \[[ xX]\] #[0-9]+' | grep -oE '[0-9]+$')
-  ALL_CLOSED=true
-  if [ -z "$PARENT_SUBTASKS" ]; then
-    echo "⚠️  No sub-task checklist found on #$PARENT_ISSUE — not auto-closing it."
-    ALL_CLOSED=false
-  fi
-
-  for SUBTASK_NUM in $PARENT_SUBTASKS; do
-    SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
-    if [ "$SUBTASK_STATE" != "CLOSED" ]; then
-      ALL_CLOSED=false
-      break
-    fi
-  done
-
-  if [ "$ALL_CLOSED" = "true" ]; then
-    echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
-    # The rollup is a review digest too (#196). It has no diff of its own (each
-    # sub-task landed and was digested separately), so it renders against HEAD and
-    # the sub-tasks go in "Where to look".
-    ROLLUP_SECTIONS=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-rollup-${PARENT_ISSUE}.XXXXXX")
-    {
-      printf '## Intent\n%s\n\n' "$(issue_get "$PARENT_ISSUE" | jq -r '.title')"
-      printf '## Where to look\nEach sub-task landed separately with its own digest; review them there:\n'
-      for num in $PARENT_SUBTASKS; do printf -- '- #%s %s\n' "$num" "$(issue_get "$num" | jq -r '.title')"; done
-      printf '\n## Verification\nEvery sub-task listed above is CLOSED (checked with issue_get just now).\n\n'
-      printf '## Not verified / confidence\nThe sub-tasks were gated one at a time; nothing re-tested them together beyond each merge gate. Confidence: medium.\n'
-    } > "$ROLLUP_SECTIONS"
-    if ROLLUP=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$PARENT_ISSUE" --base HEAD --sections "$ROLLUP_SECTIONS"); then
-      if issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
-
-${ROLLUP}
-
-🤖 Auto-closed by autonomous fix workflow" && [ "$MERGE_MODE" != "pr" ]; then
-        # Merge mode samples closed work for later human review (#197). The rollup
-        # has no diff of its own, so only its labels and the random sample apply.
-        bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$PARENT_ISSUE" \
-          --sha "$(git rev-parse HEAD)" --base HEAD --apply || true
-      fi
-    else
-      echo "❌ Rollup digest for #$PARENT_ISSUE did not render — leaving it open"
-    fi
-    rm -f "$ROLLUP_SECTIONS"
-  fi
-fi
-```
+**Monitoring Decomposed Issues**: moved to `autocoder:references/fix-decomposition.md` (#293). When the issue you just finished is a sub-task (its body says `Sub-task of #N`), read its "Monitoring Decomposed Issues" section: it checks whether every sibling sub-task is closed and, if so, closes the parent with a rollup digest (and samples it for spot-check in merge mode).
 
 ### Skip Criteria (Legacy)
 

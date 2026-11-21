@@ -59,26 +59,33 @@ for P in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
     || bad "$P: $BARE close(s) of ISSUE_NUM/ENHANCE_NUM are not followed by the selector"
   [ "$INLINE_SAMPLED" -eq "$INLINE" ] && ok "$P: each inline close calls the selector ($INLINE)" \
     || bad "$P: $INLINE inline close(s) but $INLINE_SAMPLED selector call(s)"
-  ROLLUP=$(awk '/if issue_close "\$PARENT_ISSUE"/ {on=1} on {print} on && /^      fi$/ {exit}' "$F")
+  # The rollup moved from fix.md into the fix-decomposition reference (#293).
+  case "$P" in
+    .agent/*) R="$ROOT/.agent/shared/fix-decomposition.md" ;;
+    *)        R="$ROOT/skills/autocoder/references/fix-decomposition.md" ;;
+  esac
+  ROLLUP=$(awk '/if issue_close "\$PARENT_ISSUE"/ {on=1} on {print} on && /^      fi$/ {exit}' "$R")
   printf '%s' "$ROLLUP" | grep -q '\[ "\$MERGE_MODE" != "pr" \]' \
     && ok "$P: the rollup samples only outside pr mode" || bad "$P: the rollup's spot-check is not skipped in pr mode"
   printf '%s' "$ROLLUP" | grep -q "\"\${SCRIPT_DIR}/${SC}\" --issue \"\$PARENT_ISSUE\"" \
     && ok "$P: the decomposed-parent rollup calls the selector after its close" \
     || bad "$P: the rollup close does not call ${SC}"
-  [ "$(grep -c "${SC}" "$F")" -eq $((1 + INLINE)) ] && ok "$P: no other site calls the selector (pr-mode sites stay untouched)" \
-    || bad "$P: ${SC} appears $(grep -c "${SC}" "$F") times, want $((1 + INLINE))"
+  [ "$(grep -c "${SC}" "$F")" -eq "$INLINE" ] && ok "$P: no other site calls the selector (pr-mode sites stay untouched)" \
+    || bad "$P: ${SC} appears $(grep -c "${SC}" "$F") times, want $INLINE"
+  [ "$(grep -c "${SC}" "$R")" -eq 1 ] && ok "$P: the rollup reference calls the selector once" \
+    || bad "$P: ${SC} appears $(grep -c "${SC}" "$R") times in $R, want 1"
 
-  # The label is reconciled...
-  grep -E '^ *for label in ' "$F" | grep -q '"spot-check:' \
-    && ok "$P: the spot-check label is in the label reconciliation block" \
-    || bad "$P: spot-check missing from the label reconciliation block"
-  # ...but is never a blocking label or a claimable-queue filter.
+  # The label is reconciled by fix-config.sh (#293), but is never a blocking
+  # label or a claimable-queue filter.
   if grep -nE "needs-approval" "$F" | grep -v '^ *[0-9]*: *for label in ' | grep -v 'for label in' | grep -q 'spot-check'; then
     bad "$P: spot-check appears in a blocking/claim-filter list"
   else
     ok "$P: spot-check is not a blocking or claim-filter label"
   fi
 done
+grep -E '^ *LABELS\+?=\(' "$ROOT/plugins/autocoder/scripts/fix-config.sh" | grep -q '"spot-check:' \
+  && ok "fix-config.sh: the spot-check label is in the label reconciliation block" \
+  || bad "fix-config.sh: spot-check missing from the label reconciliation block"
 for f in fix-loop-gate.sh issues-gh.sh issues-file.py issue-fns.sh claimed-issue-numbers.sh; do
   [ -f "$ROOT/plugins/autocoder/scripts/$f" ] || continue
   grep -q 'spot-check' "$ROOT/plugins/autocoder/scripts/$f" \

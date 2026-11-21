@@ -143,3 +143,70 @@ fi
 echo ""
 # Continue to next issue
 ```
+
+## Monitoring Decomposed Issues
+
+Moved here from fix.md (#293). After an issue closes, check for decomposed issues where all sub-tasks are complete:
+
+```bash
+# After fixing each issue, check if it was a sub-task that completes a decomposed issue
+# Get parent issue if this was a subtask
+PARENT_ISSUE=$(issue_get "$ISSUE_NUM" | jq -r '.body // ""' | sed -nE 's/.*Sub-task of #([0-9]+).*/\1/p' | head -1)
+
+if [ -n "$PARENT_ISSUE" ]; then
+  echo "🔍 Checking if parent issue #$PARENT_ISSUE is now complete..."
+
+  # Check if all sub-tasks of parent are closed. The sub-task list lives in the
+  # "Issue Decomposed into Sub-Tasks" COMMENT, not the body (#134): take the
+  # checklist from the latest such comment, so a list corrected by a later
+  # re-decomposition wins. Fall back to the body only when no such comment exists
+  # (older decompositions, and the file backend, which folds comments into the body).
+  PARENT_JSON=$(issue_get "$PARENT_ISSUE")
+  PARENT_SUBTASKS=$(printf '%s' "$PARENT_JSON" | jq -r '
+    ([(.comments // [])[] | (.body // "") | select(test("Issue Decomposed into Sub-Tasks"))] | last)
+      // (.body // "")' | tr -d '\r' | grep -oE '^- \[[ xX]\] #[0-9]+' | grep -oE '[0-9]+$')
+  ALL_CLOSED=true
+  if [ -z "$PARENT_SUBTASKS" ]; then
+    echo "⚠️  No sub-task checklist found on #$PARENT_ISSUE — not auto-closing it."
+    ALL_CLOSED=false
+  fi
+
+  for SUBTASK_NUM in $PARENT_SUBTASKS; do
+    SUBTASK_STATE=$(issue_get "$SUBTASK_NUM" | jq -r '.state')
+    if [ "$SUBTASK_STATE" != "CLOSED" ]; then
+      ALL_CLOSED=false
+      break
+    fi
+  done
+
+  if [ "$ALL_CLOSED" = "true" ]; then
+    echo "✅ All sub-tasks complete! Closing parent issue #$PARENT_ISSUE"
+    # The rollup is a review digest too (#196). It has no diff of its own (each
+    # sub-task landed and was digested separately), so it renders against HEAD and
+    # the sub-tasks go in "Where to look".
+    ROLLUP_SECTIONS=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-rollup-${PARENT_ISSUE}.XXXXXX")
+    {
+      printf '## Intent\n%s\n\n' "$(issue_get "$PARENT_ISSUE" | jq -r '.title')"
+      printf '## Where to look\nEach sub-task landed separately with its own digest; review them there:\n'
+      for num in $PARENT_SUBTASKS; do printf -- '- #%s %s\n' "$num" "$(issue_get "$num" | jq -r '.title')"; done
+      printf '\n## Verification\nEvery sub-task listed above is CLOSED (checked with issue_get just now).\n\n'
+      printf '## Not verified / confidence\nThe sub-tasks were gated one at a time; nothing re-tested them together beyond each merge gate. Confidence: medium.\n'
+    } > "$ROLLUP_SECTIONS"
+    if ROLLUP=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$PARENT_ISSUE" --base HEAD --sections "$ROLLUP_SECTIONS"); then
+      if issue_close "$PARENT_ISSUE" --comment "✅ **Complex Issue Resolved**
+
+${ROLLUP}
+
+🤖 Auto-closed by autonomous fix workflow" && [ "$MERGE_MODE" != "pr" ]; then
+        # Merge mode samples closed work for later human review (#197). The rollup
+        # has no diff of its own, so only its labels and the random sample apply.
+        bash "${SCRIPT_DIR}/spot-check-select.sh" --issue "$PARENT_ISSUE" \
+          --sha "$(git rev-parse HEAD)" --base HEAD --apply || true
+      fi
+    else
+      echo "❌ Rollup digest for #$PARENT_ISSUE did not render — leaving it open"
+    fi
+    rm -f "$ROLLUP_SECTIONS"
+  fi
+fi
+```

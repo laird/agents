@@ -62,11 +62,14 @@ for f in plugins/autocoder/commands/fix.md .pi/prompts/fix.md; do
   grep -q 'swaps `working` for `merging` itself as its first act' "$path" && ok "$f lock table says the job performs the swap" || bad "$f lock table does not assign the swap to the job"
   grep -q 'merge-launch.sh --own-issue' "$path" && ok "$f blocking-labels table names the merge job" || bad "$f blocking-labels row not updated"
   grep -q '^| `merging` |' "$path" && ok "$f blocking-labels table has a merging row" || bad "$f blocking-labels table lacks a merging row"
-  grep -q '"merging:' "$path" && ok "$f creates the merging label on GitHub" || bad "$f label-creation list lacks merging"
 
   prs=$(grep -c 'gh pr create' "$path")
   [ "$prs" -ge 1 ] && ok "$f keeps the pr merge-mode branch ($prs)" || bad "$f lost the pr merge-mode branch"
 done
+
+# The label reconciliation moved from fix.md into fix-config.sh (#293).
+grep -q '"merging:' "$ROOT/plugins/autocoder/scripts/fix-config.sh" \
+  && ok "fix-config.sh creates the merging label on GitHub" || bad "fix-config.sh label-creation list lacks merging"
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
