@@ -473,7 +473,7 @@ class Cycle:
         self.log(f"reconciling a cycle left by a dead process (started {old.get('started')})")
         self.record = old
         for m in old.get("members", []):
-            if m["status"] in ("landed", "returned"):
+            if m["status"] in ("landed", "returned", "nothing"):
                 continue
             proof = T.landing_proof(self.cfg, m["tip"])
             if proof:
