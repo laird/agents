@@ -196,8 +196,23 @@ has "dry run from the manager pane names it as this pane" "DRY-RUN would prompt 
 hasnt "dry run from the manager pane does not offer the other pane" "would prompt restored manager pane w0:p1" "$OUT"
 OUT=$(HERDR_PANE_ID=w5:p1 run "$T/herdrbin")
 [ ! -s "$HERDR_DIR/prompts" ] && pass "the pane running the script is not prompted, nor the other" || fail "prompted: $(cat "$HERDR_DIR/prompts")"
-has "says the manager is this pane" "manager is w5:p1 (this pane)" "$OUT"
+has "says the manager is this pane" "manager is w5:p1, the pane running this script" "$OUT"
 has "running from the manager is not a problem" "problems=0" "$OUT"
+
+# ── 4f. Run from a person's own session in the root (review of #291) ──────────
+# Nothing names that pane the manager, so it is never picked by elimination.
+setup
+agents "w0:p1=$T/alpha"
+OUT=$(HERDR_PANE_ID=w0:p1 run "$T/herdrbin")
+has "own session alone in the root: the sentinel starts a manager" "SENTINEL --once --project $T/alpha" "$(cat "$HERDR_DIR/sentinel")"
+[ ! -s "$HERDR_DIR/prompts" ] && pass "own session alone: not prompted" || fail "prompted: $(cat "$HERDR_DIR/prompts")"
+has "own session reported as left alone" "w0:p1 (this pane): not the manager, left alone" "$OUT"
+setup
+agents "w0:p1=$T/alpha" "w5:p1=$T/alpha"
+workspaces "w5=old-name"
+OUT=$(HERDR_PANE_ID=w0:p1 run "$T/herdrbin")
+has "own session plus an unlabelled manager: the other pane is prompted" "PROMPT w5:p1 " "$(cat "$HERDR_DIR/prompts")"
+has "and it is not a problem" "problems=0" "$OUT"
 
 # ── 5. tmux host: never adopted, always spawned via the sentinel ─────────────
 setup

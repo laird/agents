@@ -437,10 +437,12 @@ pane_label() {
 # choose_manager <root> <"pane\tworkspace" lines>: which agent pane in the root
 # is the swarm's manager (#291). Prints "PICK\t<pane>\t<reason>" plus one
 # "OTHER\t<pane>" per pane left alone, or "AMBIGUOUS\t<panes>" when two or more
-# remain and nothing tells them apart; nothing when there is no pane.
+# remain and nothing tells them apart. With no pick, OTHER lines only (the pane
+# running this script was the only one, and nothing named it the manager), or
+# nothing when there is no pane: the sentinel starts a manager.
 # Each signal narrows the candidates only when it matches at least one of them.
 choose_manager() {
-  ROOT="$1" ROOT_PANES="$2" WS_LABELS="${WS_LABELS:-}" MARKED="${MARKED:-}" python3 -c '
+  ROOT="$1" ROOT_PANES="$2" SELF_PANE="${HERDR_PANE_ID:-}" WS_LABELS="${WS_LABELS:-}" MARKED="${MARKED:-}" python3 -c '
 import glob, json, os
 root = os.environ["ROOT"]
 panes = []   # (pane, workspace) in listing order
@@ -469,6 +471,7 @@ for f in sorted(glob.glob(os.path.join(root, ".autocoder", "swarm", "*.json"))):
     m = data.get("manager")
     if isinstance(m, dict) and m.get("herdrPane"):
         recorded.add(str(m["herdrPane"]))
+self_pane = os.environ.get("SELF_PANE", "")
 name = "manager-" + os.path.basename(root)
 signals = [
     ("the manifest records it as the manager", lambda p, w: p in recorded),
@@ -484,14 +487,22 @@ for why, test in signals:
         if len(hit) == 1:
             reason = why
             break
+if reason is None:
+    # Only a named signal makes the pane running this script the manager: a
+    # person running it from their own session in the root is not one, and the
+    # choice falls to the other panes, or to the sentinel when none is left.
+    cands = [c for c in cands if c[0] != self_pane]
 if len(cands) == 1:
     pick = cands[0][0]
     print("PICK\t%s\t%s" % (pick, reason or "the only agent in the root"))
     for p, _ in panes:
         if p != pick:
             print("OTHER\t" + p)
-else:
+elif cands:
     print("AMBIGUOUS\t" + " ".join(p for p, _ in cands))
+else:
+    for p, _ in panes:
+        print("OTHER\t" + p)
 '
 }
 
@@ -654,11 +665,11 @@ while IFS= read -r root; do
     echo "⚠️  $n agent panes in $root ($ambiguous) and nothing tells which is the manager (manifest manager pane, workspace manager-$(basename "$root"), AUTOCODER_MANAGER marker); prompting none. Close the extras, or rename the manager's workspace manager-$(basename "$root"), then re-run."
     FAILED=$((FAILED + 1)); continue
   fi
+  for o in $others; do echo "   $(pane_label "$o"): not the manager, left alone"; done
   if [ -n "$chosen" ]; then
-    for o in $others; do echo "   $(pane_label "$o"): not the manager, left alone"; done
     if [ "$chosen" = "${HERDR_PANE_ID:-}" ] && [ "$DRY_RUN" != true ]; then
       # Prompting the pane this runs in would type into its own input.
-      echo "   manager is $(pane_label "$chosen") ($why); not prompting the pane running this script"
+      echo "   manager is $chosen, the pane running this script ($why); not prompting it"
       mark_done "$root"
     elif [ "$DRY_RUN" = true ]; then
       echo "   DRY-RUN would prompt restored manager pane $(pane_label "$chosen") ($why)"
