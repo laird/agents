@@ -293,6 +293,9 @@ For the file backend specifically, also exercise:
 > can write: anything there may be executed. Upgrading moves the default root, so
 > let in-flight merges finish first (or keep `AUTOCODER_TMP=/tmp/autocoder-<uid>`
 > until they do): a job launched under the old root is not seen under the new one.
+> The default depends on `$HOME`/`$XDG_STATE_HOME`, so a sentinel started from
+> cron or systemd with a different environment than the workers must be given the
+> same `AUTOCODER_TMP` (or the same `XDG_STATE_HOME`) to see their jobs.
 
 `merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
 push onto an integration branch that is already red. The sentinel is what makes
