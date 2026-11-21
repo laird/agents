@@ -157,7 +157,7 @@ issue_body | grep -q "not yet shipped" && issue_body | grep -q 'must merge to `m
 
 # ── 7. red base + --own-issue: parked with both tree ids, never closed ──────
 setup
-OUT=$(run_own 'echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs; false'); RC=$?
+OUT=$(run_own 'echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs; echo "FAIL  tests/app.test.sh"; false'); RC=$?
 [ "$RC" -eq 0 ] && ok "red-base merge exits 0" || bad "rc=$RC: $OUT"
 git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "red-base: fix landed on master" || bad "red-base: fix did not land"
 [ "$(issue_state)" = OPEN ] && [ "$(issue_bucket)" = working ] && [ "$(issue_labels)" = "awaiting-integration bug" ] && ok "red-base: parked under awaiting-integration, not closed" || bad "red-base state: $(issue_state) $(issue_bucket) $(issue_labels)"

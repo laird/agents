@@ -62,8 +62,31 @@
 #         treated as code and the ordinary re-gate rule decides.
 #   - When the gate fails on the integrated tree, origin/<integration> is gated ALONE in a
 #     second throwaway worktree. If the base passes, this change broke it: exit 2. If the
-#     base fails too, the integration branch is red independent of this change, so the work
-#     is pushed anyway and the issue is told so (the post-merge sentinel owns red main).
+#     base fails too WITH THE SAME NAMED FAILURES, the integration branch is red independent
+#     of this change, so the work is pushed anyway and the issue is told so (the post-merge
+#     sentinel owns red main). Two things are required before that comparison counts:
+#       * neither run was an INFRASTRUCTURE refusal. A gate that stopped because the host
+#         could not run it (a disk-space stage over its threshold, ENOSPC, a tool that is
+#         missing, a stage reporting itself as INFRASTRUCTURE because its tool died) says
+#         nothing about master or this change: the merge aborts with exit 3 before gating
+#         the base (or after it, when the base run is the one refused), prints
+#         `::error::merge-to-integration: INFRASTRUCTURE -- <cause>` naming the line that
+#         decided it, forgets the gate cache's fail record for that tree (it is not a
+#         verdict), and leaves the branch for a relaunch once the host is fixed. On
+#         2026-11-16 a disk-space stage at exactly its threshold failed both runs the same
+#         way and a branch landed with no test stage run on either tree.
+#         AUTOCODER_GATE_INFRA_PATTERNS  extended regex (grep -E) over the run's output;
+#           the default covers the `::error::<stage>: INFRASTRUCTURE` marker,
+#           `::error::check-disk-space:`, ENOSPC / "No space left on device", a heap or
+#           memory death and "command not found". A repo appends its own stage names.
+#       * both runs named what failed, and the sets are the same. Named failures are the
+#         run's output lines matching AUTOCODER_GATE_FAILURE_PATTERNS (default: GitHub
+#         `::error::` annotations, lines opening with ❌, vitest/jest/go `FAIL`, pytest
+#         `FAILED`, go `--- FAIL:`, cargo `... FAILED`, ✗/× bullets), trimmed, durations
+#         and 7+ hex-digit ids blanked, sorted unique. A failure named on the integrated
+#         tree only is this change's: exit 2, naming it. A run that names nothing is not a
+#         verdict either: exit 2, saying so. The base run still happens whenever the
+#         integrated run was not refused, so "the base passes alone" keeps its attribution.
 #       AUTOCODER_MERGE_ON_RED_BASE  default 1; 0 restores exit 2 on a red base.
 #   - Both relaxations exist because a sentinel re-gates the integration tip after the
 #     fact. Until one has proven a green tip at least once, there is nobody to catch what
@@ -164,9 +187,11 @@
 #          repeat (the newest earlier bounce has the same kind and sig) escalates to
 #          needs-clarification.
 #     any other failure before anything was pushed (unresolvable ref, publish failure,
-#     red base refused, base worktree could not be created)
+#     red base refused, an INFRASTRUCTURE refusal, base worktree could not be created)
 #        → issue_escalate --label needs-clarification, comment with the reason and the
-#          last 40 lines of gate output
+#          last 40 lines of gate output (exit 3's reason opens with INFRASTRUCTURE and
+#          says the branch is intact and the merge is to be relaunched once the host is
+#          fixed; nothing about the change is in doubt)
 #     internal error AFTER the push succeeded
 #        → issue_park (the work is on the branch; nothing is lost), never an escalation
 #   Every transition converges: an issue that is already closed is left alone (the whole
@@ -298,6 +323,28 @@ _gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is t
     return $?
   done
 }
+
+# A gate run's verdict is read from the slice of GATE_LOG that run wrote (tee appends
+# every run to it): the byte offset before the run, and the log from there afterwards.
+# Two readers: an INFRASTRUCTURE line means the host could not run the gate, so the run
+# is no verdict at all; the named-failure lines are what a red-base comparison compares.
+GATE_INFRA_PATTERNS_DEFAULT='^::error::[^:]*: INFRASTRUCTURE|INFRASTRUCTURE --|^::error::check-disk-space:|ENOSPC|No space left on device|JavaScript heap out of memory|Cannot allocate memory|command not found'
+GATE_INFRA_PATTERNS="${AUTOCODER_GATE_INFRA_PATTERNS:-$GATE_INFRA_PATTERNS_DEFAULT}"
+GATE_FAILURE_PATTERNS_DEFAULT='^::error::|^❌|^[[:space:]]*FAIL[[:space:]]|^FAILED[[:space:]]|^--- FAIL:|^test .* \.\.\. FAILED$|^[[:space:]]*(✗|×)[[:space:]]'
+GATE_FAILURE_PATTERNS="${AUTOCODER_GATE_FAILURE_PATTERNS:-$GATE_FAILURE_PATTERNS_DEFAULT}"
+_gate_log_size() { wc -c < "$GATE_LOG" | tr -d ' '; }
+_gate_slice() {  # <offset>: the gate log written since <offset>, ANSI colour stripped
+  tail -c +"$(( $1 + 1 ))" "$GATE_LOG" | sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g'
+}
+_gate_infra_line() {  # <offset>: the first INFRASTRUCTURE line of the run (rc 0), or nothing (rc 1)
+  _gate_slice "$1" | grep -aE -m1 "$GATE_INFRA_PATTERNS"
+}
+_gate_named_failures() {  # <offset>: the run's failure names, one per line, sorted unique
+  _gate_slice "$1" | grep -aE "$GATE_FAILURE_PATTERNS" \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*\(?[0-9]+(\.[0-9]+)?[[:space:]]?(ms|s|m|min)\)?$//; s/[0-9a-f]{7,40}/<sha>/g' \
+    | sort -u
+}
+_join_lines() { awk '{ a = a (NR > 1 ? "`, `" : "") $0 } END { printf "%s", a }'; }  # x`, `y for a `...` list in a message
 
 _issue_is_closed() {
   issue_get "$ISSUE_NUM" 2>/dev/null | grep -Eq '"state": *"CLOSED"'
@@ -971,15 +1018,33 @@ TESTED_TREE=""
 PUBLISH_BASIS=""
 RED_INTEGRATED_TREE=""
 RED_BASE_TREE=""
+RED_BASE_FAILURES=""
 DOCS_RESYNC_FILES=0
+
+# The host could not run the gate on <where> (trees <started> -> <left>; <line> decided
+# it). That is no verdict about master or this change: forget any fail the cache just
+# recorded for those trees, say why in the shape a train's classifier reads
+# (`::error::<stage>: INFRASTRUCTURE -- ...`), and stop before anything is pushed.
+_refuse_infrastructure() {
+  local where="$1" started="$2" left="$3" line="$4"
+  echo "::error::merge-to-integration: INFRASTRUCTURE -- the gate did not reach a verdict on ${where}: ${line}"
+  echo "   That is a host condition, not a test failure, so nothing is known about origin/${INTEGRATION_BRANCH} or this change. NOT pushing."
+  echo "   Branch '${FEATURE}' is untouched; relaunch the merge once the host is fixed."
+  gate_cache_forget "$started" "$TEST_CMD"
+  [ "$left" = "$started" ] || gate_cache_forget "$left" "$TEST_CMD"
+  _fail 3 "INFRASTRUCTURE: the gate did not reach a verdict on ${where} (${line}). A host condition, not a test failure: nothing about this change is in doubt and nothing landed. Relaunch the merge once the host is fixed; branch \`${FEATURE}\` is intact"
+}
 
 _gate_integrated_tree() {
   if [ "$DOCS_ONLY" -eq 1 ]; then
     PUBLISH_BASIS=docs-only
     return 0
   fi
-  local tree base_sha base_tree
+  local tree after base_sha base_tree base_left at base_at infra
+  local -a integrated_failures base_failures
+  local only_integrated only_base
   tree=$(git rev-parse "HEAD^{tree}")
+  at=$(_gate_log_size)
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
   : > "$GATE_LAST"
   # A gate already ran on an earlier tree: that run is thrown away by this re-gate.
@@ -993,9 +1058,17 @@ _gate_integrated_tree() {
   fi
 
   _landing_gate_done $((SECONDS - _g0))
+  # The command may have committed inside its worktree before failing; the tree it left
+  # is the one its fail record (and any refusal) is about as much as the one it started on.
+  after=$(git rev-parse "HEAD^{tree}")
+  if infra=$(_gate_infra_line "$at"); then
+    _refuse_infrastructure "the integrated tree ${tree:0:8}" "$tree" "$after" "$infra"
+  fi
+  tree="$after"
+  mapfile -t integrated_failures < <(_gate_named_failures "$at")
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
-  echo "❌ Tests fail on the integrated tree ${tree:0:8}."
+  echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."
   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
   _remove_worktree "$BASE_WORKTREE_DIR"
   if ! git -C "$CALLER_DIR" worktree add --detach "$BASE_WORKTREE_DIR" "$base_sha"; then
@@ -1005,6 +1078,7 @@ _gate_integrated_tree() {
   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
   _g0=$SECONDS
   _base_green=0
+  base_at=$(_gate_log_size)
   _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" && _base_green=1
   _landing_gate_done $((SECONDS - _g0))
   if [ "$_base_green" -eq 1 ]; then
@@ -1013,13 +1087,42 @@ _gate_integrated_tree() {
     GATE_BOUNCE=1
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
   fi
+  base_left=$(git -C "$BASE_WORKTREE_DIR" rev-parse "HEAD^{tree}" 2>/dev/null || echo "$base_tree")
   _remove_worktree "$BASE_WORKTREE_DIR"
+  if infra=$(_gate_infra_line "$base_at"); then
+    _refuse_infrastructure "origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8})" "$base_tree" "$base_left" "$infra"
+  fi
+  mapfile -t base_failures < <(_gate_named_failures "$base_at")
+
+  # Both runs failed as tests. The base is red "independent of this change" only when
+  # both runs name the same failures; anything the integrated run names alone is this
+  # change's, and a run that names nothing proves nothing about either tree.
+  if [ "${#integrated_failures[@]}" -eq 0 ] || [ "${#base_failures[@]}" -eq 0 ]; then
+    echo "❌ Both trees fail, but the gate named no failing test or check on $([ "${#integrated_failures[@]}" -eq 0 ] && echo "the integrated tree" || echo "origin/${INTEGRATION_BRANCH} alone") (nothing matched AUTOCODER_GATE_FAILURE_PATTERNS), so the failures cannot be compared. NOT pushing."
+    echo "   A red-base landing needs the same named failures on both trees; read the gate output and either fix the change or relaunch once origin/${INTEGRATION_BRANCH} is fixed."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), but the gate named no failing test or check on $([ "${#integrated_failures[@]}" -eq 0 ] && echo "the integrated tree" || echo "the base"), so the failures cannot be compared; not a red-base landing"
+  fi
+  only_integrated=$(comm -23 <(printf '%s\n' "${integrated_failures[@]}") <(printf '%s\n' "${base_failures[@]}"))
+  only_base=$(comm -13 <(printf '%s\n' "${integrated_failures[@]}") <(printf '%s\n' "${base_failures[@]}"))
+  if [ -n "$only_integrated" ]; then
+    echo "❌ The integrated tree ${tree:0:8} names failure(s) origin/${INTEGRATION_BRANCH} alone does not, so this change broke it (at least these). NOT pushing."
+    printf '   this change only: %s\n' "$only_integrated"
+    [ -z "$only_base" ] || printf '   base only:        %s\n' "$only_base"
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} with failure(s) origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) does not have, so this change broke it: \`$(printf '%s\n' "$only_integrated" | _join_lines)\`"
+  fi
+  if [ -n "$only_base" ]; then
+    echo "❌ origin/${INTEGRATION_BRANCH} alone names failure(s) the integrated tree ${tree:0:8} does not; the two failure sets differ, so this is not the same red base. NOT pushing."
+    printf '   base only: %s\n' "$only_base"
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) with different named failures (base only: \`$(printf '%s\n' "$only_base" | _join_lines)\`); not the same red base, so not landed"
+  fi
+  RED_BASE_FAILURES=$(printf '%s\n' "${integrated_failures[@]}" | _join_lines)
   LANDING_CAUSE=red-integration   # the base is red too: the batch is red, though not this change's fault
   if [ "$MERGE_ON_RED_BASE" != "1" ]; then
-    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}), and ${RED_BASE_REFUSAL}. NOT pushing."
-    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}); ${RED_BASE_REFUSAL}"
+    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}, the same ${#integrated_failures[@]} named failure(s)), and ${RED_BASE_REFUSAL}. NOT pushing."
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) with the same named failures; ${RED_BASE_REFUSAL}"
   fi
-  echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}): the integration branch is red independent of this change."
+  echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}) with the same ${#integrated_failures[@]} named failure(s): the integration branch is red independent of this change."
+  printf '   %s\n' "${integrated_failures[@]}"
   echo "   Pushing anyway; the post-merge sentinel owns red ${INTEGRATION_BRANCH}."
   RED_INTEGRATED_TREE="$tree"
   RED_BASE_TREE="$base_tree"
@@ -1219,7 +1322,7 @@ merge_queue_release
 # The word "verified" is reserved for the one case where the gate passed on the very tree
 # that is now on the integration branch. PARK_NOTE explains every other basis to the
 # issue when _close_or_park parks it.
-RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
+RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), both naming the same failure(s): \`${RED_BASE_FAILURES}\`; so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
 case "$PUBLISH_BASIS" in
   docs-only)
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (documentation-only change; no tests run; tree ${LOCAL_TREE:0:8})." ;;
