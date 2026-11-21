@@ -480,7 +480,7 @@ The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merg
 {"ts":"2026-11-17T02:43:44Z","event":"attempt","outcome":"conflict","repo":"agents-5ea0ca80",
  "issue":184,"branch":"feature/issue-184","attempt":2,"escalated":false,
  "files":["src/a.sh"],"gate_tests_failed":[],"duration_s":41,"landed":null,
- "push_retries":0,"exit":1,"reason":null}
+ "push_retries":0,"exit":1,"reason":null,"red_base":false}
 ```
 
 - `event`: `attempt` (one per job, its final outcome) or `push-retry` (one per rejected push).
@@ -490,6 +490,13 @@ The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merg
 - `escalated`: true when the attempt went to a human rather than back to the worker (#207).
 - `files`: conflicting files. `gate_tests_failed`: failing suites. Both are sorted and may be empty.
 - `landed`: the commit pushed to the integration branch, when one was.
+- `red_base` (`attempt` lines, #285): `true` when the gate failed on the integrated tree
+  and `origin/<integration>` then failed alone, as tests, on the same command. A
+  `gate-failed` or `escalated` attempt with `red_base: true` was refused on a red base (or,
+  if the integrated tree named extra failures, broke more than the base already had); a
+  `landed` or `parked` one landed on a red base. `false` covers everything else, including
+  a base that passed alone, was never gated, or failed only as infrastructure. Lines
+  written before #285 have no `red_base`; read a missing field as unknown, not `false`.
 
 Lines older than `AUTOCODER_MERGE_EVENTS_DAYS` (default 30) are dropped once the file
 passes 1 MiB. The file is created 0600. Recording is best effort and never fails a merge.

@@ -365,6 +365,9 @@ PUSHED=0
 # the exit status. merge-launch.sh passes AUTOCODER_MERGE_ATTEMPT.
 MERGE_T0=$SECONDS MERGE_OUTCOME="" MERGE_ESCALATED=0 MERGE_FILES="" MERGE_TESTS=""
 MERGE_REASON="" MERGE_LANDED="" PUSH_RETRIES=0
+# 1 when the latest gate found origin/<integration> failing alone on the same command
+# (#285): the attempt was refused, or landed, on a red base. Reset by every re-gate.
+MERGE_RED_BASE=0
 _merge_repo_id() {
   if declare -F autocoder_repo_id >/dev/null; then autocoder_repo_id "${CALLER_DIR:-$PWD}" 2>/dev/null
   else basename "$(git -C "${CALLER_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)"; fi
@@ -407,7 +410,7 @@ _emit_attempt_event() {
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
     files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
     landed="$MERGE_LANDED" push_retries="$PUSH_RETRIES" exit="$rc" reason="$MERGE_REASON" \
-    conflict_resolved_by="${CONFLICT_RESOLVED_BY:-}"
+    conflict_resolved_by="${CONFLICT_RESOLVED_BY:-}" red_base="$MERGE_RED_BASE"
   issue_event gate-end "${ISSUE_NUM:-}" repo="$(_merge_repo_id)" outcome="$outcome" \
     attempt="${AUTOCODER_MERGE_ATTEMPT:-}" duration_s="$((SECONDS - MERGE_T0))" exit="$rc" \
     reason="$MERGE_REASON"
@@ -1065,6 +1068,7 @@ _gate_integrated_tree() {
   local tree head_before after base_sha base_tree base_left at base_at infra
   local -a integrated_failures base_failures
   local only_integrated only_base
+  MERGE_RED_BASE=0   # a re-gate on a new tip measures the base again
   head_before=$(git rev-parse HEAD)
   tree=$(git rev-parse "HEAD^{tree}")
   at=$(_gate_log_size)
@@ -1123,6 +1127,9 @@ _gate_integrated_tree() {
   if infra=$(_gate_infra_line "$base_at"); then
     _refuse_infrastructure "origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8})" "$base_tree" "$base_left" "$infra"
   fi
+  # The base failed alone, as tests, on the same command: whatever follows (refused,
+  # landed anyway, or charged to this change for extra failures) happened on a red base.
+  MERGE_RED_BASE=1
   mapfile -t base_failures < <(_gate_named_failures "$base_at")
 
   # Both runs failed as tests. The base is red "independent of this change" only when

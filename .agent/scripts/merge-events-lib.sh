@@ -15,7 +15,9 @@
 #    "outcome": "landed"|"parked"|"skipped"|"conflict"|"gate-failed"|"escalated"|"failed"|"push-retry",
 #    "escalated": true|false, "files": [...], "gate_tests_failed": [...],
 #    "duration_s": <n>, "landed": "<sha>"|null, "push_retries": <n>, "exit": <code>|null,
-#    "reason": "<text>"}
+#    "reason": "<text>", "red_base": true|false}
+#   red_base (attempt lines only, #285): origin/<integration> failed alone, as tests, on the
+#   same gate command in this attempt, so it was refused or landed on a red base.
 #   One "attempt" line per merge job (its final outcome) plus one "push-retry" line per
 #   rejected push. A gate that sees a test fail and then pass on the same tree adds a
 #   "flaky" line (#191): {"ts", "event": "flaky", "outcome": "flaky", "repo", "issue",
@@ -52,7 +54,7 @@ for a in args:
             ev[k] = int(v)
         except ValueError:
             ev[k] = None
-    elif k == "escalated":
+    elif k in ("escalated", "red_base"):
         ev[k] = v in ("1", "true", "yes")
     else:
         ev[k] = v if v != "" else None
@@ -60,6 +62,8 @@ if ev.get("event") != "flaky":
     for k in ("files", "gate_tests_failed"):
         ev.setdefault(k, [])
     ev.setdefault("escalated", False)
+if ev.get("event") == "attempt":
+    ev.setdefault("red_base", False)
 line = json.dumps(ev, separators=(",", ":")) + "\n"
 # One write() of an O_APPEND line: concurrent jobs do not interleave.
 # 0600 and O_NOFOLLOW: the log names branches, files and failure reasons.
