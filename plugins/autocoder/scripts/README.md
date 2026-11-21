@@ -495,8 +495,33 @@ Lines older than `AUTOCODER_MERGE_EVENTS_DAYS` (default 30) are dropped once the
 passes 1 MiB. The file is created 0600. Recording is best effort and never fails a merge.
 After a day, the post-merge sentinel archives a finished job's current log as the next
 numbered attempt instead of deleting it. Archived attempts are pruned after
-`AUTOCODER_MERGE_ARCHIVE_DAYS` (default 14). `tests/run-shell-suite.sh`
-points the file at a temp path, so test runs never write to the real one.
+`AUTOCODER_MERGE_ARCHIVE_DAYS` (default 14). Test runs never write to the real
+file; see "Tests and the per-user state dir" below.
+
+### Tests and the per-user state dir (#282)
+
+Everything under `${XDG_STATE_HOME:-~/.local/state}/autocoder` (event logs,
+landing timings, gate cache and `gate.jsonl`, merge and sentinel state, the
+auth watchdog) is real data that `/retro`, `flaky-report.sh` and UIs read, so
+the tests keep out of it two ways:
+
+- `tests/lib/private-event-logs.sh`, sourced by every test, points each
+  script-specific override and `XDG_STATE_HOME` itself at fresh private paths.
+- `tests/run-shell-suite.sh` runs the suite under a scratch `HOME` (with the
+  real `.gitconfig`, `.config`, `.cache` and `.local/{share,lib,bin}` symlinked
+  in) and a private `XDG_STATE_HOME`. Anything written under the scratch
+  `HOME`'s `.local/state` came from code that ignores `XDG_STATE_HOME`. It is
+  listed and counted as a failed suite named `state-isolation`. The check uses
+  a scratch home instead of a before/after diff of the real directory, because
+  live workers on the same host keep appending to the real logs during a run.
+
+Records an older suite left in the real logs can be removed with
+`prune-test-events.sh`. It keeps a record only when its `repo` is the repo id
+of a root in the swarm-roots registry, a `--root`, or a `--keep-repo`, and it
+drops records with no repo. It dry-runs by default. `--apply` keeps a
+`.bak-<stamp>` copy of each file and leaves alone any file that grows while it
+runs. `landing-timings.jsonl` has no repo field, so it is not touched. Nothing
+runs the script automatically.
 
 ### Flaky tests: same tree fails, then passes (#191)
 

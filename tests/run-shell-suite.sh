@@ -40,7 +40,32 @@ export AUTOCODER_LANDING_TIMINGS="$SUITE_LANDING"
 # Each test's output, shown on failure. mktemp, and removed by the trap, so an
 # interrupted run does not leave it behind (#259).
 SUITE_LOG=$(mktemp "${TMPDIR:-/tmp}/shell-suite.XXXXXX")
-trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LANDING" "$SUITE_LOG"' EXIT
+
+# The rest of the per-user state dir (#282). Tests used to reach the real
+# ~/.local/state/autocoder whenever one forgot a script-specific override, and its
+# event logs, gate cache and merge state are what /retro and UIs read. Run the
+# suite under a scratch HOME with a private XDG_STATE_HOME, so neither the XDG
+# default nor a hard-coded ~/.local/state can reach the real one, and fail the
+# run if anything lands in the scratch HOME's state dir: that is a test (or a
+# script) ignoring XDG_STATE_HOME. A scratch HOME rather than a before/after
+# comparison of the real dir, because live workers on this host keep appending
+# to the real logs while the suite runs (a merge gate always has neighbours).
+# Config, data and cache stay where they were, so git identity, gh and pip
+# user installs behave as before.
+REAL_HOME="${HOME:-}"
+SUITE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/suite-home.XXXXXX")
+SUITE_STATE=$(mktemp -d "${TMPDIR:-/tmp}/suite-state.XXXXXX")
+trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LANDING" "$SUITE_LOG"; rm -rf "$SUITE_HOME" "$SUITE_STATE"' EXIT
+# Symlinks, not XDG_CONFIG_HOME and friends: a test that sets its own HOME and
+# expects ~/.config under it must not have an exported XDG_CONFIG_HOME send it
+# to the real one.
+if [ -n "$REAL_HOME" ] && [ -d "$REAL_HOME" ]; then
+    mkdir -p "$SUITE_HOME/.local"
+    for p in .gitconfig .config .cache .local/share .local/lib .local/bin; do
+        [ -e "$REAL_HOME/$p" ] && ln -s "$REAL_HOME/$p" "$SUITE_HOME/$p"
+    done
+fi
+export HOME="$SUITE_HOME" XDG_STATE_HOME="$SUITE_STATE"
 # #197's random spot-check sampling makes exact-label assertions flaky (#225). Off by
 # default for the suite; tests that exercise spot checks set or unset it themselves.
 export AUTOCODER_SPOT_CHECK_RATE="${AUTOCODER_SPOT_CHECK_RATE:-0}"
@@ -75,6 +100,17 @@ for t in "${tests[@]}"; do
         failed_names="$failed_names $name"
     fi
 done
+
+# Anything under the scratch HOME's state dir was written by code that ignored
+# XDG_STATE_HOME: against a real HOME it would have gone into the user's real
+# state. Count it as a failure so the summary and exit status both say so.
+leaked=$(find "$SUITE_HOME/.local/state" -type f 2>/dev/null | sed "s|^$SUITE_HOME|~|" | sort)
+if [ -n "$leaked" ]; then
+    echo "FAIL  per-user state isolation: written under \$HOME/.local/state despite a private XDG_STATE_HOME:"
+    sed 's/^/      | /' <<<"$leaked" | head -20
+    failed=$((failed + 1))
+    failed_names="$failed_names state-isolation"
+fi
 
 total=$((passed + failed))
 
