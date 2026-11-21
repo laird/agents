@@ -23,27 +23,58 @@ source "$S/repo-id-fns.sh"
 U=$(id -u)
 
 # ── autocoder_tmp_root ──────────────────────────────────────────────────────
-eq "AUTOCODER_TMP wins when set" "$TMP/explicit" "$(AUTOCODER_TMP="$TMP/explicit" autocoder_tmp_root)"
+# Every call pins XDG_STATE_HOME (and AUTOCODER_TMP_BASE) to a temp dir, so the
+# suite never creates or reads the real ~/.local/state or /tmp/autocoder-<uid>.
+eq "AUTOCODER_TMP wins when set" "$TMP/explicit" \
+  "$(AUTOCODER_TMP="$TMP/explicit" XDG_STATE_HOME="$TMP/xdg0" autocoder_tmp_root)"
+[ ! -e "$TMP/xdg0" ] && ok "AUTOCODER_TMP set: the state dir is not even created" || bad "state dir created despite AUTOCODER_TMP"
 
-mkdir -p "$TMP/base1"
-R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base1" autocoder_tmp_root)
-eq "default is <base>/autocoder-<uid>" "$TMP/base1/autocoder-$U" "$R"
+# Default (#272): the persistent XDG state dir, which survives a reboot.
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base1" XDG_STATE_HOME="$TMP/xdg1" autocoder_tmp_root)
+eq "default is \$XDG_STATE_HOME/autocoder/merge" "$TMP/xdg1/autocoder/merge" "$R"
 eq "created mode 0700" "700" "$(mode "$R")"
+[ ! -e "$TMP/base1/autocoder-$U" ] && ok "/tmp fallback not created when the state dir is usable" || bad "/tmp dir created anyway"
 
-mkdir -p "$TMP/base2/autocoder-$U"; chmod 777 "$TMP/base2/autocoder-$U"
-R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base2" autocoder_tmp_root)
-eq "an existing dir of ours that is too open is tightened" "700" "$(mode "$R")"
+R=$(unset AUTOCODER_TMP XDG_STATE_HOME; HOME="$TMP/home1" AUTOCODER_TMP_BASE="$TMP/base1h" autocoder_tmp_root)
+eq "no XDG_STATE_HOME: ~/.local/state/autocoder/merge" "$TMP/home1/.local/state/autocoder/merge" "$R"
 
-# A symlink planted at the per-user name is not followed: fall back to XDG state.
-mkdir -p "$TMP/base3" "$TMP/elsewhere"
-ln -s "$TMP/elsewhere" "$TMP/base3/autocoder-$U"
-R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3" XDG_STATE_HOME="$TMP/xdg" autocoder_tmp_root)
-eq "a symlinked per-user dir is refused; XDG state is used" "$TMP/xdg/autocoder/tmp" "$R"
+R=$(unset AUTOCODER_TMP; HOME="$TMP/home2" XDG_STATE_HOME="relative/state" AUTOCODER_TMP_BASE="$TMP/base1r" autocoder_tmp_root)
+eq "a relative XDG_STATE_HOME is ignored (XDG spec)" "$TMP/home2/.local/state/autocoder/merge" "$R"
+
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base1s" XDG_STATE_HOME="$TMP/x d g" autocoder_tmp_root)
+eq "a state path with a space works" "$TMP/x d g/autocoder/merge" "$R"
+
+mkdir -p "$TMP/xdg2/autocoder/merge"; chmod 777 "$TMP/xdg2/autocoder/merge"
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base2" XDG_STATE_HOME="$TMP/xdg2" autocoder_tmp_root)
+eq "an existing state dir of ours that is too open is tightened" "$TMP/xdg2/autocoder/merge" "$R"
+eq "...to 0700" "700" "$(mode "$R")"
+
+# An unsafe state dir is never used: fall back to /tmp/autocoder-<uid>.
+mkdir -p "$TMP/base3" "$TMP/xdg3/autocoder" "$TMP/elsewhere"
+ln -s "$TMP/elsewhere" "$TMP/xdg3/autocoder/merge"
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3" XDG_STATE_HOME="$TMP/xdg3" autocoder_tmp_root)
+eq "a symlinked state dir is refused; <base>/autocoder-<uid> is used" "$TMP/base3/autocoder-$U" "$R"
 eq "fallback is 0700 too" "700" "$(mode "$R")"
+
+mkdir -p "$TMP/base3b" "$TMP/xdg3b/autocoder"; : > "$TMP/xdg3b/autocoder/merge"
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3b" XDG_STATE_HOME="$TMP/xdg3b" autocoder_tmp_root)
+eq "a non-directory at the state path falls back" "$TMP/base3b/autocoder-$U" "$R"
+
+# Group/other bits that cannot be cleared: a stub chmod that always fails.
+mkdir -p "$TMP/base3c" "$TMP/xdg3c/autocoder/merge"; command chmod 777 "$TMP/xdg3c/autocoder/merge"
+R=$(unset AUTOCODER_TMP; chmod() { return 1; }; AUTOCODER_TMP_BASE="$TMP/base3c" XDG_STATE_HOME="$TMP/xdg3c" autocoder_tmp_root)
+eq "a too-open state dir that cannot be tightened falls back" "$TMP/base3c/autocoder-$U" "$R"
+unset -f chmod
+
+# A /tmp fallback that is itself a symlink is refused as well.
+mkdir -p "$TMP/base3d" "$TMP/xdg3d/autocoder"; : > "$TMP/xdg3d/autocoder/merge"
+ln -s "$TMP/elsewhere" "$TMP/base3d/autocoder-$U"
+(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3d" XDG_STATE_HOME="$TMP/xdg3d" autocoder_tmp_root) >/dev/null 2>&1
+eq "symlinked fallback and unusable state dir: exit 1" "1" "$?"
 
 # A non-directory at both places: no safe root, exit 1.
 mkdir -p "$TMP/base4" "$TMP/xdg4/autocoder"
-: > "$TMP/base4/autocoder-$U"; : > "$TMP/xdg4/autocoder/tmp"
+: > "$TMP/base4/autocoder-$U"; : > "$TMP/xdg4/autocoder/merge"
 (unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base4" XDG_STATE_HOME="$TMP/xdg4" autocoder_tmp_root) >/dev/null 2>&1
 eq "no safe directory: exit 1" "1" "$?"
 

@@ -282,9 +282,17 @@ For the file backend specifically, also exercise:
 
 > **`<tmp-root>`** below is where the merge job, sentinel and landing queue keep
 > their host-local state: `$AUTOCODER_TMP` if set, else a private per-user
-> `/tmp/autocoder-<uid>` (0700), else `~/.local/state/autocoder/tmp`
-> (`autocoder_tmp_root` in `repo-id-fns.sh`, #213). If you set `AUTOCODER_TMP`,
-> point it at a directory only you can write: anything there may be executed.
+> `${XDG_STATE_HOME:-~/.local/state}/autocoder/merge` (0700), else
+> `/tmp/autocoder-<uid>` (0700) when the state dir cannot be made safe
+> (`autocoder_tmp_root` in `repo-id-fns.sh`, #213, #272). The state dir is the
+> default because it survives a reboot: on a tmpfs `/tmp` a reboot mid-merge used
+> to delete the job's `.pid`/`.exit`/`.run.sh`, so a waiting worker never saw an
+> exit code and the sentinel could not re-run the job. A candidate that is a
+> symlink, is not ours, or is group/other-accessible and cannot be tightened is
+> skipped, never used. If you set `AUTOCODER_TMP`, point it at a directory only you
+> can write: anything there may be executed. Upgrading moves the default root, so
+> let in-flight merges finish first (or keep `AUTOCODER_TMP=/tmp/autocoder-<uid>`
+> until they do): a job launched under the old root is not seen under the new one.
 
 `merge-to-integration.sh` may push a push-race re-sync without re-gating it and may
 push onto an integration branch that is already red. The sentinel is what makes

@@ -27,3 +27,15 @@ if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ] 
   exit 1
 fi
 export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS AUTOCODER_LANDING_TIMINGS
+
+# Merge/sentinel state (#272). autocoder_tmp_root now defaults to the persistent
+# ~/.local/state/autocoder/merge, so a test that launches or polls a merge
+# without choosing AUTOCODER_TMP would leave fake .pid/.exit/.run.sh files there
+# for good, and one run under a live worker (which exports its real
+# AUTOCODER_TMP) would write into the live merge state. Always start from a
+# fresh private directory (mktemp -d is 0700). A test that needs a particular
+# root still sets AUTOCODER_TMP itself after sourcing this; one that tests the
+# default unsets it.
+AUTOCODER_TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-autocoder-tmp.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-autocoder-tmp.XXXXXX") \
+  || { echo "private-event-logs.sh: cannot create a private AUTOCODER_TMP; refusing to run against the real one" >&2; exit 1; }
+export AUTOCODER_TMP
