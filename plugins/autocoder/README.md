@@ -211,6 +211,16 @@ In the train model, workers bank; the **manager lands**, and it lands in **merge
   on every diff that touches source, with the post-merge whole-suite run as the net behind them.
 - **Workers' rules do not change.** Rebase at bank time, run the cheap prefix, post READY with the
   prebank block, never gate or push to the integration branch.
+- **A host that cannot gate enqueues.** Some hosts cannot run the project's pre-check or gate at all
+  (missing tools, child processes a supervisor stops, no test database), and a pre-check that stalls
+  for hours or fails on files the branch never touched costs more than none. A worker there runs
+  `scripts/enqueue.sh --issue N`: a short PREFLIGHT (fetch, rebase onto the integration branch, a
+  clean `merge-tree`, the project's build-or-typecheck of what changed and the tests of the changed
+  test files, or the project's own preflight command in their place), the push, then the READY
+  comment with the preflight block, the ready labels on and the working label off. The queue reads
+  that READY like any other (`basis` `preflight` on its row, counted in the status line); the batch
+  gate on a gate host is its first full test. Nothing on that host gates, pre-checks, or pushes the
+  integration branch. Configuration: `train.enqueue` in `.autocoder.json` (see scripts/README.md).
 
 The reference implementation is athena2's `scripts/mgr-train.sh` (issue #5956 there). This
 plugin's `merge-to-integration.sh` gates whatever branch it is handed, so a manager can land a
