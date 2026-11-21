@@ -41,6 +41,16 @@ MERGE_TO_INTEGRATION="$AGENTS_ROOT/plugins/autocoder/scripts/merge-to-integratio
 COMMAND="$1"
 shift
 
+# Flags for `codex exec` (#286). Nothing here bypasses approvals or the sandbox.
+# codex exec is headless: it cannot ask for approval, and its default sandbox is
+# read-only, so a fix pass could not edit the repo. The default asks for the
+# workspace-write sandbox (edits inside the repo, still sandboxed), which is what
+# the old --full-auto meant; current codex rejects --full-auto outright.
+# AUTOCODER_CODEX_FLAGS replaces the default (split on whitespace, no globbing);
+# set it to "" to let ~/.codex/config.toml decide.
+CODEX_FLAGS_DEFAULT="--sandbox workspace-write"
+read -r -a CODEX_FLAGS <<< "${AUTOCODER_CODEX_FLAGS-$CODEX_FLAGS_DEFAULT}"
+
 build_fix_prompt() {
   local user_scope="$1"
   printf '%s\n' \
@@ -111,13 +121,13 @@ case "$COMMAND" in
 
     PROMPT="$(build_fix_prompt "$USER_SCOPE")"
 
-    codex exec --full-auto -C "$REPO_ROOT" "$PROMPT"
+    codex exec ${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"} -C "$REPO_ROOT" "$PROMPT"
     ;;
   review-blocked)
     EXTRA_GUIDANCE="${*:-}"
     PROMPT="$(build_review_blocked_prompt "$EXTRA_GUIDANCE")"
 
-    codex exec --full-auto -C "$REPO_ROOT" "$PROMPT"
+    codex exec ${CODEX_FLAGS[@]+"${CODEX_FLAGS[@]}"} -C "$REPO_ROOT" "$PROMPT"
     ;;
   -h|--help|help)
     usage

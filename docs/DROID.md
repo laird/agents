@@ -276,7 +276,7 @@ bash scripts/droid-stop-loop.sh all
 
 ## Design Notes
 
-- Droid uses `droid exec --auto high` for headless autonomous operation (equivalent to Codex's `codex exec --full-auto`).
+- Droid uses `droid exec --auto high` for headless autonomous operation: `droid exec` cannot ask for permission and is read-only by default, and a fix pass must edit, commit and push. Nothing passes `--skip-permissions-unsafe`. Set `AUTOCODER_DROID_FLAGS` to replace `--auto high` (split on whitespace), or to an empty string to pass no flags (#286).
 - Loop behavior is implemented with shell scripts (same approach as Codex), not with Droid-specific hook mechanisms.
 - Workers run `bash scripts/droid-fix-loop.sh`.
 - Managers run `bash scripts/droid-manage-workers-loop.sh`.

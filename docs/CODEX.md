@@ -87,6 +87,24 @@ bash scripts/codex-autocoder.sh fix
 
 When a fix pass makes code changes, the Codex prompt instructs the agent to run the relevant tests, commit the changes, and push the current branch if the repo's git rules allow that push target.
 
+### Sandbox and approval flags
+
+`codex exec` runs headless, so it cannot stop to ask for approval, and its
+default sandbox is read-only. The wrappers (`codex-autocoder.sh`,
+`codex-monitor-workers.sh`) therefore pass `--sandbox workspace-write`: Codex
+may edit files inside the repo, still inside its sandbox. Nothing passes
+`--dangerously-bypass-approvals-and-sandbox`. (The wrappers used to pass
+`--full-auto`, which current Codex rejects as an unknown argument.)
+
+To choose your own flags, set `AUTOCODER_CODEX_FLAGS`. It replaces the default
+and is split on whitespace. Set it to an empty string to pass no flags, so
+`~/.codex/config.toml` decides:
+
+```bash
+AUTOCODER_CODEX_FLAGS="--sandbox read-only" bash scripts/codex-autocoder.sh review-blocked
+AUTOCODER_CODEX_FLAGS="" bash scripts/codex-fix-loop.sh   # use config.toml
+```
+
 ### Continuous fix loop
 
 ```bash
