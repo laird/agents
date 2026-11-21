@@ -833,8 +833,11 @@ Serializing the queue around it forever is not the fix.
 #    (merge-to-integration.sh exit 1, and the issue comments it posts)
 #    The logs live under autocoder_tmp_root (repo-id-fns.sh, #272): $AUTOCODER_TMP,
 #    else ~/.local/state/autocoder/merge, else /tmp/autocoder-<uid>.
-source "${SCRIPT_DIR}/repo-id-fns.sh"
-grep -lE 'CONFLICT|conflict' "$(autocoder_tmp_root)"/autocoder-merge-*.log 2>/dev/null \
+#    Each Bash call is a fresh shell: re-run the "Resolve SCRIPT_DIR" block above in
+#    this same call first. A missing root must fail loudly, not grep "/" for nothing.
+source "${SCRIPT_DIR:?run the Resolve SCRIPT_DIR block above in this call first}/repo-id-fns.sh" || exit 1
+MERGE_ROOT=$(autocoder_tmp_root) || exit 1
+grep -lE 'CONFLICT|conflict' "$MERGE_ROOT"/autocoder-merge-*.log 2>/dev/null \
   | xargs -r grep -hoE 'CONFLICT \(content\): Merge conflict in [^ ]+' | sort | uniq -c | sort -rn
 
 # 2. Churn: files touched by many distinct issue branches recently

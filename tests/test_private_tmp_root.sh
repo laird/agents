@@ -72,6 +72,12 @@ ln -s "$TMP/elsewhere" "$TMP/base3d/autocoder-$U"
 (unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3d" XDG_STATE_HOME="$TMP/xdg3d" autocoder_tmp_root) >/dev/null 2>&1
 eq "symlinked fallback and unusable state dir: exit 1" "1" "$?"
 
+# Both unusable: the error keeps the state dir's reason, not just /tmp's.
+mkdir -p "$TMP/base8" "$TMP/xdg8/autocoder"; ln -s "$TMP/elsewhere" "$TMP/xdg8/autocoder/merge"; : > "$TMP/base8/autocoder-$U"
+ERR=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base8" XDG_STATE_HOME="$TMP/xdg8" autocoder_tmp_root 2>&1 >/dev/null)
+echo "$ERR" | grep -q "merge is a symlink" && echo "$ERR" | grep -q "autocoder-$U is not a directory" \
+  && ok "no safe root: the error names both reasons" || bad "both-fail error: '$ERR'"
+
 # A non-directory at both places: no safe root, exit 1.
 mkdir -p "$TMP/base4" "$TMP/xdg4/autocoder"
 : > "$TMP/base4/autocoder-$U"; : > "$TMP/xdg4/autocoder/merge"
@@ -109,12 +115,13 @@ STAT
 chmod +x "$BSD/stat"
 bsd() { env -i PATH="$BSD" HOME="$TMP/bsdhome" /bin/bash -c "source '$S/repo-id-fns.sh'; $1"; }
 
-R=$(bsd 'autocoder_tmp_root' 2>"$TMP/bsderr")
+R=$(bsd "AUTOCODER_TMP_BASE='$TMP/bsdbase' autocoder_tmp_root" 2>"$TMP/bsderr")
 eq "BSD stat: default state dir resolves" "$TMP/bsdhome/.local/state/autocoder/merge" "$R"
 eq "...with nothing on stderr" "" "$(cat "$TMP/bsderr")"
 mkdir -p "$TMP/bsdhome2/.local/state/autocoder/merge"; chmod 755 "$TMP/bsdhome2/.local/state/autocoder/merge"
-R=$(env -i PATH="$BSD" HOME="$TMP/bsdhome2" /bin/bash -c "source '$S/repo-id-fns.sh'; autocoder_tmp_root")
-eq "BSD stat: a 0755 state dir is read via -f %Lp and tightened" "700" "$(mode "$R")"
+R=$(env -i PATH="$BSD" HOME="$TMP/bsdhome2" AUTOCODER_TMP_BASE="$TMP/bsdbase2" /bin/bash -c "source '$S/repo-id-fns.sh'; autocoder_tmp_root")
+eq "BSD stat: a 0755 state dir is still the one used" "$TMP/bsdhome2/.local/state/autocoder/merge" "$R"
+eq "...read via -f %Lp and tightened to 0700" "700" "$(mode "$R")"
 
 git init -q "$TMP/idrepo"
 WANT=$(autocoder_repo_id "$TMP/idrepo")

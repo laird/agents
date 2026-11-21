@@ -67,11 +67,12 @@ _autocoder_sha1() {
 # AUTOCODER_TMP_BASE (default /tmp) replaces /tmp, for tests.
 autocoder_tmp_root() {
   if [ -n "${AUTOCODER_TMP:-}" ]; then printf '%s\n' "$AUTOCODER_TMP"; return 0; fi
-  local d mode why="" state="${XDG_STATE_HOME:-}"
+  local d mode why="" state_why="" state="${XDG_STATE_HOME:-}"
   local tmpd="${AUTOCODER_TMP_BASE:-/tmp}/autocoder-$(id -u)"
   case "$state" in /*) ;; *) state="${HOME:+$HOME/.local/state}" ;; esac
   [ -n "$state" ] || why="neither XDG_STATE_HOME nor HOME is set"
   for d in ${state:+"$state/autocoder/merge"} "$tmpd"; do
+    [ "$d" = "$tmpd" ] && state_why=$why   # keep the state dir's reason for the error
     if [ ! -e "$d" ] && [ ! -L "$d" ]; then
       (umask 077 && mkdir -p "$d") 2>/dev/null || { why="cannot create $d"; continue; }
     fi
@@ -87,6 +88,6 @@ autocoder_tmp_root() {
       echo "autocoder: state dir unusable ($why); using $d, which may not survive a reboot" >&2
     printf '%s\n' "$d"; return 0
   done
-  echo "autocoder: no private state directory ($why); set AUTOCODER_TMP" >&2
+  echo "autocoder: no private state directory (${state_why:+$state_why; }$why); set AUTOCODER_TMP" >&2
   return 1
 }
