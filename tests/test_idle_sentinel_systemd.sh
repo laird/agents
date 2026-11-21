@@ -253,7 +253,11 @@ case "$EXEC" in
 esac
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-  V=$(systemd-analyze verify "$FAKEHOME/.config/systemd/user/$(unit_for "$QDIR").service" 2>&1)
+  # Only findings about OUR unit count: verify also loads the host's other units and
+  # warns about them (a deprecated option in a distro service), which says nothing
+  # about the file under test.
+  U="$(unit_for "$QDIR").service"
+  V=$(systemd-analyze verify "$FAKEHOME/.config/systemd/user/$U" 2>&1 | grep -F "$U" || true)
   [ -z "$V" ] && ok "systemd-analyze verify accepts the escaped service" || bad "systemd-analyze: $V"
 fi
 
