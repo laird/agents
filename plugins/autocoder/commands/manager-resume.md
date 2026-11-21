@@ -255,7 +255,9 @@ For each worktree row:
    `closed` or the branch names none (`none`). A spawned worker's loop resumes its own
    claim by itself, so it needs no prompt.
 3. **Claims.** Release a `working` claim only when its worktree is gone, i.e. a row from
-   `--orphan-claims`. Comment first, then remove the label. In this step do NOT release
+   `--orphan-claims`. On a shared tracker (GitHub, Jira, ADO) that means a claim this host
+   made whose `wt=` worktree no longer exists; claims from other hosts or other clones are
+   never listed, and must never be released here. Comment first, then remove the label. In this step do NOT release
    claims for worktrees that still exist, even if they look stale; Step 5's 60-minute
    rule does not apply to them after a reboot.
 4. **Housekeeping.** Run `git worktree prune`. For each

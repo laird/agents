@@ -34,7 +34,9 @@
 #
 # Usage: reboot-recover.sh [--project DIR]... [--dry-run]
 #   --project DIR  a directory inside a swarm's repository (repeatable; default:
-#                  $PWD when no herdr pane names any swarm)
+#                  $PWD when no herdr pane names any swarm). Manifests live
+#                  inside each repo, so without herdr (tmux, no mux) only the
+#                  swarms named here are found: callers pass every root they know.
 #   --dry-run      list the swarms and what would be done; change nothing
 #
 # Exit: 0 ran (each per-swarm failure is reported), 1 bad usage.

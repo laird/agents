@@ -58,6 +58,23 @@ OUT=$(bash "$SCRIPT" --project "$R" --orphan-claims)
 has "claim with no worktree on its branch is an orphan" "6${TAB}-" "$OUT"
 hasnt "claim whose worktree exists is not an orphan" "1${TAB}" "$OUT"
 
+# Shared trackers: only this host's claims on a vanished worktree are orphans.
+mj() { printf '{"comments":[%s]}' "$1"; }
+cm() { printf '{"body":"🔒 claim %s 1700000000000 start=1 wt=%s"}' "$1" "$2"; }
+mo() { printf '%s' "$1" | AUTOCODER_HOST_ID=hostA bash "$SCRIPT" --marker-orphan; }
+OUT=$(mo "$(mj "$(cm hostA-123 "$T/gone-wt")")")
+[ "$OUT" = "$T/gone-wt" ] && pass "this host, worktree gone → orphan" || fail "got '$OUT'"
+OUT=$(mo "$(mj "$(cm hostA-123 "$R-wt-1")")")
+[ -z "$OUT" ] && pass "this host, worktree still there → not an orphan" || fail "got '$OUT'"
+OUT=$(mo "$(mj "$(cm hostB-123 "$T/gone-wt")")")
+[ -z "$OUT" ] && pass "another host's claim → never an orphan" || fail "got '$OUT'"
+OUT=$(mo "$(mj "$(cm hostA-1 "$T/gone-wt"),$(cm hostB-2 "$T/gone-wt")")")
+[ -z "$OUT" ] && pass "newest marker decides (re-claimed elsewhere)" || fail "got '$OUT'"
+OUT=$(mo "$(mj '{"body":"🔒 claim hostA-5 1700000000000"}')")
+[ -z "$OUT" ] && pass "marker without wt= → not an orphan" || fail "got '$OUT'"
+OUT=$(mo "$(mj "$(cm hostAB-5 "$T/gone-wt")")")
+[ -z "$OUT" ] && pass "host name must match exactly" || fail "got '$OUT'"
+
 OUT=$(bash "$SCRIPT" --project /nonexistent 2>&1); RC=$?
 [ "$RC" -eq 1 ] && pass "outside a checkout exits 1" || fail "rc=$RC"
 OUT=$(bash "$SCRIPT" --bogus 2>&1); RC=$?
