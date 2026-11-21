@@ -40,6 +40,19 @@ printf '%s\n' "$changed" >> "$FX_STATE/gates.log"
 if [ -s "$FX_STATE/infra.script" ]; then
   first=$(head -1 "$FX_STATE/infra.script"); sed -i 1d "$FX_STATE/infra.script"
   if [ "$first" = infra ]; then echo "::error::check-disk-space: INFRASTRUCTURE -- full disk (/tmp)"; exit 1; fi
+  # red-base: the plugin's refusal on a red base (the files that failed on the integrated tree fail on master alone too)
+  if [ "$first" = red-base ]; then
+    echo "❌ Tests fail on the integrated tree 73ed0986 (1 named failure(s))."
+    echo "   t_shared.test: fails on origin/master too (red base, not this change's)"
+    echo "merge-to-integration: RED-BASE -- origin/master (c44669ae) fails alone too with the same 1 named failure(s) in t_shared.test: red master, not this change's."
+    echo "❌ origin/master fails alone too (tree 8eda80f4, the same 1 named failure(s)), and AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base. NOT pushing."
+    exit 2
+  fi
+  # land-red-base: the plugin landed anyway on a red base (the default once a sentinel proved green)
+  if [ "$first" = land-red-base ]; then
+    echo "merge-to-integration: RED-BASE -- origin/master (c44669ae) fails alone too with the same 1 named failure(s) in t_shared.test: red master, not this change's."
+    echo "⚠️  origin/master fails alone too (tree 8eda80f4) with the same 1 named failure(s): the integration branch is red independent of this change."
+  fi
 fi
 if [ -z "$changed" ]; then
   # merge-to-integration.sh's own line for a rebase that drops every commit as already upstream
@@ -220,6 +233,36 @@ def test_two_infrastructure_rereds_end_the_cycle_with_everyone_back_in_the_queue
     assert fx.dropped() == [] and not any(fx.on_master(i) for i in range(4))
     assert [fx.state_of(i) for i in issues] == ["OPEN"] * 4
     assert R.State(fx.rc()).limit() == 8                 # an infrastructure red says nothing about the batch size
+
+
+def test_a_red_base_refusal_ends_the_cycle_with_everyone_in_the_queue_unfaulted_and_names_the_integration_branch(fx):
+    issues = fx.members(4)
+    report = fx.member(9)
+    fx.train["reportIssue"] = str(report)
+    fx.write_config()
+    (fx.state / "infra.script").write_text("red-base\n")
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1            # never a re-gate, never a bisect: the same base fails the same way
+    assert fx.dropped() == [] and not any(fx.on_master(i) for i in range(4))
+    assert [fx.state_of(i) for i in issues] == ["OPEN"] * 4
+    assert R.State(fx.rc()).limit() == 8                 # a red base says nothing about the batch size
+    note = fx.comments(report)
+    assert "red `master`, not a member's" in note and "nobody dropped, held out or re-gated" in note
+    assert "RED-BASE -- origin/master" in note and "Open or cite the issue for red `master`" in note
+    assert all("returned:" not in fx.comments(i) for i in issues)
+
+
+def test_a_landing_on_a_red_base_publishes_and_says_the_red_is_the_integration_branchs(fx):
+    issues = fx.members(3)
+    report = fx.member(9)
+    fx.train["reportIssue"] = str(report)
+    fx.write_config()
+    (fx.state / "infra.script").write_text("land-red-base\n")
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1
+    assert all(fx.on_master(i) for i in range(3)) and [fx.state_of(i) for i in issues] == ["CLOSED"] * 3
+    note = fx.comments(report)
+    assert "landed on a RED `master`" in note and "RED-BASE -- origin/master" in note and "not this train's" in note
 
 
 # ── a hold-out re-gates the remaining members ───────────────────────────────────────────
