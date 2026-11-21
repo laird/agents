@@ -237,7 +237,7 @@ source "${_MTI_DIR}/gate-cache-fns.sh"
 merge_event() { :; }
 # shellcheck source=merge-events-lib.sh
 [ -f "${_MTI_DIR}/merge-events-lib.sh" ] && source "${_MTI_DIR}/merge-events-lib.sh"
-# Landing timings (#7011): batch and change rows for landing-report.py. Optional like merge_event.
+# Landing timings: batch and change rows for landing-report.py. Optional like merge_event.
 landing_change() { :; }
 landing_batch() { :; }
 # shellcheck source=landing-timings-lib.sh
@@ -319,7 +319,7 @@ _merge_repo_id() {
   if declare -F autocoder_repo_id >/dev/null; then autocoder_repo_id "${CALLER_DIR:-$PWD}" 2>/dev/null
   else basename "$(git -C "${CALLER_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)"; fi
 }
-# Landing timings (#7011). This job is a batch of one: its gate seconds, the gate seconds a re-sync
+# Landing timings. This job is a batch of one: its gate seconds, the gate seconds a re-sync
 # threw away, and why a change came back. LANDING_CAUSE is set where the reason is known.
 GATE_S=0 GATE_RUNS=0 GATE_LAST_S=0 DISCARDED_S=0 LANDING_CAUSE="" LANDING_BATCH=""
 _landing_gate_done() {  # <seconds one gate run took>

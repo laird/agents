@@ -1,6 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255
-# tests/test_landing_timings_gate.sh — merge-to-integration.sh appends landing-timings rows (#7011):
+# tests/test_landing_timings_gate.sh — merge-to-integration.sh appends landing-timings rows:
 # a landing gives a green batch of one plus batched and landed; a gate that fails only on the
 # change gives a red batch (cause defect) and a returned change; a red integration branch gives a
 # red batch (cause red-integration), the change landing or coming back by the red-base setting.

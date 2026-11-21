@@ -1,4 +1,4 @@
-"""landing-timings.py (writer) and landing-report.py (waste-first report, history mode) (#7011)."""
+"""landing-timings.py (writer) and landing-report.py (waste-first report, history mode)."""
 
 from __future__ import annotations
 

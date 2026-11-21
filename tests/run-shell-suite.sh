@@ -34,7 +34,7 @@ export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
 # Likewise the issue lifecycle events (#190), which the issue verbs append.
 SUITE_ISSUE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-issue-events.XXXXXX")
 export AUTOCODER_ISSUE_EVENTS="$SUITE_ISSUE_EVENTS"
-# And the landing timings (#7011), which every merge job appends to.
+# And the landing timings, which every merge job appends to.
 SUITE_LANDING=$(mktemp "${TMPDIR:-/tmp}/suite-landing-timings.XXXXXX")
 export AUTOCODER_LANDING_TIMINGS="$SUITE_LANDING"
 # Each test's output, shown on failure. mktemp, and removed by the trap, so an

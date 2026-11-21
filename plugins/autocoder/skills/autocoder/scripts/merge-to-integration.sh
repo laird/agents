@@ -237,6 +237,11 @@ source "${_MTI_DIR}/gate-cache-fns.sh"
 merge_event() { :; }
 # shellcheck source=merge-events-lib.sh
 [ -f "${_MTI_DIR}/merge-events-lib.sh" ] && source "${_MTI_DIR}/merge-events-lib.sh"
+# Landing timings: batch and change rows for landing-report.py. Optional like merge_event.
+landing_change() { :; }
+landing_batch() { :; }
+# shellcheck source=landing-timings-lib.sh
+[ -f "${_MTI_DIR}/landing-timings-lib.sh" ] && source "${_MTI_DIR}/landing-timings-lib.sh"
 # shellcheck source=repo-id-fns.sh
 source "${_MTI_DIR}/repo-id-fns.sh"
 # Lifecycle events (#190), sourced by issue-fns.sh. This job runs in a throwaway worktree,
@@ -314,9 +319,40 @@ _merge_repo_id() {
   if declare -F autocoder_repo_id >/dev/null; then autocoder_repo_id "${CALLER_DIR:-$PWD}" 2>/dev/null
   else basename "$(git -C "${CALLER_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)"; fi
 }
+# Landing timings. This job is a batch of one: its gate seconds, the gate seconds a re-sync
+# threw away, and why a change came back. LANDING_CAUSE is set where the reason is known.
+GATE_S=0 GATE_RUNS=0 GATE_LAST_S=0 DISCARDED_S=0 LANDING_CAUSE="" LANDING_BATCH=""
+_landing_gate_done() {  # <seconds one gate run took>
+  GATE_S=$((GATE_S + $1)) GATE_LAST_S="$1" GATE_RUNS=$((GATE_RUNS + 1))
+}
+_emit_landing_rows() {  # <outcome> <rc>
+  local outcome="$1" rc="$2" verdict="" cause="" issue="${ISSUE_NUM:-}"
+  [ -n "$issue" ] || return 0
+  case "$outcome" in
+    landed|parked) verdict=green ;;
+    gate-failed) verdict=red cause="${LANDING_CAUSE:-defect}" ;;
+    skipped) return 0 ;;
+    conflict) cause=conflict ;;
+    *) verdict=aborted cause="${LANDING_CAUSE:-other}" ;;
+  esac
+  [ "$LANDING_CAUSE" = red-integration ] && verdict=red cause=red-integration
+  if [ "$GATE_RUNS" -gt 0 ]; then
+    LANDING_BATCH="solo-${issue}-${AUTOCODER_MERGE_ATTEMPT:-1}-$(date +%s)"
+    landing_batch --batch "$LANDING_BATCH" --members "$issue" --gate-s "$GATE_S" \
+      --discarded-gate-s "$DISCARDED_S" --resyncs "$PUSH_RETRIES" --push-rejected "$PUSH_RETRIES" \
+      --verdict "$verdict" ${cause:+--cause "$cause"}
+    landing_change "$issue" batched --batch "$LANDING_BATCH"
+  fi
+  if [ -n "$MERGE_LANDED" ]; then landing_change "$issue" landed ${LANDING_BATCH:+--batch "$LANDING_BATCH"}
+  elif [ "$outcome" = conflict ]; then landing_change "$issue" returned --cause conflict
+  elif [ "$rc" -ne 0 ] || [ "$outcome" = gate-failed ] || [ "$outcome" = escalated ]; then
+    landing_change "$issue" returned --cause "${LANDING_CAUSE:-${cause:-other}}"
+  fi
+}
 _emit_attempt_event() {
   local rc="$1" outcome="$MERGE_OUTCOME"
   [ -n "$outcome" ] || { [ "$rc" -eq 0 ] && outcome=landed || outcome=failed; }
+  _emit_landing_rows "$outcome" "$rc"
   merge_event event=attempt outcome="$outcome" repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
     files="$MERGE_FILES" gate_tests_failed="$MERGE_TESTS" duration_s="$((SECONDS - MERGE_T0))" \
@@ -946,12 +982,17 @@ _gate_integrated_tree() {
   tree=$(git rev-parse "HEAD^{tree}")
   echo "🧪 Gating the integrated tree ${tree:0:8}: $TEST_CMD"
   : > "$GATE_LAST"
+  # A gate already ran on an earlier tree: that run is thrown away by this re-gate.
+  DISCARDED_S=$((DISCARDED_S + GATE_LAST_S)) GATE_LAST_S=0
+  _g0=$SECONDS
   if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" "$GATE_LAST"; then
+    _landing_gate_done $((SECONDS - _g0))
     TESTED_TREE="$tree"
     PUBLISH_BASIS=tested
     return 0
   fi
 
+  _landing_gate_done $((SECONDS - _g0))
   base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8}."
@@ -962,13 +1003,18 @@ _gate_integrated_tree() {
     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
   fi
   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
-  if _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+  _g0=$SECONDS
+  _base_green=0
+  _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" && _base_green=1
+  _landing_gate_done $((SECONDS - _g0))
+  if [ "$_base_green" -eq 1 ]; then
     echo "❌ origin/${INTEGRATION_BRANCH} passes alone, so this change broke it. NOT pushing."
     echo "   The fix remains on '${FEATURE}'; investigate the interaction with newly merged work."
     GATE_BOUNCE=1
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and pass on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), so this change broke it"
   fi
   _remove_worktree "$BASE_WORKTREE_DIR"
+  LANDING_CAUSE=red-integration   # the base is red too: the batch is red, though not this change's fault
   if [ "$MERGE_ON_RED_BASE" != "1" ]; then
     echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}), and ${RED_BASE_REFUSAL}. NOT pushing."
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}); ${RED_BASE_REFUSAL}"
