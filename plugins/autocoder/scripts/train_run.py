@@ -209,7 +209,7 @@ class State:
 
     def regen_tell(self, issue, tip):
         with open(self.dir / "regenerate-only.tsv", "a") as f:
-            f.write(f"{issue} {tip} {now_iso()}\n")
+            f.write(f"{issue}\t{tip}\t{now_iso()}\n")
 
     def launched(self, issue, tip):
         p = self.rc.cfg.launched
@@ -633,9 +633,11 @@ class Cycle:
         reads `train-dropped` and never plans that tip again); nothing is closed, nobody is bisected."""
         kept = self.keep_log(log_path, train)
         c = self.cfg
+        for m in members:   # dropped FIRST: a death between the two must not offer the tip again
+            self.state.drop(m["issue"], m["tip"][:10], NOTHING_LANDED)
         self._set_status(members, "nothing", NOTHING_LANDED)
         for m in members:
-            self.state.drop(m["issue"], m["tip"][:10], NOTHING_LANDED)
+            self.timing("change", "--issue", m["issue"], "--event", "returned", "--cause", "other")
             self.say.say(m["issue"], f"{NOTHING_LANDED}: `{m['branch']}` @ `{m['tip'][:10]}` was in **{train}**, whose landing "
                          f"left nothing to land (`{line[:160]}`). The train's net change against `{c.ref}` is empty: a change to a "
                          f"regenerated file is put back by the regeneration, and work already on `{c.integration}` adds nothing. "

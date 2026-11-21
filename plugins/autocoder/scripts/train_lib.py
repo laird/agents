@@ -219,9 +219,10 @@ def regenerate_only(cfg: Config, ref, base=None):
     if not paths:
         return None
     # The attributes of <base>'s tree (git 2.40+); an older git reads the working tree's .gitattributes.
-    r = git(cfg.repo, "check-attr", "-z", f"--source={base}", "merge", "--", *paths)
+    stdin = "\0".join(paths) + "\0"   # on stdin, so a tree-wide diff never hits the argv limit
+    r = git(cfg.repo, "check-attr", "-z", "--stdin", f"--source={base}", "merge", input=stdin)
     if r.returncode != 0:
-        r = git(cfg.repo, "check-attr", "-z", "merge", "--", *paths)
+        r = git(cfg.repo, "check-attr", "-z", "--stdin", "merge", input=stdin)
     if r.returncode != 0:
         return None
     fields = r.stdout.split("\0")
@@ -233,8 +234,8 @@ def regenerate_only(cfg: Config, ref, base=None):
 
 def regenerate_only_note(cfg: Config, paths):
     shown = ", ".join(f"`{p}`" for p in paths[:6]) + (f" and {len(paths) - 6} more" if len(paths) > 6 else "")
-    return (f"changes only regenerated files ({shown}), which a landing regenerates from their sources: it would land nothing"
-            + (f". {cfg.regenerated_advice}" if cfg.regenerated_advice else ""))
+    return (f"changes only regenerated files ({shown}), which a landing regenerates from their sources: it would land nothing."
+            + (f" {cfg.regenerated_advice}" if cfg.regenerated_advice else ""))
 
 
 # ── READY pickup ────────────────────────────────────────────────────────────────────────

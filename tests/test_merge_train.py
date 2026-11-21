@@ -611,7 +611,7 @@ def test_a_branch_changing_only_regenerated_paths_is_regenerate_only_and_never_p
     q = fx.queue()
     assert q[gen_only]["state"] == "regenerate-only"
     assert "`gen/a.txt`" in q[gen_only]["note"] and "`export.lock`" in q[gen_only]["note"]
-    assert "would land nothing" in q[gen_only]["note"] and q[gen_only]["note"].endswith("Land the change in the source instead.")
+    assert "would land nothing. Land the change in the source instead." in q[gen_only]["note"]
     assert q[mixed]["state"] == "queue" and q[attrs]["state"] == "queue"     # a source, or the attributes file itself, is a real change
     rows, fault = fx.plan()
     assert fault is None
