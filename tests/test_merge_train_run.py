@@ -6,6 +6,9 @@ contract: exit 0 plus a `merged into` line mean the tree landed (here: a fast-fo
 anything else is red, with an `::error::` line. A member is bad when it adds a file under `bad/`; the red
 line names no path unless the fixture asks it to. `infra.script` lists outcomes consumed one per gate
 (`infra` = an INFRASTRUCTURE refusal). `gates.log` records, per gate, the files the tree adds to master.
+With `squash` present the gate lands the way merge-to-integration.sh lands a branch that holds merge
+commits (every train does): ONE squash commit on master, no member tip in its history; `squash-omit`
+lists paths left out of that commit (a landing that did not carry a member's work).
 """
 
 from __future__ import annotations
@@ -42,7 +45,16 @@ if [ -n "$bad" ]; then
   if [ -e "$FX_STATE/name-path" ]; then echo "::error::lint: $bad is wrong"; else echo "::error::tests: 1 failed"; fi
   exit 1
 fi
-git push -q origin "$TIP":refs/heads/master || { echo "::error::push rejected"; exit 1; }
+if [ -e "$FX_STATE/squash" ]; then
+  git checkout -q --detach origin/master
+  git merge -q --squash "$TIP" >/dev/null
+  if [ -s "$FX_STATE/squash-omit" ]; then while read -r p; do git rm -q --cached "$p"; rm -f "$p"; done < "$FX_STATE/squash-omit"; fi
+  git -c user.name=g -c user.email=g@x commit -qm "squash of $1 (the branch contained merge commits)"
+  git push -q origin HEAD:refs/heads/master || { echo "::error::push rejected"; exit 1; }
+  git checkout -q master
+else
+  git push -q origin "$TIP":refs/heads/master || { echo "::error::push rejected"; exit 1; }
+fi
 echo "✅ Issue #0 merged into 'master' and verified: tests passed."
 """
 
@@ -323,6 +335,78 @@ def test_a_failing_regeneration_blames_nobody_and_gates_nothing(fx):
     code, _ = fx.run()
     assert code == 0 and fx.gates() == [] and fx.dropped() == []
     assert [fx.state_of(i) for i in issues] == ["OPEN", "OPEN"]
+
+
+def tips(fx, n):
+    return [T.git(fx.work, "rev-parse", f"origin/feature/m{i}").stdout.strip() for i in range(n)]
+
+
+def test_a_squash_landing_closes_every_member_by_its_content(fx):
+    """4.38.0+ lands a train as ONE squash commit, so no member tip is an ancestor of master and no member
+    commit is patch-equivalent to one there; the content proof closes them."""
+    issues = fx.members(3)
+    before = tips(fx, 3)
+    (fx.state / "squash").write_text("")
+    code, cyc = fx.run()
+    assert code == 0 and len(fx.gates()) == 1
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    assert all(sh("git", "merge-base", "--is-ancestor", t, "origin/master", cwd=fx.work, check=False).returncode != 0 for t in before)
+    assert all(T.landing_proof(fx.rc().cfg, t) == "content" for t in before)
+    assert [fx.state_of(i) for i in issues] == ["CLOSED"] * 3
+    assert all("landing proof: content" in fx.comments(i) for i in issues)
+    assert all(sh("git", "rev-parse", "--verify", "-q", f"origin/feature/m{n}", cwd=fx.work, check=False).returncode != 0 for n in range(3))
+    assert fx.dropped() == [] and R.State(fx.rc()).cycle() == {}
+
+
+def test_a_squash_landing_that_lacks_a_members_work_leaves_that_member_open_and_in_the_queue(fx):
+    issues = fx.members(3)
+    (fx.state / "squash").write_text("")
+    (fx.state / "squash-omit").write_text("files/m1.txt\n")
+    code, cyc = fx.run()
+    assert code == 0
+    assert [fx.state_of(i) for i in issues] == ["CLOSED", "OPEN", "CLOSED"]
+    assert "landed on" not in fx.comments(issues[1])
+    assert sh("git", "rev-parse", "--verify", "-q", "origin/feature/m1", cwd=fx.work, check=False).returncode == 0
+    assert fx.dropped() == [] and R.State(fx.rc()).cycle() == {}
+    first = T.plan_queue(fx.rc().cfg)[0]
+    assert str(first["issue"]) == str(issues[1]) and first["state"] in ("queue", "launched")
+
+
+def test_the_landed_hook_runs_once_after_a_landing_with_the_landing_in_its_environment(fx):
+    issues = fx.members(2)
+    base = T.git(fx.work, "rev-parse", "origin/master").stdout.strip()
+    before = tips(fx, 2)
+    fx.train["hooks"] = {"landed": 'printf "%s %s %s %s\\n" "$AUTOCODER_TRAIN_BRANCH" "$AUTOCODER_TRAIN_LANDED" "$AUTOCODER_TRAIN_BASE" "$AUTOCODER_TRAIN_INTEGRATION" >> "$FX_STATE/landed.log"; printf "%s\\n" "$AUTOCODER_TRAIN_MEMBERS" >> "$FX_STATE/landed.log"; pwd >> "$FX_STATE/landed.log"'}
+    fx.write_config()
+    fx.run()
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    lines = (fx.state / "landed.log").read_text().splitlines()
+    head = lines[0].split()
+    assert head[0].startswith("train/") and head[1] == T.git(fx.work, "rev-parse", "origin/master").stdout.strip() and head[2] == base and head[3] == "master"
+    assert lines[1:3] == [f"{issues[0]}\t{before[0]}\tfeature/m0", f"{issues[1]}\t{before[1]}\tfeature/m1"]
+    assert lines[3] == str(fx.work.resolve()) and len(lines) == 4
+
+
+def test_a_failing_landed_hook_cannot_unland_and_is_reported(fx):
+    issues = fx.members(2)
+    report = fx.member(9)
+    fx.train["hooks"] = {"landed": "echo 'upstream push refused'; exit 4"}
+    fx.train["reportIssue"] = str(report)
+    fx.write_config()
+    code, _ = fx.run()
+    assert code == 0 and [fx.state_of(i) for i in issues] == ["CLOSED", "CLOSED"]
+    assert "`landed` hook exited 4" in fx.comments(report) and "upstream push refused" in fx.comments(report)
+
+
+def test_the_landed_hook_runs_on_a_partial_landing_and_names_the_members_apart(fx):
+    issues = fx.members(2)
+    before = tips(fx, 2)
+    (fx.state / "squash").write_text("")
+    (fx.state / "squash-omit").write_text("files/m0.txt\n")
+    fx.train["hooks"] = {"landed": 'printf "landed=%s\\nunlanded=%s\\n" "$AUTOCODER_TRAIN_MEMBERS" "$AUTOCODER_TRAIN_UNLANDED" >> "$FX_STATE/landed.log"'}
+    fx.write_config()
+    fx.run()
+    assert (fx.state / "landed.log").read_text().splitlines() == [f"landed={issues[1]}\t{before[1]}\tfeature/m1", f"unlanded={issues[0]}\t{before[0]}\tfeature/m0"]
 
 
 def test_timing_rows_go_through_the_writer(fx):
