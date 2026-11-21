@@ -248,6 +248,9 @@ CALLER_DIR="$(pwd)"
 
 # issue_update / issue_comment live in the shared issue backend layer next to this script.
 _MTI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Where the plugin's scripts are, for a gate command that runs one (stage-runner.py). A hermetic gate
+# (gate.env) must list it to see it.
+export AUTOCODER_SCRIPTS_DIR="$_MTI_DIR"
 # shellcheck source=issue-fns.sh
 source "${_MTI_DIR}/issue-fns.sh"
 # shellcheck source=regate-fns.sh
@@ -862,8 +865,20 @@ for _tok in $(printf '%s' "$TEST_CMD" | tr ';&|()<>`"'"'"'=' ' '); do
   _tok="${_tok#./}"; _tok="${_tok%/}"
   case "$_tok" in ""|-*|/*|'$'*) continue ;; esac
   [ -e "$WORKTREE_DIR/$_tok" ] && TEST_CMD_PATHS["$_tok"]=1
+  # A stage manifest (stage-runner.py) hides the gate's scripts from the command line: name the
+  # commands it runs too, so a change to one of them still counts as a gate path.
+  case "$_tok" in
+    *.json)
+      [ -f "$WORKTREE_DIR/$_tok" ] || continue
+      for _mtok in $(python3 "${_MTI_DIR}/stage-runner.py" --manifest "$WORKTREE_DIR/$_tok" --list-commands 2>/dev/null \
+                       | tr ';&|()<>`"'"'"'=' ' '); do
+        _mtok="${_mtok#./}"; _mtok="${_mtok%/}"
+        case "$_mtok" in ""|-*|/*|'$'*) continue ;; esac
+        [ -e "$WORKTREE_DIR/$_mtok" ] && TEST_CMD_PATHS["$_mtok"]=1
+      done ;;
+  esac
 done
-unset _tok
+unset _tok _mtok
 
 # Replay the feature commits onto the integration tip (#221) so the eventual push is a
 # fast-forward and the integration branch stays linear. Never checks out the integration
