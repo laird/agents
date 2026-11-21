@@ -140,6 +140,8 @@ SHIM="$FAKEHOME/.local/bin/autocoder-idle-sentinel"
 EXEC=$(grep '^ExecStart=' "$UDIR/$UNIT.service")
 [ "$EXEC" = "ExecStart=\"$SHIM\" --once --project \"$P\"" ] \
   && ok "ExecStart runs the shim, not a versioned script path" || bad "ExecStart: $EXEC"
+grep -qxF "Environment=\"PATH=$TESTPATH\"" "$UDIR/$UNIT.service" \
+  && ok "service carries the PATH --ensure ran with" || bad "no PATH in service: $(cat "$UDIR/$UNIT.service")"
 [ "$(state_mode "$P")" = systemd ] && ok "scheduler_mode=systemd recorded" \
   || bad "scheduler_mode=$(state_mode "$P")"
 

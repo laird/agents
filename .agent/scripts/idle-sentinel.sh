@@ -2025,12 +2025,15 @@ render_sentinel_service() {
   local desc=${PROJECT_ROOT//%/%%}
   cat <<UNIT
 # Installed by idle-sentinel.sh --ensure (#273). Runs one sentinel tick.
+# PATH is the one --ensure ran with: the user manager's own PATH is minimal,
+# and a wake must find the agent CLI, gh and the multiplexer the shell found.
 [Unit]
 Description=autocoder idle sentinel tick for ${desc}
 
 [Service]
 Type=oneshot
 Environment=$(systemd_word "AUTOCODER_SENTINEL_FALLBACK=$SELF_PATH")
+Environment=$(systemd_word "PATH=$PATH")
 ExecStart=$(systemd_word "$SENTINEL_SHIM") --once --project $(systemd_word "$PROJECT_ROOT" arg)
 UNIT
 }
@@ -2080,9 +2083,9 @@ warn_if_no_linger() {
 # install_systemd_scheduler: write + enable the timer. 0 = scheduled.
 install_systemd_scheduler() {
   local _p
-  for _p in "$PROJECT_ROOT" "$SELF_PATH" "$SENTINEL_SHIM" "$SYSTEMD_USER_DIR"; do
+  for _p in "$PROJECT_ROOT" "$SELF_PATH" "$SENTINEL_SHIM" "$SYSTEMD_USER_DIR" "$PATH"; do
     case "$_p" in *$'\n'*|*$'\r'*)
-      echo "❌ Refusing to write a systemd unit: a path contains a newline ($(printf '%q' "$_p"))." >&2
+      echo "❌ Refusing to write a systemd unit: a path (or PATH) contains a newline ($(printf '%q' "$_p"))." >&2
       return 1 ;;
     esac
   done
