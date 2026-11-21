@@ -52,17 +52,17 @@ eq "...to 0700" "700" "$(mode "$R")"
 # An unsafe state dir is never used: fall back to /tmp/autocoder-<uid>.
 mkdir -p "$TMP/base3" "$TMP/xdg3/autocoder" "$TMP/elsewhere"
 ln -s "$TMP/elsewhere" "$TMP/xdg3/autocoder/merge"
-R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3" XDG_STATE_HOME="$TMP/xdg3" autocoder_tmp_root)
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3" XDG_STATE_HOME="$TMP/xdg3" autocoder_tmp_root 2>/dev/null)
 eq "a symlinked state dir is refused; <base>/autocoder-<uid> is used" "$TMP/base3/autocoder-$U" "$R"
 eq "fallback is 0700 too" "700" "$(mode "$R")"
 
 mkdir -p "$TMP/base3b" "$TMP/xdg3b/autocoder"; : > "$TMP/xdg3b/autocoder/merge"
-R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3b" XDG_STATE_HOME="$TMP/xdg3b" autocoder_tmp_root)
+R=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base3b" XDG_STATE_HOME="$TMP/xdg3b" autocoder_tmp_root 2>/dev/null)
 eq "a non-directory at the state path falls back" "$TMP/base3b/autocoder-$U" "$R"
 
 # Group/other bits that cannot be cleared: a stub chmod that always fails.
 mkdir -p "$TMP/base3c" "$TMP/xdg3c/autocoder/merge"; command chmod 777 "$TMP/xdg3c/autocoder/merge"
-R=$(unset AUTOCODER_TMP; chmod() { return 1; }; AUTOCODER_TMP_BASE="$TMP/base3c" XDG_STATE_HOME="$TMP/xdg3c" autocoder_tmp_root)
+R=$(unset AUTOCODER_TMP; chmod() { return 1; }; AUTOCODER_TMP_BASE="$TMP/base3c" XDG_STATE_HOME="$TMP/xdg3c" autocoder_tmp_root 2>/dev/null)
 eq "a too-open state dir that cannot be tightened falls back" "$TMP/base3c/autocoder-$U" "$R"
 unset -f chmod
 
@@ -77,6 +77,56 @@ mkdir -p "$TMP/base4" "$TMP/xdg4/autocoder"
 : > "$TMP/base4/autocoder-$U"; : > "$TMP/xdg4/autocoder/merge"
 (unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base4" XDG_STATE_HOME="$TMP/xdg4" autocoder_tmp_root) >/dev/null 2>&1
 eq "no safe directory: exit 1" "1" "$?"
+
+# ── the decision is visible only when it is a fallback ──────────────────────
+ERR=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base5" XDG_STATE_HOME="$TMP/xdg5" autocoder_tmp_root 2>&1 >/dev/null)
+eq "default path: nothing on stderr" "" "$ERR"
+mkdir -p "$TMP/base6" "$TMP/xdg6/autocoder"; ln -s "$TMP/elsewhere" "$TMP/xdg6/autocoder/merge"
+ERR=$(unset AUTOCODER_TMP; AUTOCODER_TMP_BASE="$TMP/base6" XDG_STATE_HOME="$TMP/xdg6" autocoder_tmp_root 2>&1 >/dev/null)
+echo "$ERR" | grep -q "is a symlink); using $TMP/base6/autocoder-$U, which may not survive a reboot" \
+  && ok "fallback names the reason and the /tmp dir it chose" || bad "fallback notice: '$ERR'"
+
+# No HOME and no XDG_STATE_HOME (a bare cron/launchd/container environment):
+# no state dir can be named, so /tmp is used, and it says why.
+OUT=$(env -i PATH="$PATH" AUTOCODER_TMP_BASE="$TMP/base7" bash -c \
+  'source "$1/repo-id-fns.sh"; autocoder_tmp_root' _ "$S" 2>"$TMP/err7")
+eq "no HOME, no XDG_STATE_HOME: /tmp fallback" "$TMP/base7/autocoder-$U" "$OUT"
+grep -q "neither XDG_STATE_HOME nor HOME is set" "$TMP/err7" && ok "...and says why" || bad "no-HOME notice: $(cat "$TMP/err7")"
+
+# ── BSD/macOS userland (#272): no `stat -c`, no sha1sum ────────────────────
+# A PATH holding only what the helpers need, with a BSD-style stat that rejects
+# -c and answers -f %Lp, and no sha1sum. Run under `env -i` so nothing leaks in.
+BSD="$TMP/bsdbin"; mkdir -p "$BSD"
+for t in mkdir id chmod cut basename dirname git python3 printf cat; do
+  p=$(command -v "$t" 2>/dev/null) && [ "${p#/}" != "$p" ] && ln -s "$p" "$BSD/$t"
+done
+cat > "$BSD/stat" <<'STAT'
+#!/bin/bash
+# BSD stat: no -c. -f %Lp prints the permission bits in octal.
+[ "$1" = "-f" ] && [ "$2" = "%Lp" ] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
+exec python3 -c 'import os,stat,sys; print(format(stat.S_IMODE(os.lstat(sys.argv[1]).st_mode), "o"))' "$3"
+STAT
+chmod +x "$BSD/stat"
+bsd() { env -i PATH="$BSD" HOME="$TMP/bsdhome" /bin/bash -c "source '$S/repo-id-fns.sh'; $1"; }
+
+R=$(bsd 'autocoder_tmp_root' 2>"$TMP/bsderr")
+eq "BSD stat: default state dir resolves" "$TMP/bsdhome/.local/state/autocoder/merge" "$R"
+eq "...with nothing on stderr" "" "$(cat "$TMP/bsderr")"
+mkdir -p "$TMP/bsdhome2/.local/state/autocoder/merge"; chmod 755 "$TMP/bsdhome2/.local/state/autocoder/merge"
+R=$(env -i PATH="$BSD" HOME="$TMP/bsdhome2" /bin/bash -c "source '$S/repo-id-fns.sh'; autocoder_tmp_root")
+eq "BSD stat: a 0755 state dir is read via -f %Lp and tightened" "700" "$(mode "$R")"
+
+git init -q "$TMP/idrepo"
+WANT=$(autocoder_repo_id "$TMP/idrepo")
+eq "no sha1sum (python3 fallback): same repo id" "$WANT" "$(bsd "autocoder_repo_id '$TMP/idrepo'")"
+cat > "$BSD/shasum" <<'SHA'
+#!/bin/bash
+# macOS shasum stand-in: `shasum -a 1` prints "<hex>  -" like sha1sum.
+[ "$1" = "-a" ] && [ "$2" = "1" ] || exit 2
+python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest() + "  -")'
+SHA
+chmod +x "$BSD/shasum"
+eq "shasum -a 1 (macOS): same repo id" "$WANT" "$(bsd "autocoder_repo_id '$TMP/idrepo'")"
 
 # ── every state writer/reader resolves through the helper ──────────────────
 for f in merge-launch.sh merge-poll.sh merge-queue-fns.sh main-sentinel.sh merge-to-integration.sh promote.sh; do
