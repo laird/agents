@@ -218,6 +218,41 @@ train branch through it (and through the host queue) unchanged; assembling the t
 members and closing member issues are left to the manager. A project adopting the model states it
 in its `AGENTS.md` PUSH & MERGE section.
 
+## One publisher for the integration branch
+
+`scripts/publisher.sh` is the single writer of the integration branch. A queue, a train, a
+single-change gate and a person all land a gated tree with `publisher.sh publish --sha SHA --branch B`;
+nothing else pushes the branch.
+
+- **Leases.** The publisher holds a host lease (a `flock`, released when its holder dies) and, with
+  `AUTOCODER_REF_LEASE=on`, a second lease on the remote for two hosts sharing one branch: a ref
+  `refs/autocoder/landing-lease/<branch>` created only when absent, carrying an expiry, taken over
+  when expired. Pushes are serialised behind them, so a second landing starts from a branch that
+  already holds the first instead of being rejected and re-synced.
+- **Mode.** `ff` (default) pushes a gated commit that fast-forwards the branch, else returns it as
+  stale (exit 3). `merge` also accepts a branch that moved under the gate when every incoming file is
+  a document and the document checks pass; code that arrived untested always forces a re-gate.
+- **Fast lane.** `publisher.sh enqueue --sha REF --issue N` takes a documents-only or mechanical
+  change (the plugin's documents rule, plus `AUTOCODER_DOCS_PATHS` / `AUTOCODER_DOCS_CODE_PATHS` and
+  the mechanical globs in `AUTOCODER_FASTLANE_PATHS`; anything else is refused naming the files). It
+  rides in the next `publish` (same push, no test stages), or lands at once when no batch is in
+  flight. A train marks its window with `batch-begin --pid PID` / `batch-end`. The checks are
+  `AUTOCODER_FASTLANE_CHECK_CMD` (default `AUTOCODER_DOCS_RESYNC_CMD`); a change that fails them or
+  conflicts is marked failed with the reason and costs nothing else. `enqueue` waits and reports the
+  landed commit (`--no-wait` to return at once).
+- **Record.** Every publish and rejection goes to the landing-timings file. A caller that passes its
+  own `--batch` owns the batch row and reads the `publish-result` line (publish seconds, rejected
+  pushes) for it; otherwise the publisher writes the row.
+- **Health and the manual path.** `publisher.sh health` exits 1 on a stale batch marker, an
+  expired unreleased ref lease, an unreachable remote or a fast lane that is not draining. The
+  queue being down changes nothing for the people using it: `publisher.sh drain` lands the pending
+  fast lane by hand, `publish` is the same command a queue calls, `batch-end --force` and
+  `lease-break` clear a stale marker or lease.
+- **Branch protection.** Once every writer goes through the publisher, restrict pushes to the
+  integration branch to the account the publisher pushes with (and the operator's break-glass);
+  until then the publisher is a convention the scripts follow. That change is the repository
+  owner's, not the swarm's.
+
 ## Blocked Issue Review Workflow
 
 When fix-loop encounters issues it cannot handle autonomously, it adds blocking labels (`needs-approval`, `needs-design`, `needs-clarification`, `too-complex`) and moves on. Use `/review-blocked` in a separate session to review and unblock these issues.
