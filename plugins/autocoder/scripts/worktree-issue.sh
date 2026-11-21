@@ -24,8 +24,11 @@
 # checkout): claims whose fix branch no worktree holds. Shared trackers (GitHub,
 # Jira, ADO), which also hold other hosts' and clones' claims: only claims whose
 # newest marker (`🔒 claim <host>-<pid> <ms> ... wt=<path>`, #202) names this host
-# and a worktree directory that no longer exists. AUTOCODER_HOST_ID overrides the
-# host name, for tests.
+# and a worktree directory that no longer exists, and every claim marker since
+# the last 🔓 release must be such (the claim race lets the earliest marker win).
+# A worker whose AUTOCODER_WORKER_ID replaces the <host>-<pid> id is never
+# recognised as this host's, so its claims are never released here (a missed
+# release, never a wrong one). AUTOCODER_HOST_ID overrides the host name, for tests.
 #
 # Usage: worktree-issue.sh [--project DIR] [--orphan-claims]
 # Exit: 0, 1 bad usage or not inside a git checkout.
@@ -53,14 +56,23 @@ marker_orphan() {
   HOST_ID="${AUTOCODER_HOST_ID:-$host}" python3 -c '
 import json, os, re, sys
 host = os.environ["HOST_ID"]
-last = None
+# Claims since the last release. The claim race lets the EARLIEST live marker
+# win (fix-loop-gate.sh), so the newest may be a losing claim: every one must
+# belong to this host, on a worktree that is gone, or the claim may be live elsewhere.
+claims = []
 for c in json.load(sys.stdin).get("comments") or []:
-    m = re.match(r"\s*🔒 claim (\S+) \d+(?: start=\d+)?(?: wt=([^\n]*))?\s*$", c.get("body") or "")
+    body = c.get("body") or ""
+    if body.lstrip().startswith("\U0001f513"):
+        claims = []
+        continue
+    m = re.match(r"\s*🔒 claim (\S+) \d+(?: start=\d+)?(?: wt=([^\n]*))?\s*$", body)
     if m:
-        last = m
-if last and last.group(2) and re.fullmatch(re.escape(host) + r"-\d+", last.group(1)) \
-        and not os.path.isdir(last.group(2).strip()):
-    print(last.group(2).strip())' 2>/dev/null
+        claims.append(m)
+def orphaned(m):
+    return bool(m.group(2)) and re.fullmatch(re.escape(host) + r"-\d+", m.group(1)) \
+        and not os.path.isdir(m.group(2).strip())
+if claims and all(orphaned(m) for m in claims):
+    print(claims[0].group(2).strip())' 2>/dev/null
 }
 
 # Internal (tests): classify one issue JSON on stdin.

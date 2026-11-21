@@ -75,6 +75,13 @@ OUT=$(mo "$(mj '{"body":"🔒 claim hostA-5 1700000000000"}')")
 OUT=$(mo "$(mj "$(cm hostAB-5 "$T/gone-wt")")")
 [ -z "$OUT" ] && pass "host name must match exactly" || fail "got '$OUT'"
 
+OUT=$(mo "$(mj "$(cm hostB-1 "$T/live-elsewhere"),$(cm hostA-2 "$T/gone-wt")")")
+[ -z "$OUT" ] && pass "race: earlier winner on another host, later loser here → not an orphan" || fail "got '$OUT'"
+OUT=$(mo "$(mj "$(cm hostB-1 "$T/x"),{\"body\":\"🔓 **Releasing claim**\"},$(cm hostA-2 "$T/gone-wt")")")
+[ "$OUT" = "$T/gone-wt" ] && pass "release then re-claim here: only claims since the 🔓 count" || fail "got '$OUT'"
+OUT=$(mo "$(mj '{"body":"🔒 claim my-custom-id 1700000000000 wt=/nonexistent"}')")
+[ -z "$OUT" ] && pass "AUTOCODER_WORKER_ID-style id is never this host's" || fail "got '$OUT'"
+
 OUT=$(bash "$SCRIPT" --project /nonexistent 2>&1); RC=$?
 [ "$RC" -eq 1 ] && pass "outside a checkout exits 1" || fail "rc=$RC"
 OUT=$(bash "$SCRIPT" --bogus 2>&1); RC=$?
