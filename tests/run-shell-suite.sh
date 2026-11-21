@@ -34,10 +34,13 @@ export AUTOCODER_MERGE_EVENTS="$SUITE_EVENTS"
 # Likewise the issue lifecycle events (#190), which the issue verbs append.
 SUITE_ISSUE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-issue-events.XXXXXX")
 export AUTOCODER_ISSUE_EVENTS="$SUITE_ISSUE_EVENTS"
+# And the landing timings (#7011), which every merge job appends to.
+SUITE_LANDING=$(mktemp "${TMPDIR:-/tmp}/suite-landing-timings.XXXXXX")
+export AUTOCODER_LANDING_TIMINGS="$SUITE_LANDING"
 # Each test's output, shown on failure. mktemp, and removed by the trap, so an
 # interrupted run does not leave it behind (#259).
 SUITE_LOG=$(mktemp "${TMPDIR:-/tmp}/shell-suite.XXXXXX")
-trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LOG"' EXIT
+trap 'rm -f "$SUITE_EVENTS" "$SUITE_ISSUE_EVENTS" "$SUITE_LANDING" "$SUITE_LOG"' EXIT
 # #197's random spot-check sampling makes exact-label assertions flaky (#225). Off by
 # default for the suite; tests that exercise spot checks set or unset it themselves.
 export AUTOCODER_SPOT_CHECK_RATE="${AUTOCODER_SPOT_CHECK_RATE:-0}"
