@@ -810,7 +810,7 @@ class Cycle:
         self.say.say(m["issue"], f"landed on `{c.integration}` as `{landed[:10]}` in **{train}** (the tested tree is the published tree; landing proof: {proof}). Branch `{m['branch']}` @ `{m['tip'][:10]}` merged"
                      + (f"; origin/{m['branch']} kept at `{cur[:10]}` (moved after the plan, not in the train: re-bank it if it adds work)." if kept else " and deleted."), close=True)
         try:
-            T.reopen_if_newer_ready(c, m["issue"], m["branch"], landed)
+            T.reopen_if_newer_ready(c, m["issue"], m["branch"], landed, who=self.rc.swarm)   # the train's prefix, so the queue never reads it as a READY
         except RuntimeError as e:
             self.log(f"could not check #{m['issue']} for a newer READY ({e}); reopen it by hand if its newest READY names another branch")
         if cur and not kept:

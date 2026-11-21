@@ -38,9 +38,11 @@ DEFAULT_READY_RE = r"(^|[^A-Za-z])READY([^A-Za-z]|$)"
 DEFAULT_PREFLIGHT_RE = r"=== preflight \(enqueue\.sh\): PASS ==="
 READY_STATES = ("open", "working", "blocked", "all")   # the `issue_list --state` values a READY may be found under
 READY_TIPS = ("named", "current")   # `readyTip`: hold the branch's tip to the sha the READY names, or take whatever tip it has
-# The sha a READY names for its branch: the first hex word after the branch's name on the same line
-# (`READY `feat/x` @ abc1234`, enqueue.sh's line, a prebank block's `tree abc1234 on origin/master ...`).
-NAMED_SHA_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])")
+# The sha a READY names for its branch: the hex word RIGHT AFTER the branch's backticked name, joined by
+# `@`, `at` or `:` and optional backticks (`READY `feat/x` @ abc1234`, enqueue.sh's line, `` `feat/x` @ `abc1234` ``).
+# A sha anywhere else on the line (another branch of a stack quoted before the tip, a base, a CI number)
+# names nothing, so the rule fails open to the branch's current tip, never to a refusal.
+NAMED_SHA_RE = re.compile(r"^\s*(?:@|at|:)?\s*`?([0-9a-f]{7,40})`?(?![0-9A-Za-z])")
 PREFLIGHT_NOTE = "preflight READY (enqueued from a host that does not gate): the batch gate is its first full test"
 # `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
@@ -334,15 +336,16 @@ def ready_basis(cfg: Config, body: str) -> str:
 
 
 def named_tip(body: str, branch: str):
-    """The sha a READY names for <branch>: the first hex word (7 to 40 digits) after the branch's backticked
-    name on the same line, or None. Only that line counts: a sha elsewhere in the comment (a base the
-    branch was rebased onto, another branch of a stack, a landed commit) is not this branch's tip."""
+    """The sha a READY names for <branch>: the hex word (7 to 40 digits) right after the branch's backticked
+    name, joined by `@`, `at` or `:` (`` `b` @ sha ``), or None. Nothing else counts: a sha elsewhere on the
+    line or in the comment (a base the branch was rebased onto, another branch of a stack quoted before the
+    tip, a landed commit, a run number) is not this branch's tip, and no sha means the current tip."""
     for line in (body or "").splitlines():
         for token in (f"`{branch}`", f"`origin/{branch}`"):
             at = line.find(token)
             if at >= 0:
-                m = NAMED_SHA_RE.search(line, at + len(token))
-                return m.group(0) if m else None
+                m = NAMED_SHA_RE.match(line[at + len(token):])
+                return m.group(1) if m else None
     return None
 
 
@@ -743,8 +746,8 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
 
     `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
     its first full test; a launchable one's note says so), else `ready`. `named` is the sha the READY names
-    for the branch (or `-`); `followed` is the note of a tip taken in its place (same patches, rebased or
-    fast-forwarded), else "" (the note carries it too; the cycle tells the issue once per tip).
+    for the branch (or `-`); `followed` is the note of a LAUNCHABLE tip taken in its place (same patches, rebased
+    or fast-forwarded), else "" (the note carries it for every state; the cycle tells the issue once per tip).
 
     Order: `first` rows in file order, then the lane (lane-labelled items), then priority rank, then
     age (the tracker's createdAt when it reports one, else the issue number), then number. The order
@@ -773,7 +776,8 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         parts = ([PREFLIGHT_NOTE] if basis == "preflight" and state == "queue" else []) + ([note] if note != "-" else []) + ([named_text] if named_text else [])
         rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or "-", "tip": tip,
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
-                     "named": (picked.get("named") or "-"), "followed": named_text if named_kind == "taken" else ""})
+                     "named": (picked.get("named") or "-"),
+                     "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else ""})
     return rows
 
 

@@ -714,9 +714,11 @@ SAME patches (one zero-context patch id of the branch's whole diff against its m
 the moved integration branch or a merge of it into the branch passes, and a change to the branch's own
 lines, a conflict resolved included, does not); the row's note and a once-per-tip comment say `READY named
 abc, taking the rebased tip def: same patches`. A tip that carries other work is `tip-moved`: not READY
-until a READY names it. A READY naming no sha, a sha this clone cannot resolve (noted) or a sha in the
-integration branch's history (a base, not a tip) takes the current tip; `readyTip: current` ignores the
-named sha altogether. Comment timestamps are used when
+until a READY names it (two legitimate rebases read so too and are told the same remedy: the integration
+branch renamed a file the branch edits, or landed the very hunk the branch carried, so the branch's diff
+changed). A READY naming no sha, a sha this clone cannot resolve (noted; a clone that never fetched the
+named tip cannot tell new work from a rebase) or a sha in the integration branch's history (a base, not a
+tip) takes the current tip; `readyTip: current` ignores the named sha altogether. Comment timestamps are used when
 the backend reports them (GitHub) and are `None` otherwise (ADO and Jira report only a body; the file
 backend keeps comments as blockquotes in the issue body, which are read back with their time). The queue
 orders by `first` overrides, then lane labels (`laneLabels`), then priority (`priorityLabels`), then age

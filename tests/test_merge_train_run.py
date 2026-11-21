@@ -680,16 +680,20 @@ def test_a_tip_with_other_work_is_told_tip_moved_once_and_never_trained_until_a_
 def test_the_plan_reads_a_tip_pushed_while_the_preflight_ran(fx):
     """The cycle fetches once when it opens, then runs the project's preflight, which can take minutes. A
     push in that window (the worker's rebase after a sibling landed) must be the tip the plan classifies,
-    so the plan fetches again right before it: here the preflight hook itself pushes the rebase."""
+    so the plan fetches again right before it: here the preflight hook pushes the rebase and leaves the planning
+    clone's tracking ref at the old tip, as a push from another clone would (without the second fetch the plan
+    takes the old tip and the landed tree lacks the sibling's base)."""
     issue, old = named_member(fx, 0)
     land_sibling(fx)
     hook = fx.root / "preflight-pushes-a-rebase.sh"
     hook.write_text(f"""#!/bin/bash
 set -e
 cd "{fx.work}"
+old=$(git rev-parse origin/feature/m0)
 git checkout -q -B feature/m0 origin/feature/m0 && git rebase -q origin/master && git push -q -f origin feature/m0
 git rev-parse --short=10 HEAD > "{fx.state}/pushed-tip"
 git checkout -q master
+git update-ref refs/remotes/origin/feature/m0 "$old"   # as a push from another clone leaves this one: stale until it fetches
 """)
     fx.train["hooks"] = {"preflight": f"bash {hook}"}
     fx.write_config()

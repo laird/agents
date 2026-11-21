@@ -717,7 +717,12 @@ def test_named_tip_reads_the_first_sha_after_the_branch_on_its_line():
     assert T.named_tip("READY `feature/x`\ntree abc1234 on origin/master", "feature/x") is None   # another line is not this branch's tip
     assert T.named_tip("READY `feature/x-2` @ abc1234", "feature/x") is None             # another branch's name
     assert T.named_tip("READY `feature/x` @ abcdef (short)", "feature/x") is None        # 6 digits is not a sha
-    assert T.named_tip("READY `feature/x` @ 20261121T20 abc1234", "feature/x") == "abc1234"   # a timestamp is not a sha
+    assert T.named_tip("READY `feature/x`: abc1234 banked", "feature/x") == "abc1234"
+    assert T.named_tip("READY `feature/x` at abc1234", "feature/x") == "abc1234"
+    # Only the sha joined to the branch counts; anything else on the line fails open to the current tip, never to a refusal
+    assert T.named_tip("READY `feature/a` (stacked on `feature/b` @ bbbbbbb1) @ aaaaaaa1", "feature/a") is None
+    assert T.named_tip("READY `feature/x` CI run 19567890123 green @ abc1234", "feature/x") is None
+    assert T.named_tip("READY `feature/x` @ 20261121T20 abc1234", "feature/x") is None
 
 
 def test_queue_follows_a_rebased_tip_that_carries_the_readys_patches_and_says_so(fx):
