@@ -25,6 +25,7 @@ MANIFEST (JSON; keys not listed are rejected, so a typo is an error, not a silen
    "memory_headroom_mib": 1024,
    "heartbeat_s": 60,                    a line when nothing printed for this long: gates run under
                                          a no-output watchdog, and output is printed in order
+   "default_tail": 15,                   output lines kept for a stage that sets no "tail"
    "on_failure": "cancel" | "finish",    a stage failed: stop the running ones (default) or let them end
    "tree_guard": true,                   HEAD's tree and the tracked-file diff are recorded after the
                                          last exclusive stage and must be unchanged when the run ends
@@ -35,6 +36,9 @@ MANIFEST (JSON; keys not listed are rejected, so a typo is an error, not a silen
           "cmd": "npm run build",        run as `bash -c` with pipefail, from --cwd (default: cwd).
                                          No `| tail`: the runner bounds the output itself
           "needs": ["install"],          stages that must PASS first (declared, never inferred)
+          "conflicts": ["lint"],         never running at the same moment as these stages (symmetric;
+                                         order is whichever is ready first). For a shared port, a shared
+                                         build cache, a stage that rewrites files another one reads
           "exclusive": true,             a BARRIER: starts only when every stage declared before it
                                          has ended, runs alone, and every stage declared after it
                                          waits for it. For anything that mutates the tree or the
@@ -43,7 +47,9 @@ MANIFEST (JSON; keys not listed are rejected, so a typo is an error, not a silen
           "tail": 15,                    lines of output kept (default 15); a failing stage's tail is
                                          printed before the verdict
           "memory_mib": 6144,            declared peak; counted against the budget, exported as
-                                         AUTOCODER_STAGE_MEMORY_MIB so the stage can size a heap
+                                         AUTOCODER_STAGE_MEMORY_MIB so the stage can size a heap. The
+                                         summary shows each stage's measured peak (sum of the RSS of its
+                                         process tree, sampled each second) to calibrate it against
           "est_s": 120,                  expected seconds: of the ready stages the longest starts first
           "timeout_s": 7200}             optional; a safety bound for dead work, never an SLA
 
@@ -77,8 +83,8 @@ from pathlib import Path
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TOP_KEYS = {"version", "title", "concurrency", "memory_budget_mib", "memory_headroom_mib", "heartbeat_s",
-            "on_failure", "tree_guard", "env", "stages"}
-STAGE_KEYS = {"name", "cmd", "needs", "exclusive", "tail", "memory_mib", "est_s", "timeout_s",
+            "on_failure", "tree_guard", "env", "default_tail", "stages"}
+STAGE_KEYS = {"name", "cmd", "needs", "conflicts", "exclusive", "tail", "memory_mib", "est_s", "timeout_s",
               "wrapper", "stages"}
 DEFAULT_TAIL = 15
 GROUP_TAIL = 60
@@ -89,8 +95,45 @@ class ManifestError(Exception):
     pass
 
 
+def rss_by_tree(roots: list[int]) -> dict[int, int]:
+    """Peak-sampling helper: resident MiB summed over each root pid and all of its descendants.
+
+    A stage's own processes include nested runners (a group's inner stages run in sessions of their
+    own), so the tree below the stage's pid is what it holds, not its session. Shared pages are counted
+    once per process, so this over-reports a little; it is a calibration aid for memory_mib."""
+    page = os.sysconf("SC_PAGE_SIZE")
+    kids: dict[int, list[int]] = {}
+    rss: dict[int, int] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return {}
+    for e in entries:
+        if not e.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{e}/stat").read_text()
+            ppid = int(stat[stat.rindex(")") + 2:].split()[1])
+            rss[int(e)] = int(Path(f"/proc/{e}/statm").read_text().split()[1]) * page // (1024 * 1024)
+        except (OSError, ValueError, IndexError):
+            continue
+        kids.setdefault(ppid, []).append(int(e))
+    out: dict[int, int] = {}
+    for root in roots:
+        total, todo, seen = 0, [root], set()
+        while todo:
+            pid = todo.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            total += rss.get(pid, 0)
+            todo.extend(kids.get(pid, []))
+        out[root] = total
+    return out
+
+
 class Stage:
-    def __init__(self, raw: dict, index: int, where: str):
+    def __init__(self, raw: dict, index: int, where: str, default_tail: int = DEFAULT_TAIL):
         unknown = set(raw) - STAGE_KEYS
         if unknown:
             raise ManifestError(f"{where}: unknown stage key(s) {sorted(unknown)}")
@@ -114,14 +157,17 @@ class Stage:
         self.needs = list(raw.get("needs", []))
         if not all(isinstance(n, str) for n in self.needs):
             raise ManifestError(f"stage {name}: needs must be a list of stage names")
+        self.conflicts = set(raw.get("conflicts", []))
+        if not all(isinstance(n, str) for n in self.conflicts):
+            raise ManifestError(f"stage {name}: conflicts must be a list of stage names")
         self.exclusive = bool(raw.get("exclusive", False))
-        self.tail = _int(raw, "tail", GROUP_TAIL if self.is_group else DEFAULT_TAIL, name, lo=0)
+        self.tail = _int(raw, "tail", max(GROUP_TAIL, default_tail) if self.is_group else default_tail, name, lo=0)
         self.memory_mib = _int(raw, "memory_mib", 0, name, lo=0)
         self.est_s = _int(raw, "est_s", 0, name, lo=0)
         self.timeout_s = _int(raw, "timeout_s", 0, name, lo=0)
         self.children = None
         if self.is_group:
-            self.children = parse_stages(raw["stages"], f"group {name}")
+            self.children = parse_stages(raw["stages"], f"group {name}", default_tail)
         # filled in by the scheduler
         self.deps: set[str] = set()
         self.status = "pending"  # pending running pass fail cancelled skipped notrun
@@ -132,6 +178,7 @@ class Stage:
         self.proc: subprocess.Popen | None = None
         self.printed = False
         self.note = ""
+        self.peak_mib = 0
 
 
 def _int(raw: dict, key: str, default: int, name: str, lo: int) -> int:
@@ -141,10 +188,10 @@ def _int(raw: dict, key: str, default: int, name: str, lo: int) -> int:
     return v
 
 
-def parse_stages(raw_list, where: str) -> list[Stage]:
+def parse_stages(raw_list, where: str, default_tail: int = DEFAULT_TAIL) -> list[Stage]:
     if not isinstance(raw_list, list) or not raw_list:
         raise ManifestError(f"{where}: stages must be a non-empty list")
-    stages = [Stage(r, i, where) for i, r in enumerate(raw_list)]
+    stages = [Stage(r, i, where, default_tail) for i, r in enumerate(raw_list)]
     names = [s.name for s in stages]
     dup = sorted({n for n in names if names.count(n) > 1})
     if dup:
@@ -156,6 +203,13 @@ def parse_stages(raw_list, where: str) -> list[Stage]:
                                     f"(a group's inner stages cannot need outer ones)")
             if n == s.name:
                 raise ManifestError(f"{where}: stage {s.name} needs itself")
+    for s in stages:
+        for n in s.conflicts:
+            if n not in names or n == s.name:
+                raise ManifestError(f"{where}: stage {s.name} conflicts with {n!r}, which is not another stage here")
+    for s in stages:  # mutual exclusion is symmetric whichever side declared it
+        for n in list(s.conflicts):
+            stages[names.index(n)].conflicts.add(s.name)
     _add_implicit_edges(stages, where)
     return stages
 
@@ -204,7 +258,10 @@ def load_manifest(path: Path) -> dict:
     env = data.get("env", {})
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         raise ManifestError(f"manifest {path}: env must map names to strings")
-    data["_stages"] = parse_stages(data.get("stages"), f"manifest {path}")
+    dt = data.get("default_tail", DEFAULT_TAIL)
+    if isinstance(dt, bool) or not isinstance(dt, int) or dt < 0:
+        raise ManifestError(f"manifest {path}: default_tail must be an integer >= 0, got {dt!r}")
+    data["_stages"] = parse_stages(data.get("stages"), f"manifest {path}", dt)
     return data
 
 
@@ -271,6 +328,7 @@ class Runner:
         self.last_print = self.t0
         self.guard_before: str | None = None
         self.guard_note = ""
+        self.last_sample = 0.0
 
     # -- output
     def say(self, text: str = "") -> None:
@@ -361,6 +419,8 @@ class Runner:
                 continue
             if picked and picked[0].exclusive:
                 break
+            if any(o.name in s.conflicts for o in running + picked):
+                continue
             over = self.budget is not None and s.memory_mib and used + s.memory_mib > self.budget
             if over and (running or picked):
                 continue  # waits for memory; a stage bigger than the budget still runs, alone
@@ -454,6 +514,11 @@ class Runner:
                         s.status, s.note = "notrun", "scheduler deadlock"
                 self.failed.append(self.by[stuck[0]])
                 self.say(f"{self.label}: scheduler found no runnable stage among {stuck}; this is a bug")
+            if running and time.monotonic() - self.last_sample >= 1.0:
+                self.last_sample = time.monotonic()
+                by_root = rss_by_tree([s.proc.pid for s in running])
+                for s in running:
+                    s.peak_mib = max(s.peak_mib, by_root.get(s.proc.pid, 0))
             if running and hb and time.monotonic() - self.last_print >= hb:
                 self.say("… still running: " + ", ".join(f"{s.name} ({time.monotonic() - s.started:.0f} s)" for s in running))
             time.sleep(0.05)
@@ -492,7 +557,8 @@ class Runner:
         for s in self.stages:
             if s.started:
                 secs = (s.ended or time.monotonic()) - s.started
-                self.say(f"  {s.name:<{width}}  {secs:7.0f} s  +{s.started - self.t0:5.0f} s  {s.status.upper()}")
+                mem = f"  peak {s.peak_mib:6d} MiB" if s.peak_mib else ""
+                self.say(f"  {s.name:<{width}}  {secs:7.0f} s  +{s.started - self.t0:5.0f} s  {s.status.upper()}{mem}")
             else:
                 self.say(f"  {s.name:<{width}}  {'-':>7}    {'':>7}  {s.status.upper()}")
         serial = sum((s.ended or 0) - s.started for s in ran if s.ended and s.started)
@@ -503,7 +569,7 @@ class Runner:
         wall = wall if wall is not None else time.monotonic() - self.t0
         return {"v": 1, "verdict": self._verdict, "wall_s": round(wall, 1), "stages": {
             s.name: {"seconds": round((s.ended - s.started), 1) if s.started and s.ended else None,
-                     "status": s.status, "rc": s.rc, "start_s": round(s.started - self.t0, 1) if s.started else None}
+                     "status": s.status, "rc": s.rc, "peak_rss_mib": s.peak_mib or None, "start_s": round(s.started - self.t0, 1) if s.started else None}
             for s in self.stages}}
 
 

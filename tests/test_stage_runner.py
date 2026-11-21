@@ -257,3 +257,15 @@ def test_peak_memory_of_a_stage_is_measured(tmp_path):
     p = run(tmp_path, [st("hog", "python3 -c \"b = bytearray(150*1024*1024); import time; time.sleep(2.2)\"")], expect_rc=0)
     assert p.timings["stages"]["hog"]["peak_rss_mib"] >= 100
     assert "peak" in p.stdout
+
+
+def test_peak_memory_counts_a_nested_runners_stages(tmp_path):
+    """A group's inner stages run in sessions of their own; the group's peak must still include them."""
+    inner = st("hog", "python3 -c \"b = bytearray(150*1024*1024); import time; time.sleep(2.2)\"")
+    p = run(tmp_path, [{"name": "g", "wrapper": "bash -c {inner}", "stages": [inner]}], expect_rc=0)
+    assert p.timings["stages"]["g"]["peak_rss_mib"] >= 100
+
+
+def test_default_tail_applies_to_stages_without_their_own(tmp_path):
+    p = run(tmp_path, [st("a", "seq 1 100"), st("b", "seq 1 100", tail=2)], top={"default_tail": 4}, expect_rc=0)
+    assert "\n97\n98\n99\n100\n" in p.stdout and "\n99\n100\n" in p.stdout and "\n96\n" not in p.stdout
