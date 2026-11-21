@@ -492,9 +492,10 @@ The current attempt keeps the plain `.log` / `.exit` / `.pid` names, which `merg
 - `landed`: the commit pushed to the integration branch, when one was.
 - `red_base` (`attempt` lines, #285): `true` when the gate failed on the integrated tree
   and `origin/<integration>` then failed alone, as tests, on the same command. A
-  `gate-failed` or `escalated` attempt with `red_base: true` was refused on a red base (or,
-  if the integrated tree named extra failures, broke more than the base already had); a
-  `landed` or `parked` one landed on a red base. `false` covers everything else, including
+  `landed` or `parked` attempt with `red_base: true` landed on a red base. A `gate-failed`
+  or `escalated` one was refused while the base was red, which does not by itself clear the
+  change: when the integrated tree named failures the base did not, the change broke those
+  too, and `reason` names them. `false` covers everything else, including
   a base that passed alone, was never gated, or failed only as infrastructure. Lines
   written before #285 have no `red_base`; read a missing field as unknown, not `false`.
 
