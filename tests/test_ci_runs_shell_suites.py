@@ -161,17 +161,27 @@ def test_runner_fails_when_a_suite_fails(tmp_path):
 
     Verified rather than assumed — a runner that always exits 0 would satisfy
     every other test in this file while providing no protection at all.
+
+    Runs a copy of the runner in a scratch tree holding one passing and one
+    failing suite. Running it in the repo ran every real suite, so this one test
+    cost as much as the whole shell suite, and that doubled the merge gate once
+    it ran pytest too (#295). It also wrote a file into the checkout's tests/.
     """
-    broken = REPO / "tests" / "test_zz_pytest_injected_failure.sh"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = tmp_path / "scripts" / RUNNER.name
+    runner.write_text(RUNNER.read_text())
+    (tmp_path / "tests" / "test_aa_passes.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    broken = tmp_path / "tests" / "test_zz_pytest_injected_failure.sh"
     broken.write_text("#!/usr/bin/env bash\nexit 1\n")
-    try:
-        result = subprocess.run(
-            ["bash", str(RUNNER)], capture_output=True, text=True, cwd=str(REPO)
-        )
-        assert result.returncode != 0, (
-            "runner exited 0 despite a failing suite — CI would stay green on a "
-            "real regression"
-        )
-        assert broken.name in result.stdout, "runner did not name the failing suite"
-    finally:
-        broken.unlink(missing_ok=True)
+    result = subprocess.run(
+        ["bash", str(runner)], capture_output=True, text=True, cwd=str(tmp_path)
+    )
+    assert result.returncode != 0, (
+        "runner exited 0 despite a failing suite — CI would stay green on a "
+        "real regression"
+    )
+    assert broken.name in result.stdout, "runner did not name the failing suite"
+    assert "1 passed, 1 failed" in result.stdout, (
+        "runner stopped at the failure or skipped the passing suite: " + result.stdout
+    )

@@ -12,8 +12,17 @@
 #   Deliberately does NOT stop at the first failure: the regression report is
 #   more useful when it names every failing suite, not just the earliest one.
 #
-# Arguments, optional: test file names (test_x.sh or tests/test_x.sh) to run instead of
-# all of them. The merge gate's flaky re-run uses this (AUTOCODER_GATE_RERUN_CMD, #191).
+# It also runs every tests/test_*.py under pytest, one file at a time, so a pytest
+# failure fails the merge gate the way it fails CI (#295). Each file counts as one
+# suite. pytest is found as `python3 -m pytest`, else `pytest` on PATH, else
+# `uvx --offline pytest` (offline: a gate never downloads); AUTOCODER_PYTEST names
+# the command instead ("none" means there is none). Without one, the python files
+# are skipped with a warning that names them, and that is a failure when CI is set
+# or AUTOCODER_REQUIRE_PYTEST=1.
+#
+# Arguments, optional: test file names (test_x.sh, test_x.py, or tests/...) to run
+# instead of all of them. The merge gate's flaky re-run uses this
+# (AUTOCODER_GATE_RERUN_CMD, #191).
 #
 # Exit status: 0 when every test passed, 1 otherwise.
 
@@ -79,15 +88,22 @@ failed_names=""
 
 if [ "$#" -gt 0 ]; then
     tests=()
+    pytests=()
     for a in "$@"; do
         t="tests/$(basename "$a")"
         case "$(basename "$a")" in
-            test_*.sh) [ -f "$t" ] && tests+=("$t") || { echo "FAIL  $(basename "$a") (no such test)"; failed=$((failed + 1)); failed_names="$failed_names $(basename "$a")"; } ;;
+            test_*.sh|test_*.py)
+                if [ ! -f "$t" ]; then
+                    echo "FAIL  $(basename "$a") (no such test)"; failed=$((failed + 1)); failed_names="$failed_names $(basename "$a")"
+                elif [ "${t%.py}" != "$t" ]; then pytests+=("$t")
+                else tests+=("$t"); fi ;;
             *) echo "run-shell-suite: not a test file: $a" >&2; exit 2 ;;
         esac
     done
 else
     tests=(tests/test_*.sh)
+    pytests=()
+    for t in tests/test_*.py; do [ -f "$t" ] && pytests+=("$t"); done
 fi
 
 for t in "${tests[@]}"; do
@@ -103,6 +119,44 @@ for t in "${tests[@]}"; do
         failed_names="$failed_names $name"
     fi
 done
+
+# The python tests (#295). CI runs `python3 -m pytest tests/`; the gate runs the same
+# files, one pytest per file so a failure names its file in "Failing suites:" and the
+# flaky re-run can pass it back in.
+pytest_cmd() {
+    if [ -n "${AUTOCODER_PYTEST+x}" ]; then
+        [ "$AUTOCODER_PYTEST" = none ] || [ -z "$AUTOCODER_PYTEST" ] || echo "$AUTOCODER_PYTEST"
+    elif python3 -m pytest --version >/dev/null 2>&1; then echo "python3 -m pytest"
+    elif command -v pytest >/dev/null 2>&1; then echo "pytest"
+    elif command -v uvx >/dev/null 2>&1 && uvx --offline pytest --version >/dev/null 2>&1; then echo "uvx --offline pytest"
+    fi
+}
+if [ "${#pytests[@]}" -gt 0 ]; then
+    PYTEST=$(pytest_cmd)
+    if [ -n "$PYTEST" ]; then
+        for t in "${pytests[@]}"; do
+            name="$(basename "$t")"
+            # No .pytest_cache or __pycache__ left in the checkout.
+            if PYTHONDONTWRITEBYTECODE=1 $PYTEST -q -p no:cacheprovider "$t" >"$SUITE_LOG" 2>&1; then
+                echo "PASS  $name"
+                passed=$((passed + 1))
+            else
+                echo "FAIL  $name"
+                sed 's/^/      | /' "$SUITE_LOG" | tail -20
+                failed=$((failed + 1))
+                failed_names="$failed_names $name"
+            fi
+        done
+    else
+        skipped=$(for t in "${pytests[@]}"; do basename "$t"; done | paste -sd' ' -)
+        echo "WARN  pytest not found (python3 -m pytest, pytest, uvx --offline pytest): skipped ${#pytests[@]} python test files: $skipped"
+        if [ -n "${CI:-}" ] || [ "${AUTOCODER_REQUIRE_PYTEST:-0}" = 1 ]; then
+            echo "FAIL  pytest-missing (CI or AUTOCODER_REQUIRE_PYTEST=1: the python tests must run)"
+            failed=$((failed + 1))
+            failed_names="$failed_names pytest-missing"
+        fi
+    fi
+fi
 
 # Anything under the scratch HOME's state dir was written by code that ignored
 # XDG_STATE_HOME: against a real HOME it would have gone into the user's real

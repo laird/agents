@@ -84,7 +84,8 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
 **Unit Tests**:
 - Framework: plain `bash` assertion scripts, plus `pytest` for the Python backend
 - Location: `tests/test_*.sh` (shell), `tests/test_*.py` (Python)
-- Run all shell tests: `bash tests/run-shell-suite.sh` — runs every `tests/test_*.sh`
+- Run all tests: `bash tests/run-shell-suite.sh` — runs every `tests/test_*.sh`, then
+  every `tests/test_*.py` under pytest (one suite per file, as CI runs them, #295),
   and prints a single parseable summary. `regression-test.sh` reads its unit-test
   command from the `### Unit Tests Only` section above; a bare `for` loop emits one
   summary per file and the report then quotes a single test's numbers as the suite's.
@@ -94,6 +95,9 @@ bash -n plugins/autocoder/scripts/*.sh && python3 -m py_compile plugins/autocode
   prelude gives each test a private `XDG_STATE_HOME`, and the suite runs under a
   scratch `HOME` and fails if anything lands in its `.local/state` (#282).
 - Note: the Python tests require `pytest`, which is not installed in all environments.
+  The runner tries `python3 -m pytest`, `pytest`, then `uvx --offline pytest`
+  (`AUTOCODER_PYTEST` overrides). With none it skips them with a `WARN` line naming
+  each file; that is a failure under `CI` or `AUTOCODER_REQUIRE_PYTEST=1`.
 - The Jira and Azure DevOps backends each have two complementary shell tests,
   all hermetic (no network): `test_issues_jira.sh` / `test_issues_ado.sh` stub
   `curl` to assert request (JQL / WIQL + JSON-patch) shape, and
