@@ -62,10 +62,12 @@ check "list with no --state drops the parent too" "$OPEN" "[600]"
 OUT=$(run "issue_any_claimable; echo rc=\$?")
 check "issue_any_claimable sees the real work" "$OUT" "rc=0"
 
-# The filter passes anything that is not an issue array through untouched.
-OUT=$(bash -c "source '$SCRIPT_DIR/issue-fns.sh' 2>/dev/null; printf 'not json' | _ifns_drop_decomposed")
+# The filter passes anything that is not an issue array through untouched. Source it
+# in the temp repo (#301): .autocoder.json is gitignored, so a CI checkout has no issue
+# source and sourcing issue-fns.sh from the repo itself exits before the filter runs.
+OUT=$(run "printf 'not json' | _ifns_drop_decomposed")
 check "non-JSON input passes through" "$OUT" "not json"
-OUT=$(bash -c "source '$SCRIPT_DIR/issue-fns.sh' 2>/dev/null; printf '[{\"number\":1,\"labels\":[\"decomposed\"]},{\"number\":2,\"labels\":[\"P1\"]}]' | _ifns_drop_decomposed | jq -c '[.[].number]'")
+OUT=$(run "printf '[{\"number\":1,\"labels\":[\"decomposed\"]},{\"number\":2,\"labels\":[\"P1\"]}]' | _ifns_drop_decomposed | jq -c '[.[].number]'")
 check "labels given as bare strings are matched too" "$OUT" "[2]"
 
 [ -f "$TMP/gh-was-called" ] && bad "gh was invoked: $(cat "$TMP/gh-was-called")"
