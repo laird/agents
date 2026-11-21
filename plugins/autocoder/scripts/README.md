@@ -636,3 +636,72 @@ reads the state that scripts publish, which comes out the same on every run:
 The commands themselves (`/fix`, `/monitor-workers`) write no status files. They
 used to have the model write per-session JSON files for one UI; nothing updates
 those any more, so a UI that still reads them should move to the sources above.
+
+## Merge trains (`merge-train.py`, `train_lib.py`)
+
+A merge train lands several READY branches as ONE tree: it is merged onto the integration branch,
+gated once through `merge-to-integration.sh`, and the integration branch moves once. This is the
+queue and planner half; it changes nothing on the remote and writes only its scratch worktree.
+
+```
+merge-train.py [--repo DIR] [--config FILE] [--no-fetch] queue [--in-flight N,N] [--status-line]
+merge-train.py ...                                           plan  [--size N] [--in-flight N,N]
+merge-train.py ...                                           reopen --issue N --member-branch B --landed SHA [--launched TS]
+```
+
+**READY pickup** goes through the issue-source abstraction (`issue_list`, `issue_get`), so every
+backend works. An item is an open issue carrying every `readyLabels` label whose comments say READY
+(`readyPattern`). The branch is the first backticked branch-shaped name of the newest READY comment that
+exists on the remote; a later comment naming no branch never shadows it. Comment timestamps are used when
+the backend reports them (GitHub) and are `None` otherwise (ADO and Jira report only a body; the file
+backend keeps comments as blockquotes in the issue body, which are read back with their time). The queue
+orders by `first` overrides, then lane labels (`laneLabels`), then priority (`priorityLabels`), then age
+(the tracker's `createdAt` when `list` reports it, else the issue number), then number.
+
+**Overrides file** (`overridesFile`, default under the train state dir), one row each:
+`hold <issue> [reason]` never plan it; `first <issue>` plan it ahead of the order; `retry <issue>`
+plan it although its tip was already launched. `#` lines and blank lines are ignored.
+
+**Item states** printed by `queue`: `queue` (launchable), `launched` (this tip already launched), `hold`,
+`in-flight` (`--in-flight`), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
+again), `stale` (`staleDays`), `on-master`, `conflict` (the merge-tree prefilter, or a real merge),
+`driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
+(`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote).
+
+**The planner** (`plan`) takes the next `size` launchable items, each merged for real into a scratch
+worktree onto the integration branch plus the train so far, so the output is a train that assembles:
+
+- the merge-tree prefilter decides first: a conflict in a path no merge driver owns skips the candidate at
+  once, with no merge attempted;
+- the planner then goes on to the NEXT candidate (a conflict never ends the plan);
+- a branch already contained in the train so far (the lower slice of a stack whose tip is a member) rides
+  as a member without a merge: stacks land at their tip;
+- one real merge both judges and accepts a candidate; a failed merge is cleared before the next candidate;
+  a conflict from a prefilter-clean candidate is the planner's fault, not the branch's (exit 2, `fault` row).
+
+Rows: `train <issue> <branch> <tip> <note>`, `skip <issue> <branch> <reason>`,
+`drop <issue> <branch> <tip> <reason>`, and a final `fault <reason>` with exit 2 when the plan cannot be
+trusted (nothing blames a branch for a fault of the scratch).
+
+**`reopen`** reopens (state open, ready labels back, a comment saying why) an issue a landing closed while its
+newest READY names a branch that landing did not carry; it prints `reopened` or `not reopened`.
+
+**Configuration**: the `train` object of the main worktree's `.autocoder.json` (environment:
+`AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`):
+
+```json
+{ "train": { "readyLabels": ["ready-for-review"], "priorityLabels": ["P0","P1","P2","P3"],
+             "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
+             "notePattern": "^\\[coordinator\\]",
+             "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
+             "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh" } } }
+```
+
+`seedDirs` are hardlink-copied (never symlinked) from the repo into the scratch, and re-copied when the
+marker file's inode changed (a reinstall). `hooks.prepareScratch` runs in the scratch before any candidate is
+judged, because a merge driver whose generator cannot run falls back to a textual merge that reads as a
+conflict: a failing hook stops the plan with a named fault. `hooks.mergeFault` receives the unmerged paths
+on the first stdin line and the merge output after it, and may print `driver-fault<TAB>detail` (the
+scratch's fault: stop) or `generator-failed<TAB>detail` (this candidate's merge: drop it for this plan).
+
+Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend).
