@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fix-md-landing.sh"  # #242: one landing section, reached from every flow
 # tests/test_merge_launch_poll.sh — pin #1693's fix: merge-to-integration.sh
 # must never run inside a single foreground call. It legitimately takes
 # 25-30 minutes, and agent harnesses kill a foreground Bash-tool call at a
@@ -141,8 +142,10 @@ if [ -f "$FIXMD" ]; then
 
   LAUNCH_CALLS=$(grep -c '"\${SCRIPT_DIR}/merge-launch\.sh"' "$FIXMD")
   POLL_CALLS=$(grep -c '"\${SCRIPT_DIR}/merge-poll\.sh"' "$FIXMD")
-  [ "$LAUNCH_CALLS" -ge 3 ] && ok "fix.md launches the merge at all 3 sites (found $LAUNCH_CALLS)" \
-    || bad "fix.md missing merge-launch.sh at one or more sites (found $LAUNCH_CALLS, want >= 3)"
+  [ "$LAUNCH_CALLS" -eq 1 ] && ok "fix.md launches the merge once, in the shared landing section" \
+    || bad "fix.md has $LAUNCH_CALLS merge-launch.sh site(s), want 1 (the shared landing section, #242)"
+  PROBLEMS=$(fix_md_landing_problems "$FIXMD")
+  [ -z "$PROBLEMS" ] && ok "fix.md lands every flow through one section (#242)" || bad "fix.md landing section: $PROBLEMS"
   [ "$POLL_CALLS" -eq 0 ] && ok "fix.md never polls merge-poll.sh (the job owns the outcome via --own-issue)" \
     || bad "fix.md polls merge-poll.sh at $POLL_CALLS site(s); the worker should hand off with --own-issue instead"
 else

@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fix-md-landing.sh"  # #242: one landing section, reached from every flow
 # tests/test_landing_mode.sh — landing-mode.sh picks merge vs pr from the diff's
 # risk tier (#165), and fix.md lands through it at every landing site.
 
@@ -122,7 +123,11 @@ bash "$LM" --base main >/dev/null 2>&1; eq "missing --mode → exit 2" 2 "$?"
 # ── fix.md lands through landing-mode.sh at every site ───────────────────
 for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md .pi/prompts/fix.md; do
   P="$ROOT/$F"
-  SITES=$(grep -c 'git push -u origin "\(feature\|enhancement\)/issue-' "$P")
+  SITES=$(grep -c 'git push -u origin "' "$P")
+  eq "$F: one landing site, shared by every flow (#242)" 1 "$SITES"
+  PROBLEMS=$(fix_md_landing_problems "$P")
+  [ -z "$PROBLEMS" ] && ok "$F lands every flow through one section (#242)" || bad "$F landing section: $PROBLEMS"
+
   CALLS=$(grep -c '^ *LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE"' "$P")
   eq "$F: one landing-mode call per landing site" "$SITES" "$CALLS"
   STOPS=$(grep -A1 '^ *LANDING_MODE=$(bash' "$P" | grep -c 'exit 1; }')

@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fix-md-landing.sh"  # #242: one landing section, reached from every flow
 # tests/test_fix_md_review_digest.sh — every place fix.md publishes work uses the
 # review digest renderer (#196), in both platform copies.
 #
@@ -21,9 +22,11 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
 
   # Every `gh pr create` takes its body from a --pr render that stops on failure.
   PRS=$(grep -c '^ *gh pr create' "$P")
-  PR_RENDERS=$(grep -c 'render-review-digest.sh" --issue "\$ISSUE_NUM"' "$P")
   PR_FROM_DIGEST=$(grep -c -- '--body "\${DIGEST}' "$P")
-  eq "$F: all 3 gh pr create sites exist (two fix paths + the high-risk enhancement, #165)" 3 "$PRS"
+  eq "$F: one gh pr create site, in the shared landing section (#242)" 1 "$PRS"
+  PROBLEMS=$(fix_md_landing_problems "$P")
+  [ -z "$PROBLEMS" ] && ok "$F lands every flow through one section (#242)" || bad "$F landing section: $PROBLEMS"
+
   eq "$F: every gh pr create body is \${DIGEST}" "$PRS" "$PR_FROM_DIGEST"
   [ "$(grep -c -- '--sections "\${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \\' "$P")" -eq "$PRS" ] \
     && ok "$F: every PR digest is rendered with --pr" || bad "$F: a PR digest is not rendered with --pr"
@@ -32,22 +35,22 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   if grep -q 'SUMMARY_FILE=$(mktemp' "$P"; then   # Claude copy: the merge job closes
     SUMS=$(grep -c 'SUMMARY_FILE=$(mktemp' "$P")
     SUM_RENDERS=$(grep -c -- '--sections "\${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "\$SUMMARY_FILE"' "$P")
-    eq "$F: all 3 merge summaries exist" 3 "$SUMS"
+    eq "$F: one merge summary, in the shared landing section" 1 "$SUMS"
     eq "$F: every merge summary is rendered" "$SUMS" "$SUM_RENDERS"
     CLOSES_LITERAL=$(grep -c "<<\\\\'SUMMARY\\\\'" "$P")
     eq "$F: no hand-written SUMMARY heredoc remains" 0 "$CLOSES_LITERAL"
   else
-    CLOSES=$(grep -cE 'issue_close "\$(ISSUE_NUM|ENHANCE_NUM)" --comment "✅ \*\*(Issue Resolved|Enhancement Implemented)' "$P")
+    CLOSES=$(grep -cE 'issue_close "\$LAND_NUM" --comment "✅ \*\*Issue Resolved' "$P")
     CLOSE_RENDERS=$(grep -c '^ *CLOSE_DIGEST=$(bash "\${SCRIPT_DIR}/render-review-digest.sh"' "$P")
-    eq "$F: all 3 resolved/implemented closes exist" 3 "$CLOSES"
-    eq "$F: a close digest is rendered before each review-gated landing" 3 "$CLOSE_RENDERS"
-    BODIES=$(grep -A2 -E 'issue_close "\$(ISSUE_NUM|ENHANCE_NUM)" --comment "✅ \*\*(Issue Resolved|Enhancement Implemented)' "$P" | grep -c '^\${CLOSE_DIGEST}$')
-    eq "$F: every close body is \${CLOSE_DIGEST}" 3 "$BODIES"
+    eq "$F: one resolved close, in the shared landing section" 1 "$CLOSES"
+    eq "$F: the close digest is rendered before the review-gated landing" 1 "$CLOSE_RENDERS"
+    BODIES=$(grep -A2 -E 'issue_close "\$LAND_NUM" --comment "✅ \*\*Issue Resolved' "$P" | grep -c '^\${CLOSE_DIGEST}$')
+    eq "$F: the close body is \${CLOSE_DIGEST}" 1 "$BODIES"
   fi
 
   # Every render stops the publish on failure (|| { ...; exit 1; } on the next line).
   RENDERS_THAT_STOP=$(grep -A3 'render-review-digest.sh" --issue' "$P" | grep -c '|| { echo "❌ Review digest')
-  ALL_ISSUE_RENDERS=$(grep -cE 'render-review-digest\.sh" --issue "\$(ISSUE_NUM|ENHANCE_NUM)"' "$P")
+  ALL_ISSUE_RENDERS=$(grep -cE 'render-review-digest\.sh" --issue "\$(ISSUE_NUM|ENHANCE_NUM|LAND_NUM)"' "$P")
   eq "$F: every issue render stops the publish on failure" "$ALL_ISSUE_RENDERS" "$RENDERS_THAT_STOP"
 
   # Rollup close renders too, and does not close when the render fails.

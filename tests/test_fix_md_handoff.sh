@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fix-md-landing.sh"  # #242: one landing section, reached from every flow
 # tests/test_fix_md_handoff.sh — the /fix protocol hands the merge off instead of polling,
 # and the merge JOB owns the issue from the launch onward.
 #
@@ -23,7 +24,9 @@ for f in plugins/autocoder/commands/fix.md .pi/prompts/fix.md; do
   [ -f "$path" ] || { bad "$f exists"; continue; }
 
   launches=$(grep -c '"\${SCRIPT_DIR}/merge-launch\.sh"' "$path")
-  [ "$launches" -ge 3 ] && ok "$f launches the merge at all 3 sites ($launches)" || bad "$f has $launches merge-launch.sh sites; want >= 3"
+  [ "$launches" -eq 1 ] && ok "$f launches the merge once, in the shared landing section" || bad "$f has $launches merge-launch.sh sites; want 1 (#242)"
+  PROBLEMS=$(fix_md_landing_problems "$path")
+  [ -z "$PROBLEMS" ] && ok "$f lands every flow through one section (#242)" || bad "$f landing section: $PROBLEMS"
 
   # Every launch must carry --own-issue and --summary-file in the same command.
   unowned=$(awk '
@@ -41,7 +44,7 @@ for f in plugins/autocoder/commands/fix.md .pi/prompts/fix.md; do
   [ "$inline_gate" -eq 0 ] && ok "$f runs no inline ship gate" || bad "$f still runs verify-shipped.sh inline at $inline_gate site(s)"
 
   handoffs=$(grep -c 'handed off to the merge job' "$path")
-  [ "$handoffs" -ge 3 ] && ok "$f prints the hand-off line at all 3 sites ($handoffs)" || bad "$f prints the hand-off line $handoffs time(s); want >= 3"
+  [ "$handoffs" -eq 1 ] && ok "$f prints the hand-off line at the landing site" || bad "$f prints the hand-off line $handoffs time(s); want 1"
 
   # Between each launch and its hand-off line the worker touches no label: no
   # issue_update, issue_release, or add-blocking-label call.
@@ -62,7 +65,7 @@ for f in plugins/autocoder/commands/fix.md .pi/prompts/fix.md; do
   grep -q '"merging:' "$path" && ok "$f creates the merging label on GitHub" || bad "$f label-creation list lacks merging"
 
   prs=$(grep -c 'gh pr create' "$path")
-  [ "$prs" -ge 2 ] && ok "$f keeps the pr merge-mode branch ($prs)" || bad "$f lost the pr merge-mode branch"
+  [ "$prs" -ge 1 ] && ok "$f keeps the pr merge-mode branch ($prs)" || bad "$f lost the pr merge-mode branch"
 done
 
 TOTAL=$((PASS + FAIL))

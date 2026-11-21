@@ -1296,109 +1296,8 @@ Detailed explanation of what was fixed and how.
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
-git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
-if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
-  echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
-  echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
-  exit 2
-fi
-
-# Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
-REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ISSUE_NUM}.md"
-if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
-   || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
-  echo "❌ No passing review for this HEAD of #${ISSUE_NUM} — run the Pre-Landing Review Gate, then re-run this block"
-  exit 1
-fi
-
-# Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
-LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
-  || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
-
-# Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
-PUSH_OK=false
-if git push -u origin "feature/issue-${ISSUE_NUM}"; then
-  PUSH_OK=true
-else
-  echo "⚠️  git push failed — trying the GitHub API fallback..."
-  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
-    PUSH_OK=true
-  fi
-fi
-
-if [ "$PUSH_OK" != true ]; then
-  # Not published: leave the issue open and keep 'working' (#26).
-  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
-
-Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
-The issue stays open and keeps its \`working\` label so the work is not lost or
-silently redone.
-
-Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
-  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
-  exit 1
-fi
-
-if [ "$LANDING_MODE" = "pr" ]; then
-  # Create a pull request and stop. The body is the review digest (see
-  # "Review Digest" above); a body with unfilled slots is never published.
-  DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
-  gh pr create \
-    --base "$INTEGRATION_BRANCH" \
-    --head "feature/issue-${ISSUE_NUM}" \
-    --title "Fix #${ISSUE_NUM}: Brief description" \
-    --body "${DIGEST}
-
-$(cat "$REVIEW_FILE")
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-
-  # Hand off from 'working' (concurrency lock) to 'awaiting-integration'
-  # (review gate). Without the second label the issue is immediately claimable
-  # again and the loop re-does the work every iteration until a human merges.
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
-  # Log to history
-  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "PR created on branch feature/issue-${ISSUE_NUM}." \
-    "${ISSUE_BODY:0:150}" \
-    "Awaiting code review."
-else
-  # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
-  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
-  # The close comment is the review digest (see "Review Digest" above); a body
-  # with unfilled slots is never handed to the merge job.
-  bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
-  cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
-  if ! "${SCRIPT_DIR}/merge-launch.sh" \
-    --feature "feature/issue-${ISSUE_NUM}" \
-    --issue "$ISSUE_NUM" \
-    --integration "$INTEGRATION_BRANCH" \
-    --test-cmd "$TEST_COMMAND" \
-    --summary-file "$SUMMARY_FILE" \
-    --own-issue; then
-    echo "❌ Merge job did not launch for issue #${ISSUE_NUM} — keeping the 'working' label; fix the launch error and retry."
-    exit 1
-  fi
-
-  # No label write here. The job performed the hand-off ('working' → 'merging')
-  # as its first act and retires 'merging' when it closes, parks, or escalates.
-
-  # Log to history
-  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "Resolved on feature/issue-${ISSUE_NUM}. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
-    "${ISSUE_BODY:0:150}" \
-    "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
-fi
+# Land it: "Landing the Work" below runs the rebase, review check, push and merge.
+LAND_NUM="$ISSUE_NUM"; LAND_BRANCH="feature/issue-${ISSUE_NUM}"; LAND_TITLE="$ISSUE_TITLE"; LAND_BODY="$ISSUE_BODY"
 ```
 
 ### Step 2B: Complex Issue - Use Superpowers (if available)
@@ -1453,108 +1352,127 @@ Detailed multi-line explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
+# Land it: "Landing the Work" below runs the rebase, review check, push and merge.
+LAND_NUM="$ISSUE_NUM"; LAND_BRANCH="feature/issue-${ISSUE_NUM}"; LAND_TITLE="$ISSUE_TITLE"; LAND_BODY="$ISSUE_BODY"
+```
+
+### Landing the Work (Step 2A, Step 3 and 5D all end here)
+
+Every flow lands through this one block (#242). The flow you came from has committed its
+work and set four variables. Run its commit block first, then this one:
+
+| Flow | `LAND_NUM` | `LAND_BRANCH` | `LAND_TITLE` / `LAND_BODY` |
+|---|---|---|---|
+| Step 2A, Step 3 (bug fix) | `$ISSUE_NUM` | `feature/issue-${ISSUE_NUM}` | `$ISSUE_TITLE` / `$ISSUE_BODY` |
+| 5D (approved enhancement) | `$ENHANCE_NUM` | `enhancement/issue-${ENHANCE_NUM}-auto` | `$ENHANCE_TITLE` / `$ENHANCE_BODY` |
+
+`REVIEW_ISSUE` in the Pre-Landing Review Gate and the Review Digest is the same number as `LAND_NUM`.
+
+```bash
+: "${LAND_NUM:?set LAND_NUM, LAND_BRANCH, LAND_TITLE and LAND_BODY in the flow's commit block first}"
+: "${LAND_BRANCH:?set LAND_BRANCH in the flow's commit block first}"
+
 # Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
 git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
 if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
-  echo "⚠️  Rebase of #${ISSUE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
+  echo "⚠️  Rebase of #${LAND_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
   echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
   exit 2
 fi
 
 # Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
-REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ISSUE_NUM}.md"
+REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${LAND_NUM}.md"
 if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
    || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
-  echo "❌ No passing review for this HEAD of #${ISSUE_NUM} — run the Pre-Landing Review Gate, then re-run this block"
+  echo "❌ No passing review for this HEAD of #${LAND_NUM} — run the Pre-Landing Review Gate, then re-run this block"
   exit 1
 fi
 
 # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
 LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
-  || { echo "❌ Cannot choose a landing mode for #${ISSUE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
+  || { echo "❌ Cannot choose a landing mode for #${LAND_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
 
 # Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
 PUSH_OK=false
-if git push -u origin "feature/issue-${ISSUE_NUM}"; then
+if git push -u origin "$LAND_BRANCH"; then
   PUSH_OK=true
 else
   echo "⚠️  git push failed — trying the GitHub API fallback..."
-  if python3 "${SCRIPT_DIR}/api-push.py" "feature/issue-${ISSUE_NUM}" --base "origin/${INTEGRATION_BRANCH:-master}"; then
+  if python3 "${SCRIPT_DIR}/api-push.py" "$LAND_BRANCH" --base "origin/${INTEGRATION_BRANCH:-master}"; then
     PUSH_OK=true
   fi
 fi
 
 if [ "$PUSH_OK" != true ]; then
   # Not published: leave the issue open and keep 'working' (#26).
-  issue_comment "$ISSUE_NUM" --body "⚠️ **Publication failed — issue left open**
+  issue_comment "$LAND_NUM" --body "⚠️ **Publication failed — issue left open**
 
 Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
 The issue stays open and keeps its \`working\` label so the work is not lost or
 silently redone.
 
-Local branch: \`feature/issue-${ISSUE_NUM}\`" 2>/dev/null || true
-  echo "❌ Could not publish feature/issue-${ISSUE_NUM} — issue $ISSUE_NUM left OPEN (nothing was closed)"
+Local branch: \`${LAND_BRANCH}\`" 2>/dev/null || true
+  echo "❌ Could not publish ${LAND_BRANCH} — issue $LAND_NUM left OPEN (nothing was closed)"
   exit 1
 fi
 
 if [ "$LANDING_MODE" = "pr" ]; then
   # Create a pull request and stop. The body is the review digest (see
   # "Review Digest" above); a body with unfilled slots is never published.
-  DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+  DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$LAND_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
+    || { echo "❌ Review digest for #${LAND_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   gh pr create \
     --base "$INTEGRATION_BRANCH" \
-    --head "feature/issue-${ISSUE_NUM}" \
-    --title "Fix #${ISSUE_NUM}: Brief description" \
+    --head "$LAND_BRANCH" \
+    --title "#${LAND_NUM}: ${LAND_TITLE}" \
     --body "${DIGEST}
 
 $(cat "$REVIEW_FILE")
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+    || { echo "❌ gh pr create failed for #${LAND_NUM} — keeping the 'working' label; fix it and re-run"; exit 1; }
 
   # Hand off from 'working' (concurrency lock) to 'awaiting-integration'
   # (review gate). Without the second label the issue is immediately claimable
   # again and the loop re-does the work every iteration until a human merges.
-  issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
-  issue_update "$ISSUE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-  echo "✅ PR created for issue #$ISSUE_NUM — awaiting review"
-  # Log to history
+  issue_update "$LAND_NUM" --remove-label "working" 2>/dev/null || true
+  issue_update "$LAND_NUM" --add-label "awaiting-integration" 2>/dev/null || true
+  echo "✅ PR created for issue #$LAND_NUM — awaiting review"
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "PR #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "PR created on branch feature/issue-${ISSUE_NUM}." \
-    "${ISSUE_BODY:0:150}" \
+    "PR #${LAND_NUM}: ${LAND_TITLE}" \
+    "PR created on branch ${LAND_BRANCH}." \
+    "${LAND_BODY:0:150}" \
     "Awaiting code review."
 else
   # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
-  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ISSUE_NUM}.summary.XXXXXX")
+  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${LAND_NUM}.summary.XXXXXX")
   # The close comment is the review digest (see "Review Digest" above); a body
   # with unfilled slots is never handed to the merge job.
-  bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ISSUE_NUM" \
+  bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$LAND_NUM" \
     --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ISSUE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
+    || { echo "❌ Review digest for #${LAND_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
   cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
   if ! "${SCRIPT_DIR}/merge-launch.sh" \
-    --feature "feature/issue-${ISSUE_NUM}" \
-    --issue "$ISSUE_NUM" \
+    --feature "$LAND_BRANCH" \
+    --issue "$LAND_NUM" \
     --integration "$INTEGRATION_BRANCH" \
     --test-cmd "$TEST_COMMAND" \
     --summary-file "$SUMMARY_FILE" \
     --own-issue; then
-    echo "❌ Merge job did not launch for issue #${ISSUE_NUM} — keeping the 'working' label; fix the launch error and retry."
+    echo "❌ Merge job did not launch for issue #${LAND_NUM} — keeping the 'working' label; fix the launch error and retry."
     exit 1
   fi
 
   # No label write here. The job performed the hand-off ('working' → 'merging')
   # as its first act and retires 'merging' when it closes, parks, or escalates.
 
-  # Log to history
   "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "Fix #${ISSUE_NUM}: ${ISSUE_TITLE}" \
-    "Resolved on feature/issue-${ISSUE_NUM}. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
-    "${ISSUE_BODY:0:150}" \
+    "Fix #${LAND_NUM}: ${LAND_TITLE}" \
+    "Resolved on ${LAND_BRANCH}. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
+    "${LAND_BODY:0:150}" \
     "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ISSUE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
+  echo "🚀 Issue #${LAND_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
 fi
 ```
 
@@ -1896,101 +1814,8 @@ Detailed explanation of:
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-  # Trial rebase (#222): rebase before the review check, then review the rebased HEAD.
-  git fetch -q origin "${INTEGRATION_BRANCH:?INTEGRATION_BRANCH unset — re-run the configuration block above}"
-  if ! git rebase "origin/${INTEGRATION_BRANCH}"; then
-    echo "⚠️  Rebase of #${ENHANCE_NUM} onto origin/${INTEGRATION_BRANCH} conflicts in:"; git diff --name-only --diff-filter=U
-    echo "   Resolve keeping both sides' behaviour, git rebase --continue, re-test, then re-run this block."
-    exit 2
-  fi
-
-  # Pre-landing review gate (#147, #166): nothing publishes until the record for this HEAD says pass.
-  REVIEW_FILE="$(git rev-parse --git-common-dir)/autocoder-review-${ENHANCE_NUM}.md"
-  if ! grep -qx "Reviewed-HEAD: $(git rev-parse HEAD)" "$REVIEW_FILE" 2>/dev/null \
-     || ! grep -qx "Verdict: pass" "$REVIEW_FILE"; then
-    echo "❌ No passing review for this HEAD of #${ENHANCE_NUM} — run the Pre-Landing Review Gate, then re-run this block"
-    exit 1
-  fi
-
-  # Landing mode by diff risk (#165): a diff touching a `risk.high` glob lands as a PR.
-  LANDING_MODE=$(bash "${SCRIPT_DIR}/landing-mode.sh" --mode "$MERGE_MODE" --base "origin/${INTEGRATION_BRANCH}") \
-    || { echo "❌ Cannot choose a landing mode for #${ENHANCE_NUM} — fix the \"risk\" setting in .autocoder.json and re-run this block"; exit 1; }
-
-  # Publish: git push, else the GitHub API. PUSH_OK means it landed; never --dry-run (#26).
-  PUSH_OK=false
-  if git push -u origin "enhancement/issue-${ENHANCE_NUM}-auto"; then
-    PUSH_OK=true
-  else
-    echo "⚠️  git push failed — trying the GitHub API fallback..."
-    if python3 "${SCRIPT_DIR}/api-push.py" "enhancement/issue-${ENHANCE_NUM}-auto" --base "origin/${INTEGRATION_BRANCH:-master}"; then
-      PUSH_OK=true
-    fi
-  fi
-
-  if [ "$PUSH_OK" != true ]; then
-    # Not published: leave the issue open and keep 'working' (#26).
-    issue_comment "$ENHANCE_NUM" --body "⚠️ **Publication failed — issue left open**
-
-  Both \`git push\` and the GitHub API fallback failed, so the fix has NOT landed.
-  The issue stays open and keeps its \`working\` label so the work is not lost or
-  silently redone.
-
-  Local branch: \`enhancement/issue-${ENHANCE_NUM}-auto\`" 2>/dev/null || true
-    echo "❌ Could not publish enhancement/issue-${ENHANCE_NUM}-auto — issue $ENHANCE_NUM left OPEN (nothing was closed)"
-    exit 1
-  fi
-
-  if [ "$LANDING_MODE" = "pr" ]; then
-    # High-risk diff (#165): open a pull request instead of merging, and stop.
-    DIGEST=$(bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
-      --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" --pr) \
-      || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
-    gh pr create \
-      --base "${INTEGRATION_BRANCH}" \
-      --head "enhancement/issue-${ENHANCE_NUM}-auto" \
-      --title "#${ENHANCE_NUM}: ${ENHANCE_TITLE}" \
-      --body "${DIGEST}
-
-$(cat "$REVIEW_FILE")
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
-      || { echo "❌ gh pr create failed for #${ENHANCE_NUM} — keeping the 'working' label; fix it and re-run"; exit 1; }
-    # Hand off 'working' to 'awaiting-integration' so the loop does not redo it.
-    issue_update "$ENHANCE_NUM" --remove-label "working" 2>/dev/null || true
-    issue_update "$ENHANCE_NUM" --add-label "awaiting-integration" 2>/dev/null || true
-    echo "✅ High-risk enhancement #$ENHANCE_NUM opened as a PR — awaiting human review"
-    exit 0
-  fi
-
-  # Launch detached (#1693); the job owns the issue: `merging`, verify-shipped.sh (#35), close.
-  SUMMARY_FILE=$(mktemp "${AUTOCODER_TMP:-/tmp}/autocoder-merge-${ENHANCE_NUM}.summary.XXXXXX")
-  # The close comment is the review digest (see "Review Digest" above); a body
-  # with unfilled slots is never handed to the merge job.
-  bash "${SCRIPT_DIR}/render-review-digest.sh" --issue "$ENHANCE_NUM" \
-    --base "origin/${INTEGRATION_BRANCH}" --sections "${DIGEST_SECTIONS:?write the Review Digest sections file first}" > "$SUMMARY_FILE" \
-    || { echo "❌ Review digest for #${ENHANCE_NUM} has unfilled slots or no Verification evidence (a "$ command" line and its result) — fix $DIGEST_SECTIONS and re-run (the renderer's stderr says which)"; exit 1; }
-  cat "$REVIEW_FILE" >> "$SUMMARY_FILE"   # review outcome goes in the close comment
-  if ! "${SCRIPT_DIR}/merge-launch.sh" \
-    --feature "enhancement/issue-${ENHANCE_NUM}-auto" \
-    --issue "$ENHANCE_NUM" \
-    --integration "$INTEGRATION_BRANCH" \
-    --test-cmd "$TEST_COMMAND" \
-    --summary-file "$SUMMARY_FILE" \
-    --own-issue; then
-    echo "❌ Merge job did not launch for issue #${ENHANCE_NUM} — keeping the 'working' label; fix the launch error and retry."
-    exit 1
-  fi
-
-  # No label write here. The job performed the hand-off ('working' → 'merging')
-  # as its first act and retires 'merging' when it closes, parks, or escalates.
-
-  # Log to history
-  "${SCRIPT_DIR}/append-to-history.sh" --history-file "HISTORY.md" --backend auto \
-    "Fix #${ENHANCE_NUM}: ${ENHANCE_TITLE}" \
-    "Resolved on enhancement/issue-${ENHANCE_NUM}-auto. Handed off to the merge job for ${INTEGRATION_BRANCH}." \
-    "${ENHANCE_BODY:0:150}" \
-    "Tests passing on the branch. The merge job gates the integrated tree and closes the issue when it lands."
-  echo "🚀 Issue #${ENHANCE_NUM} handed off to the merge job (log path printed by merge-launch.sh); the job closes, parks, or escalates the issue itself"
+  # Land it: "Landing the Work" (after Step 3) runs the rebase, review check, push and merge.
+  LAND_NUM="$ENHANCE_NUM"; LAND_BRANCH="enhancement/issue-${ENHANCE_NUM}-auto"; LAND_TITLE="$ENHANCE_TITLE"; LAND_BODY="$ENHANCE_BODY"
 fi
 ```
 

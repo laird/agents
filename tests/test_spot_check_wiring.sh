@@ -1,5 +1,6 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fix-md-landing.sh"  # #242: one landing section, reached from every flow
 # tests/test_spot_check_wiring.sh — spot-check (#197) runs at every merge-mode close
 # and nowhere else that matters, and its human side is registered on every platform.
 #
@@ -47,11 +48,13 @@ for P in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   # A merge site either hands the close to the job (--own-issue; the job samples) or
   # closes inline (the Antigravity mirror), and then must sample right after its close.
   OWN=$(grep -c -- '--own-issue; then' "$F")
-  INLINE=$(grep -cE '^ *if issue_close "\$(ISSUE_NUM|ENHANCE_NUM)" --comment "✅ \*\*' "$F")
-  BARE=$(grep -cE '^ *issue_close "\$(ISSUE_NUM|ENHANCE_NUM)" --comment "✅ \*\*' "$F")
-  INLINE_SAMPLED=$(grep -cE "\"\\\$\{SCRIPT_DIR\}/${SC}\" --issue \"\\\$(ISSUE_NUM|ENHANCE_NUM)\"" "$F")
-  [ $((OWN + INLINE)) -ge 3 ] && ok "$P: all 3 merge sites are covered (job-owned: $OWN, inline: $INLINE)" \
-    || bad "$P: only $((OWN + INLINE)) merge site(s) reach spot-check"
+  INLINE=$(grep -cE '^ *if issue_close "\$(ISSUE_NUM|ENHANCE_NUM|LAND_NUM)" --comment "✅ \*\*' "$F")
+  BARE=$(grep -cE '^ *issue_close "\$(ISSUE_NUM|ENHANCE_NUM|LAND_NUM)" --comment "✅ \*\*' "$F")
+  INLINE_SAMPLED=$(grep -cE "\"\\\$\{SCRIPT_DIR\}/${SC}\" --issue \"\\\$(ISSUE_NUM|ENHANCE_NUM|LAND_NUM)\"" "$F")
+  PROBLEMS=$(fix_md_landing_problems "$F")
+  [ -z "$PROBLEMS" ] && ok "$P lands every flow through one section (#242)" || bad "$P landing section: $PROBLEMS"
+  [ $((OWN + INLINE)) -eq 1 ] && ok "$P: the one merge site is covered (job-owned: $OWN, inline: $INLINE)" \
+    || bad "$P: $((OWN + INLINE)) merge site(s) reach spot-check, want 1 (#242)"
   [ "$BARE" -eq 0 ] && ok "$P: no merge site closes an issue without sampling it" \
     || bad "$P: $BARE close(s) of ISSUE_NUM/ENHANCE_NUM are not followed by the selector"
   [ "$INLINE_SAMPLED" -eq "$INLINE" ] && ok "$P: each inline close calls the selector ($INLINE)" \
