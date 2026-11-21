@@ -15,8 +15,11 @@
 #   --loop      run ticks forever, sleeping the interval between them
 #   --ensure    idempotent scheduler install/check: inspects crontab, systemd
 #               user timers, and running --loop processes; installs a cron
-#               entry (preferred) or starts a loop only when NOTHING is
-#               scheduled yet; records the scheduler mode in the state file
+#               entry (preferred), else a systemd user timer that calls the
+#               version-independent idle-sentinel-shim.sh (#273), else starts
+#               a loop, only when NOTHING is scheduled yet (a loop running an
+#               older plugin version's script is replaced); records the
+#               scheduler mode in the state file
 #   --dry-run   evaluate the predicate read-only and print, for the detected
 #               (or AUTOCODER_MUX-forced) multiplexer, the exact spawn
 #               commands a wake WOULD run. No side effects: no lock, no
@@ -1906,34 +1909,240 @@ detect_scheduler() {
       return 0
     fi
   fi
-  local pid cmdline
+  if [ -n "$(find_project_loop)" ]; then
+    echo loop
+    return 0
+  fi
+  echo none
+}
+
+# find_project_loop: prints "<pid> <script path>" for the first running --loop
+# that belongs to THIS project, or nothing. The script path is the argv word
+# ending in idle-sentinel.sh (or idle-sentinel-shim.sh), read NUL-split from
+# /proc so a path with spaces survives; elsewhere it is a best-effort parse
+# of `ps -o command=`.
+find_project_loop() {
+  local pid cmdline script a
+  local -a argv
   for pid in $(pgrep -f 'idle-sentine[l]' 2>/dev/null); do
     [ "$pid" = "$$" ] && continue
+    script=""
     if [ -d /proc/self ]; then
-      cmdline=$(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline")
+      argv=()
+      mapfile -d '' -t argv 2>/dev/null < "/proc/$pid/cmdline" || continue
+      cmdline=" ${argv[*]} "
+      for a in "${argv[@]}"; do
+        case "$a" in */idle-sentinel.sh|idle-sentinel.sh|*/idle-sentinel-shim.sh) script="$a"; break ;; esac
+      done
     else
-      cmdline=$(ps -o command= -p "$pid" 2>/dev/null)
+      cmdline=" $(ps -o command= -p "$pid" 2>/dev/null) "
+      script=$(printf '%s' "$cmdline" | grep -oE '[^ ]*idle-sentinel(-shim)?\.sh' | head -1)
     fi
     case "$cmdline" in
-      *--loop*)
+      *" --loop "*)
         # cwd inside THIS root (slash-anchored), or an EXACT --project token
         # match — never a raw substring, which the sibling-prefix checkout
         # would satisfy.
-        if pid_cwd_in_root "$pid" || [[ " $cmdline " == *" --project $PROJECT_ROOT "* ]]; then
-          echo loop
+        if pid_cwd_in_root "$pid" || [[ "$cmdline" == *" --project $PROJECT_ROOT "* ]]; then
+          printf '%s %s\n' "$pid" "$script"
           return 0
         fi
         ;;
     esac
   done
-  echo none
+}
+
+# plugin_version_of <path>: the <version> segment of a plugin-cache path
+# (…/autocoder/<version>/scripts/…), or nothing for a checkout path.
+plugin_version_of() {
+  printf '%s\n' "$1" | sed -nE 's#.*/autocoder/([0-9]+(\.[0-9]+)*[^/]*)/scripts/[^/]*$#\1#p'
+}
+
+# loop_script_is_stale <path>: true when a running --loop executes a script
+# other than this one that is gone, or that belongs to an OLDER plugin
+# version than this one (#273). Two unversioned paths (checkouts) are never
+# compared: there is no order to compare them by.
+loop_script_is_stale() {
+  local theirs="$1" vt vm
+  [ -n "$theirs" ] || return 1
+  [ "$theirs" = "$SELF_PATH" ] && return 1
+  [ -f "$theirs" ] || return 0
+  vt=$(plugin_version_of "$theirs")
+  vm=$(plugin_version_of "$SELF_PATH")
+  [ -n "$vt" ] && [ -n "$vm" ] && [ "$vt" != "$vm" ] || return 1
+  [ "$(printf '%s\n%s\n' "$vt" "$vm" | sort -V | head -1)" = "$vt" ]
+}
+
+# replace_stale_loop: stop this project's --loop when its script is stale.
+# Returns 0 when one was stopped (or would be, under --dry-run).
+replace_stale_loop() {
+  local found pid script
+  found=$(find_project_loop)
+  [ -n "$found" ] || return 1
+  pid=${found%% *}
+  script=${found#* }
+  loop_script_is_stale "$script" || return 1
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN would stop the --loop (pid $pid) running an older sentinel: $script"
+    return 0
+  fi
+  pkill -P "$pid" 2>/dev/null
+  kill "$pid" 2>/dev/null
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  log_event "ENSURE stopped stale --loop pid $pid ($script)"
+  echo "🔁 Stopped the --loop (pid $pid) running an older sentinel: $script"
+  return 0
+}
+
+# ── systemd user timer (#273) ───────────────────────────────────────────────
+# Used when crontab is missing (Arch/Omarchy ship without it) and the user
+# manager answers. The detached --loop it replaces dies on reboot, and it
+# pins the plugin version that started it. The unit runs the shim, which
+# resolves the newest sentinel at run time.
+
+SENTINEL_UNIT=""   # set by cmd_ensure: hashing the root costs a python run per tick
+SENTINEL_SHIM_SRC="$SCRIPT_DIR/idle-sentinel-shim.sh"
+SENTINEL_SHIM="${AUTOCODER_SENTINEL_SHIM:-$HOME/.local/bin/autocoder-idle-sentinel}"
+SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+
+systemd_user_available() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
+}
+
+# systemd_word <s> [arg]: <s> as one double-quoted word in a unit file: \ and
+# " are backslash-escaped and % (specifiers) doubled. Pass "arg" for an
+# ExecStart= ARGUMENT, the only place systemd expands $ (doubled there). The
+# executable path and Environment= keep a $ literally, so doubling it there
+# would corrupt the value.
+systemd_word() {
+  local s=${1//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//%/%%}
+  [ "${2:-}" = arg ] && s=${s//\$/\$\$}
+  printf '"%s"' "$s"
+}
+
+render_sentinel_service() {
+  local desc=${PROJECT_ROOT//%/%%}
+  cat <<UNIT
+# Installed by idle-sentinel.sh --ensure (#273). Runs one sentinel tick.
+[Unit]
+Description=autocoder idle sentinel tick for ${desc}
+
+[Service]
+Type=oneshot
+Environment=$(systemd_word "AUTOCODER_SENTINEL_FALLBACK=$SELF_PATH")
+ExecStart=$(systemd_word "$SENTINEL_SHIM") --once --project $(systemd_word "$PROJECT_ROOT" arg)
+UNIT
+}
+
+render_sentinel_timer() {
+  local desc=${PROJECT_ROOT//%/%%}
+  cat <<UNIT
+# Installed by idle-sentinel.sh --ensure (#273).
+[Unit]
+Description=autocoder idle sentinel timer for ${desc}
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=${INTERVAL_S}s
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+}
+
+# install_sentinel_shim: copy the shim into place when missing or changed.
+install_sentinel_shim() {
+  if [ -f "$SENTINEL_SHIM" ] && cmp -s "$SENTINEL_SHIM_SRC" "$SENTINEL_SHIM"; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$SENTINEL_SHIM")" || return 1
+  cp "$SENTINEL_SHIM_SRC" "$SENTINEL_SHIM.tmp.$$" \
+    && chmod 755 "$SENTINEL_SHIM.tmp.$$" \
+    && mv -f "$SENTINEL_SHIM.tmp.$$" "$SENTINEL_SHIM" \
+    || { rm -f "$SENTINEL_SHIM.tmp.$$"; return 1; }
+}
+
+# warn_if_no_linger: without lingering the user manager, and the timer with
+# it, stops when the user's last session ends and does not start at boot.
+warn_if_no_linger() {
+  command -v loginctl >/dev/null 2>&1 || return 0
+  local user linger
+  user=$(id -un 2>/dev/null) || return 0
+  linger=$(loginctl show-user "$user" -p Linger 2>/dev/null)
+  if [ "$linger" = "Linger=no" ]; then
+    echo "⚠️  Lingering is off for $user: the timer runs only while $user is logged in, and not after a reboot until they log in."
+    echo "    To keep it running: loginctl enable-linger $user"
+  fi
+}
+
+# install_systemd_scheduler: write + enable the timer. 0 = scheduled.
+install_systemd_scheduler() {
+  local _p
+  for _p in "$PROJECT_ROOT" "$SELF_PATH" "$SENTINEL_SHIM" "$SYSTEMD_USER_DIR"; do
+    case "$_p" in *$'\n'*|*$'\r'*)
+      echo "❌ Refusing to write a systemd unit: a path contains a newline ($(printf '%q' "$_p"))." >&2
+      return 1 ;;
+    esac
+  done
+  # systemd refuses to run an executable whose path holds ' " or \ (#273).
+  case "$SENTINEL_SHIM" in *\'*|*\"*|*\\*)
+    echo "❌ Refusing to write a systemd unit: systemd will not run $SENTINEL_SHIM (it contains ' \" or \\). Set AUTOCODER_SENTINEL_SHIM to a plainer path." >&2
+    return 1 ;;
+  esac
+  [ -f "$SENTINEL_SHIM_SRC" ] || { echo "❌ $SENTINEL_SHIM_SRC is missing" >&2; return 1; }
+  local svc="$SYSTEMD_USER_DIR/$SENTINEL_UNIT.service"
+  local tmr="$SYSTEMD_USER_DIR/$SENTINEL_UNIT.timer"
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN would install the version-independent entry point: $SENTINEL_SHIM (from $SENTINEL_SHIM_SRC)"
+    echo "DRY-RUN would write $svc:"
+    render_sentinel_service | sed 's/^/  /'
+    echo "DRY-RUN would write $tmr:"
+    render_sentinel_timer | sed 's/^/  /'
+    echo "DRY-RUN would run: systemctl --user daemon-reload && systemctl --user enable --now $SENTINEL_UNIT.timer"
+    warn_if_no_linger
+    return 0
+  fi
+  install_sentinel_shim || { echo "❌ could not install $SENTINEL_SHIM" >&2; return 1; }
+  mkdir -p "$SYSTEMD_USER_DIR" || return 1
+  render_sentinel_service > "$svc" && render_sentinel_timer > "$tmr" || {
+    echo "❌ could not write the systemd units in $SYSTEMD_USER_DIR" >&2
+    return 1
+  }
+  if ! systemctl --user daemon-reload || ! systemctl --user enable --now "$SENTINEL_UNIT.timer"; then
+    echo "❌ systemctl --user could not enable $SENTINEL_UNIT.timer" >&2
+    return 1
+  fi
+  state_merge "{\"scheduler_mode\": \"systemd\"}"
+  log_event "ENSURE installed systemd user timer $SENTINEL_UNIT.timer (every ${INTERVAL_S}s)"
+  echo "✅ Sentinel scheduled via systemd: $SENTINEL_UNIT.timer (every ${INTERVAL_S}s, runs $SENTINEL_SHIM)"
+  warn_if_no_linger
+  return 0
 }
 
 cmd_ensure() {
   mkdir -p "$AC_DIR"
+  SENTINEL_UNIT="autocoder-idle-sentinel-$(sha256_of "$PROJECT_ROOT" | cut -c1-12)"
   local existing
   existing=$(detect_scheduler)
+  if [ "$existing" = loop ] && replace_stale_loop; then
+    existing=$(detect_scheduler)
+    # Under --dry-run the old loop is still running; plan as if it were gone.
+    [ "$DRY_RUN" = true ] && [ "$existing" = loop ] && existing=none
+  fi
   if [ "$existing" != none ]; then
+    # Keep the shim behind our own timer current: it is the one file the timer
+    # does not re-resolve on its own.
+    if [ "$existing" = systemd ] && [ "$DRY_RUN" != true ] &&
+       [ -f "$SYSTEMD_USER_DIR/$SENTINEL_UNIT.timer" ] && [ -f "$SENTINEL_SHIM_SRC" ]; then
+      install_sentinel_shim || echo "⚠️  could not refresh $SENTINEL_SHIM" >&2
+    fi
     echo "✅ Sentinel already scheduled via $existing — nothing to install"
     state_merge "{\"scheduler_mode\": \"$existing\"}"
     return 0
@@ -1975,8 +2184,15 @@ cmd_ensure() {
     return 0
   fi
 
-  # No crontab available: fall back to a detached loop (recorded, so a later
-  # --ensure will find it and not double-install).
+  # No crontab: a systemd user timer survives a reboot and follows plugin
+  # upgrades (#273), so it comes before the loop.
+  if systemd_user_available; then
+    install_systemd_scheduler && return 0
+    echo "⚠️  systemd user timer install failed — falling back to a detached --loop" >&2
+  fi
+
+  # Last resort, neither cron nor a systemd user manager: a detached loop
+  # (recorded, so a later --ensure will find it and not double-install).
   if [ "$DRY_RUN" = true ]; then
     echo "DRY-RUN would start: nohup $(sh_quote "$SELF_PATH") --loop --project $(sh_quote "$PROJECT_ROOT") &"
     return 0

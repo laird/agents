@@ -686,7 +686,9 @@ step down — in this exact order:
    manager over work nobody can action.
 2. **Ensure the sentinel is scheduled**: run `idle-sentinel.sh --ensure` (from the
    same resolved `SCRIPT_DIR` as Step 2). It is idempotent — it inspects
-   crontab/systemd/running loops and never double-installs.
+   crontab/systemd/running loops and never double-installs. With no `crontab` it
+   installs a systemd user timer that survives reboots and follows plugin upgrades,
+   and it warns if lingering is off.
 3. **Delete the counter**: `rm -f .autocoder/quiescent-iterations` (R2-F8 — a
    surviving counter would let the NEXT woken manager step down after a single
    iteration).
