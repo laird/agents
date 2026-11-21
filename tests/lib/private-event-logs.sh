@@ -39,3 +39,11 @@ export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS AUTOCODER_LANDING_TIMINGS
 AUTOCODER_TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-autocoder-tmp.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-autocoder-tmp.XXXXXX") \
   || { echo "private-event-logs.sh: cannot create a private AUTOCODER_TMP; refusing to run against the real one" >&2; exit 1; }
 export AUTOCODER_TMP
+
+# Reboot state (#275): the per-user boot stamp and swarm-roots registry
+# (reboot-lib.sh) live in ~/.local/state/autocoder. A test that creates a swarm
+# or ticks a sentinel would otherwise register fake roots, or move the real
+# boot stamp, for the operator's real boot trigger to act on.
+AUTOCODER_REBOOT_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/test-reboot-state.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-reboot-state.XXXXXX") \
+  || { echo "private-event-logs.sh: cannot create a private AUTOCODER_REBOOT_STATE_DIR; refusing to run against the real one" >&2; exit 1; }
+export AUTOCODER_REBOOT_STATE_DIR

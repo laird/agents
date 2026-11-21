@@ -75,6 +75,16 @@
 #     "consent_dialog_at": "<iso8601>"  // last bootstrap-config failure
 #   }
 #
+#   BOOT WAKE (#275): before each tick (outside the tick lock, so the tick
+#   reboot-recover.sh runs for this root can take it) the sentinel compares
+#   this boot's id (Linux boot_id, macOS kern.boottime; reboot-lib.sh) with
+#   the PER-USER stamp in ${XDG_STATE_HOME:-~/.local/state}/autocoder/
+#   last-boot-id, shared with the host boot trigger (reboot-recover.sh
+#   --install). On a change it runs one "reboot" wake, a duty wake exempt from
+#   dedup: `reboot-recover.sh --boot --project <root>`, which recovers every
+#   known swarm and writes the stamp only once it has run. No stamp yet (first
+#   run): record it, no wake. No boot id on this host: no boot wake.
+#
 #   Dedup/backoff semantics: constant-hash reasons (duty, error-escalation,
 #   wake-file, heartbeat-respawn) are EXEMPT from dedup — "no observable state
 #   change" is trivially true for them by construction, so dedup could only
@@ -103,6 +113,10 @@
 #   .autocoder/sentinel-hooks.sh               sentinel_extra_wake_conditions,
 #                                              sentinel_health_probe, sentinel_notify
 #   .autocoder/wake                            manual/external force-wake file
+#   AUTOCODER_REBOOT_RECOVER_SCRIPT            reboot recovery run by the boot
+#                                              wake (default reboot-recover.sh here)
+#   AUTOCODER_REBOOT_RECOVER=1                 set by reboot-recover.sh on the tick
+#                                              it runs: skip the boot wake
 #   .autocoder/stepped-down                    written by the manager's step-down
 #                                              (monitor-workers Step 6b); the
 #                                              sentinel retires a lingering
@@ -119,18 +133,16 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
 
-# sh_quote <s>: <s> as one POSIX-shell word, '…' with each ' written '\'' (#235).
-# Cron runs its lines with /bin/sh, so bash's printf %q ($'…' forms) is not safe here.
-sh_quote() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
-# cron_escape <s>: cron turns an unescaped % in the command into a newline; \% keeps it
-# (Vixie cron / cronie; other crons may differ).
-cron_escape() { printf '%s' "${1//%/\\%}"; }
 AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # shellcheck source=swarm-manifest-lib.sh
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 # shellcheck source=mux-send-lib.sh
 source "$SCRIPT_DIR/mux-send-lib.sh"
+# Host detection, quoting helpers, the per-user boot stamp and swarm-roots
+# registry, shared with reboot-recover.sh (#275).
+# shellcheck source=reboot-lib.sh
+source "$SCRIPT_DIR/reboot-lib.sh"
 
 # The sentinel must never carry the manager identity marker itself (it may
 # inherit one when a manager runs `idle-sentinel.sh --ensure`). unset scrubs
@@ -997,7 +1009,7 @@ evaluate_predicate() {
 # The spec's safety-net wakes ("wake regardless") must keep firing.
 dedup_exempt() {
   case "$1" in
-    duty|error-escalation|wake-file|heartbeat-respawn) return 0 ;;
+    duty|error-escalation|wake-file|heartbeat-respawn|reboot) return 0 ;;
   esac
   return 1
 }
@@ -1813,6 +1825,45 @@ run_tick() {
   log_event "TICK result=$TICK_RESULT predicate=[$PREDICATE_SUMMARY]"
 }
 
+# ── boot wake (#275) ────────────────────────────────────────────────────────
+REBOOT_RECOVER_SCRIPT="${AUTOCODER_REBOOT_RECOVER_SCRIPT:-$SCRIPT_DIR/reboot-recover.sh}"
+
+# reboot_wake: run reboot recovery once per boot. Runs before the tick lock is
+# taken: recovery may run `idle-sentinel.sh --once` for this same root to
+# spawn its manager, and that tick needs the lock.
+reboot_wake() {
+  # The tick reboot-recover.sh itself started: its caller owns this boot.
+  [ -n "${AUTOCODER_REBOOT_RECOVER:-}" ] && return 0
+  local cur stamp
+  if ! cur=$(boot_id_current); then
+    if [ "$DRY_RUN" != true ] && [ -z "$(state_get boot_id_unavailable)" ]; then
+      log_event "REBOOT check off: no boot id on this host ($(boot_id_file) unreadable, no kern.boottime)"
+      state_merge '{"boot_id_unavailable": true}'
+    fi
+    return 0
+  fi
+  stamp=$(boot_stamp_get)
+  if [ -z "$stamp" ]; then
+    # First run: start from this boot. Never a wake.
+    [ "$DRY_RUN" = true ] || boot_stamp_set "$cur"
+    return 0
+  fi
+  [ "$cur" = "$stamp" ] && return 0
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY-RUN boot id changed ($stamp -> $cur): would run reboot wake: $REBOOT_RECOVER_SCRIPT --boot --project $PROJECT_ROOT"
+    return 0
+  fi
+  mkdir -p "$AC_DIR"
+  log_event "WAKE reason=reboot (boot $stamp -> $cur; duty wake, dedup skipped): $REBOOT_RECOVER_SCRIPT --boot --project $PROJECT_ROOT"
+  local rc=0
+  bash "$REBOOT_RECOVER_SCRIPT" --boot --project "$PROJECT_ROOT" >> "$LOG_FILE" 2>&1 || rc=$?
+  state_merge "{\"last_wake\": {\"reason\": \"reboot\", \"issues_hash\": \"\", \"at\": \"$(now_iso)\"}, \"last_reboot_wake\": {\"boot_id\": \"$cur\", \"rc\": $rc, \"at\": \"$(now_iso)\"}}"
+  # The script writes the stamp after it has run; a failed run leaves it, so
+  # the next tick retries.
+  [ "$rc" -eq 0 ] || notify "idle-sentinel: reboot recovery exited $rc; the next tick retries"
+  return 0
+}
+
 # Whole tick body under a NON-BLOCKING lock (R2-F7): a contended tick SKIPs —
 # logged and counted — rather than queueing behind a hung wake forever while
 # cron reports green.
@@ -2021,49 +2072,6 @@ sentinel_unit_tag() {
 }
 launchd_label() { printf 'com.autocoder.idle-sentinel.%s' "$(sentinel_unit_tag)"; }
 
-# host_os: macos | linux/<os-release ID>[+wsl] | <kernel name> | unknown
-host_os() {
-  local kernel id
-  kernel=$(uname -s 2>/dev/null)
-  case "$kernel" in
-    Darwin) echo macos ;;
-    Linux)
-      id=$(sed -nE "s/^ID=[\"']?([^\"']*)[\"']?\$/\\1/p" "${AUTOCODER_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -1)
-      if [ -n "${WSL_DISTRO_NAME:-}" ] ||
-         grep -qi microsoft "${AUTOCODER_PROC_VERSION:-/proc/version}" 2>/dev/null; then
-        echo "linux/${id:-unknown}+wsl"
-      else
-        echo "linux/${id:-unknown}"
-      fi ;;
-    "") echo unknown ;;
-    *) printf '%s\n' "$kernel" | tr 'A-Z' 'a-z' ;;
-  esac
-}
-
-cron_available() { command -v crontab >/dev/null 2>&1; }
-
-# cron_daemon_running: crontab(1) can exist with no daemon to run the entries
-# (WSL without the cron service, minimal containers). Unknown counts as yes.
-cron_daemon_running() {
-  command -v pgrep >/dev/null 2>&1 || return 0
-  pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1
-}
-
-# A launchd agent is the macOS scheduler; launchctl elsewhere is not launchd.
-launchd_available() {
-  [ "$(uname -s 2>/dev/null)" = Darwin ] && command -v launchctl >/dev/null 2>&1
-}
-
-# linger_state: yes | no | n/a (no loginctl, or it cannot tell)
-linger_state() {
-  command -v loginctl >/dev/null 2>&1 || { echo n/a; return; }
-  case "$(loginctl show-user "$(id -un 2>/dev/null)" -p Linger 2>/dev/null)" in
-    Linger=yes) echo yes ;;
-    Linger=no) echo no ;;
-    *) echo n/a ;;
-  esac
-}
-
 yes_no() { if "$@"; then echo yes; else echo no; fi; }
 
 print_host_detection() {
@@ -2085,23 +2093,6 @@ SENTINEL_UNIT=""   # set by cmd_ensure: hashing the root costs a python run per 
 SENTINEL_SHIM_SRC="$SCRIPT_DIR/idle-sentinel-shim.sh"
 SENTINEL_SHIM="${AUTOCODER_SENTINEL_SHIM:-$HOME/.local/bin/autocoder-idle-sentinel}"
 SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-
-systemd_user_available() {
-  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
-}
-
-# systemd_word <s> [arg]: <s> as one double-quoted word in a unit file: \ and
-# " are backslash-escaped and % (specifiers) doubled. Pass "arg" for an
-# ExecStart= ARGUMENT, the only place systemd expands $ (doubled there). The
-# executable path and Environment= keep a $ literally, so doubling it there
-# would corrupt the value.
-systemd_word() {
-  local s=${1//\\/\\\\}
-  s=${s//\"/\\\"}
-  s=${s//%/%%}
-  [ "${2:-}" = arg ] && s=${s//\$/\$\$}
-  printf '"%s"' "$s"
-}
 
 render_sentinel_service() {
   local desc=${PROJECT_ROOT//%/%%}
@@ -2211,13 +2202,6 @@ install_systemd_scheduler() {
 
 LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 
-# sed, not ${s//&/&amp;}: since bash 5.2 (patsub_replacement) an & in the
-# replacement means "the match", so the parameter-expansion form breaks on the
-# Homebrew/mise bash a Mac often has first on PATH, while 3.2 is fine.
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
-}
-
 # The XML comment below must never contain "--" (invalid XML; launchd rejects it).
 render_launchd_plist() {
   cat <<PLIST
@@ -2288,7 +2272,21 @@ install_launchd_scheduler() {
   return 0
 }
 
+# cmd_ensure: schedule the sentinel, then (#275) register this swarm root and
+# install the host's boot trigger. The boot trigger is attempted only once the
+# sentinel is scheduled, and its failure never fails --ensure: the sentinel's
+# boot wake still covers this project.
 cmd_ensure() {
+  ensure_scheduler || return $?
+  [ "$DRY_RUN" = true ] || swarm_roots_register "$PROJECT_ROOT"
+  if [ -f "$SCRIPT_DIR/reboot-recover.sh" ]; then
+    bash "$SCRIPT_DIR/reboot-recover.sh" --install $([ "$DRY_RUN" = true ] && echo --dry-run) \
+      || echo "⚠️  could not install the reboot boot trigger; the sentinel's boot wake still covers this project" >&2
+  fi
+  return 0
+}
+
+ensure_scheduler() {
   mkdir -p "$AC_DIR"
   # Set here, not inside sentinel_unit_tag: its callers run it in $(…)
   # subshells, where a cached value would not outlive the call.
@@ -2393,6 +2391,7 @@ case "$MODE" in
     ;;
   once)
     [ "$DRY_RUN" != true ] && state_merge "{\"version\": 1}"
+    reboot_wake
     run_locked_tick
     ;;
   loop)
@@ -2404,6 +2403,7 @@ case "$MODE" in
     state_merge "{\"scheduler_mode\": \"loop\"}"
     log_event "LOOP started (interval ${INTERVAL_S}s, pid $$)"
     while :; do
+      reboot_wake
       run_locked_tick
       sleep "$INTERVAL_S"
     done

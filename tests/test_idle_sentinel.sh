@@ -1062,7 +1062,7 @@ GOT=$(sh -c "${QCMD%% && *} && pwd" 2>/dev/null)
   || bad "cd went to '$GOT', wanted '$QDIR' (line: $QLINE)"
 printf '%s' "$QLINE" | grep -q '100\\%' && ok "the % is cron-escaped" || bad "unescaped % in: $QLINE"
 OUT=$(run_sentinel "$CRONSHIM:$BASEPATH" CRONTAB_STORE="$STORE4" -- --ensure --project "$QDIR" 2>&1)
-echo "$OUT" | grep -q "already scheduled via cron" && [ "$(wc -l < "$STORE4")" -eq 1 ] \
+echo "$OUT" | grep -q "already scheduled via cron" && [ "$(grep -c autocoder-idle-sentinel "$STORE4")" -eq 1 ] \
   && ok "second --ensure finds the escaped entry (no double install)" \
   || bad "quoted-path entry not detected: $OUT / $(cat "$STORE4")"
 

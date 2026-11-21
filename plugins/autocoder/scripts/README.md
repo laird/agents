@@ -787,7 +787,7 @@ uncommitted edits are still on disk. Recovery is split in two:
   prompted. With none, the script writes `.autocoder/wake` and runs
   `idle-sentinel.sh --once` for that root, so the sentinel does the spawn: it
   detects the multiplexer, checks no manager is alive, and records the manager in
-  the manifest. The run prints what it detected (`host mux=...`). The sentinel's
+  the manifest. The run prints what it detected (`host os=... scheduler=... mux=... boot_id=... state=...`). The sentinel's
   `reboot` wake calls it (#275), and it marks the nested sentinel run with
   `AUTOCODER_REBOOT_RECOVER=1` so that wake does not recurse.
 - The manager does the worktrees (`manager-resume`, Step 4b). `worktree-issue.sh`
@@ -797,3 +797,51 @@ uncommitted edits are still on disk. Recovery is split in two:
   `/autocoder:fix-loop` when the issue is closed or the branch names none.
   `--orphan-claims` lists the `working` claims whose worktree is gone; only those
   are released.
+
+## Once per boot: boot triggers, the boot stamp and the swarm-roots registry (#275)
+
+Nothing ran `reboot-recover.sh` at boot. Now two triggers can, and a shared
+per-user stamp makes sure recovery runs once per boot, from whichever fires first.
+`reboot-lib.sh` holds the shared state and the host detection:
+
+- **Boot identity.** Linux `/proc/sys/kernel/random/boot_id`, else macOS
+  `sysctl -n kern.boottime`, else none (the boot check is skipped with a log
+  line). `AUTOCODER_BOOT_ID_FILE` overrides the file for tests.
+- **State directory.** `${AUTOCODER_REBOOT_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/autocoder}`
+  holds `last-boot-id` (the boot last recovered) and `swarm-roots` (one swarm root
+  per line, deduplicated). `start-parallel-agents.sh`, `add-worker.sh`,
+  `swarm-register.sh` and `idle-sentinel.sh --ensure` add their root. On a tmux
+  host, or with no multiplexer, the registry is the only thing that names the
+  swarms after a reboot; herdr's panes stay an additional source.
+
+`reboot-recover.sh --boot` (implies `--all`, which adds the registry's roots)
+does nothing when the stamp matches this boot. Otherwise, under a per-user lock,
+it waits for herdr when herdr is an enabled user service (`AUTOCODER_REBOOT_MUX_WAIT`,
+90s; it never starts herdr itself), recovers every swarm, and only then writes
+the stamp, so a crash mid-recovery is retried by the next trigger. No stamp yet
+means a first run: it records the boot and recovers nothing.
+
+The triggers:
+
+1. **The host boot trigger**, installed by `reboot-recover.sh --install` (and by
+   `idle-sentinel.sh --ensure` once the sentinel is scheduled). It detects the
+   host and picks the first that works: a launchd agent with `RunAtLoad` on
+   macOS; a systemd user unit `autocoder-reboot-recover.service` (`Type=oneshot`,
+   `After=herdr.service network-online.target`, `WantedBy=default.target`, with
+   a warning and the `loginctl enable-linger` command when lingering is off);
+   a cron `@reboot` line; or none, which it says. Each runs
+   `~/.local/bin/autocoder-reboot-recover --boot`: the same version-independent
+   shim as the sentinel's (#273), which resolves `reboot-recover.sh` from the
+   newest installed plugin when installed under that name. The PATH is the one
+   `--install` ran with. `--install` records the current boot, so the next boot
+   counts as a change.
+2. **The sentinel's boot wake**, a backstop on hosts without the trigger. Before
+   each tick (outside the tick lock) the sentinel compares the boot id with the
+   same stamp; on a change it runs one `reboot` wake (a duty wake, exempt from
+   dedup): `reboot-recover.sh --boot --project <root>`. A tick that
+   `reboot-recover.sh` itself started (`AUTOCODER_REBOOT_RECOVER=1`) skips it.
+
+Tests: `tests/test_reboot_boot.sh` runs every path against fakes: systemd user,
+cron only, launchd, no scheduler, no boot id, macOS `kern.boottime`, a tmux-only
+host with registered roots, and herdr roots.
+

@@ -87,7 +87,7 @@ agents "w0:p1=$T/alpha" "w1:p1=$T/alpha-wt-1" "w2:p1=$T/beta-wt-1" "w3:p1=$T/gam
 OUT=$(run "$T/herdrbin"); RC=$?
 P=$(cat "$HERDR_DIR/prompts"); S=$(cat "$HERDR_DIR/sentinel"); A=$(cat "$HERDR_DIR/argv")
 [ "$RC" -eq 0 ] && pass "exits 0" || fail "rc=$RC: $OUT"
-has "host detection is printed" "host mux=herdr" "$OUT"
+has "host detection is printed" " mux=herdr " "$OUT"
 has "restored manager pane in alpha's root is prompted" "PROMPT w0:p1 Run /autocoder:manager-resume --non-interactive" "$P"
 has "manager prompt chains monitor-loop" "Then run /autocoder:monitor-loop" "$P"
 [ "$(grep -c PROMPT "$HERDR_DIR/prompts")" -eq 1 ] && pass "only one prompt sent (no worker driven)" || fail "prompts: $P"
@@ -138,7 +138,7 @@ has "duplicate managers reported" "2 agent panes in $T/alpha" "$OUT"
 # ── 5. tmux host: never adopted, always spawned via the sentinel ─────────────
 setup
 OUT=$(run "$T/tmuxbin" --project "$T/alpha-wt-2" --project "$T/beta")
-has "tmux detected" "host mux=tmux" "$OUT"
+has "tmux detected" " mux=tmux " "$OUT"
 S=$(cat "$HERDR_DIR/sentinel")
 has "tmux: alpha started via the sentinel (from a worktree path)" "--project $T/alpha" "$S"
 has "tmux: beta started via the sentinel" "--project $T/beta" "$S"
@@ -148,7 +148,7 @@ hasnt "tmux: herdr asked nothing beyond the probe" "agent" "$(cat "$HERDR_DIR/ar
 # ── 6. No multiplexer at all: the sentinel decides (it reports what it lacks) ──
 setup
 OUT=$(run "$T/nobin" --project "$T/beta")
-has "no mux detected" "host mux=none" "$OUT"
+has "no mux detected" " mux=none " "$OUT"
 has "no mux: sentinel still asked to start beta" "--project $T/beta" "$(cat "$HERDR_DIR/sentinel")"
 setup
 OUT=$(SENTINEL_RC=1 run "$T/nobin" --project "$T/beta")

@@ -105,6 +105,11 @@ source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 
 PROJECT_ROOT=$(resolve_main_worktree)
+# Remember this swarm root for reboot recovery (#275): on a tmux host nothing
+# else names it after a reboot. Best effort.
+# shellcheck source=reboot-lib.sh
+source "$SCRIPT_DIR/reboot-lib.sh"
+swarm_roots_register "$PROJECT_ROOT"
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 CURRENT_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")

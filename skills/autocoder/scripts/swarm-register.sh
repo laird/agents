@@ -66,6 +66,11 @@ WORKTREE=$(git rev-parse --show-toplevel 2>/dev/null) || { note "not in a git ch
 COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
   || COMMON=$(cd "$WORKTREE" && cd "$(git rev-parse --git-common-dir)" && pwd)
 PROJECT_ROOT=$(dirname "$COMMON")
+# Remember this swarm root for reboot recovery (#275): on a tmux host nothing
+# else names it after a reboot. Best effort.
+# shellcheck source=reboot-lib.sh
+source "$SCRIPT_DIR/reboot-lib.sh"
+swarm_roots_register "$PROJECT_ROOT"
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 MARKER_NUMBER=""

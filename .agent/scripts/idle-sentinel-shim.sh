@@ -23,6 +23,12 @@
 # prevent, and an unattended timer should not run whatever a checkout contains.
 #
 # All arguments are passed through unchanged.
+#
+# The same file is installed as ~/.local/bin/autocoder-reboot-recover by
+# `reboot-recover.sh --install` (#275). Under a name containing
+# "reboot-recover" it resolves reboot-recover.sh instead, by the same rules,
+# with $AUTOCODER_REBOOT_SCRIPT and $AUTOCODER_REBOOT_FALLBACK as the override
+# and the fallback.
 
 set -u
 
@@ -39,8 +45,18 @@ run_sentinel() {
   exec bash "$script" "$@"
 }
 
-if [ -n "${AUTOCODER_SENTINEL_SCRIPT:-}" ]; then
-  run_sentinel "$AUTOCODER_SENTINEL_SCRIPT" "$@"
+target=idle-sentinel.sh
+override="${AUTOCODER_SENTINEL_SCRIPT:-}"
+fallback="${AUTOCODER_SENTINEL_FALLBACK:-}"
+case "$(basename "$0")" in
+  *reboot-recover*)
+    target=reboot-recover.sh
+    override="${AUTOCODER_REBOOT_SCRIPT:-}"
+    fallback="${AUTOCODER_REBOOT_FALLBACK:-}" ;;
+esac
+
+if [ -n "$override" ]; then
+  run_sentinel "$override" "$@"
 fi
 
 cache="${AUTOCODER_PLUGIN_CACHE:-${HOME:-}/.claude/plugins/cache}"
@@ -48,17 +64,17 @@ newest=""
 if [ -d "$cache" ]; then
   # "<version><TAB><path>" for <marketplace>/autocoder/<version>/scripts/idle-sentinel.sh
   # exactly (the version must start with a digit), sorted on the version only.
-  newest=$(find "$cache" -mindepth 5 -maxdepth 5 -type f -path '*/autocoder/*/scripts/idle-sentinel.sh' 2>/dev/null \
-    | sed -nE 's#^.*/autocoder/([0-9][^/]*)/scripts/idle-sentinel\.sh$#\1\t&#p' \
+  newest=$(find "$cache" -mindepth 5 -maxdepth 5 -type f -path "*/autocoder/*/scripts/$target" 2>/dev/null \
+    | sed -nE "s#^.*/autocoder/([0-9][^/]*)/scripts/${target%.sh}\\.sh\$#\\1\t&#p" \
     | sort -t "$(printf '\t')" -k1,1V | tail -1 | cut -f2-)
 fi
 if [ -n "$newest" ]; then
   run_sentinel "$newest" "$@"
 fi
 
-if [ -n "${AUTOCODER_SENTINEL_FALLBACK:-}" ] && [ -f "$AUTOCODER_SENTINEL_FALLBACK" ]; then
-  run_sentinel "$AUTOCODER_SENTINEL_FALLBACK" "$@"
+if [ -n "$fallback" ] && [ -f "$fallback" ]; then
+  run_sentinel "$fallback" "$@"
 fi
 
-echo "autocoder-idle-sentinel: no idle-sentinel.sh found (project '${project}', plugin cache '${cache}')" >&2
+echo "$(basename "$0"): no $target found (project '${project}', plugin cache '${cache}')" >&2
 exit 1

@@ -236,7 +236,7 @@ OUT=$(run_sentinel_at "$SENTINEL" -- --ensure --dry-run --project "$P" 2>&1)
 echo "$OUT" | grep -q "OnUnitInactiveSec=900s" && echo "$OUT" | grep -q "ExecStart=" \
   && ok "--dry-run prints the unit files" || bad "dry-run output: $OUT"
 [ ! -e "$FAKEHOME/.config/systemd" ] && [ ! -e "$FAKEHOME/.local/bin/autocoder-idle-sentinel" ] \
-  && ! grep -q "enable" "$SYSD/calls" 2>/dev/null \
+  && ! grep -q "enable.*autocoder-idle-sentinel" "$SYSD/calls" 2>/dev/null \
   && ok "--dry-run wrote no units, no shim, enabled nothing" || bad "dry-run side effects"
 
 # ── 4. a path that needs unit-file escaping ─────────────────────────────────
@@ -266,7 +266,7 @@ OUT=$(run_sentinel_at "$SENTINEL" AUTOCODER_SENTINEL_SHIM="$TMP/it's/shim" AUTOC
 LPID=$(echo "$OUT" | sed -nE 's/.*started a detached --loop \(pid ([0-9]+)\).*/\1/p')
 [ -n "$LPID" ] && CLEANUP_PIDS+=("$LPID")
 echo "$OUT" | grep -q "systemd will not run" && echo "$OUT" | grep -q "started a detached --loop" \
-  && ! grep -q "enable" "$SYSD/calls" 2>/dev/null \
+  && ! grep -q "enable.*autocoder-idle-sentinel" "$SYSD/calls" 2>/dev/null \
   && ok "unrunnable shim path → refused, falls back to the loop" || bad "bad shim path: $OUT"
 if [ -n "$LPID" ]; then pkill -P "$LPID" 2>/dev/null; kill "$LPID" 2>/dev/null; fi
 
@@ -310,7 +310,7 @@ grep -q "^bootstrap gui/" "$SYSD/launchctl.calls" && ok "macOS: launchctl bootst
 [ ! -s "$TMP/cron-mac" ] && ok "macOS: no cron entry when launchd works" || bad "cron entry on macOS: $(cat "$TMP/cron-mac")"
 [ "$(state_mode "$P")" = launchd ] && ok "macOS: scheduler_mode=launchd" || bad "mode=$(state_mode "$P")"
 OUT=$(run_mac -- --ensure --project "$P" 2>&1)
-echo "$OUT" | grep -q "already scheduled via launchd" && [ "$(grep -c '^bootstrap' "$SYSD/launchctl.calls")" = 1 ] \
+echo "$OUT" | grep -q "already scheduled via launchd" && [ "$(grep -c '^bootstrap.*idle-sentinel' "$SYSD/launchctl.calls")" = 1 ] \
   && ok "macOS: second --ensure is idempotent" || bad "macOS second run: $OUT"
 reset_sysd
 P=$(new_project macdry)
@@ -357,7 +357,8 @@ P=$(new_project cronsd)
 STORE="$TMP/cron-cronsd"
 OUT=$(TESTPATH="$CRONBIN:$TESTPATH" run_sentinel_at "$SENTINEL" FAKE_CROND=yes \
   CRONTAB_STORE="$STORE" -- --ensure --project "$P" 2>&1)
-[ "$(grep -c -- "# autocoder-idle-sentinel:$P\$" "$STORE" 2>/dev/null)" = 1 ] && [ ! -e "$FAKEHOME/.config/systemd" ] \
+[ "$(grep -c -- "# autocoder-idle-sentinel:$P\$" "$STORE" 2>/dev/null)" = 1 ] \
+  && ! ls "$FAKEHOME/.config/systemd/user/"autocoder-idle-sentinel-* >/dev/null 2>&1 \
   && ok "cron + daemon + systemd user → cron, as before" || bad "cron+systemd: $OUT"
 
 # A crontab with no daemon loses to a working systemd user manager.

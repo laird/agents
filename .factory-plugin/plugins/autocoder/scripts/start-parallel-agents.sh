@@ -349,6 +349,11 @@ fi
 
 # Get project info
 PROJECT_ROOT=$(pwd)
+# Remember this swarm root for reboot recovery (#275): on a tmux host nothing
+# else names it after a reboot. Best effort.
+# shellcheck source=reboot-lib.sh
+source "$SCRIPT_DIR/reboot-lib.sh"
+swarm_roots_register "$PROJECT_ROOT"
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
