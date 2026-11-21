@@ -28,9 +28,9 @@ cat > "$T/herdrbin/herdr" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$HERDR_DIR/argv"
 case "$1 $2" in
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace list") cat "$HERDR_DIR/workspaces.json" 2>/dev/null || echo '{"result":{"workspaces":[]}}' ;;
   "agent list")     cat "$HERDR_DIR/agents.json" ;;
-  "pane get")       printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "$3" "$(cat "$HERDR_DIR/cwd-${3//:/_}")" ;;
+  "pane get")       printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s","workspace_id":"%s"}}}\n' "$3" "$(cat "$HERDR_DIR/cwd-${3//:/_}")" "${3%%:*}" ;;
   "pane read")      echo "❯ " ;;
   "agent prompt")   printf 'PROMPT %s %s\n' "$3" "$4" >> "$HERDR_DIR/prompts" ;;
   *) exit 0 ;;
@@ -50,8 +50,11 @@ exit "${SENTINEL_RC:-0}"
 STUB
 chmod +x "$T"/herdrbin/* "$T"/tmuxbin/* "$T"/nobin/* "$T/sentinel"
 
+# AUTOCODER_PROC_ROOT: a fake /proc, so live processes on this host never count
+# as manager markers.
+mkdir -p "$T/proc"
 export HERDR_DIR="$T/state" AUTOCODER_REBOOT_SENTINEL="$T/sentinel" AUTOCODER_MUX_SUBMIT_DELAY=0 \
-  AUTOCODER_HERDR_PROBE_SECONDS=2 AUTOCODER_MUX_TIMEOUT_SECONDS=5
+  AUTOCODER_HERDR_PROBE_SECONDS=2 AUTOCODER_MUX_TIMEOUT_SECONDS=5 AUTOCODER_PROC_ROOT="$T/proc"
 unset HERDR_PANE_ID AUTOCODER_AGENT
 
 mkrepo() {  # mkrepo <name> <worktree-suffix>...
@@ -61,7 +64,7 @@ mkrepo() {  # mkrepo <name> <worktree-suffix>...
   for s in "$@"; do git -C "$T/$name" worktree add -q -b "b-$name-$s" "$T/$name-$s"; done
 }
 setup() {
-  rm -rf "$T"/alpha* "$T"/beta* "$T"/gamma* "$T/state"/*
+  rm -rf "$T"/alpha* "$T"/beta* "$T"/gamma* "$T/state"/* "$T/proc"/*
   mkrepo alpha wt-1 wt-2   # swarm with a restored manager pane
   mkrepo beta  wt-1        # swarm without one
   mkrepo gamma scratch     # worktree not named <repo>-wt-*: not a swarm
@@ -74,6 +77,15 @@ agents() {  # agents <pane>=<dir>...
     list="$list${list:+,}{\"pane_id\":\"${spec%%=*}\",\"agent_status\":\"idle\"}"
   done
   printf '{"result":{"agents":[%s]}}\n' "$list" > "$HERDR_DIR/agents.json"
+}
+workspaces() {  # workspaces <workspace>=<label>...
+  local spec list=""
+  for spec in "$@"; do list="$list${list:+,}{\"workspace_id\":\"${spec%%=*}\",\"label\":\"${spec#*=}\"}"; done
+  printf '{"result":{"workspaces":[%s]}}\n' "$list" > "$HERDR_DIR/workspaces.json"
+}
+marker() {  # marker <pid> <pane> <session>: a fake process carrying the manager marker
+  mkdir -p "$T/proc/$1"
+  printf 'PATH=/bin\0HERDR_PANE_ID=%s\0AUTOCODER_MANAGER=%s\0' "$2" "$3" > "$T/proc/$1/environ"
 }
 manifest() {  # manifest <repo> <state> [agent]
   mkdir -p "$T/$1/.autocoder/swarm"
@@ -135,6 +147,58 @@ OUT=$(run "$T/herdrbin")
 hasnt "duplicate managers: no spawn" "alpha" "$(cat "$HERDR_DIR/sentinel")"
 has "duplicate managers reported" "2 agent panes in $T/alpha" "$OUT"
 
+# ── 4b. Two agents in one root, one in workspace manager-<project> (#291) ────
+setup
+agents "w0:p1=$T/alpha" "w5:p1=$T/alpha"
+workspaces "w0=alpha" "w5=manager-alpha"
+OUT=$(run "$T/herdrbin")
+P=$(cat "$HERDR_DIR/prompts")
+has "manager-<project> workspace: that pane is prompted" "PROMPT w5:p1 Run /autocoder:manager-resume" "$P"
+hasnt "manager-<project> workspace: the other pane is untouched" "w0:p1" "$P"
+has "the other pane is reported as left alone" "w0:p1: not the manager, left alone" "$OUT"
+has "the reason is given" "its workspace is named manager-alpha" "$OUT"
+has "no problem counted" "problems=0" "$OUT"
+hasnt "no sentinel spawn when a manager was picked" "alpha" "$(cat "$HERDR_DIR/sentinel")"
+
+# ── 4c. The manifest names the manager pane, listed second ───────────────────
+setup
+agents "w0:p1=$T/alpha" "w0:p2=$T/alpha"
+mkdir -p "$T/alpha/.autocoder/swarm"
+printf '{"session":"s","state":"running","agent":"claude","manager":{"herdrPane":"w0:p2"}}\n' > "$T/alpha/.autocoder/swarm/s.json"
+OUT=$(run "$T/herdrbin")
+P=$(cat "$HERDR_DIR/prompts")
+has "manifest manager pane is prompted" "PROMPT w0:p2 " "$P"
+hasnt "the pane named first is untouched" "PROMPT w0:p1 " "$P"
+has "manifest reason given" "the manifest records it as the manager" "$OUT"
+# The manifest outranks the workspace name.
+workspaces "w0=manager-alpha"
+: > "$HERDR_DIR/prompts"
+OUT=$(run "$T/herdrbin")
+has "manifest wins over the workspace name" "PROMPT w0:p2 " "$(cat "$HERDR_DIR/prompts")"
+
+# ── 4d. The AUTOCODER_MANAGER marker picks the pane ──────────────────────────
+setup
+agents "w0:p1=$T/alpha" "w0:p2=$T/alpha"
+manifest alpha running
+marker 4242 "w0:p2" s
+marker 4243 "w0:p1" other-session   # another swarm's marker does not count
+OUT=$(run "$T/herdrbin")
+has "marker pane is prompted" "PROMPT w0:p2 " "$(cat "$HERDR_DIR/prompts")"
+has "marker reason given" "carries the AUTOCODER_MANAGER marker" "$OUT"
+hasnt "a marker for another session does not count" "PROMPT w0:p1" "$(cat "$HERDR_DIR/prompts")"
+
+# ── 4e. Run from the manager pane itself ─────────────────────────────────────
+setup
+agents "w0:p1=$T/alpha" "w5:p1=$T/alpha"
+workspaces "w5=manager-alpha"
+OUT=$(HERDR_PANE_ID=w5:p1 run "$T/herdrbin" --dry-run)
+has "dry run from the manager pane names it as this pane" "DRY-RUN would prompt restored manager pane w5:p1 (this pane)" "$OUT"
+hasnt "dry run from the manager pane does not offer the other pane" "would prompt restored manager pane w0:p1" "$OUT"
+OUT=$(HERDR_PANE_ID=w5:p1 run "$T/herdrbin")
+[ ! -s "$HERDR_DIR/prompts" ] && pass "the pane running the script is not prompted, nor the other" || fail "prompted: $(cat "$HERDR_DIR/prompts")"
+has "says the manager is this pane" "manager is w5:p1 (this pane)" "$OUT"
+has "running from the manager is not a problem" "problems=0" "$OUT"
+
 # ── 5. tmux host: never adopted, always spawned via the sentinel ─────────────
 setup
 OUT=$(run "$T/tmuxbin" --project "$T/alpha-wt-2" --project "$T/beta")
@@ -170,6 +234,12 @@ OUT=$(run "$T/nobin" --project /nonexistent-dir); RC=$?
 [ "$RC" -eq 0 ] && [ ! -s "$HERDR_DIR/sentinel" ] && pass "a non-repo directory is ignored" || fail "rc=$RC: $OUT"
 OUT=$(bash "$SCRIPT" --bogus 2>&1); RC=$?
 [ "$RC" -eq 1 ] && pass "unknown argument exits 1" || fail "rc=$RC"
+
+# ── 9. manager-resume records the manager pane the recovery looks for (#291) ─
+for f in "$ROOT/plugins/autocoder/commands/manager-resume.md" "$ROOT/.agent/workflows/manager-resume.md"; do
+  grep -q 'bash "$REGISTER_SH" --manager' "$f" && pass "$(basename "$(dirname "$f")")/manager-resume registers the manager" \
+    || fail "$f does not run swarm-register.sh --manager"
+done
 
 echo ""
 echo "$PASS passed / $FAIL failed / $((PASS + FAIL)) total"

@@ -17,10 +17,15 @@
 #    every manifest (.autocoder/swarm/*.json) says "paused" (the sentinel's
 #    step-down, #218) is skipped.
 # 2. For each swarm, exactly one manager:
-#    - one restored herdr agent pane in the repo root → prompt it with the
-#      sentinel's wake prompt (manager-resume --non-interactive, then
-#      monitor-loop);
-#    - two or more → report them and prompt none (a person picks one);
+#    - restored herdr agent panes in the repo root → pick the manager and
+#      prompt only it with the sentinel's wake prompt (manager-resume
+#      --non-interactive, then monitor-loop). The manager is, in order: the pane
+#      the manifest records (manager.herdrPane), the pane in the workspace named
+#      manager-<project>, the pane whose processes carry AUTOCODER_MANAGER=<session>,
+#      else the only agent pane in the root (#291). Other root panes (a person's
+#      own session) are left alone and listed as such. The pane running this
+#      script counts too: it is named "this pane", and never prompted;
+#    - two or more that nothing tells apart → report them and prompt none;
 #    - none → create .autocoder/wake and run `idle-sentinel.sh --once` for that
 #      root. The sentinel detects the multiplexer (herdr, tmux, cmux), checks
 #      that no manager is alive, spawns one with the same prompt and records it
@@ -424,6 +429,72 @@ manifest_agent() {
   return 1
 }
 
+# pane_label <pane>: the pane id, marked when it is the pane running this script.
+pane_label() {
+  if [ -n "${HERDR_PANE_ID:-}" ] && [ "$1" = "$HERDR_PANE_ID" ]; then printf '%s (this pane)' "$1"; else printf '%s' "$1"; fi
+}
+
+# choose_manager <root> <"pane\tworkspace" lines>: which agent pane in the root
+# is the swarm's manager (#291). Prints "PICK\t<pane>\t<reason>" plus one
+# "OTHER\t<pane>" per pane left alone, or "AMBIGUOUS\t<panes>" when two or more
+# remain and nothing tells them apart; nothing when there is no pane.
+# Each signal narrows the candidates only when it matches at least one of them.
+choose_manager() {
+  ROOT="$1" ROOT_PANES="$2" WS_LABELS="${WS_LABELS:-}" MARKED="${MARKED:-}" python3 -c '
+import glob, json, os
+root = os.environ["ROOT"]
+panes = []   # (pane, workspace) in listing order
+for line in os.environ["ROOT_PANES"].splitlines():
+    if line.strip():
+        pane, _, ws = line.partition("\t")
+        panes.append((pane, ws))
+if not panes:
+    raise SystemExit(0)
+labels = dict(l.split("\t", 1) for l in os.environ["WS_LABELS"].splitlines() if "\t" in l)
+marked = {}
+for l in os.environ["MARKED"].splitlines():
+    if "\t" in l:
+        p, sess = l.split("\t", 1)
+        marked.setdefault(p, set()).add(sess)
+recorded, sessions = set(), set()
+for f in sorted(glob.glob(os.path.join(root, ".autocoder", "swarm", "*.json"))):
+    try:
+        data = json.load(open(f, encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    if not isinstance(data, dict):
+        continue
+    if data.get("session"):
+        sessions.add(str(data["session"]))
+    m = data.get("manager")
+    if isinstance(m, dict) and m.get("herdrPane"):
+        recorded.add(str(m["herdrPane"]))
+name = "manager-" + os.path.basename(root)
+signals = [
+    ("the manifest records it as the manager", lambda p, w: p in recorded),
+    ("its workspace is named " + name, lambda p, w: labels.get(w) == name),
+    ("it carries the AUTOCODER_MANAGER marker",
+     lambda p, w: bool(marked.get(p)) and (not sessions or bool(marked[p] & sessions))),
+]
+cands, reason = panes, None
+for why, test in signals:
+    hit = [c for c in cands if test(*c)]
+    if hit:
+        cands = hit
+        if len(hit) == 1:
+            reason = why
+            break
+if len(cands) == 1:
+    pick = cands[0][0]
+    print("PICK\t%s\t%s" % (pick, reason or "the only agent in the root"))
+    for p, _ in panes:
+        if p != pick:
+            print("OTHER\t" + p)
+else:
+    print("AMBIGUOUS\t" + " ".join(p for p, _ in cands))
+'
+}
+
 # ── Host detection: printed so a run on a new host shows its decisions ───────
 MUX=none
 if herdr_is_running; then MUX=herdr
@@ -437,33 +508,38 @@ echo "reboot-recover: sentinel=$SENTINEL"
 PANES=""
 if [ "$MUX" = herdr ]; then
   agents_json=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr agent list 2>/dev/null) || agents_json=""
-  pane_ids=$(printf '%s' "$agents_json" | SELF_PANE="${HERDR_PANE_ID:-}" python3 -c '
-import json, os, sys
+  # Every agent pane, this one included: the manager choice below must see the
+  # pane running this script too (#291), and says so instead of hiding it.
+  pane_ids=$(printf '%s' "$agents_json" | python3 -c '
+import json, sys
 try:
     agents = json.load(sys.stdin)["result"]["agents"]
 except Exception:
     sys.exit(0)
 for a in agents:
-    p = a.get("pane_id")
-    if p and p != os.environ["SELF_PANE"]:
-        print(p)
+    if a.get("pane_id"):
+        print(a["pane_id"])
 ' 2>/dev/null)
   for pane in $pane_ids; do
     # foreground_cwd is the agent's own directory; cwd is the pane's shell.
-    cwd=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane get "$pane" 2>/dev/null | python3 -c '
+    info=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr pane get "$pane" 2>/dev/null | python3 -c '
 import json, sys
 try:
     p = json.load(sys.stdin)["result"]["pane"]
 except Exception:
     sys.exit(0)
-print(p.get("foreground_cwd") or p.get("cwd") or "")' 2>/dev/null)
+print((p.get("foreground_cwd") or p.get("cwd") or "") + "\t" + (p.get("workspace_id") or ""))' 2>/dev/null)
+    cwd="${info%%	*}"; ws="${info#*	}"
     [ -n "$cwd" ] || continue
     cwd=$(cd "$cwd" 2>/dev/null && pwd -P) || continue
-    PANES="$PANES$pane	$cwd
+    PANES="$PANES$pane	$cwd	$ws
 "
   done
   # Workspaces restored without an agent still name a directory, when herdr reports one.
-  WS_CWDS=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr workspace list 2>/dev/null | python3 -c '
+  # Also each workspace's name ("<id>\t<label>"): start-parallel-agents.sh names
+  # the manager's workspace manager-<project> (#291).
+  ws_json=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr workspace list 2>/dev/null) || ws_json=""
+  WS_CWDS=$(printf '%s' "$ws_json" | python3 -c '
 import json, sys
 try:
     wss = json.load(sys.stdin)["result"]["workspaces"]
@@ -472,6 +548,37 @@ except Exception:
 for w in wss:
     if w.get("cwd"):
         print(w["cwd"])' 2>/dev/null)
+  WS_LABELS=$(printf '%s' "$ws_json" | python3 -c '
+import json, sys
+try:
+    wss = json.load(sys.stdin)["result"]["workspaces"]
+except Exception:
+    sys.exit(0)
+for w in wss:
+    name = w.get("label") or w.get("custom_name") or ""
+    if w.get("workspace_id") and name:
+        print(w["workspace_id"] + "\t" + name)' 2>/dev/null)
+  # Panes whose processes carry the manager marker: "<pane>\t<session>" (Linux
+  # /proc only; elsewhere this signal is simply absent).
+  # AUTOCODER_PROC_ROOT stands in for /proc in tests.
+  MARKED=$(PROC="${AUTOCODER_PROC_ROOT:-/proc}" python3 -c '
+import os
+proc = os.environ["PROC"]
+for d in os.listdir(proc) if os.path.isdir(proc) else []:
+    if not d.isdigit():
+        continue
+    try:
+        env = open(os.path.join(proc, d, "environ"), "rb").read().split(b"\0")
+    except OSError:
+        continue
+    pane = mgr = None
+    for kv in env:
+        if kv.startswith(b"HERDR_PANE_ID="):
+            pane = kv[14:].decode("utf-8", "replace")
+        elif kv.startswith(b"AUTOCODER_MANAGER="):
+            mgr = kv[18:].decode("utf-8", "replace")
+    if pane and mgr:
+        print(pane + "\t" + mgr)' 2>/dev/null | sort -u)
 fi
 
 # ── 1. Find the swarms ───────────────────────────────────────────────────────
@@ -480,7 +587,7 @@ for p in ${PROJECTS[@]+"${PROJECTS[@]}"}; do CANDIDATES+=("$p"); done
 if [ "$ALL" = true ]; then
   while IFS= read -r p; do [ -n "$p" ] && CANDIDATES+=("$p"); done <<< "$(swarm_roots_list)"
 fi
-while IFS='	' read -r _ cwd; do [ -n "${cwd:-}" ] && CANDIDATES+=("$cwd"); done <<< "$PANES"
+while IFS='	' read -r _ cwd _; do [ -n "${cwd:-}" ] && CANDIDATES+=("$cwd"); done <<< "$PANES"
 while IFS= read -r cwd; do [ -n "$cwd" ] && CANDIDATES+=("$cwd"); done <<< "${WS_CWDS:-}"
 [ "${#CANDIDATES[@]}" -gt 0 ] || CANDIDATES+=("$PWD")
 
@@ -525,25 +632,40 @@ while IFS= read -r root; do
   case "$agent" in claude) pfx="autocoder:" ;; *) pfx="" ;; esac
   prompt="Run /${pfx}manager-resume --non-interactive and let it complete. Then run /${pfx}monitor-loop. You were woken by the idle sentinel (reason: reboot — the host restarted; recover every worktree's worker)."
 
-  # ── 2. Exactly one manager in the repo root ──
-  managers=""
-  while IFS='	' read -r pane cwd; do
+  # ── 2. One manager in the repo root ──
+  # Several agents can share the root (a person's own session beside the
+  # manager, #291), so the manager is the first of these that names exactly one
+  # of them: the manifest's manager pane, the workspace named manager-<project>,
+  # the AUTOCODER_MANAGER=<session> marker, and only then "the only agent here".
+  # The others are left alone.
+  root_panes=""
+  while IFS='	' read -r pane cwd ws; do
     [ -n "${pane:-}" ] || continue
-    [ "$(toplevel "$cwd")" = "$root" ] && managers="$managers${managers:+ }$pane"
+    [ "$(toplevel "$cwd")" = "$root" ] && root_panes="$root_panes$pane	${ws:-}
+"
   done <<< "$PANES"
-  # shellcheck disable=SC2086
-  set -- $managers
-  if [ $# -gt 1 ]; then
-    echo "⚠️  $# agent panes in $root ($managers): one manager per swarm expected; prompting none. Close the extras, then re-run."
+  pick=$(choose_manager "$root" "$root_panes")
+  chosen=$(printf '%s\n' "$pick" | sed -n 's/^PICK	\([^	]*\)	.*/\1/p')
+  why=$(printf '%s\n' "$pick" | sed -n 's/^PICK	[^	]*	//p')
+  others=$(printf '%s\n' "$pick" | sed -n 's/^OTHER	//p' | tr '\n' ' ' | sed 's/ $//')
+  ambiguous=$(printf '%s\n' "$pick" | sed -n 's/^AMBIGUOUS	//p')
+  if [ -n "$ambiguous" ]; then
+    n=$(printf '%s\n' $ambiguous | grep -c .)
+    echo "⚠️  $n agent panes in $root ($ambiguous) and nothing tells which is the manager (manifest manager pane, workspace manager-$(basename "$root"), AUTOCODER_MANAGER marker); prompting none. Close the extras, or rename the manager's workspace manager-$(basename "$root"), then re-run."
     FAILED=$((FAILED + 1)); continue
   fi
-  if [ $# -eq 1 ]; then
-    if [ "$DRY_RUN" = true ]; then
-      echo "   DRY-RUN would prompt restored manager pane $1"
-    elif send_agent_prompt herdr "$1" "$prompt"; then
-      echo "   prompted restored manager pane $1"; PROMPTED=$((PROMPTED + 1)); mark_done "$root"
+  if [ -n "$chosen" ]; then
+    for o in $others; do echo "   $(pane_label "$o"): not the manager, left alone"; done
+    if [ "$chosen" = "${HERDR_PANE_ID:-}" ] && [ "$DRY_RUN" != true ]; then
+      # Prompting the pane this runs in would type into its own input.
+      echo "   manager is $(pane_label "$chosen") ($why); not prompting the pane running this script"
+      mark_done "$root"
+    elif [ "$DRY_RUN" = true ]; then
+      echo "   DRY-RUN would prompt restored manager pane $(pane_label "$chosen") ($why)"
+    elif send_agent_prompt herdr "$chosen" "$prompt"; then
+      echo "   prompted restored manager pane $chosen ($why)"; PROMPTED=$((PROMPTED + 1)); mark_done "$root"
     else
-      echo "❌ could not prompt manager pane $1"; FAILED=$((FAILED + 1))
+      echo "❌ could not prompt manager pane $chosen"; FAILED=$((FAILED + 1))
     fi
     continue
   fi

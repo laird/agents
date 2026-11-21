@@ -42,6 +42,30 @@ unchanged; the resume brief lands in the session transcript.
 
 ## Instructions
 
+### Step 0: Register as the manager
+
+Record this session's pane as the swarm's manager before anything else (#291). After a
+reboot, `reboot-recover.sh` prompts the pane the manifest names as the manager, so a
+manager that never registered can be passed over for a person's own session in the same
+repo root.
+
+```bash
+# Outside a swarm (no manifest) swarm-register.sh prints a note and exits 0. A live
+# manager already recorded is left in place. Never fatal.
+REGISTER_SH=$(
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
+  done
+  find "$HOME/.claude/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+)
+if [ -n "$REGISTER_SH" ]; then
+  bash "$REGISTER_SH" --manager || echo "⚠️  swarm-register.sh failed; continuing without updating the manifest" >&2
+fi
+```
+
 ### Step 1: Read saved state
 
 ```bash
