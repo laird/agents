@@ -65,12 +65,12 @@ eq "change-only failure: red batch, defect, returned" "batch red defect gate
 change batched -
 change returned defect" "$(rows 7102)"
 
-run_one 7103 other.txt false
+run_one 7103 other.txt 'echo "FAIL shared"; false'
 eq "red base, landed anyway: red batch (red-integration), landed" "batch red red-integration gate
 change batched -
 change landed -" "$(rows 7103)"
 
-AUTOCODER_MERGE_ON_RED_BASE=0 run_one 7104 more.txt false
+AUTOCODER_MERGE_ON_RED_BASE=0 run_one 7104 more.txt 'echo "FAIL shared"; false'
 eq "red base, refused: red batch (red-integration), returned" "batch red red-integration gate
 change batched -
 change returned red-integration" "$(rows 7104)"

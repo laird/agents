@@ -156,6 +156,14 @@ setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && true" 2>&1); RC=$?
 [ "$(gate_runs)" -eq 1 ] && ok "(c') the same edit is disjoint when the gate does not run that file" || bad "(c') re-gated without reason ($(gate_runs) runs): $OUT"
 
+# ── (c''') a stage manifest names the scripts the gate runs, so they are gate paths too ──
+setup
+mkdir -p ci
+printf '%s\n' '{"version": 1, "stages": [{"name": "helper", "cmd": "bash scripts/helper.sh"}]}' > ci/stages.json
+git add -A; git commit -q -m "manifest"
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo "echo patched" >> scripts/helper.sh') && python3 $SCRIPT_DIR/stage-runner.py --manifest ci/stages.json" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && [ "$(gate_runs)" -eq 2 ] && echo "$OUT" | grep -q "scripts/helper.sh (a path the gate command runs)" && ok "(c''') a sibling editing a script a stage manifest runs re-gates" || bad "(c''') rc=$RC runs=$(gate_runs): $OUT"
+
 # ── (c'') a sibling renaming a file this change edits is an overlap, not a new path ──
 setup
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'git mv README.md README.rst')" 2>&1); RC=$?
@@ -185,9 +193,11 @@ OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --t
 echo "$OUT" | grep -q "passes alone, so this change broke it" && ok "(e) verdict blames this change" || bad "(e) verdict wrong: $OUT"
 [ -d "$(base_worktree)" ] && bad "(e) base worktree left behind" || ok "(e) base worktree cleaned up"
 
-# ── (f) integrated tree fails, base fails: red main, push anyway ────────────
+# ── (f) integrated tree fails, base fails the same way: red main, push anyway ─
+# Both runs name the same failing test; a red base is only ever read from that (a run
+# that names nothing, or an infrastructure refusal, is tests/test_merge_infrastructure_refusal.sh).
 setup
-GATE='echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs; false'
+GATE='echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs; echo "FAIL  tests/app.test.sh"; false'
 OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$GATE" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "(f) exit 0 on a red base" || bad "(f) rc=$RC: $OUT"
 git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "(f) fix landed on master" || bad "(f) fix did not land"
@@ -200,7 +210,7 @@ issue_body | grep -q "$BASE_TREE" && ok "(f) issue comment carries the base tree
 
 # ── (f') red base, then a disjoint re-sync: the published tree is neither gated tree ──
 setup
-OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' false)" 2>&1); RC=$?
+OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' 'echo "FAIL  tests/app.test.sh"; false')" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "(f') exit 0 on a red base followed by a disjoint re-sync" || bad "(f') rc=$RC: $OUT"
 [ "$(gate_runs)" -eq 2 ] && ok "(f') gate ran on the integrated tree and the base only" || bad "(f') gate ran $(gate_runs) time(s); want 2"
 echo "$OUT" | grep -q "on a red base followed by a disjoint re-sync" && echo "$OUT" | grep -q "is neither gated tree" && ok "(f') success line says the published tree is neither gated tree" || bad "(f') success line wrong: $OUT"

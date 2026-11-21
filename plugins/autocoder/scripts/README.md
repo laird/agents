@@ -705,3 +705,57 @@ on the first stdin line and the merge output after it, and may print `driver-fau
 scratch's fault: stop) or `generator-failed<TAB>detail` (this candidate's merge: drop it for this plan).
 
 Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend).
+
+## Parallel gate stages (#7016)
+
+A gate command that is one `&&` chain runs stages that do not depend on each other one after
+another. `stage-runner.py` reads the stages from a JSON manifest in the project, runs the
+independent ones at the same time inside a concurrency and a memory budget, and keeps what a chain
+gave: each stage's bounded output, a failing stage's block before the verdict, the verdict as the
+last line, and a timings summary. The project's doctrine file keeps its `### Regression Test Suite`
+block as ONE command, now an invocation of the runner:
+
+```bash
+python3 "${AUTOCODER_SCRIPTS_DIR}/stage-runner.py" --manifest ci/gate-stages.json
+```
+
+`merge-to-integration.sh` exports `AUTOCODER_SCRIPTS_DIR` to the gate (a hermetic gate lists it in
+`gate.env`), and it reads a `.json` manifest named in the gate command, so the scripts the manifest
+runs still count as gate paths for the scoped re-gate. Full manifest reference: the docstring of
+`stage-runner.py` (`--help` shows the CLI).
+
+```json
+{"version": 1, "concurrency": 4, "memory_budget_mib": 10000, "tree_guard": true,
+ "stages": [
+  {"name": "disk",    "cmd": "scripts/check-disk-space.sh",  "exclusive": true},
+  {"name": "install", "cmd": "scripts/install-deps.sh",      "exclusive": true},
+  {"name": "build",   "cmd": "npm run build",    "tail": 5,  "memory_mib": 6000, "est_s": 70},
+  {"name": "lint",    "cmd": "scripts/check-lint.sh",        "est_s": 60},
+  {"name": "types",   "cmd": "scripts/check-types.sh",       "memory_mib": 8000, "est_s": 120},
+  {"name": "tests",   "wrapper": "scripts/with-test-db.sh {inner}",
+   "stages": [{"name": "unit", "cmd": "npm test"}, {"name": "journey", "cmd": "scripts/journey.sh"}]}
+ ]}
+```
+
+- **Ordering is declared.** `needs` names prerequisites; nothing is inferred. An `exclusive` stage
+  is a barrier: it waits for every stage declared before it, runs alone, and every later stage waits
+  for it. Mutating stages (regeneration, a baseline ratchet, the dependency install) are exclusive
+  and declared before the stages that read the tree.
+- **The tree guard** (`"tree_guard": true`) records HEAD's tree and the tracked-file diff after the
+  last exclusive stage and fails the run if they differ when it ends, naming both. A group's
+  `wrapper` can carry a guard or shared state of its own (an isolated database created once): the
+  wrapper receives the group's inner schedule as one quoted argument.
+- **Memory.** A stage's `memory_mib` counts against the budget (default: this process's cgroup
+  `memory.max` minus 1 GiB) and is exported as `AUTOCODER_STAGE_MEMORY_MIB` for sizing a heap. A
+  stage bigger than the budget still runs, alone.
+- **Failure.** By default the first failure cancels the running stages and skips dependents
+  (`"on_failure": "finish"` lets running ones end). Exit 1; a manifest error exits 2 before anything
+  runs. `--serial` runs the same manifest one stage at a time, the chain's behaviour, for comparison.
+- **Output is printed in manifest order**, so the log reads the same whatever finished first, and a
+  heartbeat line keeps a no-output watchdog fed while an earlier stage is still running.
+- **Timings.** `--timings out.json` (or `AUTOCODER_STAGE_TIMINGS_FILE`) records seconds, status and
+  start offset per stage; `stage-runner.py --stage-args out.json` prints the `--stage name=secs`
+  words `landing-timings-lib.sh`'s `landing_batch` takes.
+
+Tests: `tests/test_stage_runner.py` (scripted stages) and the manifest case of
+`tests/test_merge_scoped_regate.sh`.
