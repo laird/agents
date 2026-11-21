@@ -704,7 +704,7 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
 ```json
 { "train": { "readyLabels": ["ready-for-review"], "priorityLabels": ["P0","P1","P2","P3"],
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
-             "notePattern": "^\\[coordinator\\]",
+             "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
              "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh" } } }
 ```
@@ -717,6 +717,52 @@ on the first stdin line and the merge output after it, and may print `driver-fau
 scratch's fault: stop) or `generator-failed<TAB>detail` (this candidate's merge: drop it for this plan).
 
 Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend).
+
+### Enqueue from a host that does not gate (`enqueue.sh`)
+
+A worker on a host that cannot run the project's pre-check or gate (missing tools, a supervisor that
+stops child processes, no test database) banks with `enqueue.sh --issue N` instead of the pre-check:
+
+```
+enqueue.sh --issue N [--branch B] [--repo DIR] [--remote NAME] [--integration BRANCH]
+           [--preflight-cmd CMD] [--build-cmd CMD] [--test-cmd CMD] [--test-pattern REGEX]
+           [--add-label L]... [--remove-label L]... [--note TEXT]... [--no-fetch] [--no-push] [--no-post] [--block-only]
+```
+
+The PREFLIGHT, in order, stopping at the first FAIL (the rest print SKIP): `fetch`; `rebase` (a clean
+working tree, HEAD rebased onto `<remote>/<integration>` when behind; a conflict is aborted and FAILS
+naming the files); `merge-tree` (clean, and the changed-file list is taken); then EITHER the project's
+`preflight` command (its own rows, its exit status) OR the generic `build` (the configured
+build-or-typecheck command) and `tests` rows (the configured test command with `{files}` replaced by the
+changed files that match the test pattern; no matching file is a named SKIP); `push`
+(`--force-with-lease`, since the rebase moved the tip). On PASS it posts the READY comment the queue reads
+(`READY \`<branch>\` @ <tip>`, the block in a fence, the project preflight's last lines, every `--note`
+line, such as a flag lifecycle line), adds the ready labels (`train.readyLabels`) and any `--add-label`,
+removes the working label (`working`, or `train.enqueue.workingLabel`) and any `--remove-label`, and
+records a `ready` landing-timings row. On FAIL nothing is pushed or posted (exit 1). `--block-only`
+prints the block and stops; `--no-post` prints the comment instead of posting it.
+
+Commands run through `bash -c` in the repository root with `AUTOCODER_ENQUEUE_BASE` (the integration tip
+sha), `AUTOCODER_ENQUEUE_INTEGRATION`, `AUTOCODER_ENQUEUE_CHANGED_FILE` (one changed path per line) and,
+for the tests row, `AUTOCODER_ENQUEUE_TEST_FILES`. Configuration, lowest precedence first: the
+`train.enqueue` object of `.autocoder.json`, the environment (`AUTOCODER_ENQUEUE_PREFLIGHT_CMD`,
+`_BUILD_CMD`, `_TEST_CMD`, `_TEST_PATTERN`, `_WORKING_LABEL`), the flags:
+
+```json
+{ "train": { "enqueue": { "preflightCmd": "scripts/preflight.sh",
+                          "buildCmd": "make typecheck", "testCmd": "npm test -- {files}",
+                          "testPattern": "\\.test\\.[a-z]+$", "workingLabel": "working" } } }
+```
+
+**How the queue takes it.** `pick_ready` reads the block (`preflightPattern`, default the
+`=== preflight (enqueue.sh): PASS ===` header) and sets the item's `basis`: `preflight` for such a READY,
+`ready` otherwise. The row is launchable like any other (the batch gate is its first full test), its note
+says so when nothing else does, the status line counts `N preflight`, and `queue` prints `basis` as its
+last column. Nothing in the planner or the train treats it differently: that is the point, a branch from a
+non-gating host lands through the same gate as every other.
+
+Tests: `tests/test_enqueue.sh` (every path against a fixture origin and the file backend, ending with the
+queue planning the enqueued branch) and the preflight cases of `tests/test_merge_train.py`.
 
 ## Parallel gate stages (#7016)
 

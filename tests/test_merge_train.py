@@ -115,6 +115,16 @@ def test_ready_comments_reads_blockquote_comments_of_the_file_backend():
     assert cs[0]["body"] == "READY on `a/b`\nsecond line"
 
 
+def test_ready_comments_keeps_a_multi_line_file_backend_comment_whole():
+    """issues-file.py writes a multi-line comment with its first line in the blockquote header and the rest as
+    written; every line up to the next header is that comment (the enqueue.sh block is read back whole)."""
+    issue = {"body": "spec\n\n> **2026-11-21 02:00** READY `a/b` @ abc\n\n```\n=== preflight (enqueue.sh): PASS === x\n```\nflag: none\n> **2026-11-21 03:00** later", "comments": []}
+    cs = T.ready_comments(issue)
+    assert [c["createdAt"] for c in cs] == ["2026-11-21T02:00:00Z", "2026-11-21T03:00:00Z"]
+    assert cs[0]["body"] == "READY `a/b` @ abc\n\n```\n=== preflight (enqueue.sh): PASS === x\n```\nflag: none"
+    assert cs[1]["body"] == "later"
+
+
 def test_ready_comments_keeps_tracker_timestamps_and_none_when_absent():
     issue = {"comments": [{"body": "x", "createdAt": "2026-01-01T00:00:00Z"}, {"body": "y"}]}
     assert [c["createdAt"] for c in T.ready_comments(issue)] == ["2026-01-01T00:00:00Z", None]
@@ -139,6 +149,52 @@ def test_pick_ready_note_pattern_skips_coordinator_notes_for_the_fallback(fx):
     cfg = T.load_config(fx.work, fx.root / "c.json")
     cs = [{"body": "READY from the worker", "createdAt": None}, {"body": "[coordinator] READY again please", "createdAt": None}]
     assert T.pick_ready(cfg, cs)["body"] == "READY from the worker"
+
+
+PREFLIGHT_BODY = ("READY `{b}` @ abc1234 (enqueued from a host that does not gate: preflight only, no pre-check; the batch gate is the first full test).\n\n"
+                  "```\n=== preflight (enqueue.sh): PASS === tree abc1234 on origin/master 0123456789 === host h === 3s\n"
+                  "PASS fetch   0s  origin/master at 0123456789\n=== preflight: PASS -- not gated on this host; the batch gate is the test ===\n```\nflag: none")
+
+
+def test_pick_ready_marks_a_preflight_ready_by_its_block_and_a_plain_one_as_ready(fx):
+    fx.branch("feature/pf", {"pf.txt": "1\n"})
+    cfg = fx.cfg()
+    pf = T.pick_ready(cfg, [{"body": PREFLIGHT_BODY.format(b="feature/pf"), "createdAt": None}])
+    assert (pf["branch"], pf["basis"]) == ("feature/pf", "preflight")
+    plain = T.pick_ready(cfg, [{"body": "READY `feature/pf`, prebank PASS", "createdAt": None}])
+    assert plain["basis"] == "ready"
+    failed = T.pick_ready(cfg, [{"body": PREFLIGHT_BODY.format(b="feature/pf").replace(": PASS ===", ": FAIL ==="), "createdAt": None}])
+    assert failed["basis"] == "ready"   # only the PASS block is a preflight READY; a pasted FAIL block is a plain (and odd) READY
+
+
+def test_preflight_pattern_is_configurable(fx):
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"preflightPattern": r"PREFLIGHTED BY HAND"}}))
+    cfg = T.load_config(fx.work, fx.root / "c.json")
+    assert T.ready_basis(cfg, "READY `a/b` PREFLIGHTED BY HAND") == "preflight"
+    assert T.ready_basis(cfg, PREFLIGHT_BODY.format(b="a/b")) == "ready"
+
+
+def test_queue_takes_a_preflight_ready_as_a_first_class_item_and_says_so(fx):
+    """The READY enqueue.sh posts (a host that does not gate) is launchable like any other; its row carries
+    basis `preflight`, its note says the batch gate is its first full test, the status line counts it, and
+    the planner trains it; a non-launchable preflight item keeps its own state's note."""
+    fx.branch("feature/pf", {"pf.txt": "1\n"})
+    fx.branch("feature/plain", {"plain.txt": "1\n"})
+    fx.branch("feature/pf-landed", {"pfl.txt": "1\n"})
+    pf = fx.issue("pf"); fx.comment(pf, PREFLIGHT_BODY.format(b="feature/pf"))
+    plain = fx.ready("plain", "feature/plain")
+    landed = fx.issue("pf-landed"); fx.comment(landed, PREFLIGHT_BODY.format(b="feature/pf-landed"))
+    fx.land("feature/pf-landed")
+    q = fx.queue()
+    assert (q[pf]["state"], q[pf]["basis"], q[pf]["note"]) == ("queue", "preflight", T.PREFLIGHT_NOTE)
+    assert (q[plain]["state"], q[plain]["basis"], q[plain]["note"]) == ("queue", "ready", "-")
+    assert (q[landed]["state"], q[landed]["basis"], q[landed]["note"]) == ("on-master", "preflight", "-")
+    line = T.status_line(list(q.values()), when="W")
+    assert "3 ready" in line and "| 2 preflight" in line
+    out, fault = fx.plan(size=4)
+    assert fault is None
+    assert [k for k in kinds(out) if k[0] == "train"] == [("train", pf), ("train", plain)]
+    assert any(r.startswith(f"train\t{pf}\tfeature/pf\t") and r.endswith(T.PREFLIGHT_NOTE) for r in out)
 
 
 def test_pick_ready_is_none_without_a_ready_comment(fx):
@@ -420,6 +476,7 @@ def test_cli_queue_and_plan_and_reopen(fx):
     q = sh(*base, "queue", "--status-line")
     assert q.stdout.splitlines()[0].count("merge-train: 1 ready") == 1
     assert q.stdout.splitlines()[1].split("\t")[:3] == ["1", "queue", str(a)]
+    assert q.stdout.splitlines()[1].split("\t")[8] == "ready"   # the basis column: `ready`, or `preflight` for enqueue.sh's READY
     p = sh(*base, "plan", "--size", "2")
     assert p.stdout.startswith(f"train\t{a}\tfeature/a\t")
     r = sh(*base, "reopen", "--issue", str(a), "--member-branch", "feature/a", "--landed", "origin/master")

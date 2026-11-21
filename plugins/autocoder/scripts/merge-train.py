@@ -2,7 +2,9 @@
 """merge-train.py -- the merge queue and train planner (library: train_lib.py).
 
   queue   [--in-flight N,N] [--status-line]   the ordered queue of READY issues, one TSV row per item:
-                                              order state issue branch tip rank created note
+                                              order state issue branch tip rank created note basis
+                                              (basis: `preflight` for a READY enqueue.sh posted from a
+                                              host that does not gate, else `ready`)
   plan    [--size N] [--in-flight N,N]        the next train: `train`, `skip` and `drop` rows; exits 2
                                               with the planner's fault when the plan cannot be trusted
   reopen  --issue N --member-branch B --landed SHA [--launched TS]
@@ -59,7 +61,7 @@ def main(argv=None):
             if a.status_line:
                 print(T.status_line(rows))
             for x in rows:
-                print("\t".join(str(x[k]) for k in ("order", "state", "issue", "branch", "tip", "rank", "created", "note")))
+                print("\t".join(str(x[k]) for k in ("order", "state", "issue", "branch", "tip", "rank", "created", "note", "basis")))
         elif a.cmd == "plan":
             rows = T.plan_queue(cfg, _ints(a.in_flight))
             out, fault = T.plan_train(cfg, rows, a.size)

@@ -32,6 +32,10 @@ SCRIPTS = Path(__file__).resolve().parent
 ISSUE_FNS = SCRIPTS / "issue-fns.sh"
 
 DEFAULT_READY_RE = r"(^|[^A-Za-z])READY([^A-Za-z]|$)"
+# The block enqueue.sh prints: a READY carrying it was preflighted on a host that does not gate, never
+# pre-checked, so the batch gate is its first full test. The queue takes it like any other READY and says so.
+DEFAULT_PREFLIGHT_RE = r"=== preflight \(enqueue\.sh\): PASS ==="
+PREFLIGHT_NOTE = "preflight READY (enqueued from a host that does not gate): the batch gate is its first full test"
 # `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
 BRANCH_SHAPE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$")
@@ -51,6 +55,7 @@ class Config:
     lane_labels: list = field(default_factory=lambda: ["hotfix"])
     ready_pattern: str = DEFAULT_READY_RE
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
+    preflight_pattern: str = DEFAULT_PREFLIGHT_RE   # a READY matching this was preflighted, not pre-checked (enqueue.sh)
     size: int = 4
     stale_days: int = 0             # 0 = a READY never goes stale
     classify_limit: int = 0         # 0 = merge-check every launchable item
@@ -91,9 +96,9 @@ def _default_integration(repo: Path, remote: str) -> str:
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, priorityLabels, laneLabels, readyPattern, notePattern, size, staleDays,
-    classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
-    seedDirs, seedMarker, hooks{prepareScratch, mergeFault}.
+    keys: readyLabels, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
+    seedDirs, seedMarker, hooks{prepareScratch, mergeFault}; `enqueue` is enqueue.sh's (see there).
     """
     env = os.environ if env is None else env
     repo = Path(repo).resolve()
@@ -117,6 +122,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
         note_pattern=raw.get("notePattern") or "",
+        preflight_pattern=raw.get("preflightPattern") or DEFAULT_PREFLIGHT_RE,
         size=int(env.get("AUTOCODER_TRAIN_SIZE") or raw.get("size") or 4),
         stale_days=int(raw.get("staleDays") or 0),
         classify_limit=int(raw.get("classifyLimit") or 0),
@@ -179,19 +185,18 @@ def ready_comments(issue: dict) -> list:
             out.append({"body": c.get("body") or "", "createdAt": c.get("createdAt") or c.get("created_at") or None})
     if out:
         return out
-    # The file backend keeps a comment as a blockquote appended to the body.
+    # The file backend keeps a comment as a blockquote appended to the body: `> **<time>** <first line>`,
+    # and the comment's remaining lines follow as they were written (a multi-line READY: the block in a
+    # fence). Comments are appended after the body, so once the first header is seen every line up to the
+    # next header belongs to the comment before it; a `> ` prefix on such a line is stripped.
     cur = None
     for line in (issue.get("body") or "").splitlines():
         m = BLOCKQUOTE_COMMENT_RE.match(line)
         if m:
             cur = {"body": m.group(2), "createdAt": _iso(m.group(1))}
             out.append(cur)
-        elif cur is not None and line.startswith("> "):
-            cur["body"] += "\n" + line[2:]
-        elif cur is not None and line.strip() == "":
-            cur["body"] += "\n"
-        else:
-            cur = None
+        elif cur is not None:
+            cur["body"] += "\n" + (line[2:] if line.startswith("> ") else line)
     for c in out:
         c["body"] = c["body"].strip()
     return out
@@ -211,14 +216,21 @@ def branch_candidates(body: str, extra_exclude=()) -> list:
     return out
 
 
+def ready_basis(cfg: Config, body: str) -> str:
+    """'preflight' when the READY carries enqueue.sh's PASS block (preflighted on a host that does not gate,
+    never pre-checked: the batch gate is its first full test), else 'ready'."""
+    return "preflight" if cfg.preflight_pattern and re.search(cfg.preflight_pattern, body or "") else "ready"
+
+
 def pick_ready(cfg: Config, comments: list):
-    """The READY an item is read from: {createdAt, body, branch|None, candidates}, or None.
+    """The READY an item is read from: {createdAt, body, branch|None, candidates, basis}, or None.
 
     Of the comments that say READY, newest first, the first that names a branch existing on the
     remote wins. A comment naming no branch is passed over, so a coordinator's later "rebase and
     re-READY" note never shadows the worker's READY. When none names an existing branch, the newest
     READY that is not a coordinator's note stands (else the newest), so the no-branch report still
-    quotes what the worker said.
+    quotes what the worker said. `basis` is ready_basis() of the comment picked: a preflight READY
+    (enqueue.sh) is a first-class item, taken and gated like any other, and the row says what it is.
     """
     ready_re = re.compile(cfg.ready_pattern)
     note_re = re.compile(cfg.note_pattern) if cfg.note_pattern else None
@@ -230,8 +242,9 @@ def pick_ready(cfg: Config, comments: list):
         cands = branch_candidates(c["body"], {cfg.integration})
         for b in cands:
             if branch_exists(cfg, b):
-                return {**c, "branch": b, "candidates": cands}
-    return {**newest_worker, "branch": None, "candidates": branch_candidates(newest_worker["body"], {cfg.integration})}
+                return {**c, "branch": b, "candidates": cands, "basis": ready_basis(cfg, c["body"])}
+    return {**newest_worker, "branch": None, "candidates": branch_candidates(newest_worker["body"], {cfg.integration}),
+            "basis": ready_basis(cfg, newest_worker["body"])}
 
 
 # ── overrides, launched tips, train state ───────────────────────────────────────────────
@@ -499,7 +512,10 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
 
 
 def plan_queue(cfg: Config, in_flight=(), now=None):
-    """The ordered queue: [{order, state, issue, branch, tip, rank, created, note}].
+    """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis}].
+
+    `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
+    its first full test; a launchable one's note says so), else `ready`.
 
     Order: `first` rows in file order, then the lane (lane-labelled items), then priority rank, then
     age (the tracker's createdAt when it reports one, else the issue number), then number. The order
@@ -524,16 +540,20 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         state, tip, note = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now)
         if not skip and state in ("queue", "launched"):
             found += 1
+        basis = picked.get("basis") or "ready"
+        if basis == "preflight" and state == "queue" and note == "-":
+            note = PREFLIGHT_NOTE
         rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or "-", "tip": tip,
-                     "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": note})
+                     "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": note, "basis": basis})
     return rows
 
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, nob = {}, None, []
+    counts, nxt, nob, preflight = {}, None, [], 0
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
+        preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
             nxt = f"#{r['issue']} {r['branch']} @ {r['tip']}"
         if r["state"] == "no-branch":
@@ -544,6 +564,8 @@ def status_line(rows, when=None):
     for s in order:
         if counts.get(s):
             line += f" | {counts[s]} {s}" + (f" ({','.join(nob)})" if s == "no-branch" else "")
+    if preflight:
+        line += f" | {preflight} preflight"
     return line
 
 
