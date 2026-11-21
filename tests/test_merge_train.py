@@ -68,11 +68,33 @@ class Fixture:
         sh("git", "checkout", "-q", "master", cwd=self.work)
         sh("git", "fetch", "-q", "origin", cwd=self.work)
 
-    def land(self, name):
-        """Merge the branch into master and push, as a landing would."""
+    def land(self, name, how="merge"):
+        """Land the branch on master and push: a merge commit, a rebase (cherry-pick of its commits) or a
+        squash (one commit, as the gate lands a branch that holds merge commits)."""
         sh("git", "checkout", "-q", "-B", "master", "origin/master", cwd=self.work)
-        sh("git", "merge", "-q", "--no-ff", "-m", f"land {name}", f"origin/{name}", cwd=self.work)
+        if how == "merge":
+            sh("git", "merge", "-q", "--no-ff", "-m", f"land {name}", f"origin/{name}", cwd=self.work)
+        elif how == "rebase":
+            sh("git", "cherry-pick", f"origin/master..origin/{name}", cwd=self.work)
+        else:
+            sh("git", "merge", "-q", "--squash", f"origin/{name}", cwd=self.work)
+            sh("git", "commit", "-q", "-m", f"squash of {name}", cwd=self.work)
         sh("git", "push", "-q", "origin", "master", cwd=self.work)
+        sh("git", "fetch", "-q", "origin", cwd=self.work)
+
+    def commit_on(self, name, files, message="more"):
+        """One more commit on an existing branch (or on master), pushed."""
+        sh("git", "checkout", "-q", "-B", name, f"origin/{name}", cwd=self.work)
+        for p, c in files.items():
+            (self.work / p).parent.mkdir(parents=True, exist_ok=True)
+            if c is None:
+                (self.work / p).unlink()
+            else:
+                (self.work / p).write_text(c)
+        sh("git", "add", "-A", cwd=self.work)
+        sh("git", "commit", "-q", "-m", message, cwd=self.work)
+        sh("git", "push", "-q", "origin", name, cwd=self.work)
+        sh("git", "checkout", "-q", "master", cwd=self.work)
         sh("git", "fetch", "-q", "origin", cwd=self.work)
 
     def issue(self, title, labels=("ready-for-review",), body=""):
@@ -196,6 +218,38 @@ def test_queue_states(fx):
     assert q[onm]["state"] == "on-master"
     assert q[c1]["state"] == "on-master"
     assert q[c2]["state"] == "conflict" and "README.md" in q[c2]["note"] and "prefilter" in q[c2]["note"]
+
+
+def test_landing_proof_names_how_master_carries_a_branch(fx):
+    cfg = fx.cfg()
+    fx.branch("feature/merged", {"a.txt": "1\n"})
+    fx.land("feature/merged")
+    fx.branch("feature/rebased", {"b.txt": "1\n"})
+    fx.commit_on("master", {"m.txt": "1\n"})   # master moved, so the rebase rewrites the commit
+    fx.land("feature/rebased", how="rebase")
+    fx.branch("feature/squashed", {"c.txt": "1\n"})
+    fx.commit_on("feature/squashed", {"d.txt": "1\n"})
+    fx.land("feature/squashed", how="squash")
+    fx.branch("feature/open", {"e.txt": "1\n"})
+    assert T.landing_proof(cfg, "origin/feature/merged") == "ancestor"
+    assert T.landing_proof(cfg, "origin/feature/rebased") == "patch"
+    assert T.landing_proof(cfg, "origin/feature/squashed") == "content"
+    assert T.landing_proof(cfg, "origin/feature/open") == ""
+    fx.commit_on("master", {"README.md": "edited after the landings\n"})
+    assert T.landing_proof(cfg, "origin/feature/squashed") == "content"   # a later landing elsewhere does not unland it
+    fx.commit_on("master", {"c.txt": None}, "revert part of the squash")
+    assert T.landing_proof(cfg, "origin/feature/squashed") == ""          # its work is no longer all there
+
+
+def test_queue_reads_a_squash_landed_branch_as_on_master_and_a_planner_never_retakes_it(fx):
+    fx.branch("feature/sq", {"s.txt": "1\n"})
+    fx.commit_on("feature/sq", {"t.txt": "1\n"})
+    n = fx.ready("sq", "feature/sq")
+    fx.land("feature/sq", how="squash")
+    q = fx.queue()
+    assert (q[n]["state"], q[n]["note"]) == ("on-master", "landing proof: content")
+    out, fault = fx.plan()
+    assert fault is None and not [r for r in out if r.startswith("train\t")]
 
 
 def test_launched_tip_is_not_queued_again_until_retry_or_a_new_tip(fx):

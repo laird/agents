@@ -159,6 +159,29 @@ def short_tip(cfg: Config, branch: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else "-"
 
 
+def landing_proof(cfg: Config, tip, ref=None) -> str:
+    """How <ref> (default: the integration branch) carries <tip>'s work; "" when it does not.
+
+    `ancestor`  tip is in ref's history (a merge or fast-forward landing);
+    `patch`     every commit of tip is patch-equivalent to one in ref (a rebase landing, `git cherry`);
+    `content`   merging tip into ref adds nothing: the merge's tree IS ref's tree (`git merge-tree`).
+                A squash landing (one commit for a train of members, or for a branch with merge
+                commits) is proven only this way, and it survives later landings that touch other
+                hunks of the same files.
+    A tip with no commit of its own (ref already is its tip) is `ancestor`.
+    """
+    ref = ref or cfg.ref
+    if git(cfg.repo, "merge-base", "--is-ancestor", tip, ref).returncode == 0:
+        return "ancestor"
+    cherry = git(cfg.repo, "cherry", ref, tip)
+    if cherry.returncode == 0 and not any(ln.startswith("+") for ln in cherry.stdout.splitlines()):
+        return "patch"
+    merged = git(cfg.repo, "merge-tree", "--write-tree", "--no-messages", ref, tip)
+    if merged.returncode == 0 and merged.stdout.split("\n", 1)[0].strip() == git(cfg.repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip():
+        return "content"
+    return ""
+
+
 # ── READY pickup ────────────────────────────────────────────────────────────────────────
 def _iso(ts: str) -> str:
     """'2026-11-21 02:00' (file backend) -> '2026-11-21T02:00:00Z'; an ISO string passes through."""
@@ -474,8 +497,9 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     if skip_merge_check:
         return ("unchecked", tip, "not merge-checked: enough launchable items were found ahead of it (classifyLimit)")
     ref = cfg.remote_ref(branch)
-    if not any(ln.startswith("+") for ln in git(cfg.repo, "cherry", cfg.ref, ref).stdout.splitlines()):
-        return ("on-master", tip, "-")
+    proof = landing_proof(cfg, ref)
+    if proof:
+        return ("on-master", tip, f"landing proof: {proof}")
     pre = merge_prefilter(cfg, cfg.repo, ref, cfg.ref)
     if pre[0] == "conflict":
         owned = f"; a merge driver owns the other conflicting path(s) {pre[2]}, which the real merge decides" if pre[2] else ""
@@ -639,7 +663,7 @@ def newer_ready(cfg: Config, issue, member_branch, landed, launched=None):
     if branch == member_branch and not (launched and picked["createdAt"] and picked["createdAt"] > launched):
         return None
     tip = git(cfg.repo, "rev-parse", "--verify", "--quiet", cfg.remote_ref(branch) + "^{commit}").stdout.strip()
-    if not tip or git(cfg.repo, "merge-base", "--is-ancestor", tip, landed).returncode == 0:
+    if not tip or landing_proof(cfg, tip, landed):
         return None
     return {"branch": branch, "tip": tip, "createdAt": picked["createdAt"] or ""}
 

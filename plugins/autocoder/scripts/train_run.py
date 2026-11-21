@@ -74,14 +74,14 @@ class RunConfig:
     report_issue: str = ""         # where batch-level notes go; empty = member issues only
     swarm: str = "merge-train"     # every tracker write starts with this
     timings_cmd: str = ""          # default: landing-timings.py beside this file, when present
-    hooks: dict = field(default_factory=dict)   # preflight, regenerate, attribute (plus slice 1's)
+    hooks: dict = field(default_factory=dict)   # preflight, regenerate, attribute, landed (plus slice 1's)
     gate_log_dir: Path = None
 
 
 def load_run_config(repo, config_file=None, env=None) -> RunConfig:
     """Slice 1's Config plus the keys this slice reads from the same `train` object:
     gate, gateIssue, testCmd, batchStart, batchMin, batchMax, maxGates, infraRegates, infraPattern,
-    reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute}."""
+    reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute, landed}."""
     env = os.environ if env is None else env
     cfg = T.load_config(repo, config_file, env)
     path = Path(config_file) if config_file else T._main_worktree(cfg.repo) / ".autocoder.json"
@@ -276,13 +276,10 @@ class Reporter:
 
 # ── git helpers ─────────────────────────────────────────────────────────────────────────
 def tip_landed(cfg: T.Config, tip, ref=None):
-    """A member is landed when its commits are in the integration branch: an ancestor, or (the gate
-    lands by rebase, which rewrites commits) every commit patch-equivalent to one already there."""
-    ref = ref or cfg.ref
-    if T.git(cfg.repo, "merge-base", "--is-ancestor", tip, ref).returncode == 0:
-        return True
-    cherry = T.git(cfg.repo, "cherry", ref, tip)
-    return cherry.returncode == 0 and not any(ln.startswith("+") for ln in cherry.stdout.splitlines())
+    """A member is landed when the integration branch carries its work: an ancestor, every commit
+    patch-equivalent to one already there (the gate lands by rebase), or the content itself (the gate
+    squashes a branch with merge commits, so a train lands as ONE commit). See T.landing_proof."""
+    return bool(T.landing_proof(cfg, tip, ref))
 
 
 def changed_files(cfg: T.Config, base, tip):
@@ -434,8 +431,9 @@ class Cycle:
         for m in old.get("members", []):
             if m["status"] in ("landed", "returned"):
                 continue
-            if tip_landed(self.cfg, m["tip"]):
-                self._close_out(m, landed=T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip(), train=old.get("train", "?"))
+            proof = T.landing_proof(self.cfg, m["tip"])
+            if proof:
+                self._close_out(m, landed=T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip(), train=old.get("train", "?"), proof=proof)
             else:
                 m["status"] = "requeued"
         for br in old.get("trainBranches", []):
@@ -453,6 +451,7 @@ class Cycle:
         if not ok:
             raise FaultError(f"the scratch toolchain is not working ({why}); fix the scratch at {scratch}")
         base = T.git(c.repo, "rev-parse", c.ref, check=True).stdout.strip()
+        self.record["base"] = base
         self.seq += 1
         train = f"train/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{self.seq}"
         assembled, conflicted = [], []
@@ -646,13 +645,16 @@ class Cycle:
 
     # ----- publish and close-out -----
     def publish(self, train, members, landed, log_path):
+        """Each member is proven against the LANDED commit (not the moving integration branch), closed out
+        with the proof that applied, and only then the project's `landed` hook runs, once per landing."""
         c = self.cfg
         T.git(c.repo, "fetch", c.remote, "-q")
-        unlanded = [m for m in members if not tip_landed(c, m["tip"])]
+        proofs = {m["issue"]: T.landing_proof(c, m["tip"], landed) for m in members}
+        unlanded = [m for m in members if not proofs[m["issue"]]]
         for m in members:
             if m in unlanded:
                 continue
-            self._close_out(m, landed, train)
+            self._close_out(m, landed, train, proofs[m["issue"]])
         if unlanded:
             self.log(f"{train}: the gate says landed but {', '.join('#' + m['issue'] for m in unlanded)} is not in {c.ref}: not closed, left in the queue")
             self._set_status(unlanded, "requeued", "not found in the integration branch after the gate; nothing closed")
@@ -660,15 +662,34 @@ class Cycle:
         else:
             self.say.report(f"{train}: landed `{landed[:10]}`: {' '.join('#' + m['issue'] for m in members)}")
         T.git(c.repo, "push", "-q", c.remote, "--delete", train)
+        self.landed_hook(train, [m for m in members if m not in unlanded], unlanded, landed)
 
-    def _close_out(self, m, landed, train):
+    def landed_hook(self, train, members, unlanded, landed):
+        """The project's close-out after a landing (an upstream sync, a drift check, a deploy note), run in
+        the repo with the landing in its environment: the integration branch moved, whether or not every
+        member was proven in it. It cannot unland anything: a failure is logged and reported, the members
+        stay closed."""
+        hook = self.rc.hooks.get("landed")
+        if not hook:
+            return
+        rows = lambda ms: "\n".join(f"{m['issue']}\t{m['tip']}\t{m['branch']}" for m in ms)
+        env = {**os.environ, "AUTOCODER_TRAIN_LANDED": landed, "AUTOCODER_TRAIN_BASE": self.record.get("base", ""),
+               "AUTOCODER_TRAIN_BRANCH": train, "AUTOCODER_TRAIN_INTEGRATION": self.cfg.integration,
+               "AUTOCODER_TRAIN_MEMBERS": rows(members), "AUTOCODER_TRAIN_UNLANDED": rows(unlanded)}
+        r = subprocess.run(["bash", "-c", hook], capture_output=True, text=True, cwd=str(self.cfg.repo), env=env)
+        if r.returncode != 0:
+            tail = ((r.stdout + r.stderr).strip().splitlines() or ["(no output)"])[-1][:200]
+            self.log(f"landed hook exited {r.returncode} after {train} landed as {landed[:10]} (the landing stands): {tail}")
+            self.say.report(f"{train}: the `landed` hook exited {r.returncode} after `{landed[:10]}` landed (`{tail}`); the landing stands, run the hook by hand.")
+
+    def _close_out(self, m, landed, train, proof="ancestor"):
         c = self.cfg
         cur = remote_tip(c, m["branch"])
-        kept = bool(cur) and not tip_landed(c, cur)
+        kept = bool(cur) and not T.landing_proof(c, cur, landed)
         self._set_status([m], "landed", landed[:10])
         self.landed_total.append(m["issue"])
         self.timing("change", "--issue", m["issue"], "--event", "landed", "--batch", train.replace("/", "-"))
-        self.say.say(m["issue"], f"landed on `{c.integration}` as `{landed[:10]}` in **{train}** (the tested tree is the published tree). Branch `{m['branch']}` @ `{m['tip'][:10]}` merged"
+        self.say.say(m["issue"], f"landed on `{c.integration}` as `{landed[:10]}` in **{train}** (the tested tree is the published tree; landing proof: {proof}). Branch `{m['branch']}` @ `{m['tip'][:10]}` merged"
                      + (f"; origin/{m['branch']} kept at `{cur[:10]}` (moved after the plan, not in the train: re-bank it if it adds work)." if kept else " and deleted."), close=True)
         try:
             T.reopen_if_newer_ready(c, m["issue"], m["branch"], landed)

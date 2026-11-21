@@ -676,7 +676,8 @@ plan it although its tip was already launched. `#` lines and blank lines are ign
 
 **Item states** printed by `queue`: `queue` (launchable), `launched` (this tip already launched), `hold`,
 `in-flight` (`--in-flight`), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
-again), `stale` (`staleDays`), `on-master`, `conflict` (the merge-tree prefilter, or a real merge),
+again), `stale` (`staleDays`), `on-master` (the integration branch carries the branch's work: an ancestor, a patch-equivalent rebase, or the content itself after a squash landing; the note names the proof),
+`conflict` (the merge-tree prefilter, or a real merge),
 `driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
 (`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote).
 
