@@ -370,8 +370,13 @@ class Cycle:
             self.log(f"ABORT: the launch preflight failed; nothing was cut or planned:\n{pre}")
             return 1, []
         limit = size or self.state.limit()
+        t_plan = time.time()
         rows = T.plan_queue(c)
-        out, fault = T.plan_train(c, rows, limit)
+        # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
+        # sum, beside the gate time in the landing report. The merges run hooks off; the project's
+        # regeneration runs once, on the assembled tree (assemble -> regenerate).
+        out, fault = T.plan_train(c, rows, limit, on_candidate=lambda i, k, s: self.timing("plan", "--issue", i, "--verdict", k, "--seconds", f"{s:.1f}"))
+        plan_s = int(time.time() - t_plan)
         for ln in out:
             if ln.startswith("drop\t"):
                 _, issue, branch, tip, reason = ln.split("\t", 4)
@@ -386,11 +391,11 @@ class Cycle:
                 _, issue, branch, tip, note = (ln.split("\t", 4) + [""])[:5]
                 members.append({"issue": issue, "branch": branch, "tip": self._full(tip, branch), "status": "planned", "note": note})
         if not members:
-            self.log("no clean READY branch to train")
+            self.log(f"no clean READY branch to train (planning took {plan_s}s)")
             return 0, []
         self.record = {"started": now_iso(), "limit": limit, "members": members, "sets": []}
         self.state.save_cycle(self.record)
-        self.log(f"planned {len(members)} member(s) (limit {limit}): " + " ".join(f"#{m['issue']}" for m in members))
+        self.log(f"planned {len(members)} member(s) (limit {limit}) in {plan_s}s: " + " ".join(f"#{m['issue']}" for m in members))
         first = self.gate_set(members, first=True)
         if first == "red":
             self.bisect_or_attribute(members)

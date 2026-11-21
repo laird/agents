@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append landing-timing rows: one per CHANGE event, one per BATCH.
+"""Append landing-timing rows: one per CHANGE event, one per BATCH, one per PLAN candidate.
 
 Generic by design: ids and numbers only, no project, branch or person names. A
 project's gate, queue or train script calls this at the moments it owns; the
@@ -20,11 +20,17 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
         [--push-rejected N] [--ts ISO]
       gate_s defaults to the sum of the stages. discarded_gate_s is the gate time spent on
       trees a later re-sync replaced; it is waste even when the batch ends green.
+  plan --issue N --verdict train|skip|drop|fault --seconds S [--batch ID] [--ts ISO]
+      one candidate the train planner judged: what it decided and the seconds its probe took
+      (prefilter, real merge, merge drivers). A cycle's planning time is the sum of its rows; the
+      report shows it beside the gate time, because a probe that regenerates the tree per
+      candidate is a fixed cost of every cycle nobody sees in a gate log.
 
 Row schema (v1), also the contract for a project's own writers:
   {"v":1,"ts","kind":"change","issue":N,"event":E,"batch":ID|null,"cause":C|null}
   {"v":1,"ts","kind":"batch","batch":ID,"members":[N..],"assembly_s","stages":{name:s},
    "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected"}
+  {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null}
 Absent numbers are null, never 0: the report tells "not measured" from "took no time".
 """
 
@@ -41,6 +47,7 @@ from pathlib import Path
 CHANGE_EVENTS = ("claimed", "ready", "batched", "landed", "returned", "rebase", "precheck")
 CAUSES = ("defect", "conflict", "stale-base", "red-integration", "infra", "docs-resync", "other")
 VERDICTS = ("green", "red", "aborted", "infra")
+PLAN_VERDICTS = ("train", "skip", "drop", "fault")
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 ISO_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
@@ -121,6 +128,11 @@ def batch_row(a: argparse.Namespace) -> dict:
             "resyncs": a.resyncs, "push_rejected": a.push_rejected}
 
 
+def plan_row(a: argparse.Namespace) -> dict:
+    return {"v": 1, "ts": _ts(a.ts), "kind": "plan", "issue": a.issue, "verdict": a.verdict,
+            "seconds": _num(a.seconds, "--seconds"), "batch": _id(a.batch, "--batch") if a.batch else None}
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Append a landing-timings row.")
     p.add_argument("--log-path", default=None, help="override the file (tests)")
@@ -144,13 +156,19 @@ def parser() -> argparse.ArgumentParser:
     b.add_argument("--resyncs", type=int)
     b.add_argument("--push-rejected", type=int)
     b.add_argument("--ts")
+    pl = sub.add_parser("plan")
+    pl.add_argument("--issue", type=int, required=True)
+    pl.add_argument("--verdict", required=True, choices=PLAN_VERDICTS)
+    pl.add_argument("--seconds", type=float, required=True)
+    pl.add_argument("--batch")
+    pl.add_argument("--ts")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
     try:
-        row = change_row(a) if a.kind == "change" else batch_row(a)
+        row = {"change": change_row, "batch": batch_row, "plan": plan_row}[a.kind](a)
     except ValueError as e:
         print(f"landing-timings: {e}", file=sys.stderr)
         return 2

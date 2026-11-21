@@ -427,6 +427,50 @@ def test_seed_dirs_are_hardlink_copies_and_reseeded_when_the_marker_changes(fx):
     assert "deps is not present" in T.seed_scratch(cfg, scratch)[0]
 
 
+
+# ── the planner's merges run hooks off; the probe is timed ──────────────────────────────
+def install_post_merge_hook(fx, marker):
+    """A repository post-merge hook that appends a line to <marker>, shared by every worktree of the repo."""
+    hooks = fx.root / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text(f"#!/bin/sh\necho hook >> '{marker}'\n")
+    (hooks / "post-merge").chmod(0o755)
+    sh("git", "config", "core.hooksPath", str(hooks), cwd=fx.work)
+
+
+def test_the_planner_merges_with_hooks_off_so_a_post_merge_hook_never_runs_per_candidate(fx):
+    fx.branch("feature/a", {"a.txt": "a\n"})
+    fx.branch("feature/b", {"b.txt": "b\n"})
+    fx.branch("feature/c", {"c.txt": "c\n"})
+    marker = fx.root / "hook-marker"
+    install_post_merge_hook(fx, marker)
+    # The hook is live: a plain merge in the work tree fires it once.
+    sh("git", "checkout", "-q", "-B", "probe", "origin/master", cwd=fx.work)
+    sh("git", "merge", "--no-ff", "-q", "-m", "probe", "origin/feature/a", cwd=fx.work)
+    assert marker.read_text().split() == ["hook"]
+    marker.unlink()
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    for b in ("feature/a", "feature/b", "feature/c"):
+        fx.ready(b, b)
+    out, fault = fx.plan(size=3)
+    assert fault is None
+    assert [ln.split("\t")[2] for ln in out if ln.startswith("train\t")] == ["feature/a", "feature/b", "feature/c"]
+    assert not marker.exists(), "the planner's candidate merges ran the repository's post-merge hook"
+
+
+def test_plan_train_reports_each_candidate_s_verdict_and_seconds(fx):
+    fx.branch("feature/a", {"a.txt": "a\n"})
+    fx.branch("feature/b", {"a.txt": "b\n"})   # clean onto master, conflicts with feature/a on the train so far
+    fx.branch("feature/c", {"c.txt": "c\n"})
+    issues = [fx.ready(b, b) for b in ("feature/a", "feature/b", "feature/c")]
+    seen = []
+    cfg = fx.cfg()
+    out, fault = T.plan_train(cfg, T.plan_queue(cfg), 3, on_candidate=lambda i, k, s: seen.append((i, k, s)))
+    assert fault is None
+    assert [(i, k) for i, k, _ in seen] == [(issues[0], "train"), (issues[1], "skip"), (issues[2], "train")]
+    assert all(isinstance(s, float) and s >= 0 for _, _, s in seen)
+    assert sum(1 for ln in out if ln.startswith("train\t")) == 2
+
 # ── reopen ──────────────────────────────────────────────────────────────────────────────
 def test_reopen_when_the_newest_ready_names_a_branch_the_landing_did_not_carry(fx):
     fx.branch("feature/lower", {"lower.txt": "1\n"})

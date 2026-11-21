@@ -4,7 +4,9 @@
   queue   [--in-flight N,N] [--status-line]   the ordered queue of READY issues, one TSV row per item:
                                               order state issue branch tip rank created note
   plan    [--size N] [--in-flight N,N]        the next train: `train`, `skip` and `drop` rows; exits 2
-                                              with the planner's fault when the plan cannot be trusted
+                                              with the planner's fault when the plan cannot be trusted;
+                                              every merge runs hooks off, and each candidate's probe
+                                              seconds go to stderr (`# plan: #N <kind> <s>s`)
   reopen  --issue N --member-branch B --landed SHA [--launched TS]
                                               reopen an issue a landing closed while a newer READY names
                                               a branch that landing did not carry
@@ -62,7 +64,8 @@ def main(argv=None):
                 print("\t".join(str(x[k]) for k in ("order", "state", "issue", "branch", "tip", "rank", "created", "note")))
         elif a.cmd == "plan":
             rows = T.plan_queue(cfg, _ints(a.in_flight))
-            out, fault = T.plan_train(cfg, rows, a.size)
+            # Each candidate's probe time on stderr (a dry plan is not a cycle, so no timing row is written).
+            out, fault = T.plan_train(cfg, rows, a.size, on_candidate=lambda i, k, s: print(f"# plan: #{i} {k} {s}s", file=sys.stderr))
             print("\n".join(out))
             if fault:
                 print(f"fault\t{fault}")

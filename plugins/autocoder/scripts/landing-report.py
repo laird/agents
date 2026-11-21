@@ -113,7 +113,7 @@ def load_rows(path):
                 continue
             try:
                 r = json.loads(line)
-                if isinstance(r, dict) and parse_ts(r.get("ts")) and r.get("kind") in ("change", "batch"):
+                if isinstance(r, dict) and parse_ts(r.get("ts")) and r.get("kind") in ("change", "batch", "plan"):
                     rows.append(r)
                 else:
                     bad += 1
@@ -143,6 +143,13 @@ def analyze(rows, since, until, bucket="week"):
     for v in ev.values():
         v.sort(key=lambda x: x[0])
     batches = [r for r in rows if r["kind"] == "batch" and inwin(r)]
+    # planning: the train planner's candidate probes (one `plan` row each; seconds and verdict)
+    plans = [r for r in rows if r["kind"] == "plan" and inwin(r) and isinstance(r.get("seconds"), (int, float))]
+    plan_by = {}
+    for r in plans:
+        d = plan_by.setdefault(r.get("verdict") or "unknown", {"n": 0, "s": 0.0})
+        d["n"] += 1
+        d["s"] += r["seconds"]
 
     # waste: gate-minutes
     measured = [b for b in batches if b.get("gate_s") is not None]
@@ -204,7 +211,7 @@ def analyze(rows, since, until, bucket="week"):
     resyncs = sum(b.get("resyncs") or 0 for b in batches)
 
     # buckets: waste, returns and capacity vs demand
-    bk = defaultdict(lambda: {"ready": 0, "landed": 0, "batches": 0, "gate_s": 0.0, "wasted_s": 0.0,
+    bk = defaultdict(lambda: {"ready": 0, "landed": 0, "batches": 0, "gate_s": 0.0, "wasted_s": 0.0, "plan_s": 0.0,
                               "returned": set(), "seen": set()})
     for i, es in ev.items():
         for t, e, r in es:
@@ -228,6 +235,8 @@ def analyze(rows, since, until, bucket="week"):
                 b["wasted_s"] += r["gate_s"]
             elif r.get("discarded_gate_s"):
                 b["wasted_s"] += r["discarded_gate_s"]
+    for r in plans:
+        bk[bucket_key(parse_ts(r["ts"]), bucket)]["plan_s"] += r["seconds"]
 
     return {
         "window": {"since": iso(since) if since else None, "until": iso(until) if until else None},
@@ -246,6 +255,8 @@ def analyze(rows, since, until, bucket="week"):
         "batches": {"count": len(batches), "size_distribution": {str(k): v for k, v in sorted(sizes.items())},
                     "assembly_s": dist(asm), "publish_s": dist(pub), "stage_s_total": dict(stage_tot),
                     "resyncs": resyncs, "push_rejected": pushrej, "red_by_cause": dict(red)},
+        "planning": {"candidates": len(plans), "s_total": sum(r["seconds"] for r in plans) if plans else None,
+                     "per_candidate_s": dist([r["seconds"] for r in plans]), "by_verdict": plan_by},
         "buckets": {k: {**v, "returned": len(v["returned"]), "seen": len(v["seen"])} for k, v in sorted(bk.items())},
         "landed": len(landed_issues),
     }
@@ -284,12 +295,21 @@ def render(a):
     if b["stage_s_total"]:
         tot = sum(b["stage_s_total"].values())
         out.append("- Gate stage time: " + ", ".join(f"{k} {human(v)} ({pct(v, tot)})" for k, v in sorted(b["stage_s_total"].items(), key=lambda kv: -kv[1])))
+    p = a["planning"]
+    if p["s_total"] is None:
+        out.append("- Planning (candidate probes): n/a (not recorded)")
+    else:
+        d = p["per_candidate_s"]
+        out.append(f"- Planning (candidate probes): {human(p['s_total'])} over {p['candidates']} candidates "
+                   f"(p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])}); by verdict: "
+                   + ", ".join(f"{k} {v['n']} ({human(v['s'])})" for k, v in sorted(p["by_verdict"].items(), key=lambda kv: -kv[1]["s"])))
     out += ["", "## Capacity against demand", "",
-            "| period | READY (demand) | landed (capacity) | backlog change | batches | gate time | wasted | returned/seen |",
-            "|---|---|---|---|---|---|---|---|"]
+            "| period | READY (demand) | landed (capacity) | backlog change | batches | gate time | planning | wasted | returned/seen |",
+            "|---|---|---|---|---|---|---|---|---|"]
     for k, v in a["buckets"].items():
         out.append(f"| {k} | {v['ready']} | {v['landed']} | {v['ready'] - v['landed']:+d} | {v['batches']} | "
-                   f"{human(v['gate_s']) if v['gate_s'] else 'n/a'} | {pct(v['wasted_s'], v['gate_s'])} | {v['returned']}/{v['seen']} |")
+                   f"{human(v['gate_s']) if v['gate_s'] else 'n/a'} | {human(v['plan_s']) if v['plan_s'] else 'n/a'} | "
+                   f"{pct(v['wasted_s'], v['gate_s'])} | {v['returned']}/{v['seen']} |")
     return "\n".join(out) + "\n"
 
 

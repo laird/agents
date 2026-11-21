@@ -41,6 +41,8 @@ def test_writer_rows_and_nulls_not_zeros(tmp_path):
     assert ch == {"v": 1, "ts": "2026-11-01T10:00:00Z", "kind": "change", "issue": 7, "event": "ready", "batch": None, "cause": None}
     assert ba["gate_s"] == 30.5 and ba["stages"] == {"build": 10.0, "test": 20.5} and ba["members"] == [7, 8]
     assert ba["assembly_s"] is None and ba["discarded_gate_s"] is None and ba["push_rejected"] is None
+    assert write(log, "plan", "--issue", "7", "--verdict", "skip", "--seconds", "12.5", "--ts", "2026-11-01T10:05:00Z").returncode == 0
+    assert rows_of(log)[2] == {"v": 1, "ts": "2026-11-01T10:05:00Z", "kind": "plan", "issue": 7, "verdict": "skip", "seconds": 12.5, "batch": None}
 
 
 @pytest.mark.parametrize("args,needle", [
@@ -52,6 +54,8 @@ def test_writer_rows_and_nulls_not_zeros(tmp_path):
     (["batch", "--batch", "b", "--members", ",", "--verdict", "green"], "names no change"),
     (["batch", "--batch", "b", "--members", "1", "--stage", "build"], "NAME=SECONDS"),
     (["batch", "--batch", "b", "--members", "1", "--gate-s", "-3"], "negative"),
+    (["plan", "--issue", "1", "--verdict", "maybe", "--seconds", "1"], "invalid choice"),
+    (["plan", "--issue", "1", "--verdict", "train", "--seconds", "-1"], "negative"),
 ])
 def test_writer_refuses_bad_input_and_writes_nothing(tmp_path, args, needle):
     log = tmp_path / "l.jsonl"
@@ -87,6 +91,10 @@ def ba(bid, ts, members, gate_s, verdict, cause=None, discarded=None, push_rejec
             "resyncs": resyncs, "push_rejected": push_rejected}
 
 
+def pl(issue, ts, verdict, seconds):
+    return {"v": 1, "ts": ts, "kind": "plan", "issue": issue, "verdict": verdict, "seconds": seconds, "batch": None}
+
+
 FIXTURE = [
     ch(1, "2026-11-02T08:00:00Z", "claimed"), ch(1, "2026-11-02T10:00:00Z", "ready"),
     ch(1, "2026-11-02T10:30:00Z", "batched", batch="b1"), ch(1, "2026-11-02T11:00:00Z", "returned", cause="defect", batch="b1"),
@@ -101,6 +109,7 @@ FIXTURE = [
     ba("b1", "2026-11-02T11:00:00Z", [1, 2], 1800, "red", "defect", push_rejected=1, resyncs=1, stages={"build": 600, "test": 1200}),
     ba("b2", "2026-11-02T13:00:00Z", [1, 2], 2400, "green", discarded=600, resyncs=1),
     ba("b3", "2026-11-03T10:00:00Z", [3], 1800, "green"),
+    pl(1, "2026-11-02T10:20:00Z", "train", 120), pl(2, "2026-11-02T10:21:00Z", "skip", 30), pl(3, "2026-11-03T09:05:00Z", "train", 60),
 ]
 
 
@@ -124,6 +133,9 @@ def test_report_waste_first_numbers(log):
     b = a["batches"]
     assert b["size_distribution"] == {"1": 1, "2": 2} and b["push_rejected"] == 1 and b["resyncs"] == 2
     assert b["red_by_cause"] == {"defect": 1} and b["stage_s_total"] == {"build": 600, "test": 1200}
+    p = a["planning"]
+    assert (p["candidates"], p["s_total"], p["per_candidate_s"]["max"]) == (3, 210, 120)
+    assert p["by_verdict"] == {"train": {"n": 2, "s": 180}, "skip": {"n": 1, "s": 30}}
 
 
 def test_report_timings_and_capacity(log):
@@ -136,11 +148,13 @@ def test_report_timings_and_capacity(log):
     d = a["buckets"]
     assert d["2026-11-02"]["ready"] == 3 and d["2026-11-02"]["landed"] == 2 and d["2026-11-03"]["landed"] == 1
     assert d["2026-11-02"]["wasted_s"] == 2400 and d["2026-11-02"]["batches"] == 2
+    assert d["2026-11-02"]["plan_s"] == 150 and d["2026-11-03"]["plan_s"] == 60
 
 
 def test_report_window_and_text(log):
     out = report("--log", str(log), "--since", "2026-11-03").stdout
     assert "Gate-minutes thrown away: 0s of 30.0m = 0%" in out
+    assert "Planning (candidate probes): 60s over 1 candidates" in out and "| planning |" in out
     assert out.index("## Waste") < out.index("## Time") < out.index("## Capacity")
 
 
@@ -149,7 +163,7 @@ def test_report_says_na_never_zero_when_not_measured(tmp_path):
     p.write_text(json.dumps(ch(9, "2026-11-01T00:00:00Z", "landed")) + "\n")
     out = report("--log", str(p)).stdout
     assert "Gate-minutes thrown away: n/a" in out and "Rebases per landed change: n/a" in out
-    assert "Build (claim to READY): n/a" in out
+    assert "Build (claim to READY): n/a" in out and "Planning (candidate probes): n/a" in out
 
 
 def test_report_bad_date_exits_2(log):
