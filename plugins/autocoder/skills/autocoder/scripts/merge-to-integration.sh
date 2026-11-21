@@ -441,6 +441,18 @@ _emit_landing_rows() {  # <outcome> <rc>
     *) verdict=aborted cause="${LANDING_CAUSE:-other}" ;;
   esac
   [ "$LANDING_CAUSE" = red-integration ] && verdict=red cause=red-integration
+  if [ -n "${AUTOCODER_LANDING_BATCH:-}" ]; then
+    # Inside a train (the train runner sets both): this gate IS the train's batch. Its row carries the train's id
+    # and members with what only the gate measures (gate seconds, discarded gate time, re-syncs); the train
+    # writes the per-member change rows, and this job's own issue is the gate's, not a change that landed or
+    # came back, so NO change row is written here, gate run or not (a conflict or a refusal before any run
+    # used to count the gate issue as a returned change).
+    LANDING_BATCH="$AUTOCODER_LANDING_BATCH"
+    [ "$GATE_RUNS" -gt 0 ] && landing_batch --batch "$LANDING_BATCH" --members "${AUTOCODER_LANDING_MEMBERS:-$issue}" --gate-s "$GATE_S" \
+      --discarded-gate-s "$DISCARDED_S" --resyncs "$PUSH_RETRIES" --push-rejected "$PUSH_RETRIES" \
+      --verdict "$verdict" ${cause:+--cause "$cause"}
+    return 0
+  fi
   if [ "$GATE_RUNS" -gt 0 ]; then
     LANDING_BATCH="solo-${issue}-${AUTOCODER_MERGE_ATTEMPT:-1}-$(date +%s)"
     landing_batch --batch "$LANDING_BATCH" --members "$issue" --gate-s "$GATE_S" \
