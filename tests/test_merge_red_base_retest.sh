@@ -13,6 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255
 
 PASS=0; FAIL=0
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts"
+MTI="$SCRIPT_DIR/merge-to-integration.sh"
 ISSUES_PY="$SCRIPT_DIR/issues-file.py"
 ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -85,6 +86,9 @@ run_one 29801 src.txt change "bash $TMP/gate.sh"
 grep -q 'AUTOCODER_GATE_RETEST_FILES="t_broken.test"' "$LOG" && ok "the base run is told the failed file" || bad "no retest line: $(cat "$LOG")"
 grep -q "t_broken.test: fails on origin/master too" "$LOG" && ok "per-file report: fails on the base too" || bad "no per-file line: $(cat "$LOG")"
 ls "$AUTOCODER_GATE_CACHE_DIR" | grep -q -- '-rt[0-9a-f]\{12\}$' && ok "the retest record is keyed by its file list" || bad "cache keys: $(ls "$AUTOCODER_GATE_CACHE_DIR")"
+grep -q "^merge-to-integration: RED-BASE -- origin/master (.*) fails alone too with the same 1 named failure(s) in t_broken.test: red master, not this change's.$" "$LOG" \
+  && ok "one RED-BASE line names the base and the file" || bad "no RED-BASE line: $(grep -n 'RED-BASE\|alone' "$LOG")"
+grep -q "so this change broke it" "$LOG" && bad "a red base blamed the change" || ok "the change is not blamed on a red base"
 
 echo "=== a failure line quoting its worktree path still compares equal ==="
 run_one 29802 src.txt change2 "bash $TMP/gate.sh abs"
@@ -95,6 +99,31 @@ echo "=== a file that passes on the base is this change's ==="
 run_one 29803 t_new.test bad "bash $TMP/gate.sh"
 [ "$(attempt 29803)" = "gate-failed red_base=false" ] && ok "change's own failure is bounced" || bad "attempt: $(attempt 29803); log: $(cat "$LOG")"
 grep -q "t_new.test: passes on origin/master (this change's)" "$LOG" && ok "per-file report: passes on the base" || bad "no per-file line: $(cat "$LOG")"
+grep -q 'so this change broke it: `t_new.test`' "$TMP"/issues/*/29803.md && ok "the bounce reason names the file that passes on the base" || bad "reason: $(grep -n 'broke it' "$TMP"/issues/*/29803.md)"
+grep -q "RED-BASE" "$LOG" && bad "a change's own failure printed a RED-BASE line" || ok "no RED-BASE line for the change's own failure"
+
+echo "=== a red base, refused: the refusal names master, not the change ==="
+AUTOCODER_MERGE_ON_RED_BASE=0 run_one 29804 src.txt change3 "bash $TMP/gate.sh"
+case "$(attempt 29804)" in "gate-failed red_base=true"|"escalated red_base=true") ok "refused on the red base" ;; *) bad "attempt: $(attempt 29804); log: $(cat "$LOG")" ;; esac
+grep -q "^merge-to-integration: RED-BASE -- origin/master" "$LOG" && ok "refused: the RED-BASE line is printed" || bad "refused: no RED-BASE line: $(cat "$LOG")"
+grep -q "Red master, not this change: hold the branch, open or cite the issue for red master" "$LOG" && ok "refused: the reader is told to hold the branch and cite red master" || bad "refused: $(grep -n 'NOT pushing' "$LOG")"
+grep -q "so this change broke it" "$LOG" && bad "refused: the change was blamed" || ok "refused: the change is not blamed"
+grep -q 'red master in `t_broken.test`, not this change'"'"'s' "$TMP"/issues/*/29804.md && ok "refused: the issue comment names red master in the file" || bad "refused: issue text: $(cat "$TMP"/issues/*/29804.md)"
+
+echo "=== a mix: the change's own failure beside a red-base one ==="
+printf -- '---\nnumber: 29805\ntitle: T\npriority: P2\nlabels: [bug]\nstatus: open\n---\nBody.\n' > "$TMP/issues/open/29805.md"
+python3 "$ISSUES_PY" claim 29805 >/dev/null
+git checkout -q -b feature/i29805 master
+echo change4 > src.txt; echo bad > t_new2.test; git add -A; git commit -q -m "fix #29805"; git push -q origin feature/i29805
+MIXED=$(bash "$MTI" --feature feature/i29805 --issue 29805 --integration master --test-cmd "bash $TMP/gate.sh" --own-issue 2>&1); MRC=$?
+git checkout -q master
+[ "$MRC" -eq 2 ] && ok "mixed: exit 2" || bad "mixed: exit $MRC
+$MIXED"
+printf '%s' "$MIXED" | grep -q "t_broken.test: fails on origin/master too" && ok "mixed: the base's file says so" || bad "mixed: no base line: $MIXED"
+printf '%s' "$MIXED" | grep -q "t_new2.test: passes on origin/master (this change's)" && ok "mixed: the change's file says so" || bad "mixed: no change line"
+printf '%s' "$MIXED" | grep -q "red master, not this change's: t_broken.test" && ok "mixed: the base's file is listed apart" || bad "mixed: $MIXED"
+printf '%s' "$MIXED" | grep -q "RED-BASE" && bad "mixed: a RED-BASE line although the change broke something" || ok "mixed: no RED-BASE line"
+grep -q 'red master in `t_broken.test` besides' "$TMP"/issues/*/29805.md && ok "mixed: the reason names red master besides" || bad "mixed: issue text: $(cat "$TMP"/issues/*/29805.md)"
 
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"

@@ -27,6 +27,12 @@ Red-batch rules (every one learned from a measured miss):
   * A candidate the queue reads as `regenerate-only` (train_lib: every changed path carries one of
     `regeneratedMergeDrivers`) is never planned; the cycle tells its issue ONCE per tip which files
     and why, so it costs no train slot and no second comment.
+  * A RED-BASE refusal (merge-to-integration.sh's `merge-to-integration: RED-BASE -- ...` line:
+    the files that failed on the integrated tree fail on the integration branch alone too, and
+    landing on a red base is off) is the integration branch's red, nobody's to own: the cycle ends
+    with everyone back in the queue unfaulted and the report names the integration branch; a
+    re-gate on the same base would fail the same way. A landing on a red base (the default once
+    a sentinel proved green) publishes as usual and the report says the red is the branch's.
   * Member accounting is in git and in `cycle.json`, never in the tracker: a failed tracker call
     is queued in `pending` and retried, and cannot change who is in a set, who landed or who was
     returned. A landing is proven by the member's commits being in the integration branch.
@@ -64,6 +70,7 @@ INFRA_RE_DEFAULT = r"^::error::[A-Za-z0-9_-]+: INFRASTRUCTURE"
 EMPTY_RE_DEFAULT = (r"^(❌|ℹ️) +Rebasing \S+ \(\w+\) .*(dropped every commit as already upstream|left nothing to land)"
                     r"|^ℹ️ +\S+ \(\w+\) is already on origin/\S+ as patch-equivalent commits .*nothing to land\.$")
 NOTHING_LANDED = "landed nothing (regenerate-only or already on the integration branch)"
+RED_BASE_RE = re.compile(r"^merge-to-integration: RED-BASE -- .*$", re.M)
 PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+")
 IDENT = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
 
@@ -426,6 +433,8 @@ class Cycle:
             self.bisect_or_attribute(members)
         elif first == "infra":
             self.log("infrastructure red twice: the cycle ends, every member stays in the queue unfaulted")
+        elif first == "red-base":
+            self.log(f"red {self.cfg.integration}: the cycle ends, every member stays in the queue unfaulted")
         elif first == "regen":
             self.log("the assembled tree could not be regenerated: the cycle ends, nobody blamed")
         elif first == "empty":
@@ -578,11 +587,14 @@ class Cycle:
         infra = re.compile(self.rc.infra_pattern, re.M).search(text)
         if infra:
             return "infra", infra.group(0)[:300]
+        red_base = RED_BASE_RE.search(text)
+        if red_base:
+            return "red-base", red_base.group(0)[:300]
         first = next((ln for ln in text.splitlines() if ERROR_LINE_RE.match(ln)), "")
         return "red", first[:300] or f"gate exited {rc_code} with no ::error:: line"
 
     def gate_set(self, members, first=False):
-        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra', 'regen' or 'empty'
+        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra', 'red-base', 'regen' or 'empty'
         (nothing to land: the members are marked landed nothing and dropped at their tips)."""
         infra_left = self.rc.infra_regates
         while True:
@@ -605,8 +617,9 @@ class Cycle:
             verdict, line = self.judge(code, log_path, members)
             self.log(f"{train} ({' '.join('#' + m['issue'] for m in members)}): gate {verdict}" + (f" ({line})" if line else ""))
             self.timing("batch", "--batch", batch_id, "--members", ",".join(m["issue"] for m in members), "--gate-s", gate_s,
-                        "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted"}[verdict],
-                        *(["--cause", "infra"] if verdict == "infra" else ["--cause", "other"] if verdict == "empty" else []))
+                        "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted", "red-base": "red"}[verdict],
+                        *(["--cause", "infra"] if verdict == "infra" else ["--cause", "other"] if verdict == "empty"
+                          else ["--cause", "red-integration"] if verdict == "red-base" else []))
             if verdict == "green":
                 landed = T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip()
                 self.publish(train, members, landed, log_path)
@@ -624,6 +637,10 @@ class Cycle:
                     self.say.report(f"{train}: infrastructure red (`{line[:200]}`); re-gating the same members once.")
                     continue
                 return "infra"
+            if verdict == "red-base":
+                self.log(f"red {self.cfg.integration}, not a member's: the gate re-ran the failing file(s) on {self.cfg.ref} alone and they fail there too; nobody is dropped, held out, bisected or re-gated")
+                self.say.report(f"{train}: red `{self.cfg.integration}`, not a member's (`{line[:200]}`). The gate re-ran the file(s) that failed on the integrated tree on `{self.cfg.ref}` alone and they fail there too, so no member owns this red: nobody dropped, held out or re-gated (it would fail the same way on the same base); every member stays in the queue as it is. Open or cite the issue for red `{self.cfg.integration}` and fix it forward; the next train takes them.")
+                return "red-base"
             return "red"
 
     def land_nothing(self, train, members, line, log_path):
@@ -723,6 +740,10 @@ class Cycle:
         with the proof that applied, and only then the project's `landed` hook runs, once per landing."""
         c = self.cfg
         T.git(c.repo, "fetch", c.remote, "-q")
+        red_base = RED_BASE_RE.search(Path(log_path).read_text(errors="replace")) if log_path else None
+        if red_base:
+            self.log(f"{train} landed on a red {c.integration}: {red_base.group(0)[:200]}")
+            self.say.report(f"{train}: landed on a RED `{c.integration}` (`{red_base.group(0)[:200]}`): the file(s) that failed on the integrated tree fail on `{c.ref}` alone too, so that red is the integration branch's, not this train's; it was red before this landing and is red after it. Open or cite its issue and fix it forward.")
         proofs = {m["issue"]: T.landing_proof(c, m["tip"], landed) for m in members}
         unlanded = [m for m in members if not proofs[m["issue"]]]
         for m in members:

@@ -63,6 +63,9 @@ printf ' FAIL  src/a.test.ts > suite > x\n ✓ src/b.test.ts\n' > "$TMP/vitest.l
 printf 'FAILED tests/test_x.py::test_a - AssertionError\nFAILED tests/test_x.py::test_b\n' > "$TMP/pytest.log"
 [ "$(gate_log_failed_tests "$TMP/pytest.log" files)" = tests/test_x.py ] && ok "pytest FAILED ids are cut to their file" || bad "pytest files: $(gate_log_failed_tests "$TMP/pytest.log" files)"
 [ "$(gate_log_failed_tests "$TMP/pytest.log" | wc -l)" -eq 2 ] && ok "pytest ids are kept whole without files" || bad "pytest names: $(gate_log_failed_tests "$TMP/pytest.log")"
+printf ' FAIL  |jsdom| src/x/Widget.test.tsx > W\n FAIL  |browser| src/x/Widget.layout.browser.test.tsx > L\n' > "$TMP/vitest-projects.log"
+[ "$(gate_log_failed_tests "$TMP/vitest-projects.log" files | paste -sd' ' -)" = "src/x/Widget.layout.browser.test.tsx src/x/Widget.test.tsx" ] \
+  && ok "a vitest project label before the file is skipped" || bad "project label: $(gate_log_failed_tests "$TMP/vitest-projects.log" files)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

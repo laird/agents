@@ -132,7 +132,8 @@ gate_log_failed_tests() {  # <log> [files]
   # vitest indents its "FAIL  <file> > <test>" lines and pytest prints "FAILED <file>::<test>"
   # (#298); with "files", a pytest id is cut to its file.
   if [ -z "$names" ]; then
-    names=$(sed -nE 's/^[[:space:]]+FAIL[[:space:]]+([^ ]+).*/\1/p; s/^FAILED[[:space:]]+([^ ]+).*/\1/p' "$f")
+    # vitest's project label (" FAIL  |jsdom| <file> > <test>") sits before the file.
+    names=$(sed -nE 's/^[[:space:]]+FAIL[[:space:]]+(\|[A-Za-z0-9_-]+\|[[:space:]]+)?([^ ]+).*/\2/p; s/^FAILED[[:space:]]+([^ ]+).*/\1/p' "$f")
     if [ "${2:-}" = files ]; then
       names=$(printf '%s\n' "$names" | sed 's/::.*//' \
         | grep -E '^[A-Za-z0-9_][A-Za-z0-9._/:+-]*\.[A-Za-z][A-Za-z0-9]*$' | awk -F/ 'tolower($NF) ~ /test|spec/' || true)
