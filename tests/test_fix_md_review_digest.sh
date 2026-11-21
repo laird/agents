@@ -53,10 +53,15 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   ALL_ISSUE_RENDERS=$(grep -cE 'render-review-digest\.sh" --issue "\$(ISSUE_NUM|ENHANCE_NUM|LAND_NUM)"' "$P")
   eq "$F: every issue render stops the publish on failure" "$ALL_ISSUE_RENDERS" "$RENDERS_THAT_STOP"
 
-  # Rollup close renders too, and does not close when the render fails.
-  grep -q 'ROLLUP=$(bash "\${SCRIPT_DIR}/render-review-digest.sh" --issue "\$PARENT_ISSUE" --base HEAD' "$P" \
+  # Rollup close renders too, and does not close when the render fails. The rollup
+  # moved from fix.md into the fix-decomposition reference (#293).
+  case "$F" in
+    .agent/*) R="$ROOT/.agent/shared/fix-decomposition.md" ;;
+    *)        R="$ROOT/skills/autocoder/references/fix-decomposition.md" ;;
+  esac
+  grep -q 'ROLLUP=$(bash "\${SCRIPT_DIR}/render-review-digest.sh" --issue "\$PARENT_ISSUE" --base HEAD' "$R" \
     && ok "$F: rollup close is rendered" || bad "$F: rollup close not rendered"
-  grep -A12 'ROLLUP=$(bash' "$P" | grep -q 'leaving it open' \
+  grep -A12 'ROLLUP=$(bash' "$R" | grep -q 'leaving it open' \
     && ok "$F: rollup stays open when the render fails" || bad "$F: rollup closes without a digest"
 
   # The sections template uses {{FILL: slots, which the renderer rejects, so a
@@ -67,7 +72,6 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
   # REVIEW FIT: scope gate criterion + post-implementation label, never split.
   grep -q '#   3. REVIEW FIT' "$P" && ok "$F: REVIEW FIT is in the scope gate" || bad "$F: no REVIEW FIT in the scope gate"
   grep -q 'add-label "needs-review-focus"' "$P" && ok "$F: over-size work gets needs-review-focus" || bad "$F: needs-review-focus never applied"
-  grep -q '"needs-review-focus:' "$P" && ok "$F: needs-review-focus is reconciled as a label" || bad "$F: needs-review-focus not in label reconciliation"
   # It must never gate claiming.
   if grep -E 'needs-approval.*needs-review-focus|needs-review-focus.*needs-approval' "$P" | grep -v '"needs-review-focus:' | grep -q .; then
     bad "$F: needs-review-focus appears in a blocking/claimable filter"
@@ -75,6 +79,9 @@ for F in plugins/autocoder/commands/fix.md .agent/workflows/fix.md; do
     ok "$F: needs-review-focus is not a blocking label"
   fi
 done
+# Label reconciliation lives in fix-config.sh since #293.
+grep -q '"needs-review-focus:' "$ROOT/plugins/autocoder/scripts/fix-config.sh" \
+  && ok "fix-config.sh: needs-review-focus is reconciled as a label" || bad "fix-config.sh: needs-review-focus not in label reconciliation"
 # The claimable filter /fix uses lives in claim-issue.sh since #289.
 if grep -q 'needs-review-focus' "$ROOT/plugins/autocoder/scripts/claim-issue.sh"; then
   bad "claim-issue.sh: needs-review-focus appears in the claimable filter"
