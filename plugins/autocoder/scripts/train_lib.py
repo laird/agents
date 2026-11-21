@@ -359,7 +359,11 @@ def merge_into(cfg: Config, scratch, ref, message=None):
     `mergeFault` hook classified the merge output). On every non-clean verdict the scratch is
     cleared back to its HEAD: a half-merged tree must never reach the next candidate.
     """
-    ident = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
+    # Hooks off: a project's post-merge hook (a regeneration of the merged tree, minutes on a loaded
+    # host) would fire on every candidate judged and again at assembly; a merge here yields the verdict
+    # and the driver-resolved tree, nothing else, and the project's `regenerate` hook runs once on the
+    # assembled tree. Merge drivers are not hooks and still run.
+    ident = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost", "-c", "core.hooksPath=/dev/null"]
     keep = message is not None
     r = git(scratch, *ident, "merge", "--no-ff", *([] if keep else ["--no-commit"]), "-q", *(["-m", message] if keep else []), ref)
     if r.returncode == 0:

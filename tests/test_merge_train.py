@@ -346,6 +346,22 @@ def test_planner_judges_each_candidate_against_the_train_so_far(fx):
     assert "train so far" in rows[1]
 
 
+def test_planner_merges_run_with_the_repository_hooks_off(fx):
+    hooks = fx.root / "hooks"
+    hooks.mkdir()
+    fired = fx.root / "post-merge.fired"
+    (hooks / "post-merge").write_text(f"#!/bin/sh\necho fired >> '{fired}'\n")
+    (hooks / "post-merge").chmod(0o755)
+    sh("git", "config", "core.hooksPath", str(hooks), cwd=fx.work)
+    fx.branch("feature/a", {"a.txt": "1\n"})
+    fx.branch("feature/b", {"registry.txt": "a\nb\n"})   # union driver: the prefilter cannot say, the real merge decides
+    fx.ready("a", "feature/a")
+    fx.ready("b", "feature/b")
+    out, fault = fx.plan()
+    assert fault is None and [k for k, _ in kinds(out)] == ["train", "train"]
+    assert not fired.exists()
+
+
 def test_a_stack_lands_at_its_tip_and_a_lower_slice_rides_as_a_member_without_a_merge(fx):
     fx.branch("feature/s1", {"s1.txt": "1\n"})
     fx.branch("feature/s2", {"s2.txt": "1\n"}, base="feature/s1")
