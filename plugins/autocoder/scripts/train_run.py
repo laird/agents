@@ -320,6 +320,19 @@ class Cycle:
         except OSError:
             pass
 
+    # ----- the publisher's batch marker: while a cycle is live the fast lane rides in its next publish -----
+    def publisher(self, *args):
+        pub = os.environ.get("AUTOCODER_TRAIN_PUBLISHER") or str(SCRIPTS / "publisher.sh")
+        if not Path(pub).is_file():
+            return
+        try:
+            r = subprocess.run(["bash", pub, *args, "--repo", str(self.cfg.repo), "--remote", self.cfg.remote],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                self.log(f"publisher.sh {args[0]} exited {r.returncode}: {(r.stdout + r.stderr).strip()[:200]}")
+        except OSError as e:
+            self.log(f"publisher.sh {args[0]} could not run: {e}")
+
     # ----- member records -----
     def _set_status(self, members, status, note=""):
         for m in self.record["members"]:
@@ -338,9 +351,11 @@ class Cycle:
         if not ok:
             self.log(f"ABORT: a train is live ({holder}); one train at a time per repo and integration branch")
             return 1, []
+        self.publisher("batch-begin", "--pid", str(os.getpid()))
         try:
             return self._run_locked(size)
         finally:
+            self.publisher("batch-end", "--force")
             lease.release()
 
     def _run_locked(self, size):

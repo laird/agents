@@ -360,3 +360,14 @@ def test_the_cli_reports_and_pins_the_limit(fx):
     assert run("limit", "--set", "50") == "16"                     # clamped to the ceiling
     assert "batch limit 16" in run("status")
     assert "cleared" in run("abandon")
+
+
+def test_the_publisher_batch_marker_brackets_a_cycle(fx, tmp_path, monkeypatch):
+    stub = tmp_path / "publisher.sh"
+    stub.write_text('#!/bin/bash\necho "$1 $2 $3" >> "$FX_STATE/publisher.log"\n')
+    monkeypatch.setenv("AUTOCODER_TRAIN_PUBLISHER", str(stub))
+    fx.members(2)
+    fx.run()
+    rows = (fx.state / "publisher.log").read_text().splitlines()
+    assert rows[0].startswith("batch-begin --pid") and rows[-1].startswith("batch-end --force")
+    assert len(fx.gates()) == 1                                    # the cycle itself pushes nothing to the integration branch
