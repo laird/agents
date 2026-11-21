@@ -133,6 +133,7 @@ chmod +x "$CRONBIN/crontab" "$LDBIN/launchctl"
 OSREL="$TMP/osrel"; mkdir -p "$OSREL"
 printf 'NAME="Arch Linux"\nID=arch\n' > "$OSREL/arch"
 printf 'NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n' > "$OSREL/ubuntu"
+printf "NAME='Fedora'\nID='fedora'\nVERSION_ID=41\n" > "$OSREL/fedora-squoted"
 printf 'Linux version 5.15.153.1-microsoft-standard-WSL2\n' > "$OSREL/procver-wsl"
 printf 'Linux version 6.12.1-arch1-1\n' > "$OSREL/procver-plain"
 
@@ -318,6 +319,22 @@ echo "$OUT" | grep -q "<key>RunAtLoad</key>" && [ ! -e "$FAKEHOME/Library" ] \
   && ! grep -qE "^(bootstrap|load)" "$SYSD/launchctl.calls" 2>/dev/null \
   && ok "macOS: --dry-run prints the plist, loads nothing" || bad "macOS dry-run: $OUT"
 
+# A project path with & < > must still give a plist launchd accepts (the fake
+# launchctl parses it with plistlib on bootstrap), on any bash: since 5.2 an &
+# in a ${s//pat/repl} replacement means "the match".
+reset_sysd
+XDIR="$TMP/R&D <x> proj"
+git init -q "$XDIR"; mkdir -p "$XDIR/.issues"
+python3 -c 'import json,sys; json.dump({"issueSource":"file","issueDir":sys.argv[1]}, open(sys.argv[2],"w"))' \
+  "$XDIR/.issues" "$XDIR/.autocoder.json"
+OUT=$(run_mac -- --ensure --project "$XDIR" 2>&1)
+XL="com.autocoder.idle-sentinel.$(unit_for "$XDIR" | sed 's/^autocoder-idle-sentinel-//')"
+GOT=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["ProgramArguments"][3])' \
+  "$FAKEHOME/Library/LaunchAgents/$XL.plist" 2>&1)
+echo "$OUT" | grep -q "scheduled via launchd" && [ "$GOT" = "$XDIR" ] \
+  && ok "macOS: & < > in the project path are XML-escaped (plist parses, path round-trips)" \
+  || bad "xml escaping: got '$GOT' / $OUT"
+
 # ── 5c. WSL / container: cron, no user manager ───────────────────────────────
 reset_sysd
 P=$(new_project wsl)
@@ -351,6 +368,11 @@ OUT=$(TESTPATH="$CRONBIN:$TESTPATH" run_sentinel_at "$SENTINEL" FAKE_CROND=no \
   CRONTAB_STORE="$STORE" -- --ensure --project "$P" 2>&1)
 echo "$OUT" | grep -q "scheduled via systemd" && [ ! -s "$STORE" ] \
   && ok "crontab without a daemon + systemd user → systemd timer, no dead cron entry" || bad "crondead: $OUT"
+
+# os-release IDs may be single-quoted.
+OUT=$(run_sentinel_at "$SENTINEL" AUTOCODER_OS_RELEASE="$OSREL/fedora-squoted" -- --ensure --dry-run --project "$P" 2>&1)
+echo "$OUT" | grep -q "^host: os=linux/fedora " && ok "single-quoted os-release ID parsed" \
+  || bad "fedora host line: $(echo "$OUT" | grep '^host:')"
 
 # An unfamiliar kernel is reported as itself, and nothing breaks.
 reset_sysd

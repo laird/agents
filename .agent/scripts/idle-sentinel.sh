@@ -2020,7 +2020,7 @@ host_os() {
   case "$kernel" in
     Darwin) echo macos ;;
     Linux)
-      id=$(sed -nE 's/^ID="?([^"]*)"?$/\1/p' "${AUTOCODER_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -1)
+      id=$(sed -nE "s/^ID=[\"']?([^\"']*)[\"']?\$/\\1/p" "${AUTOCODER_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -1)
       if [ -n "${WSL_DISTRO_NAME:-}" ] ||
          grep -qi microsoft "${AUTOCODER_PROC_VERSION:-/proc/version}" 2>/dev/null; then
         echo "linux/${id:-unknown}+wsl"
@@ -2203,11 +2203,11 @@ install_systemd_scheduler() {
 
 LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 
+# sed, not ${s//&/&amp;}: since bash 5.2 (patsub_replacement) an & in the
+# replacement means "the match", so the parameter-expansion form breaks on the
+# Homebrew/mise bash a Mac often has first on PATH, while 3.2 is fine.
 xml_escape() {
-  local s=${1//&/&amp;}
-  s=${s//</&lt;}
-  s=${s//>/&gt;}
-  printf '%s' "$s"
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
 # The XML comment below must never contain "--" (invalid XML; launchd rejects it).
@@ -2269,8 +2269,9 @@ install_launchd_scheduler() {
   mkdir -p "$LAUNCHD_DIR" || return 1
   render_launchd_plist > "$plist" || { echo "❌ could not write $plist" >&2; return 1; }
   # bootstrap is the current interface; load -w is what older macOS knows.
-  if ! launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null && ! launchctl load -w "$plist"; then
-    echo "❌ launchctl could not load $plist" >&2
+  local berr
+  if ! berr=$(launchctl bootstrap "gui/$(id -u)" "$plist" 2>&1) && ! launchctl load -w "$plist"; then
+    echo "❌ launchctl could not load $plist (bootstrap said: ${berr:-nothing})" >&2
     return 1
   fi
   state_merge "{\"scheduler_mode\": \"launchd\"}"
@@ -2281,7 +2282,11 @@ install_launchd_scheduler() {
 
 cmd_ensure() {
   mkdir -p "$AC_DIR"
+  # Set here, not inside sentinel_unit_tag: its callers run it in $(…)
+  # subshells, where a cached value would not outlive the call.
+  _SENTINEL_TAG=$(sha256_of "$PROJECT_ROOT" | cut -c1-12)
   SENTINEL_UNIT="autocoder-idle-sentinel-$(sentinel_unit_tag)"
+  print_host_detection
   local existing
   existing=$(detect_scheduler)
   if [ "$existing" = loop ] && replace_stale_loop; then
@@ -2301,8 +2306,6 @@ cmd_ensure() {
     state_merge "{\"scheduler_mode\": \"$existing\"}"
     return 0
   fi
-
-  print_host_detection
 
   # macOS: launchd is the native scheduler (cron there needs Full Disk Access).
   if launchd_available; then
