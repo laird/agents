@@ -51,6 +51,11 @@ for sig in INT TERM; do
   for _ in $(seq 50); do [ -f "$TMP/started" ] && break; sleep 0.1; done
   during=$(find "$SCRATCH" -name 'shell-suite.*')
   kill -"$sig" -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rc=$?
+  # $pid is the job's subshell, and the group-wide kill ends it at once, while the
+  # runner it started can still be in its EXIT trap removing the log (#287: the
+  # check raced the trap under load). Wait for the whole process group to exit
+  # (up to 10s) before looking.
+  for _ in $(seq 100); do kill -0 -- -"$pid" 2>/dev/null || break; sleep 0.1; done
   left=$(find "$SCRATCH" -name 'shell-suite.*')
   if [ -n "$during" ] && [ -z "$left" ] && [ "$rc" -gt 128 ]; then
     ok "SIG$sig: interrupted (rc $rc); the log existed during the run and was removed"
