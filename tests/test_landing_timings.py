@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -729,3 +730,78 @@ def test_two_reds_count_a_landing_stacked_on_both_once_in_the_distinct_figure(tm
     assert (a["red_count"], a["landings_before_red_verdicts"], a["landings_before_red_verdicts_distinct"]) == (2, 3, 2)
     out = report("--log", str(log), "--week", "2026-11-02", env=env).stdout
     assert "judged red by CI: 2 landings; landings that happened before those verdicts: 3 (2 distinct)" in out
+
+
+# ── the adversarial review's cases (each was a wrong figure before its fix) ────────────────
+def test_a_landing_past_the_windows_end_or_without_a_commit_still_counts_as_stacked_on_a_red(tmp_path):
+    rows = [chs(3, "2026-11-03T23:00:00Z", SHA_B, batch="b3"), chs(5, "2026-11-04T00:30:00Z", SHA_C, batch="b5"),
+            ch(6, "2026-11-04T01:00:00Z", "landed", batch="b6"),     # no commit: still a landing that happened before the verdict
+            ba("b3", "2026-11-03T23:00:00Z", [3], 60, "green"), ba("b5", "2026-11-04T00:30:00Z", [5], 60, "green")]
+    env, _ = ci_env(tmp_path, {SHA_B: [run(1, "completed", "failure", "2026-11-04T02:00:00Z")], SHA_C: [run(2, "completed", "success", "2026-11-04T01:00:00Z")]})
+    a = json.loads(report("--log", str(ci_log(tmp_path, rows)), "--since", "2026-11-03", "--until", "2026-11-04", "--json", env=env).stdout)["ci"]
+    # only B is in the window (judged); C landed after `until` and #6's row names no commit, both before B's verdict
+    assert (a["landings"], a["red_count"], a["landings_before_red_verdicts"], a["landings_before_red_verdicts_distinct"]) == (1, 1, 2, 2)
+
+
+def test_a_hand_written_prefix_of_a_commit_is_the_same_landing_and_the_writer_refuses_a_prefix(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), chs(2, "2026-11-03T10:00:00Z", SHA_A[:10], batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1, 2], 60, "green")]
+    env, calls = ci_env(tmp_path, {SHA_A: [run(1, "completed", "success", "2026-11-03T11:00:00Z")]})
+    a = json.loads(report("--log", str(ci_log(tmp_path, rows)), "--json", env=env).stdout)["ci"]
+    assert (a["landings"], a["judged"], a["none"]) == (1, 1, 0) and calls.read_text().split() == [SHA_A, "master"]
+    r = write(tmp_path / "w.jsonl", "change", "--issue", "1", "--event", "landed", "--sha", SHA_A[:10])
+    assert r.returncode == 2 and "full object name" in r.stderr
+
+
+def test_a_cached_row_that_says_unknown_is_not_a_verdict(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green"),
+            {"v": 1, "ts": "2026-11-03T12:00:00Z", "kind": "ci-verdict", "sha": SHA_A, "run_id": None, "conclusion": "unknown", "verdict_ts": "2026-11-03T11:00:00Z", "workflows": None}]
+    env, calls = ci_env(tmp_path, {SHA_A: [run(1, "completed", "success", "2026-11-03T11:00:00Z")]})
+    a = json.loads(report("--log", str(ci_log(tmp_path, rows)), "--json", env=env).stdout)["ci"]
+    assert (a["unknown"], a["judged"], a["queried"]) == (0, 1, 1) and calls.exists()
+
+
+def test_ci_off_with_a_partial_cache_says_the_red_figures_are_floors(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), chs(2, "2026-11-03T11:00:00Z", SHA_B, batch="b2"),
+            ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green"), ba("b2", "2026-11-03T11:00:00Z", [2], 60, "green"),
+            {"v": 1, "ts": "2026-11-03T12:00:00Z", "kind": "ci-verdict", "sha": SHA_A, "run_id": "1", "conclusion": "success", "verdict_ts": "2026-11-03T11:00:00Z", "workflows": None}]
+    out = report("--log", str(ci_log(tmp_path, rows)), "--ci", "off", "--since", "2026-11-01").stdout
+    assert "(n=1 of 2 landed commits; not queried 1); judged red by CI: 0 landings; landings that happened before those verdicts: 0 (both at least: 1 not queried of the landed commits)" in out
+
+
+def test_a_verdict_before_the_landed_row_is_a_lag_of_zero_and_is_said(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green")]
+    env, _ = ci_env(tmp_path, {SHA_A: [run(1, "completed", "success", "2026-11-03T09:50:00Z")]})
+    out = report("--log", str(ci_log(tmp_path, rows)), "--since", "2026-11-01", "--batches", env=env).stdout
+    assert "| success 0s |" in out and "(n=1 of 1 landed commits; 1 verdict before the row (lag 0))" in out and "-600" not in out
+
+
+def test_a_completed_red_run_without_a_time_is_red_with_an_unknown_lag_and_is_not_cached(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green")]
+    env, _ = ci_env(tmp_path, {SHA_A: [run(1, "completed", "failure", None)]})
+    log = ci_log(tmp_path, rows)
+    a = json.loads(report("--log", str(log), "--json", env=env).stdout)["ci"]
+    assert a["by_sha"][SHA_A] == {"status": "failure", "lag_s": None, "landings_before_verdict": None}
+    assert (a["red_count"], a["judged"], a["untimed"], a["lag_s"]["n"]) == (1, 1, 0 + 1, 0)
+    assert not [x for x in rows_of(log) if x["kind"] == "ci-verdict"]
+    out = report("--log", str(log), "--since", "2026-11-01", "--batches", env=env).stdout
+    assert "| failure (time unknown) |" in out and "1 judged without a time" in out
+
+
+def test_all_repos_asks_no_forge_and_caches_nothing(tmp_path):
+    repo, _ = git_repo(tmp_path, ["#1: x"])
+    rows = [{**chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), "repo": "ours-0123abcd"}, {**ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green"), "repo": "ours-0123abcd"},
+            {**chs(2, "2026-11-03T11:00:00Z", SHA_B, batch="b2"), "repo": "other-1234abcd"}, {**ba("b2", "2026-11-03T11:00:00Z", [2], 60, "green"), "repo": "other-1234abcd"}]
+    log = ci_log(tmp_path, rows)
+    env, calls = ci_env(tmp_path)
+    r = report("--log", str(log), "--all-repos", "--repo", str(repo), env=env)
+    assert r.returncode == 0 and not calls.exists() and not [x for x in rows_of(log) if x["kind"] == "ci-verdict"]
+    assert "n/a (not queried, --all-repos: the CI verdict is asked of one repository; 2 landed commits)" in r.stdout
+    assert "--all-repos: the CI verdict is not queried" in r.stderr
+
+
+def test_history_mode_makes_one_landing_per_pushed_tip_not_per_member_commit(tmp_path):
+    lr = load_module()
+    repo, (first, tip) = git_repo(tmp_path, ["train/20261103T0830Z: #1 first member", "train/20261103T0830Z: #2 second member (the pushed tip)"])
+    rows = lr.git_rows(str(repo), "master", None, re.compile(r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)"), re.compile(r"^$x"))
+    landings, unrecorded = lr.landings_of(rows, None, None)
+    assert unrecorded == 0 and {k: sorted(v["issues"]) for k, v in landings.items()} == {tip: [1, 2]}

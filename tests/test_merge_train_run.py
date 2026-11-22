@@ -803,3 +803,22 @@ def test_a_cycle_tells_a_foreign_branch_once_per_tip_and_plans_a_declared_stack(
     assert told.count("`foreign-branch`") == 1 and f"`feature/m0` does not belong to #{foreign}" in told and f"stack: `feature/m0` carries #{foreign}" in told
     fx.run()   # a second cycle: no second comment, still not planned
     assert fx.comments(foreign).count("`foreign-branch`") == 1 and len(fx.gates()) == 1 and fx.dropped() == []
+
+
+def test_a_resumed_close_out_names_no_commit_in_its_landed_row(fx):
+    # The process died after member 0 landed; another landing moved the integration branch before the resume, so the
+    # branch's tip is not the commit member 0 landed in. The ledger row names no commit rather than the wrong one.
+    issues = fx.members(2)
+    tips = [T.git(fx.work, "rev-parse", f"origin/feature/m{i}").stdout.strip() for i in range(2)]
+    sh("git", "push", "-q", "origin", f"{tips[0]}:refs/heads/master", cwd=fx.work)
+    sh("git", "checkout", "-q", "--detach", tips[0], cwd=fx.work)
+    (fx.work / "later.txt").write_text("x")
+    sh("git", "add", "later.txt", cwd=fx.work)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "#999: a later landing", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "HEAD:refs/heads/master", cwd=fx.work)
+    st = R.State(fx.rc())
+    st.save_cycle({"started": "then", "members": [{"issue": str(issues[i]), "branch": f"feature/m{i}", "tip": tips[i], "status": "gating", "note": ""} for i in range(2)]})
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    R.Cycle(fx.rc(), log=lambda m: None).reconcile()
+    rows = [ln for ln in (fx.state / "timings.log").read_text().splitlines() if "--event landed" in ln]
+    assert len(rows) == 1 and "--sha" not in rows[0]

@@ -68,7 +68,7 @@ CAUSES = ("defect", "conflict", "stale-base", "red-integration", "infra", "docs-
 VERDICTS = ("green", "red", "aborted", "infra")
 PLAN_VERDICTS = ("train", "skip", "drop", "fault")
 UNCACHEABLE_CONCLUSIONS = ("unknown", "pending", "none", "")   # not a verdict: the report asks the forge again
-SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")   # a FULL object name: a prefix would split one landing in two
 CONCLUSION_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 ISO_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
@@ -125,7 +125,7 @@ def _num(value, what: str):
 
 def _sha(value: str) -> str:
     if not SHA_RE.match(value):
-        raise ValueError(f"--sha {value!r} is not a commit (7 to 64 lower-case hex digits)")
+        raise ValueError(f"--sha {value!r} is not a commit (the full object name: 40 or 64 lower-case hex digits)")
     return value
 
 

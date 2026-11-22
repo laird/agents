@@ -454,6 +454,15 @@ def landings_of(rows, since, until):
         if not sha:
             unrecorded += 1
             continue
+        # a hand-written row may carry a prefix of a commit another row names in full: one landing, under the full name
+        for known in list(by):
+            if known != sha and (known.startswith(sha) or sha.startswith(known)):
+                longer = max(known, sha, key=len)
+                if longer != known:
+                    by[longer] = by.pop(known)
+                    by[longer]["sha"] = longer
+                sha = longer
+                break
         d = by.setdefault(sha, {"sha": sha, "ts": t, "issues": [], "batch": r.get("batch")})
         d["ts"] = min(d["ts"], t)
         if r["issue"] not in d["issues"]:
@@ -519,7 +528,7 @@ def cached_verdicts(rows, workflows=()):
     out = {}
     for r in rows:
         if r["kind"] == "ci-verdict" and r.get("sha") and parse_ts(r.get("verdict_ts")) and r.get("conclusion") \
-                and (sorted(set(r.get("workflows") or [])) or None) == want:
+                and r["conclusion"] not in CI_NOT_JUDGED and (sorted(set(r.get("workflows") or [])) or None) == want:
             out[r["sha"]] = {"status": r["conclusion"], "verdict_ts": parse_ts(r["verdict_ts"]), "run_id": r.get("run_id"), "source": "cached"}
     return out
 
@@ -537,14 +546,16 @@ def judge_runs(runs, integration, workflows):
             and not (workflows and r.get("name") not in workflows)]
     if not keep:
         return "none", None, None
-    done = [r for r in keep if r.get("status") == "completed" and run_time(r)]
-    red = sorted((r for r in done if r.get("conclusion") in RED_CONCLUSIONS), key=run_time)
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    done = [r for r in keep if r.get("status") == "completed"]
+    red = sorted((r for r in done if r.get("conclusion") in RED_CONCLUSIONS), key=lambda r: run_time(r) or far)   # a timed one first
     if red:
         return red[0]["conclusion"], run_time(red[0]), str(red[0].get("id") or "") or None
     if len(done) < len(keep):
         return "pending", None, None
     judged = [r for r in done if r.get("conclusion") not in NO_VERDICT_CONCLUSIONS]
-    last = max(judged or done, key=run_time)
+    timed = [r for r in (judged or done) if run_time(r)]
+    last = max(timed, key=run_time) if timed else (judged or done)[-1]      # no run carries a time: the verdict stands, its time is unknown
     return ("success" if judged else "cancelled"), run_time(last), str(last.get("id") or "") or None
 
 
@@ -593,50 +604,76 @@ def resolve_ci(landings, cached, mode, fetch, judge, write, log=lambda m: print(
             continue
         status, vts, rid = judge(runs)
         out[sha] = {"status": status, "verdict_ts": vts, "run_id": rid, "source": "queried"}
-        if status not in CI_NOT_JUDGED:
+        if status not in CI_NOT_JUDGED and vts is not None:     # an untimed verdict is reported, not cached: asked again
             write(sha, status, vts, rid)
     if meta["unknown"]:
         log(f"landing-report: the forge could not be reached for {meta['unknown']} landed commit(s) (CI verdict unknown, nothing cached): {meta['error']}")
     return out, meta
 
 
+def every_landing(rows):
+    """Every landing the ledger knows, in or out of the window, recorded commit or not: [(key, ts)], one per landed
+    commit (key = the commit), and one per batch, else per row, for landed rows that name no commit (key = the batch
+    id, else `issue@ts`). What a red verdict's "landings before it" are counted over: a landing just past the window's
+    end, or one whose row carries no commit, still stacked on the red."""
+    by = {}
+    for r in rows:
+        if r["kind"] != "change" or r.get("event") != "landed":
+            continue
+        t = parse_ts(r["ts"])
+        key = r.get("sha") or (f"batch:{r['batch']}" if r.get("batch") else f"{r['issue']}@{r['ts']}")
+        by[key] = min(by.get(key, t), t)
+    return list(by.items())
+
+
 def ci_inputs(rows, since, until, verdicts, meta):
     landings, unrecorded = landings_of(rows, since, until)
-    return landings, unrecorded, verdicts, meta
+    return landings, unrecorded, verdicts, meta, every_landing(rows)
 
 
-def ci_figures(landings, unrecorded, verdicts, meta):
+def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
     """The CI figures of the window's landings. n/a and unknown are told apart from 0: a figure is None when the
-    forge was not asked or could not answer for every landing that lacks a verdict."""
+    forge was not asked or could not answer for every landing that lacks a verdict. `universe` is every landing the
+    ledger knows ([(key, ts)], every_landing), the set a red's stacked landings are counted over."""
+    universe = universe if universe is not None else [(sha, L["ts"]) for sha, L in landings.items()]
     counts = Counter()
     lag, red = [], []
     for sha, L in landings.items():
         v = verdicts.get(sha) or {"status": "not-queried", "verdict_ts": None, "run_id": None}
-        L["status"], L["verdict_ts"], L["run_id"] = v["status"], v.get("verdict_ts"), v.get("run_id")
-        if v["status"] in CI_NOT_JUDGED or v.get("verdict_ts") is None:
-            counts[v["status"] if v["status"] in CI_NOT_JUDGED else "unknown"] += 1
-            L["lag_s"] = None
+        L["status"], L["verdict_ts"], L["run_id"], L["lag_s"] = v["status"], v.get("verdict_ts"), v.get("run_id"), None
+        if v["status"] in CI_NOT_JUDGED:
+            counts[v["status"]] += 1
+            continue
+        counts["judged"] += 1
+        if v.get("verdict_ts") is None:
+            counts["untimed"] += 1            # a terminal verdict whose runs carry no time: judged, lag unknown
             continue
         L["lag_s"] = (v["verdict_ts"] - L["ts"]).total_seconds()
+        if L["lag_s"] < 0:                    # the row is written after the push; a verdict faster than that is a lag of 0
+            counts["clamped"] += 1
+            L["lag_s"] = 0.0
         lag.append(L["lag_s"])
-        counts["judged"] += 1
+    stacked = set()
     for L in sorted(landings.values(), key=lambda x: x["ts"]):
         L["landings_before_verdict"] = None
-        if L.get("lag_s") is not None and L["status"] in RED_CONCLUSIONS:
-            L["landings_before_verdict"] = sum(1 for o in landings.values() if o["sha"] != L["sha"] and L["ts"] < o["ts"] < L["verdict_ts"])
-            red.append({"sha": L["sha"], "issues": L["issues"], "landed_ts": iso(L["ts"]), "verdict_ts": iso(L["verdict_ts"]),
-                        "conclusion": L["status"], "lag_s": L["lag_s"], "run_id": L["run_id"], "landings_before_verdict": L["landings_before_verdict"]})
-    stacked = {o["sha"] for L in landings.values() if L.get("landings_before_verdict") is not None
-               for o in landings.values() if o["sha"] != L["sha"] and L["ts"] < o["ts"] < L["verdict_ts"]}
+        if L["status"] not in RED_CONCLUSIONS or L["status"] in CI_NOT_JUDGED:
+            continue
+        if L["verdict_ts"] is not None:
+            before = {k for k, t in universe if k != L["sha"] and L["ts"] < t < L["verdict_ts"]}
+            L["landings_before_verdict"] = len(before)
+            stacked |= before
+        red.append({"sha": L["sha"], "issues": L["issues"], "landed_ts": iso(L["ts"]), "verdict_ts": iso(L["verdict_ts"]) if L["verdict_ts"] else None,
+                    "conclusion": L["status"], "lag_s": L["lag_s"], "run_id": L["run_id"], "landings_before_verdict": L["landings_before_verdict"]})
     unanswered = counts["unknown"] + counts["not-queried"]
     known = bool(counts["judged"]) or not unanswered     # nothing is known of the reds when every landing went unanswered
     return {"landings": len(landings), "unrecorded": unrecorded, "judged": counts["judged"], "pending": counts["pending"],
             "none": counts["none"], "unknown": counts["unknown"], "not_queried": counts["not-queried"],
+            "untimed": counts["untimed"], "lag_clamped": counts["clamped"],
             "queried": meta.get("queried", 0), "cached": meta.get("cached", 0), "mode": meta.get("mode"), "forge_error": meta.get("error"),
-            "workflows": sorted(meta.get("workflows") or []),
+            "off_reason": meta.get("off_reason"), "workflows": sorted(meta.get("workflows") or []),
             "lag_s": {"n": len(lag), "p50": quant(lag, 0.5), "p75": quant(lag, 0.75), "max": max(lag) if lag else None},
             "red": red, "red_count": len(red) if known else None,
-            "landings_before_red_verdicts": sum(r["landings_before_verdict"] for r in red) if known else None,
+            "landings_before_red_verdicts": sum(r["landings_before_verdict"] or 0 for r in red) if known else None,
             "landings_before_red_verdicts_distinct": len(stacked) if known else None,
             "by_sha": {sha: {"status": L["status"], "lag_s": L.get("lag_s"), "landings_before_verdict": L.get("landings_before_verdict")}
                        for sha, L in landings.items()}}
@@ -664,8 +701,10 @@ def ci_cell(c):
     if not c:
         return "-"
     st = c["status"]
-    if st in CI_NOT_JUDGED or c.get("lag_s") is None:
+    if st in CI_NOT_JUDGED:
         return {"none": "no run", "not-queried": "not queried"}.get(st, st)
+    if c.get("lag_s") is None:
+        return f"{st} (time unknown)"
     before = c.get("landings_before_verdict")
     return f"{st} {human(c['lag_s'])}" + (f" ({before} landed before the verdict)" if before else "")
 
@@ -676,7 +715,7 @@ def ci_lag_text(ci, with_max=False):
     if n == 0:
         return "n/a (no landed row carries its commit)" if ci["unrecorded"] else "n/a (nothing landed)"
     if ci["judged"] == 0 and ci["not_queried"] == n:
-        return f"n/a (not queried, --ci off; {n} landed commits)"
+        return f"n/a (not queried, {ci.get('off_reason') or '--ci off'}; {n} landed commits)"
     if ci["judged"] == 0 and ci["unknown"] and ci["unknown"] + ci["not_queried"] == n:
         return f"unknown (the forge could not be reached for {ci['unknown']} landed commits: {ci['forge_error'] or 'no answer'})"
     d = ci["lag_s"]
@@ -685,6 +724,10 @@ def ci_lag_text(ci, with_max=False):
     for key, label in (("pending", "pending"), ("none", "no run"), ("unknown", "unknown"), ("not_queried", "not queried")):
         if ci[key]:
             parts.append(f"{label} {ci[key]}")
+    if ci["untimed"]:
+        parts.append(f"{ci['untimed']} judged without a time")
+    if ci["lag_clamped"]:
+        parts.append(f"{ci['lag_clamped']} verdict{'s' if ci['lag_clamped'] != 1 else ''} before the row (lag 0)")
     if ci["unrecorded"]:
         parts.append(f"{ci['unrecorded']} landed row{'s carry' if ci['unrecorded'] != 1 else ' carries'} no commit")
     return head + " (" + "; ".join(parts) + ")"
@@ -694,9 +737,10 @@ def ci_red_text(ci):
     k, before = ci["red_count"], ci["landings_before_red_verdicts"]
     if k is None:
         return "judged red by CI: unknown; landings that happened before those verdicts: unknown"
-    partial = f" ({ci['unknown']} unknown)" if ci["unknown"] else ""
-    return f"judged red by CI: {k} landing{'s' if k != 1 else ''}{partial}; landings that happened before those verdicts: {before}" \
+    gaps = [f"{ci['unknown']} unknown"] * bool(ci["unknown"]) + [f"{ci['not_queried']} not queried"] * bool(ci["not_queried"])
+    return f"judged red by CI: {k} landing{'s' if k != 1 else ''}; landings that happened before those verdicts: {before}" \
         + (f" ({ci['landings_before_red_verdicts_distinct']} distinct)" if k > 1 else "") \
+        + (f" (both at least: {', '.join(gaps)} of the landed commits)" if gaps else "") \
         + (f"; workflows judged: {', '.join(ci['workflows'])}" if ci.get("workflows") else "")
 
 
@@ -925,20 +969,20 @@ def git_rows(repo, integration, since, batch_re, skip_re):
         ts = iso(parse_ts(cdate))
         m = batch_re.search(subj)
         if m:
-            g = groups.setdefault(m.group(1), {"ts": ts, "members": []})
+            g = groups.setdefault(m.group(1), {"ts": ts, "members": [], "tip": h})   # newest first: the first seen is the pushed tip
             g["ts"] = max(g["ts"], ts)
-            g["members"].append((int(m.group(2)), ts, h))
+            g["members"].append((int(m.group(2)), ts))
             continue
         m = re.match(r"#(\d+)\b", subj)
         if m and not skip_re.search(subj):
-            groups[f"solo-{h[:10]}"] = {"ts": ts, "members": [(int(m.group(1)), ts, h)]}
+            groups[f"solo-{h[:10]}"] = {"ts": ts, "members": [(int(m.group(1)), ts)], "tip": h}
     for bid, g in groups.items():
-        members = sorted({n for n, _, _ in g["members"]})
+        members = sorted({n for n, _ in g["members"]})
         rows.append({"v": 1, "ts": g["ts"], "kind": "batch", "batch": bid, "members": members, "assembly_s": None,
                      "stages": {}, "gate_s": None, "discarded_gate_s": None, "publish_s": None, "verdict": "green",
                      "cause": None, "resyncs": None, "push_rejected": None})
-        for n, ts, h in g["members"]:
-            rows.append({"v": 1, "ts": ts, "kind": "change", "issue": n, "event": "landed", "batch": bid, "cause": None, "sha": h})
+        for n, ts in g["members"]:   # every member of one push landed in its tip, the commit CI ran on
+            rows.append({"v": 1, "ts": ts, "kind": "change", "issue": n, "event": "landed", "batch": bid, "cause": None, "sha": g["tip"]})
     return rows
 
 
@@ -1079,9 +1123,15 @@ def main(argv=None):
         r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"landing-report: could not cache the CI verdict of {sha[:10]}: {r.stderr.strip()[:200]}", file=sys.stderr)
-    verdicts, meta = resolve_ci(landings, cached_verdicts(rows, workflows), a.ci, fetch, judge, write)
-    meta["workflows"] = workflows
-    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta))
+    ci_mode, off_reason = a.ci, "--ci off" if a.ci == "off" else None
+    if a.all_repos and ci_mode != "off":
+        # A commit's verdict is asked of, and cached under, its own repository; across every repository's rows this
+        # checkout could only ask the wrong forge and tag the row with the wrong id.
+        ci_mode, off_reason = "off", "--all-repos: the CI verdict is asked of one repository"
+        print("landing-report: --all-repos: the CI verdict is not queried (it is asked of one repository); cached verdicts are read", file=sys.stderr)
+    verdicts, meta = resolve_ci(landings, cached_verdicts(rows, workflows), ci_mode, fetch, judge, write)
+    meta["workflows"], meta["off_reason"] = workflows, off_reason
+    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)))
     if week:
         res["week"] = week
     sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res, week=week, batches=a.batches))
