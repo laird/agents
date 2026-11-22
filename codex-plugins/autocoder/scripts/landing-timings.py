@@ -26,12 +26,18 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
       report shows it beside the gate time, because a probe that regenerates the tree per
       candidate is a fixed cost of every cycle nobody sees in a gate log.
 
+  Every kind takes --repo ID (default $AUTOCODER_LANDING_REPO, else null): the repository the row
+  belongs to (repo-id-fns.sh's autocoder_repo_id). Two repositories on one host share the default
+  file, and a test run from a checkout that forgot the private path writes fixture rows beside the
+  real ones; the report keeps the rows of the repository it reports on and names the rest.
+
 Row schema (v1), also the contract for a project's own writers:
-  {"v":1,"ts","kind":"change","issue":N,"event":E,"batch":ID|null,"cause":C|null}
+  {"v":1,"ts","kind":"change","issue":N,"event":E,"batch":ID|null,"cause":C|null,"repo":ID|null}
   {"v":1,"ts","kind":"batch","batch":ID,"members":[N..],"assembly_s","stages":{name:s},
-   "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected"}
-  {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null}
-Absent numbers are null, never 0: the report tells "not measured" from "took no time".
+   "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected","repo":ID|null}
+  {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null,"repo":ID|null}
+Absent numbers are null, never 0: the report tells "not measured" from "took no time". `repo` is
+null only for a writer that named none (rows written before the field existed).
 """
 
 from __future__ import annotations
@@ -88,6 +94,11 @@ def _ts(value: str | None) -> str:
     return value
 
 
+def _repo(a: argparse.Namespace):
+    value = a.repo if a.repo is not None else (os.environ.get("AUTOCODER_LANDING_REPO") or None)
+    return _id(value, "--repo") if value else None
+
+
 def _num(value, what: str):
     if value is None:
         return None
@@ -136,6 +147,7 @@ def plan_row(a: argparse.Namespace) -> dict:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Append a landing-timings row.")
     p.add_argument("--log-path", default=None, help="override the file (tests)")
+    p.add_argument("--repo", default=None, help="the repository id of the row (default $AUTOCODER_LANDING_REPO)")
     sub = p.add_subparsers(dest="kind", required=True)
     c = sub.add_parser("change")
     c.add_argument("--issue", type=int, required=True)
@@ -169,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
     try:
         row = {"change": change_row, "batch": batch_row, "plan": plan_row}[a.kind](a)
+        row["repo"] = _repo(a)
     except ValueError as e:
         print(f"landing-timings: {e}", file=sys.stderr)
         return 2

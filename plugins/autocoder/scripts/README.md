@@ -528,8 +528,9 @@ Records an older suite left in the real logs can be removed with
 of a root in the swarm-roots registry, a `--root`, or a `--keep-repo`, and it
 drops records with no repo. It dry-runs by default. `--apply` keeps a
 `.bak-<stamp>` copy of each file and leaves alone any file that grows while it
-runs. `landing-timings.jsonl` has no repo field, so it is not touched. Nothing
-runs the script automatically.
+runs. `landing-timings.jsonl` is not touched: its rows name their repository too
+(`repo`, since the one-repository report), and `landing-report.py` keeps one
+repository's rows apart itself. Nothing runs the script automatically.
 
 ### Flaky tests: same tree fails, then passes (#191)
 

@@ -435,6 +435,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -z "$ISSUES" ] || [[ "$ISSUES" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "--issues must be comma-separated numbers, got '$ISSUES'" 2
+# Every landing-ledger row names the repository (landing-timings.py --repo), so the report keeps one
+# repository's rows apart from another's in the shared file.
+if [ -z "${AUTOCODER_LANDING_REPO:-}" ] && [ -f "${_PUB_DIR}/repo-id-fns.sh" ]; then
+  # shellcheck source=repo-id-fns.sh
+  source "${_PUB_DIR}/repo-id-fns.sh"
+  AUTOCODER_LANDING_REPO="$(autocoder_repo_id "$REPO" 2>/dev/null || true)"; export AUTOCODER_LANDING_REPO
+fi
 case "$CMD" in
   publish) cmd_publish ;;
   enqueue) cmd_enqueue ;;

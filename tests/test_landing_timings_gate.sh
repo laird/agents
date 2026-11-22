@@ -103,5 +103,55 @@ for l in open(sys.argv[1]):
 PY
 )"
 
+
+# Every row the gate writes names this repository (landing-timings.py --repo from AUTOCODER_LANDING_REPO,
+# which the gate exports from repo-id-fns.sh when the caller set none).
+eq "every row names the repository" "$(autocoder_repo_id "$TMP/worker")" \
+  "$(python3 -c 'import json,sys; print(" ".join(sorted({str(json.loads(l)["repo"]) for l in open(sys.argv[1])})))' "$AUTOCODER_LANDING_TIMINGS")"
+
+# The stage runner's per-stage seconds reach the batch row: the gate hands each run its own timings file
+# (AUTOCODER_STAGE_TIMINGS_FILE); a command that writes the runner's JSON there gets `stages` on the row,
+# gate_s stays the wall clock the gate measured.
+run_one 7107 staged.txt 'printf "%s" "{\"v\":1,\"verdict\":\"PASS\",\"wall_s\":3,\"stages\":{\"build\":{\"seconds\":1.4,\"status\":\"passed\"},\"tests\":{\"seconds\":2.0,\"status\":\"passed\"},\"skipped\":{\"seconds\":null,\"status\":\"skipped\"}}}" > "$AUTOCODER_STAGE_TIMINGS_FILE"'
+eq "stage seconds on the batch row" "green build=1 tests=2" "$(python3 - "$AUTOCODER_LANDING_TIMINGS" <<'PY'
+import json, sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["kind"] == "batch" and 7107 in r["members"]:
+        print(r["verdict"], " ".join(f"{k}={v:.0f}" for k, v in r["stages"].items()))
+PY
+)"
+eq "the per-run timings file is removed after the run" "" "$(ls "$AUTOCODER_TMP"/autocoder-gate-stages-7107-* 2>/dev/null)"
+
+# A gate killed mid-run (a memory-cap watcher's SIGTERM to its process group, a host shutdown) reaches the
+# EXIT trap with no outcome and `$?` of the interrupted command, which used to read as `landed` with exit 0
+# and no sha. A landing is the publish proof and nothing else: the job is `aborted`, the run in flight is
+# counted as gate time, the batch row says aborted:infra, the change comes back as infra, and nothing says
+# landed in either ledger. The test command kills the job's own process group (the launch's pidfile).
+state7108="$AUTOCODER_TMP/autocoder-merge-$(autocoder_repo_id "$TMP/worker")-7108"
+printf -- '---\nnumber: 7108\ntitle: T\npriority: P2\nlabels: [bug]\nstatus: open\n---\nBody.\n' > "$TMP/issues/open/7108.md"
+python3 "$ISSUES_PY" claim 7108 >/dev/null
+git checkout -q -b feature/i7108 master; echo x > killed.txt; git add -A; git commit -q -m "fix #7108"; git push -q origin feature/i7108
+bash "$SCRIPT_DIR/merge-launch.sh" --feature feature/i7108 --issue 7108 --integration master \
+  --test-cmd "sleep 2; kill -TERM -- -\$(cat '${state7108}.pid'); sleep 30" --own-issue >/dev/null 2>&1 || bad "launch 7108 failed"
+for _ in $(seq 1 120); do grep -q '"batch":"solo-7108-' "$AUTOCODER_LANDING_TIMINGS" 2>/dev/null && break; sleep 0.5; done
+sleep 1
+git checkout -q master
+eq "killed mid-run: an aborted:infra batch with its seconds, batched, returned infra; never landed" "batch aborted infra gate
+change batched -
+change returned infra" "$(rows 7108)"
+eq "killed mid-run: the lifecycle ledger says gate-end aborted, no landed event" "gate-end aborted" "$(python3 - "$AUTOCODER_ISSUE_EVENTS" <<'PY'
+import json, sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r.get("issue") == 7108 and r["event"] in ("gate-end", "landed"):
+        print(r["event"], (r.get("detail") or {}).get("outcome", ""))
+PY
+)"
+eq "killed mid-run: the merge-events attempt is aborted with no landed sha" "aborted None" "$(python3 -c 'import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r.get("issue") == 7108 and r["event"] == "attempt": print(r["outcome"], r["landed"])' "$AUTOCODER_MERGE_EVENTS")"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

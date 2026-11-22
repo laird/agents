@@ -72,13 +72,20 @@ Appends one JSON row per CHANGE event and one per BATCH to
 shell wrappers drop errors so recording never fails or delays a gate.
 
 ```
-landing-timings.py change --issue N --event claimed|ready|batched|landed|returned|rebase|precheck
+landing-timings.py [--repo ID] change --issue N --event claimed|ready|batched|landed|returned|rebase|precheck
                           [--batch ID] [--cause CAUSE] [--ts ISO]
-landing-timings.py batch  --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECS ...]
+landing-timings.py [--repo ID] batch  --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECS ...]
                           [--gate-s N] [--discarded-gate-s N] [--publish-s N]
                           [--verdict green|red|aborted|infra] [--cause CAUSE]
                           [--resyncs N] [--push-rejected N] [--ts ISO]
+landing-timings.py [--repo ID] plan   --issue N --verdict train|skip|drop|fault --seconds S [--batch ID] [--ts ISO]
 ```
+
+Every row names its repository: `--repo ID`, default `$AUTOCODER_LANDING_REPO`, which the gate, the
+train, `enqueue.sh` and the publisher export from `repo-id-fns.sh`'s `autocoder_repo_id` (the
+`<basename>-<8 hex>` every worktree of one repository shares); null in rows written before the
+field existed. Two repositories on one host share the default file, and a test run from a checkout
+without the test prelude's private path once left fixture rows beside a real week's.
 
 `CAUSE` (required with `--event returned` and with a non-green verdict): `defect` (the change
 itself was wrong, the only useful rejection), `conflict`, `stale-base`, `red-integration`,
@@ -89,9 +96,23 @@ green. A figure never measured is null, never 0.
 Who writes what:
 
 - `merge-to-integration.sh` writes, for its single-change gate, one batch of one (gate seconds,
-  discarded seconds, re-syncs, rejected pushes, verdict and cause) plus `batched`, and `landed` or
-  `returned`. `LANDING_CAUSE` is `defect` for a gate that fails only with the change,
-  `red-integration` when the integration branch fails alone too, `conflict` for a conflict.
+  discarded seconds, re-syncs, rejected pushes, verdict and cause, and the stage runner's per-stage
+  seconds when the gate command wrote them to the `AUTOCODER_STAGE_TIMINGS_FILE` the gate hands each
+  run) plus `batched`, and `landed` or `returned`. `LANDING_CAUSE` is `defect` for a gate that fails
+  only with the change, `red-integration` when the integration branch fails alone too, `conflict`
+  for a conflict, `infra` for a job that ended without a verdict. A LANDING IS THE PUBLISH PROOF: a
+  job killed mid-run (a memory-cap watcher's signal, a host shutdown) reaches the gate's EXIT trap
+  with no outcome and `$?` of the command it interrupted, usually 0, and used to be recorded as
+  `landed`; now it is `aborted`, the run in flight is counted as gate time, and the batch row says
+  `aborted:infra` with the seconds spent. A train's gate ended by a signal with no verdict line at
+  all is `infra` to the train (re-gated once, nobody blamed), and the train writes the lifecycle
+  ledger's `gate-end aborted` when the killed gate left none.
+- The queue (`merge-train.py queue` and every cycle of `merge-train-run.py`) writes a `ready` row
+  the FIRST time it sees a READY, once per issue and READY comment (`ready-seen.tsv` in the train's
+  state dir), with the comment's own time as the row's `ts`, so the wait after READY and the
+  READY-to-landed cycle are measured from the worker's post; `enqueue.sh` writes one at its post.
+  The take is the member's `batched` row (assembly, then the gate). The train's batch row carries
+  the assembly seconds and, after the close-out, the publish seconds.
 - A project's own queue or train script sources `landing-timings-lib.sh` and calls
   `landing_change <issue> <event> ...` as each change is claimed, marked READY, taken into a batch,
   landed or returned, and `landing_batch ...` once per batch with its stage seconds. A train that
@@ -102,9 +123,16 @@ Who writes what:
 
 ```
 landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
-                  [--log PATH] [--json]
-                  [--history [--repo DIR] [--integration BRANCH] [--merge-events PATH] ...]
+                  [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos]
+                  [--history [--integration BRANCH] [--merge-events PATH] ...]
 ```
+
+One repository per report. The rows kept are the `--repo-id` given (strict), else those of the id
+of `--repo DIR` (default: the current directory) when the ledger holds rows of it; rows naming no
+repository are kept; the rows of other ids are dropped and counted on stderr (`ignored N row(s) of
+other repositories (...)`). A ledger holding no row of the derived id (a copy read on another host,
+an older ledger) is reported whole, with a notice naming the ids it does hold, never empty by
+accident; `--all-repos` keeps every row.
 
 Waste leads: gate-minutes thrown away (red, aborted or infra batches, plus the gate time a
 re-sync discarded) as a share of all gate-minutes, with the breakdown; changes returned at least

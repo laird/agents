@@ -273,6 +273,12 @@ source "$SCRIPT_DIR/issue-fns.sh"
 landing_change() { :; }
 # shellcheck source=landing-timings-lib.sh
 [ -f "$SCRIPT_DIR/landing-timings-lib.sh" ] && source "$SCRIPT_DIR/landing-timings-lib.sh"
+# The row names this repository (landing-timings.py --repo): the report keeps one repository's rows apart.
+if [ -z "${AUTOCODER_LANDING_REPO:-}" ] && [ -f "$SCRIPT_DIR/repo-id-fns.sh" ]; then
+  # shellcheck source=repo-id-fns.sh
+  source "$SCRIPT_DIR/repo-id-fns.sh"
+  AUTOCODER_LANDING_REPO="$(autocoder_repo_id "$REPO" 2>/dev/null || true)"; export AUTOCODER_LANDING_REPO
+fi
 rc=0
 issue_comment "$ISSUE" --body "$(cat "$COMMENT")" || { echo "enqueue: the tracker refused the READY comment on #$ISSUE (exit $?); the branch is pushed at $HEAD_SHA: post the block above by hand" >&2; rc=3; }
 for lb in $READY_LABELS "${ADD_LABELS[@]+"${ADD_LABELS[@]}"}"; do
