@@ -93,6 +93,7 @@ case "$KEY_A" in sha256:*) ok "the file backend's analysisKey is a content hash"
 eq "--key prints the same analysisKey as GET /api/issues" "$(python3 "$SERVER" --key "$A")" "$KEY_A"
 python3 "$SERVER" --key 99999 >/dev/null 2>"$TMP/key.err"; KEY_RC=$?
 eq "--key on a missing issue exits 1" "$KEY_RC" 1
+python3 "$SERVER" --key 0 >/dev/null 2>&1; eq "--key 0 is refused as not an issue number" "$?" 2
 grep -q "cannot read issue #99999" "$TMP/key.err" && ok "--key names the issue it could not read" \
   || bad "--key stderr: $(cat "$TMP/key.err")"
 

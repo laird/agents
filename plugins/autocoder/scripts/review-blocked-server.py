@@ -301,6 +301,8 @@ def main(argv=None):
                         help="print issue N's analysisKey and exit (serves nothing)")
     args = parser.parse_args(argv)
     if args.key is not None:
+        if args.key <= 0:
+            parser.error(f"--key: not an issue number: {args.key}")
         rc, out, err = issue_fn("issue_get", str(args.key))
         try:
             full = json.loads(out) if rc == 0 else None
