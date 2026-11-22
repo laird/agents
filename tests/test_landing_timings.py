@@ -805,3 +805,56 @@ def test_history_mode_makes_one_landing_per_pushed_tip_not_per_member_commit(tmp
     rows = lr.git_rows(str(repo), "master", None, re.compile(r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)"), re.compile(r"^$x"))
     landings, unrecorded = lr.landings_of(rows, None, None)
     assert unrecorded == 0 and {k: sorted(v["issues"]) for k, v in landings.items()} == {tip: [1, 2]}
+
+
+def test_a_workflow_name_with_a_comma_is_one_name_and_its_cache_is_read(tmp_path):
+    repo, _ = git_repo(tmp_path, ["unrelated"])
+    (repo / ".autocoder.json").write_text(json.dumps({"ciWorkflows": ["Build, Test"]}))
+    log = ci_log(tmp_path, [chs(1, "2026-11-02T13:00:00Z", SHA_A), ba("b2", "2026-11-02T13:00:00Z", [1], 600, "green")])
+    env, calls = ci_env(tmp_path, runs={SHA_A: [run(1, "completed", "success", "2026-11-02T13:40:00Z", name="Build, Test")]})
+    first = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--repo", str(repo), env=env).stdout)["ci"]
+    second = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--repo", str(repo), env=env).stdout)["ci"]
+    assert (first["queried"], first["cached"], second["queried"], second["cached"]) == (1, 0, 0, 1)
+    assert [x["workflows"] for x in rows_of(log) if x["kind"] == "ci-verdict"] == [["Build, Test"]] and calls.read_text().count(SHA_A) == 1
+
+
+def test_a_batch_row_shows_the_landing_nearest_its_time_when_the_landed_row_names_no_batch(tmp_path):
+    rows = [chs(7, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [7], 600, "green"),
+            chs(7, "2026-11-03T14:00:00Z", SHA_B), ch(7, "2026-11-03T13:50:00Z", "batched", batch="b9"), ba("b9", "2026-11-03T14:00:00Z", [7], 600, "green")]
+    env, _ = ci_env(tmp_path, runs={SHA_A: [run(1, "completed", "success", "2026-11-03T10:30:00Z")], SHA_B: [run(2, "completed", "failure", "2026-11-03T16:00:00Z")]})
+    out = report("--log", str(ci_log(tmp_path, rows)), "--week", "2026-11-02", env=env).stdout
+    assert "| b1 | 2026-11-03T10:00:00Z | #7 | green | 10.0m | #7 | - | - | - | success 30.0m |" in out
+    assert "| b9 | 2026-11-03T14:00:00Z | #7 | green | 10.0m | #7 | - | - | - | failure 2.0h |" in out
+
+
+def test_the_resolver_reads_past_a_fast_forwarded_commit_with_an_old_date(tmp_path):
+    d = tmp_path / "repo"
+    d.mkdir()
+    def g(*a, date="2026-11-03T09:00:00Z"):
+        return subprocess.run(["git", "-C", str(d), *a], capture_output=True, text=True, check=True,
+                              env={**os.environ, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}).stdout.strip()
+    g("init", "-q", "-b", "master"); g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+    shas = []
+    for i, (subj, date) in enumerate([("Issue #99: train/20261103T083000Z-1 (squashed)", "2026-11-03T09:00:00Z"), ("an old-dated commit fast-forwarded in", "2026-10-20T09:00:00Z"), ("#8: a later landing", "2026-11-03T09:30:00Z")]):
+        (d / "f").write_text(str(i)); g("add", "f"); g("commit", "-q", "-m", subj, date=date); shas.append(g("rev-parse", "HEAD"))
+    rows = [ch(1, "2026-11-03T09:10:00Z", "landed", batch="train-20261103T083000Z-1"), ch(8, "2026-11-03T09:40:00Z", "landed", batch="solo-8-1-1")]
+    log = ci_log(tmp_path, rows)
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--repo", str(d), "--ci", "off", env={}).stdout)["ci"]
+    assert set(a["by_sha"]) == {shas[0], shas[2]} and a["unrecorded"] == 0
+
+
+def test_a_landing_in_the_same_second_as_the_red_landing_counts_as_stacked(tmp_path):
+    sha_e = "e" * 40
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_B, batch="b3"), chs(2, "2026-11-03T10:00:00Z", sha_e, batch="b8"), chs(3, "2026-11-03T12:30:00Z", SHA_C, batch="b5"),
+            ba("b3", "2026-11-03T10:00:00Z", [1], 600, "green"), ba("b8", "2026-11-03T10:00:00Z", [2], 600, "green"), ba("b5", "2026-11-03T12:30:00Z", [3], 600, "green")]
+    env, _ = ci_env(tmp_path, runs={SHA_B: [run(1, "completed", "failure", "2026-11-03T12:30:00Z")], sha_e: [run(2, "completed", "success", "2026-11-03T11:00:00Z")],
+                                    SHA_C: [run(3, "completed", "success", "2026-11-03T13:00:00Z")]})
+    a = json.loads(report("--log", str(ci_log(tmp_path, rows)), "--week", "2026-11-02", "--json", env=env).stdout)["ci"]
+    assert a["red"][0]["landings_before_verdict"] == 1     # E (same second as the landing) counts; C at the verdict's second does not
+
+
+def test_a_completed_run_without_a_conclusion_is_not_a_success(tmp_path):
+    lr = load_module()
+    assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z")], "master", set())[0] == "inconclusive"
+    assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "cancelled", "2026-11-03T10:00:00Z")], "master", set())[0] == "cancelled"
+    assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "success", "2026-11-03T10:05:00Z")], "master", set())[:1] == ("success",)

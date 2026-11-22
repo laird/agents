@@ -472,6 +472,7 @@ def landings_of(rows, since, until):
 
 BATCH_ID_RE = re.compile(r"(?i)\b(?:train|batch)[/-]([A-Za-z0-9._-]+)")
 SOLO_WINDOW_BEFORE_S, SOLO_WINDOW_AFTER_S = 24 * 3600, 600
+RESOLVE_LOG_MAX = 20000   # first-parent commits read to resolve old rows' commits (a busy branch lands a few hundred a day)
 
 
 def resolve_landed_commits(rows, repo_dir, integration, since, log=lambda m: print(m, file=sys.stderr)):
@@ -487,7 +488,9 @@ def resolve_landed_commits(rows, repo_dir, integration, since, log=lambda m: pri
     ref = f"origin/{integration}"
     if subprocess.run(["git", "-C", str(repo_dir), "rev-parse", "--verify", "-q", ref], capture_output=True).returncode != 0:
         ref = integration
-    r = subprocess.run(["git", "-C", str(repo_dir), "log", "--first-parent", f"--since={iso(oldest)}", "--format=%H%x1f%cI%x1f%s", ref],
+    # No `--since`: git stops walking at the first commit older than it, and a fast-forwarded commit with an old date hides
+    # every landing behind it. The walk is bounded by count and the cutoff is applied to each commit here.
+    r = subprocess.run(["git", "-C", str(repo_dir), "log", "--first-parent", f"--max-count={RESOLVE_LOG_MAX}", "--format=%H%x1f%cI%x1f%s", ref],
                        capture_output=True, text=True)
     if r.returncode != 0:
         log(f"landing-report: could not read {ref} in {repo_dir} to resolve the commits of {len(todo)} landed row(s): {r.stderr.strip()[:200]}")
@@ -496,7 +499,7 @@ def resolve_landed_commits(rows, repo_dir, integration, since, log=lambda m: pri
     for i, line in enumerate(r.stdout.splitlines()):
         h, cdate, subj = (line.split("\x1f") + ["", "", ""])[:3]
         t = parse_ts(cdate)
-        if not t:
+        if not t or t < oldest:
             continue
         m = BATCH_ID_RE.search(subj)
         if m:
@@ -539,8 +542,9 @@ def run_time(r):
 
 def judge_runs(runs, integration, workflows):
     """(status, verdict time, run id) from one commit's runs: a red conclusion at the FIRST failing run's end (when the
-    red surfaced); `pending` while any kept run is not completed; `success` at the LAST judged run's end; `cancelled`
-    when every completed run was superseded or skipped; `none` when the commit has no run on the branch."""
+    red surfaced); `pending` while any kept run is not completed; `success` at the LAST successful run's end; `cancelled`
+    when every completed run was superseded or skipped, `inconclusive` when none carries a conclusion; `none` when the
+    commit has no run on the branch."""
     keep = [r for r in runs or [] if isinstance(r, dict)
             and not (integration and r.get("head_branch") and r["head_branch"] != integration)
             and not (workflows and r.get("name") not in workflows)]
@@ -553,10 +557,11 @@ def judge_runs(runs, integration, workflows):
         return red[0]["conclusion"], run_time(red[0]), str(red[0].get("id") or "") or None
     if len(done) < len(keep):
         return "pending", None, None
-    judged = [r for r in done if r.get("conclusion") not in NO_VERDICT_CONCLUSIONS]
+    judged = [r for r in done if r.get("conclusion") == "success"]           # a completed run with no conclusion judged nothing
     timed = [r for r in (judged or done) if run_time(r)]
     last = max(timed, key=run_time) if timed else (judged or done)[-1]      # no run carries a time: the verdict stands, its time is unknown
-    return ("success" if judged else "cancelled"), run_time(last), str(last.get("id") or "") or None
+    status = "success" if judged else ("cancelled" if any(r.get("conclusion") in NO_VERDICT_CONCLUSIONS for r in done) else "inconclusive")
+    return status, run_time(last), str(last.get("id") or "") or None
 
 
 def fetch_runs(cmd, repo_dir, sha, integration):
@@ -659,7 +664,7 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
         if L["status"] not in RED_CONCLUSIONS or L["status"] in CI_NOT_JUDGED:
             continue
         if L["verdict_ts"] is not None:
-            before = {k for k, t in universe if k != L["sha"] and L["ts"] < t < L["verdict_ts"]}
+            before = {k for k, t in universe if k != L["sha"] and L["ts"] <= t < L["verdict_ts"]}   # rows are second-resolution
             L["landings_before_verdict"] = len(before)
             stacked |= before
         red.append({"sha": L["sha"], "issues": L["issues"], "landed_ts": iso(L["ts"]), "verdict_ts": iso(L["verdict_ts"]) if L["verdict_ts"] else None,
@@ -668,7 +673,7 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
     known = bool(counts["judged"]) or not unanswered     # nothing is known of the reds when every landing went unanswered
     return {"landings": len(landings), "unrecorded": unrecorded, "judged": counts["judged"], "pending": counts["pending"],
             "none": counts["none"], "unknown": counts["unknown"], "not_queried": counts["not-queried"],
-            "untimed": counts["untimed"], "lag_clamped": counts["clamped"],
+            "untimed": counts["untimed"], "lag_clamped": counts["clamped"], "complete": not unanswered,
             "queried": meta.get("queried", 0), "cached": meta.get("cached", 0), "mode": meta.get("mode"), "forge_error": meta.get("error"),
             "off_reason": meta.get("off_reason"), "workflows": sorted(meta.get("workflows") or []),
             "lag_s": {"n": len(lag), "p50": quant(lag, 0.5), "p75": quant(lag, 0.75), "max": max(lag) if lag else None},
@@ -682,15 +687,22 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
 def annotate_batches_ci(batch_rows, rows, since, until, ci_res):
     """Each batch row gets the CI verdict of the commit its landed members landed in (`ci`: status, lag, landings
     before the verdict), None when no landed member names a commit."""
-    by_issue_batch, by_issue = {}, {}
+    by_issue_batch, by_issue = {}, defaultdict(list)
     for r in rows:
         if r["kind"] == "change" and r.get("event") == "landed" and r.get("sha"):
             by_issue_batch[(r["issue"], r.get("batch"))] = r["sha"]
-            by_issue.setdefault(r["issue"], r["sha"])
+            by_issue[r["issue"]].append((parse_ts(r["ts"]), r["sha"]))
+
+    def nearest(n, bt):   # the issue's landed row closest to the batch's time, at or after it first (a re-landing is a later row)
+        rows_ = by_issue.get(n) or []
+        after = [(t, sha) for t, sha in rows_ if t >= bt]
+        return min(after)[1] if after else (max(rows_)[1] if rows_ else None)
+
     for row in batch_rows:
         row["ci"] = None
+        bt = parse_ts(row["ts"])
         for n in row["landed"]:
-            sha = by_issue_batch.get((n, row["batch"])) or by_issue.get(n)
+            sha = by_issue_batch.get((n, row["batch"])) or nearest(n, bt)
             if sha and sha in ci_res["by_sha"]:
                 row["ci"] = dict(ci_res["by_sha"][sha], sha=sha)
                 break
@@ -1100,8 +1112,7 @@ def main(argv=None):
     ids = {r.get("repo") for r in rows if r.get("repo")}
     derived = a.repo_id or repo_id_of(repo_dir)
     row_repo = derived if derived in ids else None
-    if a.ci != "off" or any(r["kind"] == "ci-verdict" for r in rows):
-        resolve_landed_commits(rows, repo_dir, a.integration, since)
+    resolve_landed_commits(rows, repo_dir, a.integration, since)
     landings, unrecorded = landings_of(rows, since, until)
 
     def fetch(sha):
@@ -1119,7 +1130,7 @@ def main(argv=None):
             return
         argv = [sys.executable, str(writer), "--log-path", a.log or default_log(), *(["--repo", row_repo] if row_repo else []),
                 "ci-verdict", "--sha", sha, "--conclusion", status, "--verdict-ts", iso(vts), *(["--run-id", rid] if rid else []),
-                *(["--workflows", ",".join(workflows)] if workflows else [])]
+                *(x for w in workflows for x in ("--workflow", w))]
         r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"landing-report: could not cache the CI verdict of {sha[:10]}: {r.stderr.strip()[:200]}", file=sys.stderr)

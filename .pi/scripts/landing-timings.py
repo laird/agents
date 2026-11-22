@@ -29,7 +29,7 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
       report shows it beside the gate time, because a probe that regenerates the tree per
       candidate is a fixed cost of every cycle nobody sees in a gate log.
 
-  ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--workflows A,B] [--ts ISO]
+  ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--workflow NAME ...] [--ts ISO]
       the integration branch's CI verdict on one landed commit, written ONCE by landing-report.py
       when it first finds a terminal verdict (success, failure, cancelled, timed_out ...): run id,
       conclusion, the time CI reached it, and the workflows it judged (null = every run on the
@@ -150,7 +150,7 @@ def ci_verdict_row(a: argparse.Namespace) -> dict:
         raise ValueError(f"--conclusion {a.conclusion!r} is not a conclusion token (lower-case letters, digits, _ -)")
     if not ISO_RE.match(a.verdict_ts):
         raise ValueError(f"--verdict-ts {a.verdict_ts!r} is not YYYY-MM-DDTHH:MM:SSZ")
-    workflows = sorted({w.strip() for w in (a.workflows or "").split(",") if w.strip()}) or None
+    workflows = sorted({w.strip() for w in (a.workflow or []) if w.strip()}) or None   # one arg per name: a name may hold a comma
     return {"v": 1, "ts": _ts(a.ts), "kind": "ci-verdict", "sha": _sha(a.sha),
             "run_id": _id(a.run_id, "--run-id") if a.run_id else None, "conclusion": a.conclusion, "verdict_ts": a.verdict_ts,
             "workflows": workflows}
@@ -220,7 +220,7 @@ def parser() -> argparse.ArgumentParser:
     cv.add_argument("--conclusion", required=True, help="the terminal conclusion CI reached (success, failure, cancelled, timed_out ...)")
     cv.add_argument("--verdict-ts", required=True, help="when CI reached it (ISO, UTC)")
     cv.add_argument("--run-id")
-    cv.add_argument("--workflows", help="the workflow names the verdict was judged over, comma-separated (default: every run on the branch)")
+    cv.add_argument("--workflow", action="append", help="a workflow name the verdict was judged over (repeatable; default: every run on the branch)")
     cv.add_argument("--ts")
     return p
 
