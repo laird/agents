@@ -30,8 +30,8 @@ git -C "$W" add -A; git -C "$W" commit -q -m init; git -C "$W" push -q origin ma
 git -C "$W" update-ref refs/remotes/origin/HEAD refs/remotes/origin/master
 echo ".autocoder.json" > "$W/.git/info/exclude"
 config() {  # <anyLabels JSON array or empty>: the queue config
-  if [ -n "$1" ]; then printf '{ "issueSource": "file", "issueDir": "%s", "train": { "anyLabels": %s } }\n' "$ISSUES" "$1"
-  else printf '{ "issueSource": "file", "issueDir": "%s", "train": { } }\n' "$ISSUES"; fi > "$W/.autocoder.json"
+  if [ -n "$1" ]; then printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any", "anyLabels": %s } }\n' "$ISSUES" "$1"
+  else printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any" } }\n' "$ISSUES"; fi > "$W/.autocoder.json"
 }
 # ready <title> <branch> <label>...: a pushed branch and an open issue labelled ready-for-review (+ the
 # labels given) whose newest comment is a READY naming the branch; prints the issue number.
@@ -74,7 +74,7 @@ hasnt "one host: the unlabelled READY is not" $'\t'"$PLAIN"$'\t' "$q"
 has "one host: the status line counts one" 'merge-train: 1 ready' "$(python3 "$SCRIPTS/merge-train.py" --repo "$W" queue --status-line 2>&1)"
 
 # ── 4. readyLabels stays "all of" beside it ─────────────────────────────────────────────────
-printf '{ "issueSource": "file", "issueDir": "%s", "train": { "readyLabels": ["ready-for-review", "host:mac"], "anyLabels": ["host:mac", "host:linux-a"] } }\n' "$ISSUES" > "$W/.autocoder.json"
+printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any", "readyLabels": ["ready-for-review", "host:mac"], "anyLabels": ["host:mac", "host:linux-a"] } }\n' "$ISSUES" > "$W/.autocoder.json"
 q=$(queue)
 has "all-of and any-of: the item carrying every ready label and one scope label" $'\t'"$MAC"$'\tfeature/mac\t' "$q"
 hasnt "all-of and any-of: a scope label alone does not make an item" $'\t'"$LINUX"$'\t' "$q"
