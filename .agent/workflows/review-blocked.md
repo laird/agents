@@ -213,8 +213,12 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Save for use in review loop
-echo "$BLOCKED_ISSUES" > /tmp/blocked-issues.json
+# Save for use in review loop: a private file per session (#329), never a fixed
+# /tmp path that another session on this host would overwrite. Each later block
+# runs in a fresh shell: set BLOCKED_FILE there to the path printed here.
+BLOCKED_FILE=$(mktemp "${TMPDIR:-/tmp}/autocoder-blocked-issues.XXXXXX") || exit 1
+echo "$BLOCKED_ISSUES" > "$BLOCKED_FILE"
+echo "BLOCKED_FILE=$BLOCKED_FILE"
 ```
 
 With `PREPARE_MODE=true`, follow "Prepare Mode" above for every issue and stop; skip
@@ -226,16 +230,17 @@ blocked issue (starting with highest priority):
 Extract the highest priority blocked issue:
 
 ```bash
-CURRENT_ISSUE=$(cat /tmp/blocked-issues.json | python3 -c "
+CURRENT_ISSUE=$(python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 if data['issues']:
     issue = data['issues'][0]
     print(json.dumps(issue))
-")
+" < "${BLOCKED_FILE:?set BLOCKED_FILE to the path the fetch block printed}")
 
 if [ -z "$CURRENT_ISSUE" ]; then
   echo "✅ All blocked issues have been reviewed!"
+  rm -f "$BLOCKED_FILE"
   exit 0
 fi
 
@@ -428,22 +433,24 @@ After processing the current issue (unless user chose "Explore further"), remove
 
 ```bash
 # Remove processed issue from queue
-cat /tmp/blocked-issues.json | python3 -c "
+: "${BLOCKED_FILE:?set BLOCKED_FILE to the path the fetch block printed}"
+REMAINING_FILE=$(mktemp "${BLOCKED_FILE}.XXXXXX") || exit 1
+python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-if len(data['issues']) > 1:
-    data['issues'] = data['issues'][1:]
-    data['total'] = len(data['issues'])
-    print(json.dumps(data))
-" > /tmp/blocked-issues-remaining.json
+data['issues'] = data['issues'][1:]   # always valid JSON, so the last issue reads as 0 left
+data['total'] = len(data['issues'])
+print(json.dumps(data))
+" < "$BLOCKED_FILE" > "$REMAINING_FILE"
 
-mv /tmp/blocked-issues-remaining.json /tmp/blocked-issues.json
+mv "$REMAINING_FILE" "$BLOCKED_FILE"
 
-REMAINING=$(cat /tmp/blocked-issues.json | python3 -c "import json,sys; print(json.load(sys.stdin)['total'])")
+REMAINING=$(python3 -c "import json,sys; print(json.load(sys.stdin)['total'])" < "$BLOCKED_FILE")
 
 if [ "$REMAINING" -eq 0 ]; then
   echo "✅ All blocked issues have been reviewed!"
   echo ""
+  rm -f "$BLOCKED_FILE"
   exit 0
 fi
 
