@@ -23,7 +23,25 @@ once (Version Management in `docs/maintaining.md`).
   complete, twice: <git's line>` marker a train's classifier reads, an issue
   comment whose reason opens with INFRASTRUCTURE and says to relaunch), the
   branch intact and nothing gated. A real conflict and a stop that is neither
-  (a dirty tree, a refused commit) keep their verdicts.
+  (a dirty tree, a refused commit) keep their verdicts. Three shapes the
+  adversarial review found with real git under a real ENOSPC and a memory limit
+  are covered: git's own memory death (`fatal: Out of memory, malloc failed`)
+  joins the default infrastructure patterns; an error printed behind git's
+  progress output (`Rebasing (1/2)\r`) is read on its own line, so the marker
+  and the issue comment carry git's line and no carriage return; and a stop
+  that left `rebase-merge/` behind before `head-name` was written (which
+  `git rebase --abort` cannot clear) has its state removed and the tree reset
+  before the retry, instead of the retry tripping on "already a rebase-merge
+  directory". Two neighbours fixed on the way: with a conflict resolver or
+  union-merge globs configured, a stop that left no unmerged file was reported
+  as "Conflict resolved" by a resolver that resolved nothing (the un-rebased tree
+  went to the gate, and a later re-sync could publish an ungated tree as
+  documents-only); the resolver now runs only for a stop with unmerged files and
+  `conflict_try_resolve` returns 1 when no rebase is in progress. Both
+  INFRASTRUCTURE refusals (the rebase's and the gate's) record `cause=infra` in
+  the landing ledger, as a train records the same verdict, where they recorded
+  `other`. A non-numeric `AUTOCODER_REBASE_INFRA_RETRY_DELAY` is reported and
+  replaced by 30 instead of handing `sleep` a value it refuses.
 - The merge train's landing proof (`train_lib.landing_proof`) no longer reads a
   member as "not in the integration branch" after a green landing when a
   keyed-row merge driver wrote its rows in another order. The gate rebases a

@@ -368,13 +368,14 @@ _gate_in_slot() {  # <dir> "<test-cmd>": gate_cache_run inside one slot; rc is t
 #   ^[Error: ENOSPC: ...                                node (`Error:`, `SystemError:`, `[Error:`)
 #   ^npm ERR! code ENOSPC / ^npm error nospc ENOSPC:    npm's rows
 #   ^OSError: [Errno 28] No space left on device, [Errno 12] Cannot allocate memory   python
+#   ^fatal: Out of memory, malloc failed (tried to allocate N bytes)   git's own memory death
 #   ...: No space left on device$ / ...: Cannot allocate memory$   libc's strerror ending a line
 #        (git's `fatal: write error:`, cp's `error writing 'x':`, bash's `fork:`)
 #   ^FATAL ERROR: ... JavaScript heap out of memory$    V8's abort, no quote anywhere on the line
 #   ^[bash: ][line N: ]<word>: command not found$       bash's two shapes; dash's `sh: 1: x: not found`
 # An assertion line quotes the text or ends in `'` or `/`, a snapshot diff row ends in `"` or
 # `",`, so none of them matches. A test printing a raw host line verbatim still would.
-GATE_INFRA_PATTERNS_DEFAULT='^::error::[^:]*: INFRASTRUCTURE|^[^ '"'"'"]+ ::error::[^:]*: INFRASTRUCTURE --|^::error::check-disk-space:|^[[:space:]]*\[?[A-Za-z]*Error: ENOSPC: |^npm (ERR!|error) [a-z]+ ENOSPC( |:|$)|^[A-Za-z]*Error: \[Errno [0-9]+\] (No space left on device|Cannot allocate memory)|: (No space left on device|Cannot allocate memory)[[:space:]]*$|^[^'"'"'"]*FATAL ERROR: [^'"'"'"]*JavaScript heap out of memory[[:space:]]*$|^([^ :]+: )?((line )?[0-9]+: )?[^ :]+: (command )?not found[[:space:]]*$'
+GATE_INFRA_PATTERNS_DEFAULT='^::error::[^:]*: INFRASTRUCTURE|^[^ '"'"'"]+ ::error::[^:]*: INFRASTRUCTURE --|^::error::check-disk-space:|^[[:space:]]*\[?[A-Za-z]*Error: ENOSPC: |^npm (ERR!|error) [a-z]+ ENOSPC( |:|$)|^[A-Za-z]*Error: \[Errno [0-9]+\] (No space left on device|Cannot allocate memory)|^fatal: Out of memory, malloc failed|: (No space left on device|Cannot allocate memory)[[:space:]]*$|^[^'"'"'"]*FATAL ERROR: [^'"'"'"]*JavaScript heap out of memory[[:space:]]*$|^([^ :]+: )?((line )?[0-9]+: )?[^ :]+: (command )?not found[[:space:]]*$'
 
 GATE_INFRA_PATTERNS="${AUTOCODER_GATE_INFRA_PATTERNS:-$GATE_INFRA_PATTERNS_DEFAULT}"
 GATE_FAILURE_PATTERNS_DEFAULT='^::error::|^❌|^[[:space:]]*FAIL[[:space:]]|^FAILED[[:space:]]|^--- FAIL:|^test .* \.\.\. FAILED$|^[[:space:]]*(✗|×)[[:space:]]'
@@ -1053,38 +1054,65 @@ REBASE_RESOLVED=0
 # once after AUTOCODER_REBASE_INFRA_RETRY_DELAY seconds (default 30: a tmpfs under gate
 # load drains in seconds), and a second one refuses as INFRASTRUCTURE (exit 3, the marker a
 # train's classifier reads and re-gates on), the branch intact.
+# Git's progress output ends in a carriage return, not a newline (`Rebasing (1/2)\r`),
+# so an error printed behind it shares the line; the CRs are read as line ends first,
+# which is what the start-anchored patterns need and what keeps the marker to git's line.
 _rebase_infra_line() {  # the first infrastructure line of the latest rebase's output (rc 0), or nothing (rc 1)
   local line
   [ -s "$REBASE_LOG" ] || return 1
-  line=$(sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g' "$REBASE_LOG" | grep -avE "$GATE_REPORT_LINE" | grep -aE "$GATE_INFRA_PATTERNS" | sed -n 1p)
+  line=$(tr '\r' '\n' < "$REBASE_LOG" | sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g' | grep -avE "$GATE_REPORT_LINE" | grep -aE "$GATE_INFRA_PATTERNS" | sed -n 1p)
   [ -n "$line" ] && printf '%s\n' "$line"
+}
+# After a host stop the abort can find nothing to abort: git that died while writing its
+# state (`rebase-merge/` made, `head-name` not yet written) is "not rebasing" to
+# `--abort`, which leaves the directory, and the retry would stop on "there is already a
+# rebase-merge directory" however healthy the host. The state is removed and the tree
+# reset to where the attempt started, as git's own hint says.
+_rebase_clear() {  # <HEAD before the attempt>
+  if ! git rebase --abort >/dev/null 2>&1; then
+    rm -rf "$(git rev-parse --git-path rebase-merge)" "$(git rev-parse --git-path rebase-apply)"
+    git reset -q --hard "$1" >/dev/null 2>&1 || true
+  fi
 }
 _refuse_rebase_infrastructure() {  # <line>: the output line that decided it
   local line="$1"
   echo "::error::merge-to-integration: INFRASTRUCTURE -- the rebase onto origin/${INTEGRATION_BRANCH} did not complete, twice: ${line}"
   echo "   That is a host condition, not a conflict and not a test failure, so nothing is known about this change. NOT pushing."
   echo "   Branch '${FEATURE}' is untouched; relaunch the merge once the host is fixed."
+  LANDING_CAUSE=infra   # the ledger's cause, as a train records the same verdict
   _fail 3 "INFRASTRUCTURE: rebasing ${FEATURE_SHA:0:8} onto origin/${INTEGRATION_BRANCH} stopped on a host condition twice (${line}). Not a conflict and not a test failure: nothing about this change is in doubt and nothing landed. Relaunch the merge once the host is fixed; branch \`${FEATURE}\` is intact"
 }
 _rebase_onto_integration() {
-  local attempt infra prior="" delay="${AUTOCODER_REBASE_INFRA_RETRY_DELAY:-30}"
+  local attempt infra before prior="" delay="${AUTOCODER_REBASE_INFRA_RETRY_DELAY:-30}"
+  if ! [[ "$delay" =~ ^[0-9]+$ ]]; then   # `sleep` would refuse it and the retry would be immediate
+    echo "⚠️  AUTOCODER_REBASE_INFRA_RETRY_DELAY='${delay}' is not a whole number of seconds; using 30."
+    delay=30
+  fi
   REBASE_RESOLVED=0
   for attempt in 1 2; do
+    before=$(git rev-parse HEAD)
     : > "$REBASE_LOG"
     if git "${_GIT_PINNED[@]}" rebase "origin/${INTEGRATION_BRANCH}" > "$REBASE_LOG" 2>&1; then
       cat "$REBASE_LOG"
       break
     fi
     cat "$REBASE_LOG"
-    if conflict_try_resolve; then
-      REBASE_RESOLVED=1
-      echo "ℹ️  Conflict resolved in the merge worktree (${CONFLICT_RESOLVED_BY}); the gate decides whether the result is right."
-      break
+    # A conflict is a stop that left unmerged files; only that is the resolver's to try.
+    # (A stop that left none, with a resolver configured, used to be reported as
+    # "Conflict resolved" by a resolver that resolved nothing, and the un-rebased tree went
+    # on to the gate.)
+    if [ -n "$(git diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+      if conflict_try_resolve; then
+        REBASE_RESOLVED=1
+        echo "ℹ️  Conflict resolved in the merge worktree (${CONFLICT_RESOLVED_BY}); the gate decides whether the result is right."
+        break
+      fi
+      _escalate_conflict
     fi
     # A non-conflict stop right after a host stop is the host's too (the first stop can
     # leave a rebase the abort could not clear), so the retry inherits the first line.
-    if [ -z "$(git diff --name-only --diff-filter=U 2>/dev/null)" ] && { infra=$(_rebase_infra_line) || { [ -n "$prior" ] && infra="$prior"; }; }; then
-      git rebase --abort 2>/dev/null || true
+    if infra=$(_rebase_infra_line) || { [ -n "$prior" ] && infra="$prior"; }; then
+      _rebase_clear "$before"
       if [ "$attempt" -eq 1 ]; then
         prior="$infra"
         echo "⚠️  Rebasing ${FEATURE} onto origin/${INTEGRATION_BRANCH} stopped on a host condition, not a conflict (${infra}); retrying once in ${delay}s."
@@ -1246,6 +1274,7 @@ _refuse_infrastructure() {
   echo "   Branch '${FEATURE}' is untouched; relaunch the merge once the host is fixed."
   gate_cache_forget "$started" "$TEST_CMD"
   [ "$left" = "$started" ] || gate_cache_forget "$left" "$TEST_CMD"
+  LANDING_CAUSE=infra   # the ledger's cause, as a train records the same verdict
   _fail 3 "INFRASTRUCTURE: the gate did not reach a verdict on ${where} (${line}). A host condition, not a test failure: nothing about this change is in doubt and nothing landed. Relaunch the merge once the host is fixed; branch \`${FEATURE}\` is intact"
 }
 

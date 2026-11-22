@@ -254,6 +254,7 @@ _cf_run_resolver() {
 conflict_try_resolve() {
   local files union_left f stops=0
   [ -n "$CF_UNION_GLOBS" ] || [ "$CF_RESOLVER" != off ] || return 1
+  _cf_rebasing || return 1            # nothing in progress: nothing was resolved
   while _cf_rebasing; do
     stops=$((stops + 1))
     [ "$stops" -le 50 ] || return 1   # a runaway rebase is not ours to finish

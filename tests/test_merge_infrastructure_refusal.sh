@@ -244,6 +244,8 @@ if [ "\$is_rebase" -eq 1 ] && [ "\$is_abort" -eq 0 ] && [ -s "\${REBASE_FAIL_COU
   n=\$(cat "\$REBASE_FAIL_COUNT_FILE")
   if [ "\$n" -gt 0 ]; then
     echo \$((n - 1)) > "\$REBASE_FAIL_COUNT_FILE"
+    # REBASE_FAIL_WEDGE=1: leave the state directory git makes before head-name (an abort cannot clear it)
+    [ -n "\${REBASE_FAIL_WEDGE:-}" ] && mkdir -p "\$("$REAL_GIT" rev-parse --git-path rebase-merge)"
     if [ -s "\$REBASE_FAIL_MSG_FILE.\$n" ]; then cat "\$REBASE_FAIL_MSG_FILE.\$n" >&2; else cat "\$REBASE_FAIL_MSG_FILE" >&2; fi
     exit 1
   fi
@@ -312,7 +314,116 @@ echo "$OUT" | grep -q "^::error::merge-to-integration: INFRASTRUCTURE -- the reb
 echo "$OUT" | grep -q "failed without a conflict" && bad "(n) read as a plain non-conflict stop: $OUT" || ok "(n) never read as a plain stop"
 [ "$(origin_master)" = "$BEFORE" ] && ok "(n) nothing pushed" || bad "(n) master moved"
 rm -f "$REBASE_FAIL_MSG_FILE.1" "$REBASE_FAIL_MSG_FILE.2"
+
+# git's own memory death is a host stop (its line is neither a strerror ending nor a heap abort)
+setup
+BEFORE=$(origin_master)
+printf 'fatal: Out of memory, malloc failed (tried to allocate 46888897 bytes)\n' > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 3 ] && ok "(o) git's out-of-memory line is a host stop (exit 3 after two)" || bad "(o) rc=$RC: $OUT"
+echo "$OUT" | grep -q "INFRASTRUCTURE -- the rebase onto origin/master did not complete, twice: fatal: Out of memory, malloc failed (tried to allocate 46888897 bytes)" && ok "(o) the marker names git's line" || bad "(o) marker: $OUT"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(o) nothing pushed" || bad "(o) master moved"
+
+# an error behind git's progress output (a carriage return, no newline) is read on its own line
+setup
+printf 'Rebasing (1/2)\rerror: unable to create temporary file: No space left on device\n' > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 3 ] && ok "(p) an error behind a progress line is still a host stop" || bad "(p) rc=$RC: $OUT"
+echo "$OUT" | grep -q "INFRASTRUCTURE -- the rebase onto origin/master did not complete, twice: error: unable to create temporary file: No space left on device$" && ok "(p) the marker is git's error line alone" || bad "(p) marker: $OUT"
+echo "$OUT" | grep -a "INFRASTRUCTURE --" | grep -q $'\r' && bad "(p) the marker carries a carriage return" || ok "(p) no carriage return in the marker"
+
+# a host stop that left git's state directory behind (died before head-name): cleared, the retry lands
+setup
+BEFORE=$(origin_master)
+printf "fatal: could not open '.git/rebase-merge/head-name' for writing: No space left on device\n" > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 1
+OUT=$(REBASE_FAIL_WEDGE=1 run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 0 ] && ok "(q) a stop that left rebase-merge/ behind is cleared and the retry lands (exit 0)" || bad "(q) rc=$RC: $OUT"
+[ "$(origin_master)" != "$BEFORE" ] && ok "(q) master moved after the retry" || bad "(q) master did not move: $OUT"
+echo "$OUT" | grep -q "already a rebase-merge directory" && bad "(q) the retry tripped on the leftover state: $OUT" || ok "(q) the leftover state did not reach the retry"
+
+# a conflict resolver configured: a host stop is still a host stop (the resolver has nothing
+# to resolve when no file is unmerged), retried and landed, never "Conflict resolved"
+setup
+BEFORE=$(origin_master)
+printf 'error: unable to create file src/generated/big.txt: No space left on device\n' > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 1
+OUT=$(AUTOCODER_CONFLICT_RESOLVER=/bin/false run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 0 ] && ok "(r) with a resolver configured, one host stop is retried and lands" || bad "(r) rc=$RC: $OUT"
+echo "$OUT" | grep -q "Conflict resolved" && bad "(r) a resolver that resolved nothing reported a resolution: $OUT" || ok "(r) never reported as resolved"
+echo "$OUT" | grep -q "retrying once" && ok "(r) the retry happened" || bad "(r) no retry: $OUT"
+[ "$(origin_master)" != "$BEFORE" ] && ok "(r) master moved" || bad "(r) master did not move"
+
+# a delay that is not a number of seconds: said so, 30 used, the retry still happens
+setup
+rebase_fails 1
+OUT=$(MTI="$MTI" AUTOCODER_REBASE_INFRA_RETRY_DELAY=soon timeout 5 bash -c 'source /dev/stdin' <<'SH' 2>&1
+# the function alone: a non-numeric delay is reported and replaced before any sleep
+INTEGRATION_BRANCH=master FEATURE=f FEATURE_SHA=0123456789 REBASE_LOG=$(mktemp)
+_rebase_infra_line() { return 1; }; conflict_try_resolve() { return 1; }; _escalate_conflict() { echo ESCALATED; exit 1; }
+git() { case "$*" in *rev-parse*HEAD) echo deadbeef;; *rebase*) echo "fatal: x" >&2; return 1;; *) return 0;; esac; }
+eval "$(sed -n '/^_rebase_onto_integration() {/,/^}/p' "$MTI")"
+_rebase_onto_integration
+SH
+); RC=$?
+echo "$OUT" | grep -q "AUTOCODER_REBASE_INFRA_RETRY_DELAY='soon' is not a whole number of seconds; using 30" && ok "(s) a non-numeric delay is reported and replaced" || bad "(s) no warning: $OUT"
+echo "$OUT" | grep -q "invalid time interval" && bad "(s) sleep was handed the bad value: $OUT" || ok "(s) sleep never saw it"
+
+# a REAL conflict whose output also carries a host line is a conflict (the unmerged files decide)
+setup
+cat > "$TMP/bin/git" <<SHIM
+#!/bin/bash
+# real git; after a rebase that stopped with unmerged files, add a host-shaped line to its output
+is_rebase=0; is_abort=0
+for a in "\$@"; do [ "\$a" = rebase ] && is_rebase=1; [ "\$a" = --abort ] && is_abort=1; done
+if [ "\$is_rebase" -eq 1 ] && [ "\$is_abort" -eq 0 ] && [ -s "\${REBASE_FAIL_COUNT_FILE:-/nonexistent}" ]; then
+  n=\$(cat "\$REBASE_FAIL_COUNT_FILE")
+  if [ "\$n" -gt 0 ]; then
+    echo \$((n - 1)) > "\$REBASE_FAIL_COUNT_FILE"
+    [ -n "\${REBASE_FAIL_WEDGE:-}" ] && mkdir -p "\$("$REAL_GIT" rev-parse --git-path rebase-merge)"
+    if [ -s "\$REBASE_FAIL_MSG_FILE.\$n" ]; then cat "\$REBASE_FAIL_MSG_FILE.\$n" >&2; else cat "\$REBASE_FAIL_MSG_FILE" >&2; fi
+    exit 1
+  fi
+fi
+if [ "\$is_rebase" -eq 1 ] && [ "\$is_abort" -eq 0 ] && [ -n "\${REBASE_CONFLICT_HOST_LINE:-}" ]; then
+  "$REAL_GIT" "\$@"; rc=\$?
+  [ "\$rc" -ne 0 ] && [ -n "\$("$REAL_GIT" diff --name-only --diff-filter=U 2>/dev/null)" ] && echo "error: unable to create file src/generated/big.txt: No space left on device" >&2
+  exit "\$rc"
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$TMP/bin/git"
+rebase_fails 0
+# master edits README.md after the feature changed it: a textual conflict on the rebase
+(cd "$TMP/worker" && git checkout -q master && echo master-side > README.md && git commit -qam "master edits readme" && git push -q origin master && git checkout -q feature/code && echo feature-side > README.md && git commit -qam "feature edits readme")
+BEFORE=$(origin_master)
+OUT=$(REBASE_CONFLICT_HOST_LINE=1 run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 1 ] && ok "(t) a real conflict with a host line in the output is a conflict (exit 1)" || bad "(t) rc=$RC: $OUT"
+echo "$OUT" | grep -q "Conflict rebasing feature/code" && ok "(t) reported as the conflict" || bad "(t) conflict not reported: $OUT"
+echo "$OUT" | grep -q "retrying once\|INFRASTRUCTURE" && bad "(t) the conflict was retried or refused as infrastructure: $OUT" || ok "(t) never read as a host stop"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(t) nothing pushed" || bad "(t) master moved"
 unset REBASE_FAIL_COUNT_FILE REBASE_FAIL_MSG_FILE
+
+# the landing ledger's cause for both refusals is infra, as a train records the same verdict
+ledger_causes() { python3 -c '
+import json,sys
+for l in open(sys.argv[1]):
+    r=json.loads(l)
+    if r.get("kind")=="change" and r["event"]=="returned": print(r["event"], r.get("cause") or "-")
+' "$AUTOCODER_LANDING_TIMINGS" 2>/dev/null | sort -u | tr "\n" ";"; }
+export AUTOCODER_LANDING_TIMINGS="$TMP/landing.jsonl"
+setup; rm -f "$AUTOCODER_LANDING_TIMINGS"
+export REBASE_FAIL_COUNT_FILE="$TMP/rebase-fails" REBASE_FAIL_MSG_FILE="$TMP/rebase-msg"
+printf 'error: unable to create file src/generated/big.txt: No space left on device\n' > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 3 ] && [ "$(ledger_causes)" = "returned infra;" ] && ok "(u) the rebase refusal's ledger row is returned/infra" || bad "(u) rc=$RC ledger: $(ledger_causes): $OUT"
+setup; rm -f "$AUTOCODER_LANDING_TIMINGS"; rebase_fails 0
+OUT=$(run "$RECORD; $DISK_ALWAYS && $RED"); RC=$?
+[ "$RC" -eq 3 ] && [ "$(ledger_causes)" = "returned infra;" ] && ok "(u) the gate refusal's ledger row is returned/infra too" || bad "(u) gate rc=$RC ledger: $(ledger_causes): $OUT"
+unset AUTOCODER_LANDING_TIMINGS REBASE_FAIL_COUNT_FILE REBASE_FAIL_MSG_FILE
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
