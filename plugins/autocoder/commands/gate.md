@@ -94,6 +94,11 @@ case applies by checking, not by recollection:
 
    A held issue must not sit idle, or it stays `working` with nobody on it.
 
+A plan with `"dispatched": true` is a **manager's dispatch** (`dispatch-issue.sh`, a file the
+gate takes ahead of its own pick, ahead of triage, and ahead of an idle exit): the issue is
+already claimed, or resumed when it was this worktree's own held claim (then `"resume": true`
+too). Dispatch it like any other plan; nothing about the claim steps changes.
+
 A plan with `"resume": true` and `"in_flight": false` is **this worktree's own claim,
 picked up by a new session** (#182): a restart or a fresh worker process found an open
 `working` issue recorded for this worktree and resumes it before claiming anything new.

@@ -9,7 +9,7 @@ merge-events.jsonl, so a project can reproduce its baseline.
   landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
                     [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos] [--train-gate-issue N]
                     [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
-                    [--history [--integration BRANCH] [--merge-events PATH]
+                    [--issue-events PATH] [--history [--integration BRANCH] [--merge-events PATH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
                                [--rules JSON] [--export-rows PATH] [--limit N]]
 
@@ -287,6 +287,11 @@ def default_log():
     return os.path.join(state, "autocoder", "landing-timings.jsonl")
 
 
+def default_issue_events():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "autocoder", "issue-events.jsonl")
+
+
 # ── analysis ───────────────────────────────────────────────────────────────
 def merge_batches(batches):
     """One row per batch id, in time order. A train's gate (merge-to-integration.sh under
@@ -309,7 +314,53 @@ def merge_batches(batches):
     return list(by.values())
 
 
-def analyze(rows, since, until, bucket="week", ci=None):
+def load_claims(path, repo_id=None):
+    """The lifecycle ledger's `claimed` events (issue-events-lib.sh: one per `issue_claim`, naming the worker
+    that claimed), as [(ts, worker, issue)]: the only record of WHICH worker took an issue. Rows of another
+    repository are dropped when `repo_id` is known and the file names repositories; a missing file is []."""
+    out = []
+    if not path or not Path(path).exists():
+        return out
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict) or e.get("event") != "claimed" or not parse_ts(e.get("ts")):
+            continue
+        if repo_id and e.get("repo") and e.get("repo") != repo_id:
+            continue
+        try:
+            out.append((parse_ts(e["ts"]), str(e.get("worker") or ""), int(e.get("issue"))))
+        except (TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
+def worker_idle_gaps(claims, ev, since, until):
+    """Per worker, the gap from the READY of the issue it claimed last to its NEXT claim: the time a worker sat
+    between banking one task and starting the next (a manager's dispatch it waited for, or nothing to pick).
+    A previous issue with no READY before the next claim (released, blocked, still open) measures nothing;
+    the next claim must be in the window. Returns the distribution, the workers and the claims counted."""
+    by = defaultdict(list)
+    for ts, worker, issue in claims:
+        if worker:
+            by[worker].append((ts, issue))
+    gaps, workers = [], set()
+    for worker, items in by.items():
+        items.sort()
+        for (pt, pi), (nt, ni) in zip(items, items[1:]):
+            if (since is not None and nt < since) or (until is not None and nt >= until):
+                continue
+            ready = [t for t, e, r in ev.get(pi, []) if e == "ready" and pt <= t <= nt]
+            if not ready:
+                continue
+            gaps.append((nt - max(ready)).total_seconds())
+            workers.add(worker)
+    return {"idle_gap_s": dist(gaps), "workers": len(workers), "claims": len(claims)}
+
+
+def analyze(rows, since, until, bucket="week", ci=None, claims=None):
     def inwin(r):
         t = parse_ts(r["ts"])
         return (since is None or t >= since) and (until is None or t < until)
@@ -451,6 +502,7 @@ def analyze(rows, since, until, bucket="week", ci=None):
         "batch_rows": batch_rows,
         "regates": regates,
         "ci": ci_res,
+        "workers": worker_idle_gaps(claims or [], ev, since, until),
     }
 
 
@@ -902,6 +954,17 @@ def ready_to_launch_text(t):
     return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']})"
 
 
+def idle_gap_text(a):
+    """A worker's wait between banking and its next claim, or why it is n/a (no `claimed` lifecycle event
+    names a worker: the issue-events ledger is missing, or every claim was the first of its worker)."""
+    w = a.get("workers") or {"idle_gap_s": {"n": 0}, "workers": 0, "claims": 0}
+    d = w["idle_gap_s"]
+    if not d["n"]:
+        return ("n/a (no worker claimed a second issue after a READY in the window"
+                + ("; no `claimed` lifecycle event read: pass --issue-events" if not w["claims"] else "") + ")")
+    return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']} over {w['workers']} workers)"
+
+
 def render_week(a):
     """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
     w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
@@ -930,6 +993,7 @@ def render_week(a):
                                for k, v in sorted(rg["by"].items(), key=lambda kv: -kv[1]["n"])))
     else:
         out.append("- Re-gates: 0")
+    out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
     return out + [""]
 
 
@@ -978,6 +1042,7 @@ def render(a, week=None, batches=False):
         out.append(f"- {label}: " + ("n/a" if not d["n"] else f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']})"))
     out.append("- READY to launch (a cycle took it): " + ready_to_launch_text(t))
     out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
+    out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
     out += ["", "## Batches", "", f"- Batches: {b['count']}; landed changes: {a['landed']}",
             "- Size distribution (members: batches): " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),
             f"- Assembly: " + ("n/a" if not b["assembly_s"]["n"] else f"p50 {human(b['assembly_s']['p50'])}, p90 {human(b['assembly_s']['p90'])}"),
@@ -1164,6 +1229,8 @@ def main(argv=None):
                    help="a command given RUN_ID that prints the run's jobs as a JSON array, for the job that bounds the verdict (default: gh api in --repo)")
     p.add_argument("--ci-workflow", action="append", default=[], help="judge only this workflow name (repeatable; default: `ciWorkflows` of the repository's .autocoder.json, else every run on the branch)")
     p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
+    p.add_argument("--issue-events", default=os.environ.get("AUTOCODER_ISSUE_EVENTS") or default_issue_events(),
+                   help="the lifecycle ledger (issue-events-lib.sh): its `claimed` events name the worker, for the worker idle gap")
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
     p.add_argument("--skip-subject-regex", default=r"(?i)\(mechanical\)|\(documents-only\)|^docs\(|^merge |^re-sync")
     p.add_argument("--ready-regex", default=r"^\W*(\[[^\]]*\]\s*)?(\w+:\s*)?READY\b")
@@ -1243,7 +1310,10 @@ def main(argv=None):
         print("landing-report: --all-repos: the CI verdict is not queried (it is asked of one repository); cached verdicts are read", file=sys.stderr)
     verdicts, meta = resolve_ci(landings, cached_verdicts(rows, workflows), ci_mode, fetch, judge, write, jobs_of=jobs_of)
     meta["workflows"], meta["off_reason"] = workflows, off_reason
-    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)))
+    # The lifecycle ledger's rows name their repository the same way: strict under --repo-id, else this
+    # directory's id (a row naming another repository is dropped), everything under --all-repos.
+    claims = load_claims(a.issue_events, None if a.all_repos else (a.repo_id or derived))
+    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims)
     if week:
         res["week"] = week
     sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res, week=week, batches=a.batches))

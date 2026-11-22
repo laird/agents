@@ -943,3 +943,40 @@ def test_week_and_full_reports_show_ready_to_launch_from_the_newest_ready_before
 def test_ready_to_launch_is_na_and_says_why_when_no_launched_row_exists(log):
     out = report("--log", str(log), "--week", "2026-11-02").stdout
     assert "- READY to launch (a cycle took it): n/a (no `launched` row" in out
+
+
+# ── the worker idle gap (READY of the previous issue to the worker's next claim) ──────────
+def ev(ts, worker, issue, event="claimed", repo=None):
+    return {"v": 1, "ts": ts, "repo": repo, "issue": issue, "worker": worker, "branch": None, "event": event, "detail": {}}
+
+
+def test_week_and_full_reports_show_the_worker_idle_gap_from_the_lifecycle_ledgers_claims(tmp_path):
+    log = tmp_path / "l.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in [
+        ch(1, "2026-11-02T10:00:00Z", "ready"),                     # w1 banked #1 at 10:00
+        ch(2, "2026-11-02T11:00:00Z", "ready"),                     # w2 banked #2 at 11:00
+        ch(3, "2026-11-02T12:00:00Z", "ready"),                     # w1 banked #3 at 12:00
+        ba("b1", "2026-11-02T13:00:00Z", [1, 2, 3], 1800, "green")]))
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(e) + "\n" for e in [
+        ev("2026-11-02T08:00:00Z", "w1", 1), ev("2026-11-02T10:30:00Z", "w1", 3),    # w1: 30 min idle after #1's READY
+        ev("2026-11-02T12:05:00Z", "w1", 5),                                           # w1: 5 min after #3's READY
+        ev("2026-11-02T09:00:00Z", "w2", 2), ev("2026-11-02T11:40:00Z", "w2", 4),    # w2: 40 min after #2's READY
+        ev("2026-11-02T09:00:00Z", "w3", 6), ev("2026-11-02T10:00:00Z", "w3", 7),    # w3: #6 never reached READY: not measured
+        ev("2026-11-02T10:00:00Z", "w1", 1, event="released"),                       # another event kind: ignored
+        ev("2026-11-02T10:00:00Z", "w9", 1, repo="other-00000000"), ev("2026-11-02T10:10:00Z", "w9", 3, repo="other-00000000"),
+    ]) + "garbage\n")
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--issue-events", str(events), "--all-repos").stdout)
+    # --all-repos: w9's rows count too (10 min); without it the rows name a repository this fixture is not run from
+    assert a["workers"]["claims"] == 9
+    assert a["workers"]["idle_gap_s"] == {"n": 4, "p50": 1200.0, "p90": 2220.0, "max": 2400.0} and a["workers"]["workers"] == 3   # 300, 600, 1800, 2400
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--issue-events", str(events), "--repo-id", "mine-00000000").stdout)
+    assert a["workers"]["idle_gap_s"]["n"] == 3 and a["workers"]["idle_gap_s"]["max"] == 2400.0, "rows naming another repository are dropped under --repo-id"
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(events), "--repo-id", "mine-00000000").stdout
+    assert "- Worker idle gap (READY of the previous issue to the next claim): p50 30.0m, p90 38.0m, max 40.0m (n=3 over 2 workers)" in out
+    assert out.count("Worker idle gap (READY of the previous issue to the next claim)") == 2   # the week summary and the Time section
+
+
+def test_the_idle_gap_is_na_and_says_why_without_a_lifecycle_ledger(log, tmp_path):
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(tmp_path / "none.jsonl")).stdout
+    assert "- Worker idle gap (READY of the previous issue to the next claim): n/a (no worker claimed a second issue after a READY in the window; no `claimed` lifecycle event read: pass --issue-events)" in out

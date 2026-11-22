@@ -278,10 +278,15 @@ For each worktree row:
    - None → spawn one with `bash "$SCRIPT_DIR/restart-worker.sh" --worktree <path>`. It
      opens the pane or workspace and starts the worker on that worktree's branch.
 2. **Send its command** (the row's last column) to the adopted worker:
-   `/fix <N>` when the state is `claimed`, `open` or `unknown`. That continues the
-   same issue on its branch with its edits. Send `/fix-loop` when the issue is
-   `closed` or the branch names none (`none`). A spawned worker's loop resumes its own
-   claim by itself, so it needs no prompt.
+   `/fix-loop` when the state is `claimed`: first write the worktree's own issue back to
+   it as a dispatch (`bash "$SCRIPT_DIR/dispatch-issue.sh" <N> --worktree <path>`,
+   accepted because the worktree is on that issue's branch), so the loop's first tick
+   resumes that issue on its branch with its edits whether or not the worktree's claim
+   record survived, and the worker keeps looping when it is done. `/fix <N>` when the
+   state is `open` or `unknown` (no `working` claim for the loop to resume, or an
+   unanswered backend: /fix re-claims it). `/fix-loop` when the issue is `closed` or the
+   branch names none (`none`). A spawned worker's loop resumes its own claim by itself,
+   so it needs no prompt.
 3. **Claims.** Release a `working` claim only when its worktree is gone, i.e. a row from
    `--orphan-claims`. On a shared tracker (GitHub, Jira, ADO) that means a claim this host
    made whose `wt=` worktree no longer exists; claims from other hosts or other clones are

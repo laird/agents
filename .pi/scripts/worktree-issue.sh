@@ -15,9 +15,13 @@
 #            closed   issue closed: the worktree is free
 #            none     the branch names no issue
 #            unknown  the issue backend could not answer
-#   command  /autocoder:fix N for claimed, open and unknown; /autocoder:fix-loop
-#            for closed and none. Non-claude agents (AUTOCODER_AGENT) get bare
-#            names.
+#   command  /autocoder:fix-loop for claimed (the loop's first tick resumes the
+#            worktree's own claim: its record, or the dispatch the manager writes
+#            with dispatch-issue.sh, and the loop carries on afterwards), closed
+#            and none; /autocoder:fix N for open and unknown, where the loop would
+#            not resume it (no `working` claim to resume, or an unanswered
+#            backend) and /fix re-claims. Non-claude agents (AUTOCODER_AGENT) get
+#            bare names.
 #
 # With --orphan-claims it prints instead the `working` claims whose worktree is
 # gone, one "N\t<worktree-or-->" per line. File backend (a tracker local to this
@@ -152,7 +156,7 @@ else:
     print("open")' 2>/dev/null) || state=unknown
   fi
   case "$state" in
-    closed|none) cmd="/${PFX}fix-loop" ;;
+    claimed|closed|none) cmd="/${PFX}fix-loop" ;;
     *) cmd="/${PFX}fix $n" ;;
   esac
   printf '%s\t%s\t%s\t%s\t%s\n' "$path" "${branch:--}" "${n:--}" "$state" "$cmd"
