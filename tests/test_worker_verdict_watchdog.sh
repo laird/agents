@@ -92,7 +92,8 @@ verdict_log() { # verdict_log <name> <PASS|FAIL|none> <minutes-ago>
   { echo "--- prebank: merge-tree"; echo "PASS merge-tree 1s clean"; } > "$f"
   case "$2" in
     PASS) { echo "=== prebank (scripts/prebank.sh, #5832): PASS === tree abc on origin/master def === 900s"; echo "=== prebank: PASS -- paste this block into the READY comment ==="; } >> "$f" ;;
-    FAIL) { echo "=== prebank (scripts/prebank.sh, #5832): FAIL === tree abc on origin/master def === 300s"; echo "=== prebank: FAIL -- fix the first FAIL row and run it again ==="; } >> "$f" ;;
+    # The closing FAIL line names the other word ("paste the PASS block"), as the real prebank's does.
+    FAIL) { echo "=== prebank (scripts/prebank.sh, #5832): FAIL === tree abc on origin/master def === 300s"; echo "=== prebank: FAIL at contracts-check -- fix it on this tree, run again, and paste the PASS block into the READY comment; never baseline it ==="; } >> "$f" ;;
   esac
   touch -d "-$3 minutes" "$f"
 }
@@ -137,6 +138,7 @@ assert_match "the nudge names the issue, the verdict, the time and the log" "sen
 assert_contains "the nudge states the rule" "Do not wait on a background-job notification for a verdict" "$(sends)"
 assert_contains "a dead run (no verdict, no holder, past dead-min) is NUDGED to re-run" "#202 DEAD 30m wt=$T/wt-202 pane=%202 seen=no idle=yes -> NUDGED (sent to %202)" "$OUT"
 assert_match "the dead nudge says there is no verdict and no live process" "send-keys -t %202 Your background pre-check for #202 \($T/logs/prebank-202.log\) stopped at [0-9T:-]+Z with no verdict and no live process: re-run it in the foreground" "$(sends)"
+assert_contains "a FAIL whose closing line says 'paste the PASS block' is read as FAIL (the first token after the prefix)" "#303 FAIL 20m" "$OUT"
 assert_contains "a busy pane is left alone (BUSY)" "#303 FAIL 20m wt=$T/wt-303 pane=%303 seen=no idle=no -> BUSY (the pane is working; it will read the log)" "$OUT"
 assert_contains "a worktree with no pane in the manifest is reported, not nudged" "#404 PASS 20m wt=$T/wt-404 pane=none seen=no idle=- -> REPORT (no tmux pane for $T/wt-404 in $REPO/.autocoder/swarm/*.json)" "$OUT"
 assert_contains "an issue no worktree checks out is reported, not nudged" "#505 PASS 20m wt=none pane=none seen=no idle=- -> REPORT (no worktree checks out a branch naming #505)" "$OUT"
@@ -157,15 +159,16 @@ assert_match "a verdict event for the FAIL nobody was nudged about" '"issue":303
 assert_match "a verdict-nudged event for #101 with the idle seconds" '"issue":101,"worker":"wt-101",.*"event":"verdict-nudged","detail":\{[^}]*"verdict":"PASS"[^}]*"idle_s":"?1[12][0-9][0-9]"?' "$EVENTS"
 assert_match "a verdict-nudged event for the dead run" '"issue":202,.*"event":"verdict-nudged","detail":\{[^}]*"verdict":"DEAD"' "$EVENTS"
 assert_not_contains "no verdict event for a log with no verdict" '"issue":606,' "$EVENTS"
+assert_not_contains "no verdict event for an issue no worktree of this repository checks out (another swarm's log on a shared host)" '"issue":505,' "$EVENTS"
 VERDICT_COUNT=$(grep -c '"event":"verdict"' "$T/events.jsonl")
-[ "$VERDICT_COUNT" = "7" ] && pass "one verdict event per log with a verdict (7)" || fail "expected 7 verdict events, got $VERDICT_COUNT"
+[ "$VERDICT_COUNT" = "6" ] && pass "one verdict event per log with a verdict and a worktree (6: 101 303 404 707 808 909)" || fail "expected 6 verdict events, got $VERDICT_COUNT"
 
 # ── A second tick: cooldown holds, nothing is re-sent, no duplicate verdict events ───────
 OUT=$(run --once)
 assert_contains "second tick: #101 is in cooldown" "#101 PASS 20m wt=$T/wt-101 pane=%101 seen=no idle=yes -> COOLDOWN (nudged within the last 1800s)" "$OUT"
 assert_contains "second tick: #202 is in cooldown" "#202 DEAD 30m wt=$T/wt-202 pane=%202 seen=no idle=yes -> COOLDOWN" "$OUT"
 [ -z "$(sends)" ] && pass "second tick: zero sends" || fail "second tick: zero sends — $(sends)"
-[ "$(grep -c '"event":"verdict"' "$T/events.jsonl")" = "7" ] && pass "second tick: no duplicate verdict events" || fail "second tick: verdict events grew to $(grep -c '"event":"verdict"' "$T/events.jsonl")"
+[ "$(grep -c '"event":"verdict"' "$T/events.jsonl")" = "6" ] && pass "second tick: no duplicate verdict events" || fail "second tick: verdict events grew to $(grep -c '"event":"verdict"' "$T/events.jsonl")"
 
 # ── --json: one object per judged log, the same decisions ────────────────────────────────
 JSON=$(run --json)

@@ -16,8 +16,8 @@
 #   1. Reads the issue number from the log's name (--issue-regex: the first run of three or
 #      more digits), and keeps only the NEWEST log of each issue (an older log is superseded).
 #   2. Reads the verdict: the last line matching --pattern (default: `^=== (prebank|pre-check|
-#      pre-gate-check)[^:]*: (PASS|FAIL)`), PASS or FAIL, timed by the log's mtime (the verdict
-#      line is the run's last write). No such line: the run is RUNNING while some process still
+#      pre-gate-check)[^:]*: (PASS|FAIL)`), its FIRST PASS or FAIL token (the rest of the line
+#      may name the other word), timed by the log's mtime (the verdict line is the run's last write). No such line: the run is RUNNING while some process still
 #      holds the log open, and DEAD once none does and the log is older than --dead-min.
 #   3. Finds the worker: the git worktree whose checked-out branch names the issue
 #      (`issue-N`, `issue/N`, or a leading `N-`), then that worktree's pane in the swarm
@@ -31,9 +31,10 @@
 #      A BUSY pane, a RUNNING log, a fresh verdict, a seen one, a cooldown, or a missing
 #      worktree or pane is a row that says why, never a send.
 #   6. Records lifecycle events (issue-events-lib.sh): `verdict` the first time a log's verdict
-#      is seen (detail: verdict, at, log) and `verdict-nudged` on each send (detail: verdict,
-#      idle_s, log), so the weekly report (landing-report.py) can count worker minutes idle
-#      after a verdict and the nudges it took.
+#      is seen (detail: verdict, at, log; only for an issue a worktree of this repository checks
+#      out, since a shared host holds other swarms' logs too) and `verdict-nudged` on each send
+#      (detail: verdict, idle_s, log), so the weekly report (landing-report.py) can count worker
+#      minutes idle after a verdict and the nudges it took.
 #
 # Usage:
 #   worker-verdict-watchdog.sh [--once]     one tick (the default; the manager's cron or loop)
@@ -283,7 +284,9 @@ tick() {
   while IFS=$'\t' read -r n f; do
     [ -n "$n" ] || continue
     mtime="$(file_mtime "$f")"; age=$(( (now - mtime) / 60 )); at="$(iso_of "$mtime")"
-    verdict="$(grep -E "$PATTERN" "$f" 2>/dev/null | tail -1 | grep -oE 'PASS|FAIL' | tail -1)"
+    # The FIRST PASS|FAIL token of the last matching line: the verdict follows the prefix the pattern
+    # anchors, and the rest of the line may name the other word (a FAIL line that says "paste the PASS block").
+    verdict="$(grep -E "$PATTERN" "$f" 2>/dev/null | tail -1 | grep -oE 'PASS|FAIL' | head -1)"
     wt="$(worktree_of_issue "$n" || true)"
     pane=""; [ -n "$wt" ] && pane="$(pane_of_worktree "$wt" || true)"
     if [ -z "$verdict" ]; then
@@ -291,7 +294,9 @@ tick() {
       if [ "$age" -lt "$DEAD_MIN" ]; then row "$n" none "$age" "$wt" "$pane" - - WAIT "no verdict yet; dead after ${DEAD_MIN}m without a holder" "$f"; continue; fi
       verdict=DEAD; msg="$(fill "$DEAD_TEXT" "$n" DEAD "$f" "$at")"
     else
-      [ "$DRY" = true ] || record_verdict_once "$n" "$verdict" "$f" "$mtime" "$wt"
+      # Recorded only for an issue a worktree of this repository checks out: a host shared with another
+      # swarm holds that swarm's logs too, and their issue numbers are not this report's.
+      [ "$DRY" = true ] || [ -z "$wt" ] || record_verdict_once "$n" "$verdict" "$f" "$mtime" "$wt"
       if [ "$age" -lt "$STALE_MIN" ]; then row "$n" "$verdict" "$age" "$wt" "$pane" - - WAIT "fresh; unread after ${STALE_MIN}m" "$f"; continue; fi
       msg="$(fill "$NUDGE_TEXT" "$n" "$verdict" "$f" "$at")"
     fi
