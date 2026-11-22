@@ -377,19 +377,22 @@ _gate_log_size() { wc -c < "$GATE_LOG" | tr -d ' '; }
 _gate_slice() {  # <offset>: the gate log written since <offset>, ANSI colour stripped
   tail -c +"$(( $1 + 1 ))" "$GATE_LOG" | sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g'
 }
-# A passing test's report line is never the host's refusal, whatever it quotes (#318).
+# A test's report line is never the host's refusal, whatever it quotes (#318, #319).
 # test_merge_infrastructure_refusal.sh prints `PASS: (h) the real line is a refusal:
 # FATAL ERROR: ... JavaScript heap out of memory`, and a runner that excerpts a failing
 # suite reprints it behind `      | `; two alternatives above (the heap abort and the
 # strerror ending) are not anchored to the line start, so they matched it and the whole
-# run became "did not reach a verdict". Lines that open with a pass mark (`PASS`, `✓`,
-# `✔`), bare or behind that excerpt prefix, are dropped before the patterns are read.
-GATE_PASS_LINE='^[[:space:]]*(\|[[:space:]]*)?(PASS([[:space:]:]|$)|✓|✔)'
+# run became "did not reach a verdict". A failing test's report line is no refusal either
+# (#319): `      | FAIL: writes the cache: No space left on device` is that test's verdict,
+# and an ordinary red it must stay, so its failure is attributed. Lines that open with a
+# test-report mark (`PASS`, `FAIL`, `FAILED`, `not ok`, `✓`, `✔`, `✗`, `×`), bare or behind
+# that excerpt prefix, are dropped before the patterns are read.
+GATE_REPORT_LINE='^[[:space:]]*(\|[[:space:]]*)?((PASS|FAIL|FAILED|not ok)([[:space:]:]|$)|✓|✔|✗|×)'
 # The whole slice is read (`sed -n 1p`, never `grep -m1`): under pipefail an early exit
 # kills the stage before it with SIGPIPE and the match would read as none.
 _gate_infra_line() {  # <offset>: the first INFRASTRUCTURE line of the run (rc 0), or nothing (rc 1)
   local line
-  line=$(_gate_slice "$1" | grep -avE "$GATE_PASS_LINE" | grep -aE "$GATE_INFRA_PATTERNS" | sed -n 1p)
+  line=$(_gate_slice "$1" | grep -avE "$GATE_REPORT_LINE" | grep -aE "$GATE_INFRA_PATTERNS" | sed -n 1p)
   [ -n "$line" ] && printf '%s\n' "$line"
 }
 # A failure line may quote its own worktree's path; the integrated and base runs use
