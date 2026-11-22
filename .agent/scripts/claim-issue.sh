@@ -79,6 +79,20 @@ write_handback() {
 }
 trap write_handback EXIT
 
+# Race check for the GitHub backend (#309). Counts only the claim evidence after the
+# last release or block, anchored on this run's own marker (claim-window.sh), so a
+# start comment or marker left by an abandoned run cannot refuse the issue forever.
+# Sets CLAIM_MARKER_COUNT and PRIOR_STARTED.
+CLAIM_ID="claim-id=$$-$(date +%s%N)"
+post_claim_marker() {
+  issue_comment "$1" --body "🔒 [autocoder-claim] Starting fix for issue #${1} — lock established (${CLAIM_ID})" 2>/dev/null || true
+}
+count_claim_window() {
+  local counts
+  counts=$(issue_get "$1" 2>/dev/null | "${SCRIPT_DIR}/claim-window.sh" --own "$CLAIM_ID")
+  read -r CLAIM_MARKER_COUNT PRIOR_STARTED <<< "${counts:-0 0}"
+}
+
 if [ -n "$SPECIFIED_ISSUE" ]; then
   # Specific issue provided - fetch it directly
   echo "🎯 Targeting specific issue #$SPECIFIED_ISSUE"
@@ -133,7 +147,10 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   if [ "$IS_WORKING" = "true" ]; then
     TARGET_BRANCH="feature/issue-${ISSUE_NUM}"
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq --arg branch "$TARGET_BRANCH" '[.comments[]? | select(((.body // "") | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) and ((.body // "") | contains($branch)))] | length' 2>/dev/null || echo "0")
+    # Only start markers since the last release or block count (#309): an abandoned
+    # run's start comment, ended by a 🔓 or a 🚫/🎨 block, is not a live lock.
+    START_MARKERS=$(issue_get "$ISSUE_NUM" 2>/dev/null | "${SCRIPT_DIR}/claim-window.sh" --branch "$TARGET_BRANCH" | cut -d' ' -f2)
+    START_MARKERS="${START_MARKERS:-0}"
     if [ "$RESUMING" != "true" ] && [ "$START_MARKERS" -gt 0 ] && [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
       echo "⚠️  Issue #$SPECIFIED_ISSUE already has a start marker on $TARGET_BRANCH - another agent is working on it"
       echo "Use '/update-issue $SPECIFIED_ISSUE --remove-label working' only after confirming the lock is stale"
@@ -166,16 +183,11 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
   if [ "$RESUMING" = "true" ]; then
     :
   elif [ "${ISSUE_SOURCE:-}" = "github" ]; then
-    issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+    post_claim_marker "$ISSUE_NUM"
     sleep 3
-    CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-      '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
-      2>/dev/null || echo "0")
-    PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-      '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
-      2>/dev/null || echo "0")
+    count_claim_window "$ISSUE_NUM"
     if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
-      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM. Releasing and aborting."
+      echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, started: $PRIOR_STARTED since the last release). Releasing and aborting."
       issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
       exit 1
     fi
@@ -265,21 +277,16 @@ else
     # marker comment NOW so concurrent workers can detect the collision within the
     # settlement window, then sleep long enough for their markers to appear.
     if [ "${ISSUE_SOURCE:-}" = "github" ]; then
-      issue_comment "$ISSUE_NUM" --body "🔒 [autocoder-claim] Starting fix for issue #${ISSUE_NUM} — lock established" 2>/dev/null || true
+      post_claim_marker "$ISSUE_NUM"
       sleep 3
 
-      # Count autocoder-claim markers. If more than one exists, two workers raced.
-      # Both back off — the issue returns to open/ and gets claimed cleanly next tick.
-      CLAIM_MARKER_COUNT=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-        '[.comments[] | select(.body | test("\\[autocoder-claim\\]"))] | length' \
-        2>/dev/null || echo "0")
-      # Also check for existing work-started comments from a prior abandoned run.
-      PRIOR_STARTED=$(issue_get "$ISSUE_NUM" 2>/dev/null | jq \
-        '[.comments[] | select(.body | test("Automated Fix Started|Implementation Started|Enhancement Implementation Started")) | select(.body | test("\\[autocoder-claim\\]") | not)] | length' \
-        2>/dev/null || echo "0")
+      # Count autocoder-claim markers and work-started comments since the last
+      # release (#309). A second marker means two workers raced: both back off and
+      # the issue is claimed cleanly next tick. A start comment means a live claim.
+      count_claim_window "$ISSUE_NUM"
 
       if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
-        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED). Releasing and trying next..."
+        echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED since the last release). Releasing and trying next..."
         issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
         continue
       fi
