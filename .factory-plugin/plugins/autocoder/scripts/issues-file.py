@@ -340,19 +340,20 @@ def cmd_update(args):
         try:
             data = parse_issue_file_fd(f)
             labels = list(data.get("labels") or [])
-            if args.add_label:
-                if args.add_label not in labels:
-                    labels.append(args.add_label)
-                if args.add_label == "working" and data.get("status") != "closed":
+            # Both options repeat (#328), as gh's do: every value applies.
+            for label in filter(None, args.add_label or []):
+                if label not in labels:
+                    labels.append(label)
+                if label == "working" and data.get("status") != "closed":
                     # Legacy/idempotent label-set. Does NOT rename to working/;
                     # only `claim` does that. Frontmatter status is updated for
                     # backward-readability.
                     data["status"] = "working"
-            if args.remove_label:
-                labels = [l for l in labels if l != args.remove_label]
+            for label in filter(None, args.remove_label or []):
+                labels = [l for l in labels if l != label]
                 # A closed issue stays closed: dropping a stale lock label from it
                 # (#211) must not reopen it.
-                if args.remove_label == "working" and data.get("status") != "closed":
+                if label == "working" and data.get("status") != "closed":
                     data["status"] = "open"
             if args.status:
                 data["status"] = args.status
@@ -768,8 +769,8 @@ def main():
 
     p_update = sub.add_parser("update")
     p_update.add_argument("number", type=int)
-    p_update.add_argument("--add-label", dest="add_label")
-    p_update.add_argument("--remove-label", dest="remove_label")
+    p_update.add_argument("--add-label", dest="add_label", action="append")
+    p_update.add_argument("--remove-label", dest="remove_label", action="append")
     p_update.add_argument("--status")
     p_update.add_argument("--assignee")
 

@@ -89,6 +89,13 @@ eq "nothing cached: analysis null, stale null" \
   "$(printf '%s' "$OUT" | jq -c --argjson n "$A" '.issues[] | select(.number == $n) | [.analysis, .stale]')" "[null,null]"
 KEY_A=$(printf '%s' "$OUT" | jq -r --argjson n "$A" '.issues[] | select(.number == $n) | .analysisKey')
 case "$KEY_A" in sha256:*) ok "the file backend's analysisKey is a content hash" ;; *) bad "analysisKey '$KEY_A'" ;; esac
+# --key N (#312): /review-blocked --prepare stores analyses under this key.
+eq "--key prints the same analysisKey as GET /api/issues" "$(python3 "$SERVER" --key "$A")" "$KEY_A"
+python3 "$SERVER" --key 99999 >/dev/null 2>"$TMP/key.err"; KEY_RC=$?
+eq "--key on a missing issue exits 1" "$KEY_RC" 1
+python3 "$SERVER" --key 0 >/dev/null 2>&1; eq "--key 0 is refused as not an issue number" "$?" 2
+grep -q "cannot read issue #99999" "$TMP/key.err" && ok "--key names the issue it could not read" \
+  || bad "--key stderr: $(cat "$TMP/key.err")"
 
 cat > "$TMP/analysis.json" <<'JSON'
 {"summary": "Pick a storage backend",
