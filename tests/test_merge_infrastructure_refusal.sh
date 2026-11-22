@@ -180,6 +180,23 @@ for real in 'bash: tsx: command not found' 'scripts/gen.sh: line 3: tsx: command
   [ "$RC" -eq 3 ] && ok "(h) the real line is a refusal: $real" || bad "(h) rc=$RC for '$real': $OUT"
 done
 
+# ── (i) a PASSING test's report line quoting a host line is never a refusal (#318) ───────
+# test_merge_infrastructure_refusal.sh's own (h) prints `PASS: ... FATAL ERROR: ... heap out
+# of memory`; run-shell-suite.sh reprints a failing suite's output behind `      | `. The
+# heap and strerror alternatives are not anchored to the line start, so that PASS line once
+# turned every red-base retest into "the gate did not reach a verdict" (exit 3).
+setup
+BEFORE=$(origin_master)
+EXCERPT='echo "FAIL  test_other.sh"; echo "      | PASS: (h) the real line is a refusal: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"; echo "      | PASS: (h) the real line is a refusal: fatal: write error: No space left on device"; echo "PASS: quotes bash: fork: retry: Cannot allocate memory"; echo "  ✓ survives fatal: write error: No space left on device"; echo "      | 45 passed / 1 failed / 46 total"; false'
+OUT=$(run "$RECORD; if [ -f src/app.sh ]; then $EXCERPT; fi"); RC=$?
+[ "$RC" -eq 2 ] && ok "(i) PASS lines quoting host lines leave a plain red (exit 2)" || bad "(i) rc=$RC: $OUT"
+echo "$OUT" | grep -q "INFRASTRUCTURE" && bad "(i) a PASS line read as an infrastructure refusal: $OUT" || ok "(i) never read as infrastructure"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(i) nothing pushed" || bad "(i) master moved"
+# a host line that is not a pass report still refuses, even beside PASS lines
+setup
+OUT=$(run "$RECORD; echo 'PASS: an earlier test'; echo 'fatal: write error: No space left on device'; false"); RC=$?
+[ "$RC" -eq 3 ] && ok "(i) a real host line beside PASS lines is still a refusal" || bad "(i) rc=$RC: $OUT"
+
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"
 [ "$FAIL" -eq 0 ]
