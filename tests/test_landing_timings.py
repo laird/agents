@@ -532,8 +532,23 @@ CI_RUNS = {
 }
 
 
-def ci_env(tmp_path, runs=CI_RUNS, fail=False):
-    """A forge stand-in: `AUTOCODER_CI_RUNS_CMD` gets SHA and BRANCH, prints the commit's runs as JSON and logs the call."""
+def job(name, conclusion, completed, status="completed"):
+    return {"name": name, "status": status, "conclusion": conclusion, "completed_at": completed}
+
+
+BACKEND = "Backend Tests (vitest)"
+# The jobs of the judging runs: 102 is A's green verdict (the last job to complete bounds it), 201 B's red (the FIRST
+# red job bounds it, not the later one), 301 C's green with one job.
+CI_JOBS = {
+    "102": [job(BACKEND, "success", "2026-11-02T14:42:00Z"), job("lint", "success", "2026-11-02T13:50:00Z"), job("docs", None, None, status="in_progress")],
+    "201": [job("lint", "success", "2026-11-03T10:05:00Z"), job("typecheck", "failure", "2026-11-03T12:35:00Z"), job(BACKEND, "failure", "2026-11-03T12:30:00Z")],
+    "301": [job("tests", "success", "2026-11-03T11:30:00Z")],
+}
+
+
+def ci_env(tmp_path, runs=CI_RUNS, fail=False, jobs=CI_JOBS, jobs_fail=False):
+    """A forge stand-in: `AUTOCODER_CI_RUNS_CMD` gets SHA and BRANCH, prints the commit's runs as JSON and logs the call;
+    `AUTOCODER_CI_JOBS_CMD` gets RUN_ID and prints the run's jobs (jobs.log records the calls)."""
     d = tmp_path / "ci"
     d.mkdir(exist_ok=True)
     for sha, rs in runs.items():
@@ -542,7 +557,13 @@ def ci_env(tmp_path, runs=CI_RUNS, fail=False):
     cmd.write_text("#!/usr/bin/env bash\nset -u\necho \"$1 $2\" >> \"$(dirname \"$0\")/calls.log\"\n"
                    + ("echo 'forge down' >&2; exit 7\n" if fail else "f=\"$(dirname \"$0\")/$1.json\"; [ -f \"$f\" ] && cat \"$f\" || echo '[]'\n"))
     cmd.chmod(0o755)
-    return {"AUTOCODER_CI_RUNS_CMD": str(cmd)}, d / "calls.log"
+    for rid, js in (jobs or {}).items():
+        (d / f"jobs-{rid}.json").write_text(json.dumps(js))
+    jcmd = d / "jobs.sh"
+    jcmd.write_text("#!/usr/bin/env bash\nset -u\necho \"$1\" >> \"$(dirname \"$0\")/jobs.log\"\n"
+                    + ("echo 'jobs api down' >&2; exit 7\n" if jobs_fail else "f=\"$(dirname \"$0\")/jobs-$1.json\"; [ -f \"$f\" ] && cat \"$f\" || echo '[]'\n"))
+    jcmd.chmod(0o755)
+    return {"AUTOCODER_CI_RUNS_CMD": str(cmd), "AUTOCODER_CI_JOBS_CMD": str(jcmd)}, d / "calls.log"
 
 
 def ci_log(tmp_path, rows=CI_FIXTURE):
@@ -559,7 +580,9 @@ def test_writer_landed_row_carries_its_commit_and_a_ci_verdict_row_is_a_kind(tmp
     r = write(log, "ci-verdict", "--sha", SHA_A, "--conclusion", "failure", "--run-id", "201", "--verdict-ts", "2026-11-01T12:30:00Z", "--ts", "2026-11-01T13:00:00Z")
     assert r.returncode == 0, r.stderr
     assert rows_of(log)[2] == {"v": 1, "ts": "2026-11-01T13:00:00Z", "kind": "ci-verdict", "sha": SHA_A, "run_id": "201",
-                               "conclusion": "failure", "verdict_ts": "2026-11-01T12:30:00Z", "workflows": None, "repo": None}
+                               "conclusion": "failure", "verdict_ts": "2026-11-01T12:30:00Z", "job": None, "workflows": None, "repo": None}
+    r = write(log, "ci-verdict", "--sha", SHA_A, "--conclusion", "failure", "--run-id", "201", "--verdict-ts", "2026-11-01T12:30:00Z", "--job", " Backend Tests (vitest) ")
+    assert r.returncode == 0 and rows_of(log)[3]["job"] == "Backend Tests (vitest)"
 
 
 @pytest.mark.parametrize("args,needle", [
@@ -589,8 +612,11 @@ def test_report_asks_the_forge_once_per_landed_commit_and_caches_the_terminal_ve
     assert (ci["landings_before_red_verdicts"], ci["landings_before_red_verdicts_distinct"], ci["red_count"]) == (2, 2, 1)
     assert sorted(calls.read_text().split("\n")[:-1]) == sorted(f"{s} master" for s in (SHA_A, SHA_B, SHA_C, SHA_D))
     cached = [x for x in rows_of(log) if x["kind"] == "ci-verdict"]
-    assert [(x["sha"], x["conclusion"], x["run_id"], x["verdict_ts"]) for x in cached] == [
-        (SHA_A, "success", "102", "2026-11-02T14:42:00Z"), (SHA_B, "failure", "201", "2026-11-03T12:30:00Z"), (SHA_C, "success", "301", "2026-11-03T11:30:00Z")]
+    assert [(x["sha"], x["conclusion"], x["run_id"], x["verdict_ts"], x["job"]) for x in cached] == [
+        (SHA_A, "success", "102", "2026-11-02T14:42:00Z", BACKEND), (SHA_B, "failure", "201", "2026-11-03T12:30:00Z", BACKEND), (SHA_C, "success", "301", "2026-11-03T11:30:00Z", "tests")]
+    # the bounding job: the LAST job to complete of a green run (the in-progress one has no say), the FIRST red job of a red run
+    assert ci["bounding_jobs"] == [{"job": BACKEND, "n": 2}, {"job": "tests", "n": 1}] and ci["job_unread"] == 0
+    assert sorted(Path(str(calls).replace("calls.log", "jobs.log")).read_text().split()) == ["102", "201", "301"]
     # the second run reads the cache: only the pending commit is asked again, and the numbers are the same
     calls.unlink()
     a2 = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", env=env).stdout)["ci"]
@@ -603,9 +629,9 @@ def test_week_page_rows_name_the_lag_the_reds_and_the_landings_before_their_verd
     env, _ = ci_env(tmp_path)
     out = report("--log", str(log), "--week", "2026-11-02", env=env).stdout
     assert "- Landing to CI verdict: p50 1.7h, p75 2.1h (n=3 of 4 landed commits; pending 1; 1 landed row carries no commit); " \
-           "judged red by CI: 1 landing; landings that happened before those verdicts: 2" in out
-    assert "| b3 | 2026-11-03T10:00:00Z | #3 | green | 30.0m | #3 | - | - | - | failure 2.5h (2 landed before the verdict) |" in out
-    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | #1 #2 | - | - | - | success 1.7h |" in out
+           "judged red by CI: 1 landing; landings that happened before those verdicts: 2; bounding job: Backend Tests (vitest) 2, tests 1" in out
+    assert "| b3 | 2026-11-03T10:00:00Z | #3 | green | 30.0m | #3 | - | - | - | failure 2.5h in Backend Tests (vitest) (2 landed before the verdict) |" in out
+    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | #1 #2 | - | - | - | success 1.7h in Backend Tests (vitest) |" in out
     assert "| b6 | 2026-11-03T12:00:00Z | #6 | green | 30.0m | #6 | - | - | - | pending |" in out
     assert "| b7 | 2026-11-03T13:00:00Z | #7 | green | 30.0m | #7 | - | - | - | - |" in out
     assert "| CI verdict |" in out
@@ -775,12 +801,42 @@ def test_a_verdict_before_the_landed_row_is_a_lag_of_zero_and_is_said(tmp_path):
     assert "| success 0s |" in out and "(n=1 of 1 landed commits; 1 verdict before the row (lag 0))" in out and "-600" not in out
 
 
+def test_bounding_job_is_the_first_red_job_of_a_red_run_and_the_last_completed_job_of_a_green_one():
+    lr = load_module()
+    jobs = [job("lint", "success", "2026-11-03T10:05:00Z"), job("typecheck", "failure", "2026-11-03T12:35:00Z"),
+            job(BACKEND, "failure", "2026-11-03T12:30:00Z"), job("deploy", None, None, status="queued")]
+    assert lr.bounding_job(jobs, "failure") == BACKEND
+    assert lr.bounding_job(jobs, "success") == "lint"                      # the last SUCCESSFUL job of a green verdict
+    assert lr.bounding_job([job("a", "success", "2026-11-03T10:00:00Z"), job("b", "success", None)], "success") == "a"   # an untimed job is first
+    assert lr.bounding_job([job("a", "failure", None), job("b", "failure", "2026-11-03T10:00:00Z")], "failure") == "b"   # an untimed red job is last
+    assert lr.bounding_job([job("a", None, None, status="in_progress")], "success") is None and lr.bounding_job([], "failure") is None
+    assert lr.bounding_job([job("a", "cancelled", "2026-11-03T10:00:00Z")], "success") == "a"   # no successful job: the last completed one
+
+
+def test_jobs_that_cannot_be_read_leave_the_bounding_job_not_read_and_the_verdict_still_cached(tmp_path):
+    rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green"),
+            # a row cached before the writer carried the job (an older writer): judged, its job not read
+            chs(2, "2026-11-03T11:00:00Z", SHA_B, batch="b2"), ba("b2", "2026-11-03T11:00:00Z", [2], 60, "green"),
+            {"v": 1, "ts": "2026-11-03T12:00:00Z", "kind": "ci-verdict", "sha": SHA_B, "run_id": "9", "conclusion": "success", "verdict_ts": "2026-11-03T11:30:00Z", "workflows": None}]
+    env, _ = ci_env(tmp_path, {SHA_A: [run(1, "completed", "failure", "2026-11-03T11:00:00Z")]}, jobs_fail=True)
+    log = ci_log(tmp_path, rows)
+    r = report("--log", str(log), "--json", "--since", "2026-11-01", env=env)
+    a = json.loads(r.stdout)["ci"]
+    assert (a["judged"], a["bounding_jobs"], a["job_unread"]) == (2, [], 2)
+    assert [x["job"] for x in a["red"]] == [None]
+    cached = [x for x in rows_of(log) if x["kind"] == "ci-verdict" and x["sha"] == SHA_A]
+    assert len(cached) == 1 and cached[0]["job"] is None            # cached without the job, not refused
+    assert "the jobs of 1 judging run(s) could not be read" in r.stderr and "jobs api down" in r.stderr
+    out = report("--log", str(log), "--since", "2026-11-01", "--batches", env=env).stdout
+    assert "; bounding job: not read" in out and "| failure 60.0m |" in out   # no " in <job>" on the cell
+
+
 def test_a_completed_red_run_without_a_time_is_red_with_an_unknown_lag_and_is_not_cached(tmp_path):
     rows = [chs(1, "2026-11-03T10:00:00Z", SHA_A, batch="b1"), ba("b1", "2026-11-03T10:00:00Z", [1], 60, "green")]
     env, _ = ci_env(tmp_path, {SHA_A: [run(1, "completed", "failure", None)]})
     log = ci_log(tmp_path, rows)
     a = json.loads(report("--log", str(log), "--json", env=env).stdout)["ci"]
-    assert a["by_sha"][SHA_A] == {"status": "failure", "lag_s": None, "landings_before_verdict": None}
+    assert a["by_sha"][SHA_A] == {"status": "failure", "lag_s": None, "job": None, "landings_before_verdict": None}
     assert (a["red_count"], a["judged"], a["untimed"], a["lag_s"]["n"]) == (1, 1, 0 + 1, 0)
     assert not [x for x in rows_of(log) if x["kind"] == "ci-verdict"]
     out = report("--log", str(log), "--since", "2026-11-01", "--batches", env=env).stdout
