@@ -368,6 +368,14 @@ def cmd_update(args):
                 target_bucket = "blocked"
             elif bucket == "blocked" and not has_blocking:
                 target_bucket = "open"
+            # `list` reads the bucket, not the frontmatter (#325): `--status`
+            # moves the file as the GitHub backend's close/reopen would. `open`
+            # on a closed issue is a reopen; on an open one it moves nothing,
+            # and only claim/release move an issue in and out of working/.
+            if args.status == "closed" and bucket != "closed":
+                target_bucket = "closed"
+            elif args.status == "open" and bucket == "closed":
+                target_bucket = "blocked" if has_blocking else "open"
         finally:
             unlock(f.fileno())
     if target_bucket is not None:

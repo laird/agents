@@ -173,6 +173,43 @@ class TestUpdate:
         content = (idir / "open" / "001.md").read_text()
         assert "working" in content
 
+    # #325: the bucket is authoritative for `list`, so `--status` must move the file.
+    def test_status_open_on_closed_issue_reopens_into_open(self, idir):
+        write_issue(idir, 1, "T", bucket="closed", labels=["bug"])
+        env = {"ISSUE_DIR_PATH": str(idir)}
+        _, _, rc = run(["update", "1", "--status", "open"], env)
+        assert rc == 0
+        assert not (idir / "closed" / "001.md").exists()
+        assert (idir / "open" / "001.md").exists()
+        assert "status: open" in (idir / "open" / "001.md").read_text()
+        out, _, _ = run(["list", "--state", "open"], env)
+        assert [i["number"] for i in json.loads(out)] == [1]
+        out, _, _ = run(["list", "--state", "closed"], env)
+        assert json.loads(out) == []
+
+    def test_status_open_on_closed_blocked_issue_reopens_into_blocked(self, idir):
+        write_issue(idir, 1, "T", bucket="closed", labels=["needs-design"])
+        run(["update", "1", "--status", "open"], {"ISSUE_DIR_PATH": str(idir)})
+        assert not (idir / "closed" / "001.md").exists()
+        assert (idir / "blocked" / "001.md").exists()
+
+    def test_status_closed_moves_to_closed(self, idir):
+        write_issue(idir, 1, "T", bucket="open", labels=["bug"])
+        env = {"ISSUE_DIR_PATH": str(idir)}
+        run(["update", "1", "--status", "closed"], env)
+        assert not (idir / "open" / "001.md").exists()
+        assert (idir / "closed" / "001.md").exists()
+        out, _, _ = run(["list", "--state", "open"], env)
+        assert json.loads(out) == []
+
+    def test_status_open_on_working_issue_keeps_it_in_working(self, idir):
+        # Only claim/release move an issue in and out of working/; reopening an
+        # issue that is already open is a no-op for the bucket, as on GitHub.
+        write_issue(idir, 1, "T", bucket="working", labels=["working"])
+        run(["update", "1", "--status", "open"], {"ISSUE_DIR_PATH": str(idir)})
+        assert (idir / "working" / "001.md").exists()
+        assert not (idir / "open" / "001.md").exists()
+
 
 class TestComment:
     def test_appends_blockquote(self, idir):

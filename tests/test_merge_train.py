@@ -1057,7 +1057,5 @@ def test_a_landed_issue_stays_closed_for_a_ready_on_a_foreign_branch_and_reopens
     assert T.reopen_if_newer_ready(cfg, n, b, landed) is True
     issue = json.loads(T.tracker(cfg, "issue_get", str(n)).stdout)
     assert issue["state"] == "OPEN" and m_b in issue["body"]
-    # (the file backend's `list` reads the directory bucket, which `update --status open` does not move, so the
-    # reopened issue is classified here directly; the GitHub backend lists it)
-    picked = T.pick_ready(cfg, T.ready_comments(issue), n)
-    assert picked["branch"] == m_b and T.classify(cfg, T.Overrides.read(cfg.overrides), n, picked, ())[0] == "queue"
+    # the reopened issue rejoins the queue through `list` on the file backend too (#325)
+    assert fx.queue()[n]["state"] == "queue" and fx.queue()[n]["branch"] == m_b
