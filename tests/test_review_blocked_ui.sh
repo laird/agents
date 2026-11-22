@@ -149,7 +149,8 @@ CHROME_PID=$!
 # report SKIP with its log, and keep the static checks' verdict.
 BROWSER_WAIT="${AUTOCODER_TEST_BROWSER_WAIT:-90}"
 DEVTOOLS_UP=false
-for _ in $(seq 1 $((BROWSER_WAIT * 4))); do
+DEADLINE=$((SECONDS + BROWSER_WAIT))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
   kill -0 "$CHROME_PID" 2>/dev/null || break
   if curl -s --max-time 2 "http://127.0.0.1:$DEVPORT/json/list" 2>/dev/null | jq -e 'any(.[]; .type == "page")' >/dev/null 2>&1; then
     DEVTOOLS_UP=true; break
