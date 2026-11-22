@@ -704,6 +704,7 @@ def named_member(fx, n, body_extra=""):
 
 def land_sibling(fx, path="README.md", text="sibling\n"):
     sh("git", "checkout", "-q", "-B", "master", "origin/master", cwd=fx.work)
+    (fx.work / path).parent.mkdir(parents=True, exist_ok=True)
     (fx.work / path).write_text(text)
     sh("git", "add", "-A", cwd=fx.work)
     sh("git", "commit", "-q", "-m", "sibling", cwd=fx.work)
@@ -754,6 +755,33 @@ def test_a_tip_with_other_work_is_told_tip_moved_once_and_never_trained_until_a_
     code, _ = fx.run()
     assert code == 0 and fx.on_master(0) and fx.state_of(moved) == "CLOSED"
     assert T.git(fx.work, "cat-file", "-p", "origin/master:files/m0.txt").stdout == "fixed\n"   # the banked tip, not the READY's
+
+
+def test_a_tip_that_conflicts_with_the_integration_branch_is_told_once_and_planned_at_its_rebased_tip(fx):
+    """The queue's merge-tree prefilter holds a branch that conflicts with the integration branch out of the plan
+    as `conflict`; before this the owner learned nothing (only an assembly-time conflict was returned with a comment),
+    so the branch sat in the queue until a person noticed. Now the cycle tells the issue once per tip, and a
+    rebased tip is judged afresh."""
+    issue, old = named_member(fx, 0)
+    ok = fx.member(1)
+    land_sibling(fx, path="files/m0.txt", text="master wrote this first\n")   # the sibling took m0's file
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1 and fx.gates()[0] == ["files/m1.txt"]    # m0 is not in the train
+    assert fx.state_of(ok) == "CLOSED" and fx.state_of(issue) == "OPEN"
+    assert T.git(fx.work, "cat-file", "-p", "origin/master:files/m0.txt").stdout != "0\n"   # m0's content never landed
+    told = fx.comments(issue)
+    assert told.count("`conflict`") == 1 and "files/m0.txt" in told and f"`{old}`" in told and "Rebase onto" in told
+    fx.run()                                                       # a second cycle: no second comment, still not planned
+    assert fx.comments(issue).count("`conflict`") == 1 and len(fx.gates()) == 1 and fx.dropped() == []
+    sh("git", "checkout", "-q", "-B", "feature/m0", "origin/master", cwd=fx.work)   # the owner's rebase: m0 resolved over master
+    (fx.work / "files/m0.txt").write_text("master wrote this first\n0\n")
+    sh("git", "commit", "-q", "-am", "work 0, rebased over the sibling", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", "feature/m0", cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    new = T.git(fx.work, "rev-parse", "--short=10", "origin/feature/m0").stdout.strip()
+    sh(sys.executable, str(ISSUES_FILE), "comment", str(issue), "--body", f"READY `feature/m0` @ {new} (rebased)", cwd=fx.work)
+    code, _ = fx.run()
+    assert code == 0 and fx.state_of(issue) == "CLOSED" and fx.comments(issue).count("`conflict`") == 1
 
 
 def test_the_plan_reads_a_tip_pushed_while_the_preflight_ran(fx):

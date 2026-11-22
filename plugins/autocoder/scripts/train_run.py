@@ -515,13 +515,15 @@ class Cycle:
         return full if full.startswith(tip) else (full or tip)
 
     def tell_queue_verdicts(self, rows):
-        """Four queue verdicts are told to the issue ONCE per tip (a `<kind>.tsv` record in the state dir), so
+        """Five queue verdicts are told to the issue ONCE per tip (a `<kind>.tsv` record in the state dir), so
         the owner learns them without a train slot and never twice:
           regenerate-only  which files it changes and why no train takes it; never planned at that tip
           tip-moved        the tip carries work the READY did not name; not READY until one names it
           foreign-branch   the READY names a branch that does not belong to the issue; never planned at that tip
+          conflict         the tip conflicts with the integration branch before any train (the merge-tree
+                           prefilter); never planned at that tip; a rebased tip is judged, and told, afresh
           followed         a rebased or fast-forwarded tip was taken in the named sha's place (same patches)
-        The queue state keeps the first three out of the plan; the record only stops a second comment."""
+        The queue state keeps the first four out of the plan; the record only stops a second comment."""
         for r in rows:
             issue, tip = r["issue"], r["tip"]
             if r["state"] == "foreign-branch" and not self.state.told("foreign-branch", issue, tip):
@@ -537,6 +539,12 @@ class Cycle:
                 self.say.say(issue, f"not trained, `tip-moved`: `{r['branch']}` @ `{tip}`: {r['note']}.")
                 self.state.tell("tip-moved", issue, tip)
                 self.log(f"#{issue} ({r['branch']} @ {tip}) is tip-moved: told once, not READY until a READY names this tip")
+            elif r["state"] == "conflict" and not self.state.told("conflict", issue, tip):
+                self.say.say(issue, f"not trained, `conflict`: `{r['branch']}` @ `{tip}` {r['note']}. "
+                             f"Rebase onto the integration branch, push with lease, post READY at the new tip; "
+                             f"it rejoins the next train there.")
+                self.state.tell("conflict", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}) is conflict: told once, never planned at this tip")
             elif r.get("followed") and not self.state.told("followed-tip", issue, tip):
                 self.say.say(issue, f"`{r['branch']}`: {r['followed']}. No new READY is needed for a rebase or fast-forward of the same work.")
                 self.state.tell("followed-tip", issue, tip)
