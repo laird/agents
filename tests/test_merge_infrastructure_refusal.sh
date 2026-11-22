@@ -132,6 +132,17 @@ OUT=$(run "$RECORD; [ ! -f src/app.sh ] || echo \"FAIL  tests/extra.test.sh > on
 echo "$OUT" | grep -q "this change only: FAIL  tests/extra.test.sh > only with the change" && ok "(d) the extra failure is attributed to this change" || bad "(d) attribution missing: $OUT"
 echo "$OUT" | grep -q "fails alone too\|merged into" && bad "(d) read as a red base: $OUT" || ok "(d) not a red base"
 
+# ── (d') the base names MORE failures than the integrated tree (#326): every failure on
+#    the integrated tree fails on the base too, so the change broke nothing; a red base ──
+setup
+OUT=$(run "$RECORD; [ -f src/app.sh ] || echo \"FAIL  tests/flaky.test.sh > only on the base\"; $RED"); RC=$?
+[ "$RC" -eq 0 ] && ok "(d') exit 0 when the base fails a superset" || bad "(d') rc=$RC: $OUT"
+git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "(d') fix landed on master" || bad "(d') fix did not land"
+echo "$OUT" | grep -q "base only: FAIL  tests/flaky.test.sh > only on the base" && ok "(d') the base-only failure is listed" || bad "(d') base-only line missing: $OUT"
+echo "$OUT" | grep -q "RED-BASE -- .* with all 1 of the integrated tree's named failure(s), and 1 more" && ok "(d') the RED-BASE line counts the extra base failure" || bad "(d') RED-BASE wording: $OUT"
+echo "$OUT" | grep -q "so this change broke it\|not the same red base" && bad "(d') refused or blamed: $OUT" || ok "(d') not refused, not blamed"
+issue_body | grep -q 'the base alone also named `FAIL  tests/flaky.test.sh > only on the base`' && ok "(d') issue comment names the base-only failure" || bad "(d') issue comment: $(issue_body)"
+
 # ── (e) both trees fail without naming anything: no verdict to compare, exit 2 ──────────
 setup
 BEFORE=$(origin_master)

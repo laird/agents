@@ -1165,6 +1165,7 @@ PUBLISH_BASIS=""
 RED_INTEGRATED_TREE=""
 RED_BASE_TREE=""
 RED_BASE_FAILURES=""
+RED_BASE_EXTRA=""   # failures the base named alone, beyond the shared ones (#326)
 DOCS_RESYNC_FILES=0
 
 # The host could not run the gate on <where> (trees <started> -> <left>; <line> decided
@@ -1207,6 +1208,7 @@ _gate_integrated_tree() {
   local -a integrated_failures base_failures
   local only_integrated only_base retest_files
   MERGE_RED_BASE=0   # a re-gate on a new tip measures the base again
+  RED_BASE_EXTRA=""
   unset AUTOCODER_GATE_RETEST_FILES   # set only for the base run below (#298)
   head_before=$(git rev-parse HEAD)
   tree=$(git rev-parse "HEAD^{tree}")
@@ -1297,12 +1299,14 @@ _gate_integrated_tree() {
   local red_note=""
   [ -z "$red_files" ] || red_note=" (red ${INTEGRATION_BRANCH} in \`$(printf '%s\n' $red_files | _join_lines)\` besides)"
 
-  # Both runs failed as tests. The base is red "independent of this change" only when
-  # both runs name the same failures; anything the integrated run names alone is this
-  # change's, and a run that names nothing proves nothing about either tree.
+  # Both runs failed as tests. The base is red "independent of this change" when every
+  # failure the integrated run names also fails on the base (#326): anything the integrated
+  # run names alone is this change's. Extra failures on the base alone (flaky or
+  # environment-dependent suites) clear nothing and blame nothing. A run that names
+  # nothing proves nothing about either tree.
   if [ "${#integrated_failures[@]}" -eq 0 ] || [ "${#base_failures[@]}" -eq 0 ]; then
     echo "❌ Both trees fail, but the gate named no failing test or check on $([ "${#integrated_failures[@]}" -eq 0 ] && echo "the integrated tree" || echo "origin/${INTEGRATION_BRANCH} alone") (nothing matched AUTOCODER_GATE_FAILURE_PATTERNS), so the failures cannot be compared. NOT pushing."
-    echo "   A red-base landing needs the same named failures on both trees; read the gate output and either fix the change or relaunch once origin/${INTEGRATION_BRANCH} is fixed."
+    echo "   A red-base landing needs every failure the integrated tree names to fail on the base too; read the gate output and either fix the change or relaunch once origin/${INTEGRATION_BRANCH} is fixed."
     _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}), but the gate named no failing test or check on $([ "${#integrated_failures[@]}" -eq 0 ] && echo "the integrated tree" || echo "the base"), so the failures cannot be compared; not a red-base landing"
   fi
   only_integrated=$(comm -23 <(printf '%s\n' "${integrated_failures[@]}") <(printf '%s\n' "${base_failures[@]}"))
@@ -1314,21 +1318,25 @@ _gate_integrated_tree() {
     [ -z "$red_files" ] || printf '   red %s, not this change'"'"'s: %s\n' "$INTEGRATION_BRANCH" "$red_files"
     _fail 2 "tests fail on the integrated tree ${tree:0:8} with failure(s) origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) does not have, so this change broke it: \`$(printf '%s\n' "$only_integrated" | _join_lines)\`${red_note}"
   fi
+  # The integrated tree's failures are a subset of the base's. Say how they compare.
+  local same_desc="the same ${#integrated_failures[@]} named failure(s)" base_extra=0
   if [ -n "$only_base" ]; then
-    echo "❌ origin/${INTEGRATION_BRANCH} alone names failure(s) the integrated tree ${tree:0:8} does not; the two failure sets differ, so this is not the same red base. NOT pushing."
+    base_extra=$(printf '%s\n' "$only_base" | grep -c .)
+    same_desc="all ${#integrated_failures[@]} of the integrated tree's named failure(s), and ${base_extra} more"
+    echo "ℹ️  origin/${INTEGRATION_BRANCH} alone also fails ${base_extra} suite(s) the integrated tree passes; the integrated tree's failures are a subset of the base's (#326)."
     printf '   base only: %s\n' "$only_base"
-    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) with different named failures (base only: \`$(printf '%s\n' "$only_base" | _join_lines)\`); not the same red base, so not landed"
+    RED_BASE_EXTRA=$(printf '%s\n' "$only_base" | _join_lines)
   fi
   RED_BASE_FAILURES=$(printf '%s\n' "${integrated_failures[@]}" | _join_lines)
   LANDING_CAUSE=red-integration   # the base is red too: the batch is red, though not this change's fault
   # One line a close-out (a train runner, a lane) reads: the base is red in these files, not this change.
-  echo "merge-to-integration: RED-BASE -- origin/${INTEGRATION_BRANCH} (${base_sha:0:8}) fails alone too with the same ${#integrated_failures[@]} named failure(s)${red_files:+ in ${red_files}}: red ${INTEGRATION_BRANCH}, not this change's."
+  echo "merge-to-integration: RED-BASE -- origin/${INTEGRATION_BRANCH} (${base_sha:0:8}) fails alone too with ${same_desc}${red_files:+ in ${red_files}}: red ${INTEGRATION_BRANCH}, not this change's."
   if [ "$MERGE_ON_RED_BASE" != "1" ]; then
-    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}, the same ${#integrated_failures[@]} named failure(s)), and ${RED_BASE_REFUSAL}. NOT pushing."
+    echo "❌ origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}, ${same_desc}), and ${RED_BASE_REFUSAL}. NOT pushing."
     echo "   Red ${INTEGRATION_BRANCH}, not this change: hold the branch, open or cite the issue for red ${INTEGRATION_BRANCH}, and relaunch once it is fixed."
-    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) with the same named failures$([ -z "$red_files" ] || printf ' (red %s in `%s`, not this change'"'"'s)' "$INTEGRATION_BRANCH" "$(printf '%s\n' $red_files | _join_lines)"); ${RED_BASE_REFUSAL}"
+    _fail 2 "tests fail on the integrated tree ${tree:0:8} and on origin/${INTEGRATION_BRANCH} alone (tree ${base_tree:0:8}) with ${same_desc}$([ -z "$red_files" ] || printf ' (red %s in `%s`, not this change'"'"'s)' "$INTEGRATION_BRANCH" "$(printf '%s\n' $red_files | _join_lines)"); ${RED_BASE_REFUSAL}"
   fi
-  echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}) with the same ${#integrated_failures[@]} named failure(s): the integration branch is red independent of this change."
+  echo "⚠️  origin/${INTEGRATION_BRANCH} fails alone too (tree ${base_tree:0:8}) with ${same_desc}: the integration branch is red independent of this change."
   printf '   %s\n' "${integrated_failures[@]}"
   echo "   Pushing anyway; the post-merge sentinel owns red ${INTEGRATION_BRANCH}."
   RED_INTEGRATED_TREE="$tree"
@@ -1541,7 +1549,7 @@ merge_queue_release
 # The word "verified" is reserved for the one case where the gate passed on the very tree
 # that is now on the integration branch. PARK_NOTE explains every other basis to the
 # issue when _close_or_park parks it.
-RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), both naming the same failure(s): \`${RED_BASE_FAILURES}\`; so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
+RED_BASE_NOTE="The gate failed on the integrated tree \`${RED_INTEGRATED_TREE}\` and also on \`origin/${INTEGRATION_BRANCH}\` alone (tree \`${RED_BASE_TREE}\`), both naming the same failure(s): \`${RED_BASE_FAILURES}\`${RED_BASE_EXTRA:+ (the base alone also named \`${RED_BASE_EXTRA}\`)}; so the integration branch was already red independent of this change. Branch \`${FEATURE}\` was pushed anyway"
 case "$PUBLISH_BASIS" in
   docs-only)
     echo "✅ Issue #${ISSUE_NUM} merged into '${INTEGRATION_BRANCH}' (documentation-only change; no tests run; tree ${LOCAL_TREE:0:8})." ;;
