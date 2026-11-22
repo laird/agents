@@ -515,6 +515,8 @@ def test_timing_rows_go_through_the_writer(fx):
     rows = (fx.state / "timings.log").read_text().splitlines()
     assert sum(r.startswith("change --issue") and "--event batched" in r for r in rows) == 3
     assert sum(r.startswith("change --issue") and "--event landed" in r for r in rows) == 3
+    # every landed row names the landed commit (the landing report looks the CI verdict up by it)
+    assert all(re.search(r"--event landed --batch \S+ --sha [0-9a-f]{40}$", r) for r in rows if "--event landed" in r)
     # the verdict row carries the assembly and gate seconds; a green batch gets a second row with the publish
     # seconds once the close-out is done (the report merges the rows of one id)
     batch = [r for r in rows if r.startswith("batch ")]
@@ -801,3 +803,22 @@ def test_a_cycle_tells_a_foreign_branch_once_per_tip_and_plans_a_declared_stack(
     assert told.count("`foreign-branch`") == 1 and f"`feature/m0` does not belong to #{foreign}" in told and f"stack: `feature/m0` carries #{foreign}" in told
     fx.run()   # a second cycle: no second comment, still not planned
     assert fx.comments(foreign).count("`foreign-branch`") == 1 and len(fx.gates()) == 1 and fx.dropped() == []
+
+
+def test_a_resumed_close_out_names_no_commit_in_its_landed_row(fx):
+    # The process died after member 0 landed; another landing moved the integration branch before the resume, so the
+    # branch's tip is not the commit member 0 landed in. The ledger row names no commit rather than the wrong one.
+    issues = fx.members(2)
+    tips = [T.git(fx.work, "rev-parse", f"origin/feature/m{i}").stdout.strip() for i in range(2)]
+    sh("git", "push", "-q", "origin", f"{tips[0]}:refs/heads/master", cwd=fx.work)
+    sh("git", "checkout", "-q", "--detach", tips[0], cwd=fx.work)
+    (fx.work / "later.txt").write_text("x")
+    sh("git", "add", "later.txt", cwd=fx.work)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "#999: a later landing", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "HEAD:refs/heads/master", cwd=fx.work)
+    st = R.State(fx.rc())
+    st.save_cycle({"started": "then", "members": [{"issue": str(issues[i]), "branch": f"feature/m{i}", "tip": tips[i], "status": "gating", "note": ""} for i in range(2)]})
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    R.Cycle(fx.rc(), log=lambda m: None).reconcile()
+    rows = [ln for ln in (fx.state / "timings.log").read_text().splitlines() if "--event landed" in ln]
+    assert len(rows) == 1 and "--sha" not in rows[0]

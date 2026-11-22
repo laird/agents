@@ -559,7 +559,9 @@ class Cycle:
                 continue
             proof = T.landing_proof(self.cfg, m["tip"])
             if proof:
-                self._close_out(m, landed=T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip(), train=old.get("train", "?"), proof=proof)
+                # The branch's tip now is not necessarily the commit this member landed in (another landing may have
+                # moved it since the process died), so the ledger row names no commit rather than the wrong one.
+                self._close_out(m, landed=T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip(), train=old.get("train", "?"), proof=proof, landed_is_this=False)
             else:
                 m["status"] = "requeued"
         for br in old.get("trainBranches", []):
@@ -872,13 +874,13 @@ class Cycle:
             self.log(f"landed hook exited {r.returncode} after {train} landed as {landed[:10]} (the landing stands): {tail}")
             self.say.report(f"{train}: the `landed` hook exited {r.returncode} after `{landed[:10]}` landed (`{tail}`); the landing stands, run the hook by hand.")
 
-    def _close_out(self, m, landed, train, proof="ancestor"):
+    def _close_out(self, m, landed, train, proof="ancestor", landed_is_this=True):
         c = self.cfg
         cur = remote_tip(c, m["branch"])
         kept = bool(cur) and not T.landing_proof(c, cur, landed)
         self._set_status([m], "landed", landed[:10])
         self.landed_total.append(m["issue"])
-        self.timing("change", "--issue", m["issue"], "--event", "landed", "--batch", train.replace("/", "-"))
+        self.timing("change", "--issue", m["issue"], "--event", "landed", "--batch", train.replace("/", "-"), *(["--sha", landed] if landed_is_this else []))
         self.say.say(m["issue"], f"landed on `{c.integration}` as `{landed[:10]}` in **{train}** (the tested tree is the published tree; landing proof: {proof}). Branch `{m['branch']}` @ `{m['tip'][:10]}` merged"
                      + (f"; origin/{m['branch']} kept at `{cur[:10]}` (moved after the plan, not in the train: re-bank it if it adds work)." if kept else " and deleted."), close=True)
         try:

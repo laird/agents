@@ -511,7 +511,9 @@ _emit_landing_rows() {  # <outcome> <rc>
       --verdict "$verdict" ${cause:+--cause "$cause"} $STAGE_ARGS
     landing_change "$issue" batched --batch "$LANDING_BATCH"
   fi
-  if [ -n "$MERGE_LANDED" ]; then landing_change "$issue" landed ${LANDING_BATCH:+--batch "$LANDING_BATCH"}
+  # The landed row names the commit now on the integration branch, so the landing report can look up
+  # that commit's CI verdict (how long after a landing the integration branch's CI judged it).
+  if [ -n "$MERGE_LANDED" ]; then landing_change "$issue" landed ${LANDING_BATCH:+--batch "$LANDING_BATCH"} --sha "$MERGE_LANDED"
   elif [ "$outcome" = conflict ]; then landing_change "$issue" returned --cause conflict
   elif [ "$rc" -ne 0 ] || [ "$outcome" = gate-failed ] || [ "$outcome" = escalated ] || [ "$outcome" = aborted ] || [ "$outcome" = failed ]; then
     # (aborted: a killed job exits 0 through its trap; the change still came back, as infra)
