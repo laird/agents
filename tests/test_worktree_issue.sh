@@ -43,7 +43,7 @@ git -C "$R" worktree add -q -b feature/issue-2b "$T/scratch"        # not <repo>
 OUT=$(bash "$SCRIPT" --project "$R-wt-2" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && pass "exits 0 (run from inside a worktree)" || fail "rc=$RC: $OUT"
 TAB=$'\t'
-has "claimed issue → /autocoder:fix 1" "$R-wt-1${TAB}feature/issue-1${TAB}1${TAB}claimed${TAB}/autocoder:fix 1" "$OUT"
+has "claimed issue → fix-loop (the loop resumes the worktree's own claim and carries on)" "$R-wt-1${TAB}feature/issue-1${TAB}1${TAB}claimed${TAB}/autocoder:fix-loop" "$OUT"
 has "open unclaimed issue still resumed → /autocoder:fix 2" "$R-wt-2${TAB}feature/issue-2${TAB}2${TAB}open${TAB}/autocoder:fix 2" "$OUT"
 has "closed issue → fix-loop" "$R-wt-3${TAB}enhancement/issue-3-auto${TAB}3${TAB}closed${TAB}/autocoder:fix-loop" "$OUT"
 has "branch naming no issue → fix-loop" "$R-wt-4${TAB}misc${TAB}-${TAB}none${TAB}/autocoder:fix-loop" "$OUT"
@@ -52,7 +52,7 @@ hasnt "scratch worktree not listed" "$T/scratch" "$OUT"
 hasnt "main checkout not listed" "$R${TAB}" "$OUT"
 
 OUT=$(AUTOCODER_AGENT=gemini bash "$SCRIPT" --project "$R")
-has "non-claude agent gets bare names" "${TAB}/fix 1" "$OUT"
+has "non-claude agent gets bare names" "${TAB}/fix 2" "$OUT"
 
 OUT=$(bash "$SCRIPT" --project "$R" --orphan-claims)
 has "claim with no worktree on its branch is an orphan" "6${TAB}-" "$OUT"

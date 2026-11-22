@@ -71,6 +71,7 @@ assert_grep "selection: comment names the branch" "$ISSUES/working/023.md" "feat
 
 # ── 2. own-claim resume (#182): our pushed branch and start comment are not a rival's lock
 git push -q origin feature/issue-23
+rm -f "$(git rev-parse --absolute-git-dir)/autocoder-worker-state"   # the claim above recorded #23 (6b); this step is a worktree with NO record
 run_claim 23
 assert_eq "no worker state: own pushed branch still reads as a lock (exit 1)" 1 "$RC"
 assert_grep "no worker state: remote-branch message" <(printf '%s' "$OUTPUT") "already exists — another agent owns this issue"
@@ -113,6 +114,24 @@ run_claim --base parent 40
 assert_eq "parent: exit 0" 0 "$RC"
 assert_eq "parent: PARENT_BRANCH recorded" main-wt-1 "$PARENT_BRANCH"
 assert_eq "parent: branched from the parent" "$(git rev-parse main-wt-1)" "$(git rev-parse HEAD)"
+
+# ── 6b. a claim made here is recorded for the worktree, so a fix loop resumes it (#182 record)
+STATE_FILE="$(git rev-parse --absolute-git-dir)/autocoder-worker-state"
+rm -f "$STATE_FILE"
+unset CLAUDE_CODE_SESSION_ID   # never the runner's own session
+git checkout -q master
+issue 40 P2 "bug, P2" "Body 40."
+run_claim 40
+assert_eq "record: claim of #40 exits 0" 0 "$RC"
+assert_eq "record: the worker-state record names #40 (a typed /fix is resumable by the loop)" 40 "$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null)"
+assert_eq "record: no claim time (none to settle) and no session outside one" "40 - -" "$(cat "$STATE_FILE" 2>/dev/null)"
+# a record the gate already wrote for the same issue (its claim time settles races) is kept as it is
+git checkout -q master
+issue 41 P2 "bug, P2" "Body 41."
+printf '41 1700000000000 -\n' > "$STATE_FILE"
+run_claim 41
+assert_eq "record: a gate-written record for the claimed issue is kept" "41 1700000000000 -" "$(cat "$STATE_FILE" 2>/dev/null)"
+rm -f "$STATE_FILE"
 
 # ── 7. bad arguments
 OUTPUT=$(bash "$CLAIM" 2>&1); RC=$?

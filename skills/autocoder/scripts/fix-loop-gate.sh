@@ -131,6 +131,32 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
   fi
 fi
 
+# ── 0b. A manager's dispatch overrides this tick's own pick (dispatch-fns.sh) ──
+# Workers run the fix loop by default; a manager steers one by writing a dispatch file
+# for its worktree (dispatch-issue.sh) instead of typing into its pane, which would end
+# the loop. A fresh file for THIS worktree is taken ahead of the priority pick, and ahead
+# of triage (see dispatch_take below); fresh files for other worktrees keep their issues
+# out of this tick's candidates, so the target's own tick finds them unclaimed. After the
+# resume step on purpose: an issue this worktree already holds comes first, and the
+# dispatch waits for the tick after it is done. A stale or unreadable own file is dropped.
+DISPATCHED_ELSEWHERE="[]"; D_ISSUE=""; D_BY=""; D_NOTE=""; DISPATCH_DIR=""; DISPATCH_OWN=""
+if [ -f "${SCRIPT_DIR}/dispatch-fns.sh" ]; then
+  # shellcheck source=dispatch-fns.sh
+  source "${SCRIPT_DIR}/dispatch-fns.sh"
+  DISPATCH_MAIN="$(dispatch_main_worktree)"; DISPATCH_OWN="$(dispatch_own_name 2>/dev/null || true)"
+  if [ -n "$DISPATCH_MAIN" ] && [ -n "$DISPATCH_OWN" ] && DISPATCH_DIR="$(dispatch_dir "$DISPATCH_MAIN")" && [ -d "$DISPATCH_DIR" ]; then
+    DISPATCHED_ELSEWHERE="$(dispatch_others_json "$DISPATCH_DIR" "$DISPATCH_OWN")"
+    if [ -f "$DISPATCH_DIR/$DISPATCH_OWN" ]; then
+      if DISPATCH_ROW="$(dispatch_read "$DISPATCH_DIR/$DISPATCH_OWN")"; then
+        IFS=$'\t' read -r D_ISSUE _ D_BY D_NOTE <<< "$DISPATCH_ROW"
+      else
+        echo "fix-loop-gate: the dispatch for this worktree ($DISPATCH_DIR/$DISPATCH_OWN) is stale or unreadable; dropping it" >&2
+        dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+      fi
+    fi
+  fi
+fi
+
 # ── 1. Snapshot all open issues ──────────────────────────────────────────
 GATE_START_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
 ALL_JSON="$(mktemp)"; WORKING_JSON=""
@@ -168,7 +194,7 @@ CLAIMED_BY_BRANCH="$(bash "${SCRIPT_DIR}/claimed-issue-numbers.sh" origin 2>/dev
 classify() {
   # Note: heredoc IS python stdin; the issues JSON must come via env var
   # (heredoc overrides any `< file` redirect, so we use ALL_JSON_PATH).
-  ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" python3 - <<'PY'
+  ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" DISPATCHED_ELSEWHERE="$DISPATCHED_ELSEWHERE" python3 - <<'PY'
 import json, os, random, sys
 
 with open(os.environ["ALL_JSON_PATH"]) as f:
@@ -177,6 +203,12 @@ try:
     claimed_by_branch = set(json.loads(os.environ.get("CLAIMED_BY_BRANCH") or "[]"))
 except ValueError:
     claimed_by_branch = set()
+try:
+    # Issues a fresh dispatch file names for ANOTHER worktree (dispatch-fns.sh): that
+    # worker's next tick takes them; this tick keeps off, whatever their priority.
+    dispatched_elsewhere = set(json.loads(os.environ.get("DISPATCHED_ELSEWHERE") or "[]"))
+except ValueError:
+    dispatched_elsewhere = set()
 
 PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
@@ -198,6 +230,8 @@ enhancements = []
 for issue in issues:
     ls = labels(issue)
     if ls & BLOCKING:
+        continue
+    if issue["number"] in dispatched_elsewhere:
         continue
     if WORKING in ls:
         # Someone holds it. A candidate only for taking over an abandoned
@@ -267,17 +301,24 @@ read -r PHASE REST <<< "$CLASSIFICATION"
 
 case "$PHASE" in
   IDLE)
-    # Truly nothing actionable. Do not spawn Claude.
-    exit 1
+    # Truly nothing actionable. Do not spawn Claude. A dispatch for this worktree is
+    # still taken below (its issue may be `working` elsewhere in the list's terms: a
+    # hand-over of this worktree's own held claim).
+    [ -n "$D_ISSUE" ] || exit 1
+    CLASSIFICATION=""
     ;;
 
   TRIAGE)
     # Unprioritized issues exist. Write the list; dispatcher will use
     # Haiku to assign P0–P3. (No atomic claim needed: triage is pure
-    # metadata, not work execution.)
-    issues_json="[$(echo "$REST" | tr ' ' ',')]"
-    printf '{"phase":"triage","issues":%s}\n' "$issues_json" > "$WORK_JSON"
-    exit 0
+    # metadata, not work execution.) A dispatch for this worktree comes first:
+    # triage is every worker's job and the next tick's; the dispatch is this one's.
+    if [ -z "$D_ISSUE" ]; then
+      issues_json="[$(echo "$REST" | tr ' ' ',')]"
+      printf '{"phase":"triage","issues":%s}\n' "$issues_json" > "$WORK_JSON"
+      exit 0
+    fi
+    CLASSIFICATION=""
     ;;
 esac
 
@@ -295,7 +336,7 @@ if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
   source "${SCRIPT_DIR}/touches-fns.sh"
   MAIN_WT="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN_WT=""
   OVERLAP_MODE="$(touches_mode "${MAIN_WT:-.}/.autocoder.json")"
-  if [ "$OVERLAP_MODE" != off ]; then
+  if [ "$OVERLAP_MODE" != off ] && [ -n "$CLASSIFICATION" ]; then
     WORKING_JSON="$(mktemp)"
     # Hot files (#228): conflicted recently (merge-events.jsonl); at most one
     # in-flight claim may touch each, under prefer and strict alike.
@@ -465,6 +506,76 @@ ${list}
 \`${WORKER_ID}\` has claimed it and will carry the work on." 2>/dev/null || true
   return 0
 }
+
+# ── Take this worktree's dispatch (#0b) ─────────────────────────────────
+# dispatch_take <issue> <by> <note>: exits 0 with the work plan (`"dispatched": true`)
+# when the issue is claimed or resumed; returns 1 otherwise, the file removed unless the
+# tracker could not answer (then the next tick retries). A `working` issue is taken only
+# as a RESUME of this worktree's own held claim: its branch exists for this worktree (a
+# reboot, a re-prompt after /clear, a manager handing a worker its own issue back); one
+# held on another worker's branch is dropped as someone else's. A fresh issue goes
+# through the same claim and race rules as a priority pick.
+dispatch_take() {
+  local n="$1" by="$2" note="$3" json state ls phase prio plan rc session
+  json="$(issue_get "$n" 2>/dev/null)" || { echo "fix-loop-gate: dispatched #${n} cannot be read from the tracker; keeping the dispatch for the next tick" >&2; return 1; }
+  state="$(printf '%s' "$json" | jq -r '(.state // "") | ascii_upcase' 2>/dev/null)"
+  ls="$(printf '%s' "$json" | jq -r '[.labels[]?.name] | join(" ")' 2>/dev/null)"
+  local blocked="" l
+  for l in $ls; do case " needs-approval needs-design needs-clarification too-complex future decomposed blocked awaiting-integration merging proposal " in *" $l "*) blocked="$l" ;; esac; done
+  if [ "$state" != OPEN ] || [ -n "$blocked" ]; then
+    echo "fix-loop-gate: dispatched #${n} dropped: ${blocked:+carries $blocked}${blocked:-is $state, not open}" >&2
+    dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+    return 1
+  fi
+  case " $ls " in
+    *" working "*)
+      if git show-ref --verify -q "refs/heads/feature/issue-${n}" || git show-ref --verify -q "refs/heads/enhancement/issue-${n}-auto" \
+         || git ls-remote --exit-code --heads origin "feature/issue-${n}" >/dev/null 2>&1; then
+        worker_state_set "$n" "" "$(_worker_session_id)"
+        plan="$(worker_resume_plan)"; rc=$?
+        case "$rc" in
+          0) echo "fix-loop-gate: resuming dispatched #${n} (by ${by}: ${note}), this worktree's own held claim" >&2
+             dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+             printf '%s\n' "$plan" | sed 's/}$/,"dispatched":true}/' > "$WORK_JSON"
+             exit 0 ;;
+          2) echo "fix-loop-gate: dispatched #${n} is this worktree's held claim but the tree is dirty; keeping the dispatch for the next tick" >&2
+             return 1 ;;
+          *) echo "fix-loop-gate: dispatched #${n} is \`working\` but no longer this worktree's claim; dropping the dispatch" >&2
+             dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+             return 1 ;;
+        esac
+      fi
+      echo "fix-loop-gate: dispatched #${n} is \`working\` on a branch this worktree does not hold (someone else's claim); dropping the dispatch" >&2
+      dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+      return 1 ;;
+  esac
+  CLAIM_MS=""
+  issue_claim "$n" 2>/dev/null || { echo "fix-loop-gate: dispatched #${n} could not be claimed; dropping the dispatch" >&2; dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"; return 1; }
+  PENDING_CLAIM="$n"; PENDING_FRESH=1; PENDING_EXCLUDE=""
+  if [ "$ISSUE_SOURCE" != file ]; then
+    claim_comment_wins "$n" || { PENDING_CLAIM=""; echo "fix-loop-gate: dispatched #${n} lost its claim race; dropping the dispatch" >&2; dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"; return 1; }
+    issue_claim "$n" 2>/dev/null || true
+  fi
+  session=""
+  [ -z "${AUTOCODER_NEXT_FIX_FILE:-}" ] && session="${CLAUDE_CODE_SESSION_ID:-}"
+  worker_state_set "$n" "$CLAIM_MS" "$session"
+  case " $ls " in *" enhancement "*) phase=enhance ;; *) phase=fix ;; esac
+  prio="$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(test("^P[0-3]$"))] | sort | .[0] // "P2"' 2>/dev/null || echo P2)"
+  if [ "$phase" = fix ]; then
+    printf '{"phase":"fix","issue":%s,"priority":"%s","dispatched":true}\n' "$n" "$prio" > "$WORK_JSON"
+  else
+    printf '{"phase":"enhance","issue":%s,"dispatched":true}\n' "$n" > "$WORK_JSON"
+  fi
+  PENDING_CLAIM=""   # handed off: the work plan names it
+  dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+  echo "fix-loop-gate: taking dispatched #${n} (by ${by}: ${note}) ahead of the priority pick" >&2
+  exit 0
+}
+if [ -n "$D_ISSUE" ]; then
+  dispatch_take "$D_ISSUE" "$D_BY" "$D_NOTE" || true
+  # A dropped dispatch on an otherwise idle or triage tick leaves no candidate to walk.
+  [ -n "$CLASSIFICATION" ] || exit 1
+fi
 
 # Walk the candidates in order; a lost race means "try the next one".
 tries=0

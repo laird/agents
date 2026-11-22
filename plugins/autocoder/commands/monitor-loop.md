@@ -58,7 +58,11 @@ the loop to watch.
 
 - **`AUTOCODER_ROUTE=self`** (default) — workers run their own `/autocoder:fix-loop`
   and self-claim issues. This manager loop co-monitors: it cleans up stale labels,
-  restarts unhealthy workers, deploys, and dispatches *supplementary* work only.
+  restarts unhealthy workers, deploys, and dispatches *supplementary* work only. A
+  dispatch here is an OVERRIDE of the worker's own next pick, written as a file with
+  `dispatch-issue.sh <N> --worktree <wt>` (monitor-workers Step 5), never `/clear` +
+  `/autocoder:fix <N>` typed into the pane, which ends the loop and leaves the worker
+  idle when the issue is done.
 - **`AUTOCODER_ROUTE=manager`** — workers were launched **without** the self-claim
   fix-loop; they idle at a ready prompt. **This manager is the SINGLE assigner.**
   On each `/autocoder:monitor-workers` iteration it must:
