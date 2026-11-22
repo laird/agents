@@ -162,6 +162,37 @@ class TestUpdate:
         assert (idir / "open" / "001.md").exists()
         assert not (idir / "blocked" / "001.md").exists()
 
+    def test_repeated_add_label_applies_every_label(self, idir):
+        # #328: a single-value option kept only the last --add-label.
+        write_issue(idir, 1, "T", labels=["bug"])
+        _, _, rc = run(["update", "1", "--add-label", "needs-design", "--add-label", "P2"],
+                       {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        out, _, _ = run(["get", "1"], {"ISSUE_DIR_PATH": str(idir)})
+        names = [l["name"] for l in json.loads(out)["labels"]]
+        assert "needs-design" in names and "P2" in names and "bug" in names
+        # The blocking label among them still moves the issue to blocked/.
+        assert (idir / "blocked" / "001.md").exists()
+        assert not (idir / "open" / "001.md").exists()
+
+    def test_repeated_remove_label_drops_every_label(self, idir):
+        write_issue(idir, 1, "T", bucket="blocked", labels=["needs-design", "P2", "bug"])
+        _, _, rc = run(["update", "1", "--remove-label", "needs-design", "--remove-label", "P2"],
+                       {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        out, _, _ = run(["get", "1"], {"ISSUE_DIR_PATH": str(idir)})
+        names = [l["name"] for l in json.loads(out)["labels"]]
+        assert names == ["bug"]
+        assert (idir / "open" / "001.md").exists()
+
+    def test_empty_label_value_is_ignored(self, idir):
+        write_issue(idir, 1, "T", labels=["bug"])
+        _, _, rc = run(["update", "1", "--add-label", "", "--add-label", "P1"],
+                       {"ISSUE_DIR_PATH": str(idir)})
+        assert rc == 0
+        out, _, _ = run(["get", "1"], {"ISSUE_DIR_PATH": str(idir)})
+        assert [l["name"] for l in json.loads(out)["labels"]] == ["bug", "P1"]
+
     def test_add_label_working_does_not_rename(self, idir):
         # Legacy/idempotent: --add-label working sets the label and frontmatter
         # status but does NOT rename to working/. Only `claim` does that.
