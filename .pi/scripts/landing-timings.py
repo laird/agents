@@ -29,11 +29,12 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
       report shows it beside the gate time, because a probe that regenerates the tree per
       candidate is a fixed cost of every cycle nobody sees in a gate log.
 
-  ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--workflow NAME ...] [--ts ISO]
+  ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--job NAME] [--workflow NAME ...] [--ts ISO]
       the integration branch's CI verdict on one landed commit, written ONCE by landing-report.py
       when it first finds a terminal verdict (success, failure, cancelled, timed_out ...): run id,
-      conclusion, the time CI reached it, and the workflows it judged (null = every run on the
-      branch), so a verdict cached under one selection is never read under another. A pending run
+      conclusion, the time CI reached it, the job of the run that bounds it (the first red job, or
+      the last to complete; null when the jobs were not read), and the workflows it judged (null =
+      every run on the branch), so a verdict cached under one selection is never read under another. A pending run
       or an unreachable forge is never cached, so `unknown` and `pending` are refused: the report
       asks again next time.
 
@@ -47,7 +48,8 @@ Row schema (v1), also the contract for a project's own writers:
   {"v":1,"ts","kind":"batch","batch":ID,"members":[N..],"assembly_s","stages":{name:s},
    "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected","repo":ID|null}
   {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null,"repo":ID|null}
-  {"v":1,"ts","kind":"ci-verdict","sha":HEX,"run_id":ID|null,"conclusion":C,"verdict_ts":ISO,"workflows":[..]|null,"repo":ID|null}
+  {"v":1,"ts","kind":"ci-verdict","sha":HEX,"run_id":ID|null,"conclusion":C,"verdict_ts":ISO,"job":NAME|null,
+   "workflows":[..]|null,"repo":ID|null}
   A `landed` change row carries "sha":HEX when its writer knew the landed commit (absent before).
 Absent numbers are null, never 0: the report tells "not measured" from "took no time". `repo` is
 null only for a writer that named none (rows written before the field existed).
@@ -153,7 +155,7 @@ def ci_verdict_row(a: argparse.Namespace) -> dict:
     workflows = sorted({w.strip() for w in (a.workflow or []) if w.strip()}) or None   # one arg per name: a name may hold a comma
     return {"v": 1, "ts": _ts(a.ts), "kind": "ci-verdict", "sha": _sha(a.sha),
             "run_id": _id(a.run_id, "--run-id") if a.run_id else None, "conclusion": a.conclusion, "verdict_ts": a.verdict_ts,
-            "workflows": workflows}
+            "job": (a.job or "").strip() or None, "workflows": workflows}
 
 
 def batch_row(a: argparse.Namespace) -> dict:
@@ -220,6 +222,7 @@ def parser() -> argparse.ArgumentParser:
     cv.add_argument("--conclusion", required=True, help="the terminal conclusion CI reached (success, failure, cancelled, timed_out ...)")
     cv.add_argument("--verdict-ts", required=True, help="when CI reached it (ISO, UTC)")
     cv.add_argument("--run-id")
+    cv.add_argument("--job", help="the job of the judging run that bounds the verdict: the first red job, or the last to complete")
     cv.add_argument("--workflow", action="append", help="a workflow name the verdict was judged over (repeatable; default: every run on the branch)")
     cv.add_argument("--ts")
     return p

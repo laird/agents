@@ -61,9 +61,16 @@ forge that cannot be reached is `unknown`, never 0. A terminal verdict is cached
 asked again next time. `--ci off` asks nothing and reads the cache. `--ci-workflow NAME` (default:
 `ciWorkflows` in the repository's .autocoder.json) judges only the named workflows: a repository
 whose every push also runs a workflow that is red for reasons of its own, or a code scan that takes
-an hour, names the judging ones; the cached row records the selection it was judged over. The figures: landing to CI verdict (p50, p75, max), the landings CI judged red,
-and how many other landings happened between a red landing and its verdict (the ones that stacked
-on a red nobody had seen yet); each batch row carries its landing's verdict and lag.
+an hour, names the judging ones; the cached row records the selection it was judged over. THE JOB
+THAT BOUNDS THE VERDICT is read from the judging run's jobs (`gh api .../actions/runs/<id>/jobs`,
+or `--ci-jobs-cmd` / `$AUTOCODER_CI_JOBS_CMD`, a command given RUN_ID that prints the jobs as a JSON
+array): for a red, the first job to complete red (where the red surfaced); for a green, the last job
+to complete (what the lag waited for). It is cached on the row (`job`) and counted, so the week page
+says which job the landing-to-verdict lag IS, and a job that takes hours is a number every Monday, not
+a guess; a run whose jobs cannot be read leaves it `not read`, never a name. The figures: landing to CI
+verdict (p50, p75, max), the bounding jobs with their counts, the landings CI judged red, and how
+many other landings happened between a red landing and its verdict (the ones that stacked on a red
+nobody had seen yet); each batch row carries its landing's verdict, lag and bounding job.
 """
 
 from __future__ import annotations
@@ -532,7 +539,8 @@ def cached_verdicts(rows, workflows=()):
     for r in rows:
         if r["kind"] == "ci-verdict" and r.get("sha") and parse_ts(r.get("verdict_ts")) and r.get("conclusion") \
                 and r["conclusion"] not in CI_NOT_JUDGED and (sorted(set(r.get("workflows") or [])) or None) == want:
-            out[r["sha"]] = {"status": r["conclusion"], "verdict_ts": parse_ts(r["verdict_ts"]), "run_id": r.get("run_id"), "source": "cached"}
+            out[r["sha"]] = {"status": r["conclusion"], "verdict_ts": parse_ts(r["verdict_ts"]), "run_id": r.get("run_id"),
+                             "job": r.get("job") or None, "source": "cached"}
     return out
 
 
@@ -587,11 +595,54 @@ def fetch_runs(cmd, repo_dir, sha, integration):
     return (runs, None) if isinstance(runs, list) else (None, "the runs JSON is not a list")
 
 
-def resolve_ci(landings, cached, mode, fetch, judge, write, log=lambda m: print(m, file=sys.stderr)):
+def job_time(j):
+    return parse_ts(j.get("completed_at") or j.get("updated_at"))
+
+
+def bounding_job(jobs, status):
+    """The job of the judging run that bounds the verdict: for a red verdict the FIRST job to complete with a red
+    conclusion (where the red surfaced; a job carrying no time is last); for any other verdict the LAST job to
+    complete (what the lag waited for; a job carrying no time is first). None when the run has no completed job."""
+    done = [j for j in jobs or [] if isinstance(j, dict) and j.get("name") and j.get("status") == "completed"]
+    if not done:
+        return None
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    near = datetime.min.replace(tzinfo=timezone.utc)
+    if status in RED_CONCLUSIONS:
+        red = [j for j in done if j.get("conclusion") in RED_CONCLUSIONS]
+        return min(red, key=lambda j: job_time(j) or far)["name"] if red else None
+    judged = [j for j in done if j.get("conclusion") == "success"] or done
+    return max(judged, key=lambda j: job_time(j) or near)["name"]
+
+
+def fetch_jobs(cmd, repo_dir, run_id):
+    """One run's jobs from the forge: `cmd` (RUN_ID on its argv, a JSON array on stdout), else `gh api` in
+    `repo_dir`. Returns (jobs, None) or (None, error)."""
+    if cmd:
+        argv = ["bash", "-c", f'{cmd} "$@"', "_", str(run_id)]
+    else:
+        argv = ["gh", "api", "-X", "GET", f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs", "-f", "per_page=100", "--jq", ".jobs"]
+    try:
+        r = subprocess.run(argv, cwd=repo_dir if Path(repo_dir).is_dir() else None, capture_output=True, text=True, timeout=CI_RUNS_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, f"{argv[0]}: {e}"
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1][:300]
+    try:
+        jobs = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError as e:
+        return None, f"unreadable jobs JSON: {e}"
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs") or []
+    return (jobs, None) if isinstance(jobs, list) else (None, "the jobs JSON is not a list")
+
+
+def resolve_ci(landings, cached, mode, fetch, judge, write, log=lambda m: print(m, file=sys.stderr), jobs_of=None):
     """Each landing's verdict: the cached one, else (mode `auto`) the forge's answer (`fetch(sha)` -> (runs, error)),
-    judged by `judge(runs)` and cached by `write(sha, status, verdict_ts, run_id)` when terminal. Returns (verdicts by
-    sha, meta: mode, queried, cached, unknown, error)."""
-    out, meta = {}, {"mode": mode, "queried": 0, "cached": 0, "error": None, "unknown": 0}
+    judged by `judge(runs)`, its bounding job read by `jobs_of(run_id)` -> (jobs, error) when given, and cached by
+    `write(sha, status, verdict_ts, run_id, job)` when terminal. Returns (verdicts by sha, meta: mode, queried,
+    cached, unknown, error, jobs_unread)."""
+    out, meta = {}, {"mode": mode, "queried": 0, "cached": 0, "error": None, "unknown": 0, "jobs_unread": 0, "jobs_error": None}
     for sha, L in sorted(landings.items(), key=lambda kv: kv[1]["ts"]):
         if sha in cached:
             out[sha] = cached[sha]
@@ -608,11 +659,21 @@ def resolve_ci(landings, cached, mode, fetch, judge, write, log=lambda m: print(
             meta["unknown"] += 1
             continue
         status, vts, rid = judge(runs)
-        out[sha] = {"status": status, "verdict_ts": vts, "run_id": rid, "source": "queried"}
+        job = None
+        if status not in CI_NOT_JUDGED and rid and jobs_of is not None:
+            jobs, jerr = jobs_of(rid)
+            if jerr is not None:
+                meta["jobs_unread"] += 1
+                meta["jobs_error"] = meta["jobs_error"] or jerr
+            else:
+                job = bounding_job(jobs, status)
+        out[sha] = {"status": status, "verdict_ts": vts, "run_id": rid, "job": job, "source": "queried"}
         if status not in CI_NOT_JUDGED and vts is not None:     # an untimed verdict is reported, not cached: asked again
-            write(sha, status, vts, rid)
+            write(sha, status, vts, rid, job)
     if meta["unknown"]:
         log(f"landing-report: the forge could not be reached for {meta['unknown']} landed commit(s) (CI verdict unknown, nothing cached): {meta['error']}")
+    if meta["jobs_unread"]:
+        log(f"landing-report: the jobs of {meta['jobs_unread']} judging run(s) could not be read (bounding job not read, the verdict cached without it): {meta['jobs_error']}")
     return out, meta
 
 
@@ -642,14 +703,19 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
     ledger knows ([(key, ts)], every_landing), the set a red's stacked landings are counted over."""
     universe = universe if universe is not None else [(sha, L["ts"]) for sha, L in landings.items()]
     counts = Counter()
+    jobs = Counter()
     lag, red = [], []
     for sha, L in landings.items():
         v = verdicts.get(sha) or {"status": "not-queried", "verdict_ts": None, "run_id": None}
-        L["status"], L["verdict_ts"], L["run_id"], L["lag_s"] = v["status"], v.get("verdict_ts"), v.get("run_id"), None
+        L["status"], L["verdict_ts"], L["run_id"], L["lag_s"], L["job"] = v["status"], v.get("verdict_ts"), v.get("run_id"), None, v.get("job") or None
         if v["status"] in CI_NOT_JUDGED:
             counts[v["status"]] += 1
             continue
         counts["judged"] += 1
+        if L["job"]:
+            jobs[L["job"]] += 1
+        else:
+            counts["job_unread"] += 1
         if v.get("verdict_ts") is None:
             counts["untimed"] += 1            # a terminal verdict whose runs carry no time: judged, lag unknown
             continue
@@ -668,7 +734,7 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
             L["landings_before_verdict"] = len(before)
             stacked |= before
         red.append({"sha": L["sha"], "issues": L["issues"], "landed_ts": iso(L["ts"]), "verdict_ts": iso(L["verdict_ts"]) if L["verdict_ts"] else None,
-                    "conclusion": L["status"], "lag_s": L["lag_s"], "run_id": L["run_id"], "landings_before_verdict": L["landings_before_verdict"]})
+                    "conclusion": L["status"], "lag_s": L["lag_s"], "run_id": L["run_id"], "job": L["job"], "landings_before_verdict": L["landings_before_verdict"]})
     unanswered = counts["unknown"] + counts["not-queried"]
     known = bool(counts["judged"]) or not unanswered     # nothing is known of the reds when every landing went unanswered
     return {"landings": len(landings), "unrecorded": unrecorded, "judged": counts["judged"], "pending": counts["pending"],
@@ -677,10 +743,11 @@ def ci_figures(landings, unrecorded, verdicts, meta, universe=None):
             "queried": meta.get("queried", 0), "cached": meta.get("cached", 0), "mode": meta.get("mode"), "forge_error": meta.get("error"),
             "off_reason": meta.get("off_reason"), "workflows": sorted(meta.get("workflows") or []),
             "lag_s": {"n": len(lag), "p50": quant(lag, 0.5), "p75": quant(lag, 0.75), "max": max(lag) if lag else None},
+            "bounding_jobs": [{"job": j, "n": n} for j, n in jobs.most_common()], "job_unread": counts["job_unread"],
             "red": red, "red_count": len(red) if known else None,
             "landings_before_red_verdicts": sum(r["landings_before_verdict"] or 0 for r in red) if known else None,
             "landings_before_red_verdicts_distinct": len(stacked) if known else None,
-            "by_sha": {sha: {"status": L["status"], "lag_s": L.get("lag_s"), "landings_before_verdict": L.get("landings_before_verdict")}
+            "by_sha": {sha: {"status": L["status"], "lag_s": L.get("lag_s"), "job": L.get("job"), "landings_before_verdict": L.get("landings_before_verdict")}
                        for sha, L in landings.items()}}
 
 
@@ -718,7 +785,7 @@ def ci_cell(c):
     if c.get("lag_s") is None:
         return f"{st} (time unknown)"
     before = c.get("landings_before_verdict")
-    return f"{st} {human(c['lag_s'])}" + (f" ({before} landed before the verdict)" if before else "")
+    return f"{st} {human(c['lag_s'])}" + (f" in {c['job']}" if c.get("job") else "") + (f" ({before} landed before the verdict)" if before else "")
 
 
 def ci_lag_text(ci, with_max=False):
@@ -743,6 +810,17 @@ def ci_lag_text(ci, with_max=False):
     if ci["unrecorded"]:
         parts.append(f"{ci['unrecorded']} landed row{'s carry' if ci['unrecorded'] != 1 else ' carries'} no commit")
     return head + " (" + "; ".join(parts) + ")"
+
+
+def ci_job_text(ci):
+    """`bounding job: Backend Tests (vitest) 41, lint 2 (not read for 1)`: the job that bounds each judged landing's
+    verdict, by count, so the lag has a name; `bounding job: not read` when none was, nothing when nothing was judged."""
+    if not ci["judged"]:
+        return ""
+    jobs, unread = ci.get("bounding_jobs") or [], ci.get("job_unread") or 0
+    if not jobs:
+        return "bounding job: not read"
+    return "bounding job: " + ", ".join(f"{j['job']} {j['n']}" for j in jobs) + (f" (not read for {unread})" if unread else "")
 
 
 def ci_red_text(ci):
@@ -828,7 +906,7 @@ def render_week(a):
     c = t["cycle_s"]
     out.append("- Median READY to landed: " + ("n/a" if not c["n"] else f"{human(c['p50'])} (p90 {human(c['p90'])}, n={c['n']})"))
     out.append("- Planning: " + ("n/a (not recorded)" if p["s_total"] is None else f"{human(p['s_total'])} over {p['candidates']} candidate probes"))
-    out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'])}; {ci_red_text(a['ci'])}")
+    out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'])}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     if rg["count"]:
         out.append(f"- Re-gates: {rg['count']} batches, {human(rg['gate_s'])} of gate time; by reason "
                    + ", ".join(f"{k} {v['n']} ({human(v['s'])}{', ' + str(v['unmeasured']) + ' unmeasured' if v['unmeasured'] else ''})"
@@ -881,7 +959,7 @@ def render(a, week=None, batches=False):
                        ("Cycle (READY to landed)", "cycle_s"), ("Claim to landed", "claim_to_landed_s")):
         d = t[key]
         out.append(f"- {label}: " + ("n/a" if not d["n"] else f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']})"))
-    out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}")
+    out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     out += ["", "## Batches", "", f"- Batches: {b['count']}; landed changes: {a['landed']}",
             "- Size distribution (members: batches): " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),
             f"- Assembly: " + ("n/a" if not b["assembly_s"]["n"] else f"p50 {human(b['assembly_s']['p50'])}, p90 {human(b['assembly_s']['p90'])}"),
@@ -1064,6 +1142,8 @@ def main(argv=None):
     p.add_argument("--ci", choices=("auto", "off"), default="auto", help="auto: ask the forge once per landed commit with no cached verdict; off: read the cache only")
     p.add_argument("--ci-runs-cmd", default=os.environ.get("AUTOCODER_CI_RUNS_CMD") or None,
                    help="a command given SHA and BRANCH that prints the commit's CI runs as a JSON array (default: gh api in --repo)")
+    p.add_argument("--ci-jobs-cmd", default=os.environ.get("AUTOCODER_CI_JOBS_CMD") or None,
+                   help="a command given RUN_ID that prints the run's jobs as a JSON array, for the job that bounds the verdict (default: gh api in --repo)")
     p.add_argument("--ci-workflow", action="append", default=[], help="judge only this workflow name (repeatable; default: `ciWorkflows` of the repository's .autocoder.json, else every run on the branch)")
     p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
@@ -1123,14 +1203,17 @@ def main(argv=None):
     def judge(runs):
         return judge_runs(runs, a.integration, set(workflows))
 
-    def write(sha, status, vts, rid):
+    def jobs_of(rid):
+        return fetch_jobs(a.ci_jobs_cmd, repo_dir, rid)
+
+    def write(sha, status, vts, rid, job=None):
         writer = HERE / "landing-timings.py"
         if not writer.is_file():
             print(f"landing-report: {writer} is missing; the CI verdict of {sha[:10]} is not cached", file=sys.stderr)
             return
         argv = [sys.executable, str(writer), "--log-path", a.log or default_log(), *(["--repo", row_repo] if row_repo else []),
                 "ci-verdict", "--sha", sha, "--conclusion", status, "--verdict-ts", iso(vts), *(["--run-id", rid] if rid else []),
-                *(x for w in workflows for x in ("--workflow", w))]
+                *(["--job", job] if job else []), *(x for w in workflows for x in ("--workflow", w))]
         r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"landing-report: could not cache the CI verdict of {sha[:10]}: {r.stderr.strip()[:200]}", file=sys.stderr)
@@ -1140,7 +1223,7 @@ def main(argv=None):
         # checkout could only ask the wrong forge and tag the row with the wrong id.
         ci_mode, off_reason = "off", "--all-repos: the CI verdict is asked of one repository"
         print("landing-report: --all-repos: the CI verdict is not queried (it is asked of one repository); cached verdicts are read", file=sys.stderr)
-    verdicts, meta = resolve_ci(landings, cached_verdicts(rows, workflows), ci_mode, fetch, judge, write)
+    verdicts, meta = resolve_ci(landings, cached_verdicts(rows, workflows), ci_mode, fetch, judge, write, jobs_of=jobs_of)
     meta["workflows"], meta["off_reason"] = workflows, off_reason
     res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)))
     if week:

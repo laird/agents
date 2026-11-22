@@ -212,6 +212,17 @@ had seen yet); every row of the Batches table ends with its landing's verdict an
 2.5h (2 landed before the verdict)`). A ledger written before the landed rows carried their commit
 reads `n/a (no landed row carries its commit)`; the JSON is `ci` (`lag_s` with `p75`, `red`,
 `red_count`, `landings_before_red_verdicts`, each None, not 0, when the forge went unanswered).
+THE JOB THAT BOUNDS THE VERDICT is named too: the judging run's jobs are read once (`gh api
+.../actions/runs/<id>/jobs` in `--repo DIR`, or `--ci-jobs-cmd` / `$AUTOCODER_CI_JOBS_CMD`, a
+command given RUN_ID that prints a JSON array of `{name, status, conclusion, completed_at}`), and
+the bounding job is, for a red verdict, the FIRST job to complete with a red conclusion (where the
+red surfaced) and, for a green one, the LAST job to complete (what the lag waited for). It is cached
+on the `ci-verdict` row (`job`; a row written before this field, or a run whose jobs could not be
+read, is `not read`, never a name, and the verdict is cached without it). The line ends with
+`bounding job: Backend Tests (vitest) 41, lint 2 (not read for 1)`, the Batches cell reads
+`failure 2.5h in Backend Tests (vitest) (2 landed before the verdict)`, and the JSON carries
+`bounding_jobs` (`[{job, n}]`, by count) and `job_unread`, so a job that takes hours is a number
+every Monday and the week page says what to shard.
 
 One row per batch id: a train's gate runs `merge-to-integration.sh` with `AUTOCODER_LANDING_BATCH`
 (the train's id) and `AUTOCODER_LANDING_MEMBERS` (its members) in its environment
