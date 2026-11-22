@@ -2,6 +2,11 @@
 """Local HTTP back end for the blocked-issue review GUI (#311, part of #308).
 
     review-blocked-server.py [--port N]
+    review-blocked-server.py --key N
+
+`--key N` serves nothing: it prints issue N's "analysisKey" (below) and exits,
+1 when the issue cannot be read. `/review-blocked --prepare` (#312) stores its
+analyses under this key, so the page reads them back as fresh.
 
 Serves, on 127.0.0.1 only:
 
@@ -36,7 +41,7 @@ the issue's updatedAt when the backend reports one, otherwise
 "sha256:<hex>" over the issue's title, body, sorted label names and comment
 bodies as issue_get returns them (analysis_key() below), so a new comment
 makes the cached analysis stale. Whatever prepares analyses (#312) must store them under
-the same key. "analysis" is the cached analysis or null; "stale" is true when an
+the same key: `--key N` prints it. "analysis" is the cached analysis or null; "stale" is true when an
 entry exists for an older key, false when the analysis is fresh, and null when
 nothing is cached.
 """
@@ -292,7 +297,21 @@ class Handler(BaseHTTPRequestHandler):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: a free one)")
+    parser.add_argument("--key", type=int, metavar="N",
+                        help="print issue N's analysisKey and exit (serves nothing)")
     args = parser.parse_args(argv)
+    if args.key is not None:
+        rc, out, err = issue_fn("issue_get", str(args.key))
+        try:
+            full = json.loads(out) if rc == 0 else None
+        except ValueError:
+            full = None
+        if not isinstance(full, dict):
+            print(f"review-blocked-server: cannot read issue #{args.key}: "
+                  f"{err.strip() or f'issue_get exited {rc}'}", file=sys.stderr)
+            return 1
+        print(analysis_key(full))
+        return 0
     Handler.token = secrets.token_urlsafe(24)
     try:
         httpd = HTTPServer((HOST, args.port), Handler)

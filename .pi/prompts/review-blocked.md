@@ -27,6 +27,10 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 
 # Jump directly to a specific issue
 /review-blocked 123
+
+# Prepare analyses for later review, asking nothing (combines with the filters above)
+/review-blocked --prepare
+/review-blocked --prepare --label needs-design
 ```
 
 ## What This Does
@@ -39,6 +43,62 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 6. **Gets your decision** - Approve, explore further, reject, or skip
 7. **Updates labels** - Removes blocking label when approved, closes if rejected
 8. **Continues** - Moves to next blocked issue or exits
+
+## Prepare Mode (`--prepare`)
+
+`--prepare` is the unattended half of the review (#312, part of #308): the agent
+analyses every blocked issue now, and a human reviews later, in the review page
+(`review-blocked-server.py`) or in the interactive flow below. It asks **no**
+question (never AskUserQuestion), changes no label and posts no comment. It only
+writes the analysis cache (`blocked-analysis-cache.py`).
+
+Each analysis is stored under the issue's **analysis key**, which
+`review-blocked-server.py --key N` prints: the issue's `updatedAt` when the
+backend reports one, otherwise a hash of its title, body, labels and comments.
+The review page looks analyses up by the same key, so it shows them as fresh,
+and any change to the issue (such as a new comment) makes the cached analysis stale.
+An issue whose cached analysis is still fresh is skipped. A stale or missing one
+is (re)generated.
+
+Run the Instructions block below first; with `--prepare` it prints
+`PREPARE_MODE=true` and saves the issue list. Then sort the issues into fresh
+(skipped) and to-analyse:
+
+```bash
+for ISSUE_NUM in $(python3 -c "import json; print(' '.join(str(i['number']) for i in json.load(open('/tmp/blocked-issues.json'))['issues']))"); do
+  if ! KEY=$(python3 "$SCRIPT_DIR/review-blocked-server.py" --key "$ISSUE_NUM"); then
+    echo "KEY_FAILED #$ISSUE_NUM"
+  elif python3 "$SCRIPT_DIR/blocked-analysis-cache.py" get "$ISSUE_NUM" --updated-at "$KEY" >/dev/null 2>&1; then
+    echo "FRESH #$ISSUE_NUM"
+  else
+    echo "ANALYSE #$ISSUE_NUM $KEY"
+  fi
+done
+```
+
+For each `ANALYSE` line, do the analysis Step 2 describes (read the issue and its
+comments, read the code it names, find 2-3 approaches, pick one), then write it
+as JSON in the cache's schema and store it under that line's key (`KEY` below):
+
+```bash
+ANALYSIS=$(mktemp "${TMPDIR:-/tmp}/review-blocked-analysis.XXXXXX")
+cat > "$ANALYSIS" <<'JSON'
+{"summary": "<one line: what the issue needs decided>",
+ "options": [
+   {"title": "<approach>", "pros": ["<benefit>"], "cons": ["<drawback>"], "effort": "<Small|Medium|Large>"},
+   {"title": "<approach>", "pros": ["<benefit>"], "cons": ["<drawback>"], "effort": "<Small|Medium|Large>"}
+ ],
+ "recommended": 0}
+JSON
+python3 "$SCRIPT_DIR/blocked-analysis-cache.py" put "$ISSUE_NUM" --updated-at "$KEY" --file "$ANALYSIS"
+rm -f "$ANALYSIS"
+```
+
+`options` holds 2 or 3 approaches and `recommended` is the index of the one you
+recommend. `put` refuses a malformed analysis (exit 2) and names what is wrong;
+fix the JSON and run `put` again. After the last issue, print how many analyses
+were written, how many were skipped as fresh, and how many failed (`KEY_FAILED`,
+or a `put` you could not fix), then stop.
 
 ## Blocking Labels
 
@@ -114,8 +174,16 @@ echo "🏷️  Checking blocking labels..."
 echo "🔍 Scanning for blocked issues..."
 echo ""
 
+# --prepare (see "Prepare Mode") is this command's flag, not a fetch filter.
+PREPARE_MODE=false
+FETCH_ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--prepare" ]; then PREPARE_MODE=true; else FETCH_ARGS+=("$arg"); fi
+done
+echo "PREPARE_MODE=$PREPARE_MODE"
+
 # Fetch blocked issues using the script
-BLOCKED_ISSUES=$(bash "$SCRIPT_DIR/fetch-blocked-issues.sh" "$@")
+BLOCKED_ISSUES=$(bash "$SCRIPT_DIR/fetch-blocked-issues.sh" "${FETCH_ARGS[@]}")
 
 # Check if we found any issues
 TOTAL_BLOCKED=$(echo "$BLOCKED_ISSUES" | python3 -c "import json,sys; print(json.load(sys.stdin)['total'])")
@@ -157,7 +225,9 @@ echo ""
 echo "$BLOCKED_ISSUES" > /tmp/blocked-issues.json
 ```
 
-Now begin the interactive review loop. For each blocked issue (starting with highest priority):
+With `PREPARE_MODE=true`, follow "Prepare Mode" above for every issue and stop; skip
+the interactive loop below. Otherwise begin the interactive review loop. For each
+blocked issue (starting with highest priority):
 
 ### Step 1: Present the Issue
 
@@ -237,7 +307,21 @@ if [ -n "$FIXLOOP_COMMENT" ]; then
 fi
 ```
 
-Now use your capabilities to analyze the issue and present recommendations. You should:
+Reuse a prepared analysis when there is a fresh one (see "Prepare Mode"):
+
+```bash
+ANALYSIS_KEY=$(python3 "$SCRIPT_DIR/review-blocked-server.py" --key "$ISSUE_NUM" 2>/dev/null) || ANALYSIS_KEY=""
+CACHED_ANALYSIS=""
+if [ -n "$ANALYSIS_KEY" ]; then
+  CACHED_ANALYSIS=$(python3 "$SCRIPT_DIR/blocked-analysis-cache.py" get "$ISSUE_NUM" --updated-at "$ANALYSIS_KEY" 2>/dev/null) || CACHED_ANALYSIS=""
+fi
+[ -n "$CACHED_ANALYSIS" ] && { echo "📦 Prepared analysis (fresh):"; echo "$CACHED_ANALYSIS"; }
+```
+
+If `CACHED_ANALYSIS` is set, present it in the format below: its `summary` as the
+context, its `options` as the approaches and `options[recommended]` as the
+recommendation. Do not re-derive it; read further only if the user asks. If it is
+empty, analyze the issue yourself. You should:
 
 1. **Read the full issue** - Understand title, body, any comments
 2. **Determine why it's blocked** - Explain the specific reason based on the blocking label
