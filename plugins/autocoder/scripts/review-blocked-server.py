@@ -33,8 +33,9 @@ reviewing.
 
 Analyses come from blocked-analysis-cache.py (#310), keyed by "analysisKey":
 the issue's updatedAt when the backend reports one, otherwise
-"sha256:<hex>" over the issue's title, body and sorted label names
-(analysis_key() below). Whatever prepares analyses (#312) must store them under
+"sha256:<hex>" over the issue's title, body, sorted label names and comment
+bodies as issue_get returns them (analysis_key() below), so a new comment
+makes the cached analysis stale. Whatever prepares analyses (#312) must store them under
 the same key. "analysis" is the cached analysis or null; "stale" is true when an
 entry exists for an older key, false when the analysis is fresh, and null when
 nothing is cached.
@@ -91,11 +92,15 @@ def label_names(issue):
     return [l.get("name") if isinstance(l, dict) else l for l in issue.get("labels") or []]
 
 
-def analysis_key(issue):
-    if issue.get("updatedAt"):
-        return str(issue["updatedAt"])
-    blob = json.dumps({"title": issue.get("title") or "", "body": issue.get("body") or "",
-                       "labels": sorted(str(n) for n in label_names(issue))},
+def analysis_key(issue, full=None):
+    """full: the issue as issue_get returns it (with comments); defaults to issue."""
+    full = full or issue
+    if full.get("updatedAt") or issue.get("updatedAt"):
+        return str(full.get("updatedAt") or issue["updatedAt"])
+    comments = [c.get("body") or "" for c in full.get("comments") or [] if isinstance(c, dict)]
+    blob = json.dumps({"title": full.get("title") or "", "body": full.get("body") or "",
+                       "labels": sorted(str(n) for n in label_names(full)),
+                       "comments": comments},
                       sort_keys=True, ensure_ascii=False)
     return "sha256:" + hashlib.sha256(blob.encode()).hexdigest()
 
@@ -125,6 +130,8 @@ def cached_analysis(number, key):
             return json.loads(out), False
         except ValueError:
             return None, None
+    if rc != 1:  # a cache error, not a miss: report nothing rather than a false "stale"
+        return None, None
     rc, out, _ = run([sys.executable, cache, "list"])
     try:
         cached = rc == 0 and any(e.get("number") == number for e in json.loads(out))
@@ -138,6 +145,8 @@ def list_issues():
     if rc != 0:
         raise RuntimeError(err.strip() or f"fetch-blocked-issues.sh exited {rc}")
     data = json.loads(out)
+    if not isinstance(data, dict) or not isinstance(data.get("issues"), list):
+        raise ValueError("fetch-blocked-issues.sh did not print an object with an issues list")
     for issue in data.get("issues", []):
         n = issue.get("number")
         grc, gout, _ = issue_fn("issue_get", str(n))
@@ -146,7 +155,7 @@ def list_issues():
         except ValueError:
             full = issue
         issue["blockReason"] = block_reason(issue, full)
-        issue["analysisKey"] = analysis_key(issue)
+        issue["analysisKey"] = analysis_key(issue, full)
         issue["analysis"], issue["stale"] = cached_analysis(n, issue["analysisKey"])
     return data
 
@@ -163,7 +172,7 @@ def decide(d):
                 "detail": "a decision must be a JSON object"}, 400
     issue, action = d.get("issue"), d.get("action")
     res = {"issue": issue, "action": action, "ok": False, "detail": ""}
-    if isinstance(issue, str) and issue.isdigit():
+    if isinstance(issue, str) and issue.isascii() and issue.isdigit():
         issue = int(issue)
     if isinstance(issue, bool) or not isinstance(issue, int) or issue <= 0:
         res["detail"] = "'issue' must be a positive issue number"
@@ -210,9 +219,12 @@ def decide(d):
 class Handler(BaseHTTPRequestHandler):
     server_version = "review-blocked"
     token = ""
+    timeout = 30  # a client that stalls mid-request cannot wedge the single-threaded server
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("review-blocked-server: %s\n" % (fmt % args))
+        # Never the raw request line: its query string can carry the token.
+        sys.stderr.write("review-blocked-server: %s %s -> %s\n" % (
+            self.command, urlsplit(self.path).path, args[1] if len(args) > 1 else "-"))
 
     def _send(self, status, body, ctype="application/json"):
         data = (json.dumps(body) + "\n").encode() if ctype == "application/json" else body.encode()
@@ -220,6 +232,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"{ctype}; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
 
@@ -267,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._send(400, {"error": "the body is not valid JSON"})
         if isinstance(payload, list):
+            if not payload:
+                return self._send(400, {"error": "a batch needs at least one decision"})
             results = [decide(d)[0] for d in payload]
             return self._send(200, {"ok": all(r["ok"] for r in results), "results": results})
         result, status = decide(payload)

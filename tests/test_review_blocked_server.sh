@@ -103,6 +103,10 @@ eq "a fresh cached analysis is returned with stale false" \
   "$(printf '%s' "$OUT" | jq -c --argjson n "$A" '.issues[] | select(.number == $n) | [.analysis.recommended, .stale]')" "[1,false]"
 eq "an analysis cached for an older key is stale, analysis null" \
   "$(printf '%s' "$OUT" | jq -c --argjson n "$B" '.issues[] | select(.number == $n) | [.analysis, .stale]')" "[null,true]"
+IF issue_comment "$A" --body "the human answered: either is fine" >/dev/null 2>&1
+OUT=$(api "$BASE/api/issues")
+eq "a new comment changes the key, so the cached analysis reads stale" \
+  "$(printf '%s' "$OUT" | jq -c --argjson n "$A" '.issues[] | select(.number == $n) | [.analysis, .stale]')" "[null,true]"
 
 # ── POST /api/decision: validation ────────────────────────────────────────────
 last() { tail -1; }
@@ -113,6 +117,8 @@ R=$(post "{\"issue\":$A,\"action\":\"approve\",\"label\":\"P2\",\"approach\":\"x
 eq "approve with a non-blocking label is 400" "$(printf '%s' "$R" | last)" 400
 R=$(post "{\"issue\":$A,\"action\":\"reject\",\"reason\":\"  \"}"); eq "reject with a blank reason is 400" "$(printf '%s' "$R" | last)" 400
 R=$(post 'not json'); eq "a body that is not JSON is 400" "$(printf '%s' "$R" | last)" 400
+R=$(post '{"issue":"²","action":"skip"}'); eq "a non-ASCII digit issue is 400, not a dropped connection" "$(printf '%s' "$R" | last)" 400
+R=$(post '[]'); eq "an empty batch is 400" "$(printf '%s' "$R" | last)" 400
 eq "nothing was changed by refused decisions" "$(labels_of "$A")" "P2,needs-design"
 
 # ── POST /api/decision: actions ───────────────────────────────────────────────
@@ -148,6 +154,10 @@ eq "a batch reports each decision in order" \
   "$(printf '%s' "$R" | body | jq -c '[.results[] | [.issue, .ok]]')" "[[$B,true],[99999,false],[$D,false],[$D,true]]"
 eq "a batch with a failure is not ok overall" "$(printf '%s' "$R" | body | jq -r .ok)" false
 eq "a failure in a batch does not stop the later decisions" "$(labels_of "$B")" ""
+
+grep -qF "$TOKEN" "$TMP/server.err" && bad "the request log holds the token" || ok "the request log never holds the token"
+grep -q "GET /api/issues -> 200" "$TMP/server.err" && ok "the request log names method, path and status" \
+  || bad "request log: $(head -3 "$TMP/server.err")"
 
 OUT=$(api "$BASE/api/issues")
 eq "after the decisions no blocked issue is left" "$(printf '%s' "$OUT" | jq -c '[.issues[].number]')" "[]"
