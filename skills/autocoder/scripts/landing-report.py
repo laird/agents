@@ -7,7 +7,7 @@ source abstraction), git history of the integration branch and, when present, th
 merge-events.jsonl, so a project can reproduce its baseline.
 
   landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
-                    [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos]
+                    [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos] [--train-gate-issue N]
                     [--history [--integration BRANCH] [--merge-events PATH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
                                [--rules JSON] [--export-rows PATH] [--limit N]]
@@ -25,6 +25,14 @@ the week's page counted as returns and a red batch. The report keeps the rows of
 rows of it, and says on stderr how many rows of which other ids it ignored. A ledger holding no row of
 the derived id is reported whole, with a notice naming the ids it does hold (a copy read on another
 host, or an older ledger), so a page is never empty by accident; `--all-repos` keeps every row.
+
+A TRAIN'S OWN GATE PASSES ARE NOT BATCHES. Before the gate learned the train's id (AUTOCODER_LANDING_BATCH),
+every gate pass of a train wrote a solo batch of the issue the gate runs under (`train.gateIssue` in the
+repository's .autocoder.json) beside the train's own row: on one week's page that issue was half the
+batches and the landings, and every gate-minute counted twice. A batch row whose only member is that
+issue, and that issue's change and plan rows, are dropped (`--train-gate-issue N` names it, default the
+configured one; `0` keeps them), and the train rows own the passes. Rows the fixed gate writes never
+have that shape.
 
 WEEK MODE (`--week`): the weekly report. The window is one calendar week, Monday 00:00Z to the next
 Monday: `--week 2026-11-16` is the week holding that date, a bare `--week` (or `--week last`) the
@@ -171,6 +179,38 @@ def repo_id_of(directory):
                        capture_output=True, text=True)
     out = r.stdout.strip()
     return out if r.returncode == 0 and out else None
+
+
+def train_gate_issue(directory):
+    """`train.gateIssue` of the repository's main-worktree .autocoder.json (the issue a train's gate runs
+    under, train_run's gate_issue), or None when there is none."""
+    try:
+        r = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+        main = (Path(directory) / r.stdout.strip()).resolve().parent if r.returncode == 0 and r.stdout.strip() else Path(directory)
+        raw = (json.loads((main / ".autocoder.json").read_text()) or {}).get("train") or {}
+        n = int(raw.get("gateIssue") or 0)
+        return n or None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def without_train_gate_rows(rows, gate_issue, log=lambda m: print(m, file=sys.stderr)):
+    """Drops the rows that were a train's own gate passes recorded as batches of their own: a batch whose only
+    member is the train gate issue, and that issue's change and plan rows. The train rows own those passes."""
+    if not gate_issue:
+        return rows
+    kept, batches, others = [], 0, 0
+    for r in rows:
+        if r["kind"] == "batch" and list(r.get("members") or []) == [gate_issue]:
+            batches += 1
+        elif r["kind"] in ("change", "plan") and r.get("issue") == gate_issue:
+            others += 1
+        else:
+            kept.append(r)
+    if batches or others:
+        log(f"landing-report: dropped {batches} batch row(s) that were a train's own gate passes (members [{gate_issue}], the train gate issue) "
+            f"and {others} change/plan row(s) of that issue; the train rows own those passes (--train-gate-issue 0 keeps them)")
+    return kept
 
 
 def one_repo(rows, repo_id, derived, log=lambda m: print(m, file=sys.stderr)):
@@ -657,6 +697,7 @@ def main(argv=None):
     p.add_argument("--repo", help="the repository directory (default: the current directory): its id selects the rows; --history reads its tracker and git log")
     p.add_argument("--repo-id", help="keep only the rows of this repository id (repo-id-fns.sh's `<basename>-<8 hex>`)")
     p.add_argument("--all-repos", action="store_true", help="keep the rows of every repository in the file")
+    p.add_argument("--train-gate-issue", type=int, help="the issue a train's gate runs under (default: train.gateIssue of the repository's .autocoder.json); its solo batches are the trains' own gate passes and are dropped; 0 keeps them")
     p.add_argument("--integration", default="master")
     p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
@@ -690,6 +731,7 @@ def main(argv=None):
         print(f"landing-report: skipped {bad} unreadable line(s) in {a.log or default_log()}", file=sys.stderr)
     if not a.all_repos:
         rows = one_repo(rows, a.repo_id, None if a.repo_id else repo_id_of(a.repo or os.getcwd()))
+    rows = without_train_gate_rows(rows, a.train_gate_issue if a.train_gate_issue is not None else train_gate_issue(a.repo or os.getcwd()))
     if a.history:
         first = min((parse_ts(r["ts"]) for r in rows), default=None)
         try:

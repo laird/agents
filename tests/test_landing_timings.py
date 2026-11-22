@@ -443,3 +443,55 @@ def test_report_derives_the_repository_from_the_directory_when_the_ledger_holds_
     r = report("--log", str(log), "--json", "--repo", str(other))
     assert r.returncode == 0 and json.loads(r.stdout)["batches"]["count"] == 2
     assert f"no row names this repository ({repo_id_of(other)}); the ledger holds rows of {mine}, worker-9baf1db6: reporting every row" in r.stderr
+
+
+# ── a train's own gate passes are not batches ───────────────────────────────
+def train_and_solo_log(tmp_path):
+    """One train of two members beside the solo batch its gate wrote under the gate issue (5956) before the gate
+    learned the train's id, plus that issue's batched and landed rows: the shape that doubled a week's batches."""
+    p = tmp_path / "l.jsonl"
+    rows = [
+        {"v": 1, "ts": "2026-11-18T10:00:00Z", "kind": "change", "issue": 10, "event": "batched", "batch": "train-1", "cause": None},
+        {"v": 1, "ts": "2026-11-18T10:00:00Z", "kind": "change", "issue": 11, "event": "batched", "batch": "train-1", "cause": None},
+        {"v": 1, "ts": "2026-11-18T10:20:00Z", "kind": "batch", "batch": "solo-5956-1-1", "members": [5956], "assembly_s": None, "stages": {}, "gate_s": 1200.0,
+         "discarded_gate_s": 0.0, "publish_s": None, "verdict": "green", "cause": None, "resyncs": 0, "push_rejected": 0},
+        {"v": 1, "ts": "2026-11-18T10:20:00Z", "kind": "change", "issue": 5956, "event": "batched", "batch": "solo-5956-1-1", "cause": None},
+        {"v": 1, "ts": "2026-11-18T10:20:00Z", "kind": "change", "issue": 5956, "event": "landed", "batch": "solo-5956-1-1", "cause": None},
+        {"v": 1, "ts": "2026-11-18T10:20:30Z", "kind": "batch", "batch": "train-1", "members": [10, 11], "assembly_s": None, "stages": {}, "gate_s": 1230.0,
+         "discarded_gate_s": None, "publish_s": None, "verdict": "green", "cause": None, "resyncs": None, "push_rejected": None},
+        {"v": 1, "ts": "2026-11-18T10:21:00Z", "kind": "change", "issue": 10, "event": "landed", "batch": "train-1", "cause": None},
+        {"v": 1, "ts": "2026-11-18T10:21:00Z", "kind": "change", "issue": 11, "event": "landed", "batch": "train-1", "cause": None},
+    ]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return p
+
+
+def test_a_trains_own_gate_passes_are_dropped_with_the_gate_issues_rows_and_the_run_says_so(tmp_path):
+    log = train_and_solo_log(tmp_path)
+    r = report("--log", str(log), "--week", "2026-11-18", "--json", "--train-gate-issue", "5956")
+    assert r.returncode == 0, r.stderr
+    a = json.loads(r.stdout)
+    assert a["batches"]["count"] == 1 and a["landed"] == 2 and a["waste"]["gate_s_total"] == 1230.0
+    assert "dropped 1 batch row(s) that were a train's own gate passes (members [5956], the train gate issue) and 2 change/plan row(s)" in r.stderr
+    # 0 keeps them (the old numbers: two batches, three landings, both gates' minutes)
+    a = json.loads(report("--log", str(log), "--week", "2026-11-18", "--json", "--train-gate-issue", "0").stdout)
+    assert a["batches"]["count"] == 2 and a["landed"] == 3 and a["waste"]["gate_s_total"] == 2430.0
+
+
+def test_the_train_gate_issue_defaults_to_the_repositorys_configured_one(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".autocoder.json").write_text(json.dumps({"train": {"gateIssue": "5956"}}))
+    log = train_and_solo_log(tmp_path)
+    a = json.loads(report("--log", str(log), "--json", "--repo", str(repo)).stdout)
+    assert a["batches"]["count"] == 1 and a["landed"] == 2
+    # a linked worktree reads the main worktree's config
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "--allow-empty", "-m", "seed"], check=True)
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(wt)], check=True)
+    a = json.loads(subprocess.run([sys.executable, str(REPORT), "--log", str(log), "--json"], capture_output=True, text=True, cwd=wt).stdout)
+    assert a["batches"]["count"] == 1
+    # no configuration: nothing is dropped
+    a = json.loads(report("--log", str(log), "--json", "--repo", str(tmp_path)).stdout)
+    assert a["batches"]["count"] == 2
