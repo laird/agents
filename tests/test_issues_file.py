@@ -202,6 +202,12 @@ class TestUpdate:
         out, _, _ = run(["list", "--state", "open"], env)
         assert json.loads(out) == []
 
+    def test_status_closed_drops_lock_labels(self, idir):
+        write_issue(idir, 1, "T", bucket="working", labels=["bug", "working", "merging"])
+        run(["update", "1", "--status", "closed"], {"ISSUE_DIR_PATH": str(idir)})
+        content = (idir / "closed" / "001.md").read_text()
+        assert "labels: [bug]" in content
+
     def test_status_open_on_working_issue_keeps_it_in_working(self, idir):
         # Only claim/release move an issue in and out of working/; reopening an
         # issue that is already open is a no-op for the bucket, as on GitHub.

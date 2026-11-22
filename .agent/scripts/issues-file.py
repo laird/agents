@@ -356,6 +356,9 @@ def cmd_update(args):
                     data["status"] = "open"
             if args.status:
                 data["status"] = args.status
+                if args.status == "closed":
+                    # As cmd_close: a closed issue is owned by nobody.
+                    labels = [l for l in labels if l not in LOCK_LABELS]
             if args.assignee:
                 data["assignee"] = args.assignee
             data["labels"] = labels
