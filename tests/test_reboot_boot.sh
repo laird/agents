@@ -376,7 +376,19 @@ eq "systemd: a cycle not involving our unit does not fail --install" 0 "$RC"
 # unit, both enabled, make no cycle. Checked with the real systemd-analyze
 # against a private unit path; the unit as #275 wrote it does, which proves
 # the check can see one.
-if command -v systemd-analyze >/dev/null 2>&1; then
+# systemd-analyze --user needs a user manager, which cannot start without a
+# runtime dir (no XDG_RUNTIME_DIR, e.g. a detached job's shell, #316): probe
+# it on an empty unit path and skip the live check rather than fail it.
+sd_user_ok() {
+  mkdir -p "$T/sd-probe"
+  ! SYSTEMD_UNIT_PATH="$T/sd-probe:" systemd-analyze --user verify default.target 2>&1 \
+    | grep -qF "Failed to initialize manager"
+}
+if ! command -v systemd-analyze >/dev/null 2>&1; then
+  pass "systemd-analyze not installed: the no-foreign-After assertions above cover the unit"
+elif ! sd_user_ok; then
+  pass "systemd-analyze --user cannot start a user manager here (no XDG_RUNTIME_DIR?): live cycle check skipped"
+else
   UD="$T/unitdir"; mkdir -p "$UD/default.target.wants"
   printf '[Unit]\nAfter=default.target\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' > "$UD/herdr.service"
   cp "$UNIT" "$UD/autocoder-reboot-recover.service"
@@ -388,8 +400,6 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   eq "real systemd-analyze: herdr After=default.target + our unit → no cycle" "" "$(verify)"
   sed -i.bak 's/^After=.*/After=herdr.service network-online.target/' "$UD/autocoder-reboot-recover.service"
   has "real systemd-analyze: the old After=herdr.service unit → cycle (check is live)" "ordering cycle" "$(verify)"
-else
-  pass "systemd-analyze not installed: the no-foreign-After assertions above cover the unit"
 fi
 
 # cron only: WSL without systemd, containers.
