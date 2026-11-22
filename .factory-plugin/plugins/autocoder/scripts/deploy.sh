@@ -141,7 +141,9 @@ ENV_ROWS=$(env_rows) || case $? in
   3) refuse "--env is required: name one of the environments in $CONFIG" ;;
   *) refuse "cannot read $CONFIG" ;;
 esac
-field() { printf '%s\n' "$ENV_ROWS" | awk -F '\t' -v k="$1" '$1 == k { sub(/^[^\t]*\t/, ""); print; exit }'; }
+# A here-string, not printf | awk: awk exits on the first match, and under pipefail a
+# writer that loses that race can die of SIGPIPE, and set -e then ends the script silently (141).
+field() { awk -F '\t' -v k="$1" '$1 == k { sub(/^[^\t]*\t/, ""); print; exit }' <<< "$ENV_ROWS"; }
 ENVIRONMENT=$(field name)
 ENV_REF=$(field ref)
 LABEL=$(field label); [ -n "$LABEL" ] || LABEL=$(basename "${MAIN_WT:-$TOP}")
