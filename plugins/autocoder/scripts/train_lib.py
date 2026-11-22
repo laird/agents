@@ -44,6 +44,19 @@ READY_TIPS = ("named", "current")   # `readyTip`: hold the branch's tip to the s
 # names nothing, so the rule fails open to the branch's current tip, never to a refusal.
 NAMED_SHA_RE = re.compile(r"^\s*(?:@|at|:)?\s*`?([0-9a-f]{7,40})`?(?![0-9A-Za-z])")
 PREFLIGHT_NOTE = "preflight READY (enqueued from a host that does not gate): the batch gate is its first full test"
+# A READY comment SAYS so first. Its first line matches readyPattern, and the lead before the match (a swarm
+# or worker prefix: `[swarm] worker `w`: **READY**`) names no branch, no sha and no issue reference and
+# runs under READY_LEAD_WORDS words. A comment that merely mentions READY (an FYI quoting another issue's
+# READY and branch, a coordinator's "re-READY" note, a quoted READY under `> `) is not one: read as one, an
+# FYI on a landed issue re-queued it at another issue's branch and the close-out reopened it.
+READY_LEAD_WORDS = 12
+ISSUE_REF_RE = re.compile(r"#\d+")
+HEX_WORD_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])")
+# `branchOwnership`: `issue` (default) plans a READY's branch only when it belongs to the issue (its name
+# carries the number as `issue-<n>` or a segment `<n>-`, or the READY has a `stack:` line naming the branch
+# with `#<n>`); `any` takes any branch the READY names, as before.
+BRANCH_OWNERSHIPS = ("issue", "any")
+STACK_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?(?:\*\*)?stack(?:\*\*)?\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
 BRANCH_SHAPE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$")
@@ -73,6 +86,7 @@ class Config:
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
     preflight_pattern: str = DEFAULT_PREFLIGHT_RE   # a READY matching this was preflighted, not pre-checked (enqueue.sh)
     ready_tip: str = "named"        # `named`: a tip is held to the sha the READY names (same patches pass); `current`: any tip
+    branch_ownership: str = "issue"  # `issue`: a READY's branch must belong to the issue (name or `stack:` line); `any`: as named
     swarm: str = "merge-train"      # the train's own comments start with `<swarm>: `; the queue never reads them as READYs
     size: int = 4
     stale_days: int = 0             # 0 = a READY never goes stale
@@ -138,10 +152,19 @@ def _ready_tip(raw, path) -> str:
     return value
 
 
+def _branch_ownership(raw, path) -> str:
+    """`branchOwnership`: `issue` (default) refuses a READY whose branch does not belong to the issue as
+    `foreign-branch`; `any` takes any branch the READY names. Anything else refuses to load, naming the file."""
+    value = str(raw or "issue")
+    if value not in BRANCH_OWNERSHIPS:
+        raise SystemExit(f"merge-train: train.branchOwnership in {path} must be one of {list(BRANCH_OWNERSHIPS)}; got {value!r}")
+    return value
+
+
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, anyLabels, readyStates, readyTip, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, hooks{prepareScratch, mergeFault};
     `enqueue` is enqueue.sh's (see there).
@@ -172,6 +195,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         note_pattern=raw.get("notePattern") or "",
         preflight_pattern=raw.get("preflightPattern") or DEFAULT_PREFLIGHT_RE,
         ready_tip=_ready_tip(raw.get("readyTip"), path),
+        branch_ownership=_branch_ownership(raw.get("branchOwnership"), path),
         swarm=str(raw.get("swarm") or "merge-train"),
         size=int(env.get("AUTOCODER_TRAIN_SIZE") or raw.get("size") or 4),
         stale_days=int(raw.get("staleDays") or 0),
@@ -388,32 +412,97 @@ def tip_relation(cfg: Config, branch: str, named: str):
     return ("fast-forward" if ff else "rebase", full)
 
 
-def pick_ready(cfg: Config, comments: list):
-    """The READY an item is read from: {createdAt, body, branch|None, candidates, named, basis}, or None.
+def ready_lead(cfg: Config, body: str):
+    """The lead of a READY comment (the text before READY on its first line), or None when the comment is no
+    READY: its first non-empty line does not match readyPattern, is a quote (`> `), or the lead names a
+    branch, a hex word of 7 digits or more (a sha) or an issue reference (`#<n>`), or runs past
+    READY_LEAD_WORDS words. `[swarm] READY:`, `[swarm] worker `w`: **READY** —`, `**[swarm]** READY` and a
+    bare `READY `b` @ sha` pass; `no label change here: the commits ride in the stack on `b` @ sha (READY posted
+    on #<m>)`, `FYI: #<m>'s READY ...`, `Landed: `b` (READY abc)` and a `> `-quoted READY do not."""
+    first = next((ln for ln in (body or "").splitlines() if ln.strip()), "")
+    if first.lstrip().startswith(">"):
+        return None
+    m = re.compile(cfg.ready_pattern).search(first)
+    if not m:
+        return None
+    lead = first[:m.start()]
+    if branch_candidates(lead) or HEX_WORD_RE.search(lead) or ISSUE_REF_RE.search(lead) or len(lead.split()) > READY_LEAD_WORDS:
+        return None
+    return lead
 
-    Of the comments that say READY, newest first, the first that names a branch existing on the
-    remote wins. A comment naming no branch is passed over, so a coordinator's later "rebase and
-    re-READY" note never shadows the worker's READY. When none names an existing branch, the newest
-    READY that is not a coordinator's note stands (else the newest), so the no-branch report still
-    quotes what the worker said. `basis` is ready_basis() of the comment picked: a preflight READY
-    (enqueue.sh) is a first-class item, taken and gated like any other, and the row says what it is.
-    `named` is the sha the READY names for the branch (named_tip), or None. The train's own comments
-    (every one starts with `<swarm>: `) are never READYs: a `tip-moved` or drop comment quotes the branch,
-    its tip and the word READY, and read as a READY it would name the very tip it refused.
-    """
+
+def is_ready(cfg: Config, body: str) -> bool:
+    """True for a comment that SAYS READY first (ready_lead) and is not one of the train's own (`<swarm>: `)."""
+    return bool(not (body or "").lstrip().startswith(f"{cfg.swarm}:") and ready_lead(cfg, body) is not None)
+
+
+def mentions_ready(cfg: Config, comments: list) -> bool:
+    """True when some comment (not the train's own) contains the READY word at all, READY comment or not."""
     ready_re = re.compile(cfg.ready_pattern)
+    return any(ready_re.search(c["body"]) and not c["body"].lstrip().startswith(f"{cfg.swarm}:") for c in comments)
+
+
+def branch_names_issue(branch: str, issue) -> bool:
+    """The branch's name carries the issue number: `issue-<n>` (not followed by a digit) or a path segment
+    starting `<n>-` (`feature/issue-12`, `enhancement/issue-12-auto`, `fix/12-login`); `issue-120` is not 12."""
+    n = re.escape(str(issue))
+    return bool(re.search(rf"(^|[^0-9A-Za-z])issue-{n}(?![0-9])", branch) or re.search(rf"(^|/){n}-", branch))
+
+
+def stack_declares(body: str, branch: str, issue) -> bool:
+    """The comment has a `stack:` line naming <branch> in backticks together with `#<issue>`: the explicit
+    statement that the branch is a stack carrying this issue (a lower slice rides in an upper slice's branch)."""
+    tokens = (f"`{branch}`", f"`origin/{branch}`")
+    ref = re.compile(rf"#{re.escape(str(issue))}(?![0-9])")
+    return any(any(t in m.group(1) for t in tokens) and ref.search(m.group(1)) for m in STACK_LINE_RE.finditer(body or ""))
+
+
+def branch_owned(cfg: Config, body: str, branch: str, issue) -> bool:
+    """Whether a READY on <issue> may plan <branch>: `branchOwnership: any`, a name carrying the number, or a
+    `stack:` line declaring it (see branch_names_issue, stack_declares)."""
+    return cfg.branch_ownership == "any" or branch_names_issue(branch, issue) or stack_declares(body, branch, issue)
+
+
+def foreign_branch_note(branch: str, issue) -> str:
+    return (f"`{branch}` does not belong to #{issue}: its name carries neither `issue-{issue}` nor a segment `{issue}-`, and the READY "
+            f"has no `stack:` line naming it with #{issue}; not planned. A stack carrying this issue says so in the READY: "
+            f"a line `stack: `{branch}` carries #{issue}`; otherwise post the READY on the branch's own issue (or set "
+            f"`train.branchOwnership` to `any`)")
+
+
+def pick_ready(cfg: Config, comments: list, issue):
+    """The READY an item is read from: {createdAt, body, branch|None, foreign|None, candidates, named, basis}, or None.
+
+    A READY comment says READY first (is_ready: the first line, a short lead naming no branch, sha or issue
+    reference; a comment that merely mentions READY is passed over, as are the train's own `<swarm>: ` comments,
+    whose `tip-moved` and drop notes quote the branch, its tip and the word READY). Of the READYs, newest first,
+    the first that names a branch existing on the remote decides: when that branch belongs to <issue>
+    (branch_owned: the name carries the number, or a `stack:` line declares it) it is the item's branch; when it
+    does not, the item is `foreign` at that branch and never plans (an older READY is not consulted: the newest is
+    the worker's word, wrong or not). A comment naming no existing branch is passed over, so a coordinator's later
+    "rebase and re-READY" note never shadows the worker's READY. When none names an existing branch, the newest
+    READY that is not a coordinator's note stands (else the newest), so the no-branch report still quotes what
+    the worker said. `basis` is ready_basis() of the comment picked: a preflight READY (enqueue.sh) is a
+    first-class item, taken and gated like any other, and the row says what it is. `named` is the sha the READY
+    names for the branch (named_tip), or None.
+    """
     note_re = re.compile(cfg.note_pattern) if cfg.note_pattern else None
-    own = f"{cfg.swarm}:"
-    ready = [c for c in reversed(comments) if ready_re.search(c["body"]) and not c["body"].lstrip().startswith(own)]
+    ready = [c for c in reversed(comments) if is_ready(cfg, c["body"])]
     if not ready:
         return None
     newest_worker = next((c for c in ready if not (note_re and note_re.search(c["body"]))), ready[0])
     for c in ready:
         cands = branch_candidates(c["body"], {cfg.integration})
+        foreign = None
         for b in cands:
-            if branch_exists(cfg, b):
-                return {**c, "branch": b, "candidates": cands, "named": named_tip(c["body"], b), "basis": ready_basis(cfg, c["body"])}
-    return {**newest_worker, "branch": None, "candidates": branch_candidates(newest_worker["body"], {cfg.integration}),
+            if not branch_exists(cfg, b):
+                continue
+            if branch_owned(cfg, c["body"], b, issue):
+                return {**c, "branch": b, "foreign": None, "candidates": cands, "named": named_tip(c["body"], b), "basis": ready_basis(cfg, c["body"])}
+            foreign = foreign or b
+        if foreign:
+            return {**c, "branch": None, "foreign": foreign, "candidates": cands, "named": None, "basis": ready_basis(cfg, c["body"])}
+    return {**newest_worker, "branch": None, "foreign": None, "candidates": branch_candidates(newest_worker["body"], {cfg.integration}),
             "named": None, "basis": ready_basis(cfg, newest_worker["body"])}
 
 
@@ -638,7 +727,11 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     """(state, tip, note, named) of one item; `named` is followed_tip()'s (kind, text) for a tip that is not
     the sha the READY named (("", "") when there is nothing to say); plan_queue appends the text to the note. States:
 
+    no-ready    (plan_queue) the label is set and a comment mentions READY, but none says READY first
     no-branch   the READY names nothing on the remote (note: the names it tried)
+    foreign-branch  the READY names a branch that exists but does not belong to the issue (`branchOwnership:
+                issue`: no `issue-<n>` or `<n>-` in its name, no `stack:` line naming it with #<n>); never planned
+                (a cycle tells the issue once per tip)
     hold        a `hold <issue>` row
     in-flight   a gate for the issue is live
     in-train    the live train holds it
@@ -659,6 +752,8 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     queue       launchable
     """
     branch = picked["branch"] if picked else None
+    if picked and picked.get("foreign"):
+        return ("foreign-branch", short_tip(cfg, picked["foreign"]), foreign_branch_note(picked["foreign"], issue), ("", ""))
     if not branch:
         tried = ",".join(picked["candidates"]) if picked else ""
         return ("no-branch", "-", tried, ("", ""))
@@ -741,6 +836,11 @@ def _classify_merge(cfg: Config, ov: Overrides, issue, ref, tip):
     return ("queue", tip, "-")
 
 
+NO_READY_NOTE = ("the word READY appears only inside a comment (an FYI, a quote, a note), never first: a READY comment says READY "
+                 "on its first line after at most a swarm or worker prefix, then the branch in backticks and its tip "
+                 "(`[swarm] READY: `feature/issue-N` @ <sha>`); labelled but not READY")
+
+
 def plan_queue(cfg: Config, in_flight=(), now=None):
     """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis, named, followed}].
 
@@ -765,8 +865,12 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
     rows, found = [], 0
     for n, it in enumerate(sorted(items, key=key), 1):
         issue = it["number"]
-        picked = pick_ready(cfg, ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout)))
+        comments = ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout))
+        picked = pick_ready(cfg, comments, issue)
         if picked is None:
+            if mentions_ready(cfg, comments):   # the word appears, but no comment SAYS READY (an FYI, a quote, a note): say so
+                rows.append({"order": n, "state": "no-ready", "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, it["labels"]),
+                             "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": ""})
             continue   # labelled ready-for-review but says READY nowhere: not an item
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
         state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now)
@@ -774,7 +878,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
             found += 1
         basis = picked.get("basis") or "ready"
         parts = ([PREFLIGHT_NOTE] if basis == "preflight" and state == "queue" else []) + ([note] if note != "-" else []) + ([named_text] if named_text else [])
-        rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or "-", "tip": tip,
+        rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or picked.get("foreign") or "-", "tip": tip,
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
@@ -950,10 +1054,14 @@ def newer_ready(cfg: Config, issue, member_branch, landed, launched=None):
     Returns {branch, tip, createdAt} when the issue's newest READY that names an existing branch names one whose
     tip is NOT an ancestor of <landed> and that is either another branch than the member's or was posted after
     <launched> (needs comment timestamps; a backend without them reopens only for another branch). None otherwise.
+    The same tests as the queue's apply (pick_ready): a comment that only mentions READY is no READY, and a branch
+    that does not belong to the issue (`branchOwnership`) never reopens it. On one project an FYI on a landed issue
+    ("the commits ride in the stack on `<other issue's branch>` @ sha (READY posted on #<m>)") reopened it at that
+    branch, and the plan then held both issues out as conflicting.
     """
-    picked = pick_ready(cfg, ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout)))
+    picked = pick_ready(cfg, ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout)), issue)
     if not picked or not picked["branch"]:
-        return None
+        return None   # no READY (an FYI quoting another issue's READY is none), or a foreign branch: nothing reopens
     branch = picked["branch"]
     if branch == member_branch and not (launched and picked["createdAt"] and picked["createdAt"] > launched):
         return None

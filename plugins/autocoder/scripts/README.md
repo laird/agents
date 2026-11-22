@@ -705,8 +705,21 @@ CLAIMABLE queue: the GitHub backend's leaves out any issue carrying `working` or
 blocking label. A project whose convention keeps the claim label on an issue until its landing
 closes it sets `["open", "working"]`, or every READY a worker posts while holding the issue is
 invisible to the queue. The values are `open`, `working`, `blocked` and `all`; anything else refuses
-to load, naming the file. The branch is the first backticked branch-shaped name of the newest READY comment that
-exists on the remote; a later comment naming no branch never shadows it, and the train's own comments (every
+to load, naming the file. A READY comment SAYS READY FIRST: its first non-empty line matches `readyPattern`, and the
+lead before the word (a swarm or worker prefix: `[swarm] READY:`, `[swarm] worker `w`: **READY** —`,
+`**[swarm]** READY`) names no branch, no sha and no issue reference and runs under twelve words. A comment
+that merely mentions READY (an FYI quoting another issue's READY and branch, a coordinator's "rebase and
+re-READY" note, a `> `-quoted READY) is not one: measured on one project, an FYI on a landed issue ("the
+commits ride in the stack on `<the other issue's branch>` @ sha (READY posted on #<m>)") reopened it at that
+branch and the plan held both issues out as conflicting. An item whose comments mention READY but never say it
+is reported as `no-ready`. The branch is the first backticked branch-shaped name of the newest READY comment that
+exists on the remote, and it must BELONG TO THE ISSUE (`branchOwnership: issue`, the default): its name carries
+the number (`issue-<n>`, or a path segment `<n>-`: `feature/issue-12`, `fix/12-login`), or the READY has a
+`stack:` line naming the branch together with `#<n>` (`stack: `feature/issue-13-deck` carries #12 (slice 1a)
+and #13`: a lower slice riding in its upper slice's branch). A READY naming an existing branch that belongs to
+nobody here is `foreign-branch`, never planned and told once per tip; an older READY is not consulted in its place
+(the newest is the worker's word). `branchOwnership: any` takes any branch the READY names. A later comment naming
+no branch never shadows the worker's READY, and the train's own comments (every
 one starts with `<swarm>: `) are never READYs. The queue classifies the branch's CURRENT remote tip (the
 run cycle fetches again right before it plans, since a preflight can take minutes). The READY may also name
 that tip (`READY `feat/x` @ abc1234`, the line enqueue.sh posts: the first hex word after the branch on its
@@ -741,7 +754,10 @@ issue once per tip; a rebased or fast-forwarded tip with the same patches is not
 other and its note says which tip was taken),
 `conflict` (the merge-tree prefilter, or a real merge),
 `driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
-(`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote).
+(`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote),
+`foreign-branch` (the READY names a branch that EXISTS but does not belong to the issue, where `no-branch` names none that exists: no `issue-<n>` or `<n>-`
+in its name and no `stack:` line naming it with `#<n>`; never planned; a cycle tells the issue once per tip, naming
+the `stack:` line to write), `no-ready` (the label is set and a comment mentions READY, but none says READY first).
 
 **The planner** (`plan`) takes the next `size` launchable items, each merged for real into a scratch
 worktree onto the integration branch plus the train so far, so the output is a train that assembles:
@@ -767,14 +783,17 @@ Rows: `train <issue> <branch> <tip> <note>`, `skip <issue> <branch> <reason>`,
 trusted (nothing blames a branch for a fault of the scratch).
 
 **`reopen`** reopens (state open, ready labels back, a comment saying why) an issue a landing closed while its
-newest READY names a branch that landing did not carry; it prints `reopened` or `not reopened`.
+newest READY names a branch that landing did not carry; it prints `reopened` or `not reopened`. The READY is
+read by the queue's rules: a comment that only mentions READY is none, and a branch that does not belong to the
+issue never reopens it (the FYI above left the landed issue closed once this held).
 
 **Configuration**: the `train` object of the main worktree's `.autocoder.json` (environment:
 `AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`):
 
 ```json
 { "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
-             "readyStates": ["open", "working"], "readyTip": "named", "priorityLabels": ["P0","P1","P2","P3"],
+             "readyStates": ["open", "working"], "readyTip": "named", "branchOwnership": "issue",
+             "priorityLabels": ["P0","P1","P2","P3"],
              "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",

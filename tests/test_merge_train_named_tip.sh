@@ -31,7 +31,7 @@ git -C "$W" add -A; git -C "$W" commit -q -m init; git -C "$W" push -q origin ma
 git -C "$W" update-ref refs/remotes/origin/HEAD refs/remotes/origin/master
 echo ".autocoder.json" > "$W/.git/info/exclude"
 config() {  # <train JSON object body or empty>
-  printf '{ "issueSource": "file", "issueDir": "%s", "train": { %s } }\n' "$ISSUES" "$1" > "$W/.autocoder.json"
+  printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any"%s } }\n' "$ISSUES" "${1:+, $1}" > "$W/.autocoder.json"
 }
 tip() { git -C "$W" rev-parse --short=10 "origin/$1"; }
 # branch <name> <file>: a pushed branch cut from origin/master adding <file>

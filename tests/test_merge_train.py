@@ -50,7 +50,8 @@ class Fixture:
         sh("git", "push", "-q", "origin", "master", cwd=self.work)
         sh("git", "fetch", "-q", "origin", cwd=self.work)
         (self.work / ".git/info/exclude").write_text(".autocoder.json\n")   # config must survive branch checkouts
-        cfg = {"issueSource": "file", "issueDir": str(self.issues), "train": config or {}}
+        # the fixture's branches (`feature/x`) carry no issue number: ownership is off unless a test turns it on
+        cfg = {"issueSource": "file", "issueDir": str(self.issues), "train": {"branchOwnership": "any", **(config or {})}}
         (self.work / ".autocoder.json").write_text(json.dumps(cfg))
         sh("git", "update-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master", cwd=self.work)
 
@@ -159,19 +160,19 @@ def test_pick_ready_prefers_the_newest_ready_naming_an_existing_branch(fx):
     cs = [{"body": "READY `feature/real`", "createdAt": None},
           {"body": "rebase and re-READY, no branch named", "createdAt": None},
           {"body": "READY `feature/gone`", "createdAt": None}]
-    assert T.pick_ready(cfg, cs)["branch"] == "feature/real"
+    assert T.pick_ready(cfg, cs, 1)["branch"] == "feature/real"
 
 
 def test_pick_ready_reports_the_tried_names_when_none_exists(fx):
-    p = T.pick_ready(fx.cfg(), [{"body": "READY `feature/gone`", "createdAt": None}])
+    p = T.pick_ready(fx.cfg(), [{"body": "READY `feature/gone`", "createdAt": None}], 1)
     assert p["branch"] is None and p["candidates"] == ["feature/gone"]
 
 
 def test_pick_ready_note_pattern_skips_coordinator_notes_for_the_fallback(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"notePattern": r"^\[coordinator\]"}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "notePattern": r"^\[coordinator\]"}}))
     cfg = T.load_config(fx.work, fx.root / "c.json")
     cs = [{"body": "READY from the worker", "createdAt": None}, {"body": "[coordinator] READY again please", "createdAt": None}]
-    assert T.pick_ready(cfg, cs)["body"] == "READY from the worker"
+    assert T.pick_ready(cfg, cs, 1)["body"] == "READY from the worker"
 
 
 PREFLIGHT_BODY = ("READY `{b}` @ {sha} (enqueued from a host that does not gate: preflight only, no pre-check; the batch gate is the first full test).\n\n"
@@ -187,16 +188,16 @@ def preflight_body(fx, b, sha=None):
 def test_pick_ready_marks_a_preflight_ready_by_its_block_and_a_plain_one_as_ready(fx):
     fx.branch("feature/pf", {"pf.txt": "1\n"})
     cfg = fx.cfg()
-    pf = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf"), "createdAt": None}])
+    pf = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf"), "createdAt": None}], 1)
     assert (pf["branch"], pf["basis"]) == ("feature/pf", "preflight")
-    plain = T.pick_ready(cfg, [{"body": "READY `feature/pf`, prebank PASS", "createdAt": None}])
+    plain = T.pick_ready(cfg, [{"body": "READY `feature/pf`, prebank PASS", "createdAt": None}], 1)
     assert plain["basis"] == "ready"
-    failed = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf").replace(": PASS ===", ": FAIL ==="), "createdAt": None}])
+    failed = T.pick_ready(cfg, [{"body": preflight_body(fx, "feature/pf").replace(": PASS ===", ": FAIL ==="), "createdAt": None}], 1)
     assert failed["basis"] == "ready"   # only the PASS block is a preflight READY; a pasted FAIL block is a plain (and odd) READY
 
 
 def test_preflight_pattern_is_configurable(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"preflightPattern": r"PREFLIGHTED BY HAND"}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "preflightPattern": r"PREFLIGHTED BY HAND"}}))
     cfg = T.load_config(fx.work, fx.root / "c.json")
     assert T.ready_basis(cfg, "READY `a/b` PREFLIGHTED BY HAND") == "preflight"
     assert T.ready_basis(cfg, preflight_body(fx, "a/b", "abc1234")) == "ready"
@@ -226,7 +227,7 @@ def test_queue_takes_a_preflight_ready_as_a_first_class_item_and_says_so(fx):
 
 
 def test_pick_ready_is_none_without_a_ready_comment(fx):
-    assert T.pick_ready(fx.cfg(), [{"body": "working on it", "createdAt": None}]) is None
+    assert T.pick_ready(fx.cfg(), [{"body": "working on it", "createdAt": None}], 1) is None
 
 
 # ── the queue ───────────────────────────────────────────────────────────────────────────
@@ -246,7 +247,7 @@ def test_queue_orders_first_then_lane_then_priority_then_age(fx):
 def test_queue_requires_every_ready_label_and_a_ready_comment(fx):
     fx.branch("feature/a", {"a.txt": "1\n"})
     fx.ready("no second label", "feature/a")
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"readyLabels": ["ready-for-review", "host:x"]}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "readyLabels": ["ready-for-review", "host:x"]}}))
     cfg = T.load_config(fx.work, fx.root / "c.json")
     assert T.plan_queue(cfg) == []
     quiet = fx.issue("labelled but never said READY")
@@ -260,11 +261,11 @@ def test_queue_any_labels_takes_an_item_carrying_at_least_one_of_them(fx):
     mac = fx.ready("from the mac", "feature/a", ("ready-for-review", "host:mac"))
     linux = fx.ready("from the linux host", "feature/b", ("ready-for-review", "host:linux-a"))
     unscoped = fx.ready("no host label", "feature/c")
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"anyLabels": ["host:linux-a", "host:mac"]}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "anyLabels": ["host:linux-a", "host:mac"]}}))
     cfg = T.load_config(fx.work, fx.root / "c.json")
     assert cfg.any_labels == ["host:linux-a", "host:mac"]
     assert {r["issue"] for r in T.plan_queue(cfg)} == {mac, linux}
-    fx.root.joinpath("one.json").write_text(json.dumps({"train": {"anyLabels": ["host:mac"]}}))
+    fx.root.joinpath("one.json").write_text(json.dumps({"train": {"branchOwnership": "any", "anyLabels": ["host:mac"]}}))
     assert [r["issue"] for r in T.plan_queue(T.load_config(fx.work, fx.root / "one.json"))] == [mac]
     # no anyLabels: no scope, every READY is an item (the default is unchanged)
     assert fx.cfg().any_labels == []
@@ -282,17 +283,17 @@ def test_queue_ready_states_lists_a_claimed_issue_when_configured(fx):
     sh(sys.executable, str(ISSUES_FILE), "claim", str(held), cwd=fx.work)   # working/ until it lands
     assert fx.cfg().ready_states == ["open"]
     assert [r["issue"] for r in T.plan_queue(fx.cfg())] == [free]
-    fx.root.joinpath("both.json").write_text(json.dumps({"train": {"readyStates": ["open", "working"]}}))
+    fx.root.joinpath("both.json").write_text(json.dumps({"train": {"branchOwnership": "any", "readyStates": ["open", "working"]}}))
     cfg = T.load_config(fx.work, fx.root / "both.json")
     assert cfg.ready_states == ["open", "working"]
     assert {r["issue"] for r in T.plan_queue(cfg)} == {free, held}
-    fx.root.joinpath("twice.json").write_text(json.dumps({"train": {"readyStates": ["all", "open", "working"]}}))
+    fx.root.joinpath("twice.json").write_text(json.dumps({"train": {"branchOwnership": "any", "readyStates": ["all", "open", "working"]}}))
     rows = T.plan_queue(T.load_config(fx.work, fx.root / "twice.json"))
     assert sorted(r["issue"] for r in rows) == sorted([free, held])   # once each
-    fx.root.joinpath("typo.json").write_text(json.dumps({"train": {"readyStates": ["open", "wroking"]}}))
+    fx.root.joinpath("typo.json").write_text(json.dumps({"train": {"branchOwnership": "any", "readyStates": ["open", "wroking"]}}))
     with pytest.raises(SystemExit, match=r"train\.readyStates in .*typo\.json .*wroking"):
         T.load_config(fx.work, fx.root / "typo.json")
-    fx.root.joinpath("empty.json").write_text(json.dumps({"train": {"readyStates": []}}))
+    fx.root.joinpath("empty.json").write_text(json.dumps({"train": {"branchOwnership": "any", "readyStates": []}}))
     assert T.load_config(fx.work, fx.root / "empty.json").ready_states == ["open"]   # empty = the default
 
 
@@ -388,7 +389,7 @@ def test_classify_limit_skips_the_merge_check_after_enough_launchable_items(fx):
     for b in "abc":
         fx.branch(f"feature/{b}", {f"{b}.txt": "1\n"})
     ns = [fx.ready(b, f"feature/{b}") for b in "abc"]
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"classifyLimit": 1}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "classifyLimit": 1}}))
     q = {r["issue"]: r["state"] for r in T.plan_queue(T.load_config(fx.work, fx.root / "c.json"))}
     assert q[ns[0]] == "queue" and q[ns[1]] == "unchecked" and q[ns[2]] == "unchecked"
 
@@ -481,7 +482,7 @@ def test_a_dropped_tip_is_skipped_until_it_is_rebanked(fx):
 
 
 def test_merge_fault_hook_drops_a_candidate_whose_generator_failed(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"hooks": {"mergeFault": "printf 'generator-failed\\tgen died on %s\\n' \"$(head -1)\""}}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "hooks": {"mergeFault": "printf 'generator-failed\\tgen died on %s\\n' \"$(head -1)\""}}}))
     fx.branch("feature/a", {"data.bin": "A\n"})
     fx.branch("feature/b", {"data.bin": "B\n"})
     fx.branch("feature/c", {"c.txt": "1\n"})
@@ -494,7 +495,7 @@ def test_merge_fault_hook_drops_a_candidate_whose_generator_failed(fx):
 
 
 def test_merge_fault_hook_driver_fault_is_the_planners_fault_not_the_branchs(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"hooks": {"mergeFault": "printf 'driver-fault\\tno toolchain\\n'"}}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "hooks": {"mergeFault": "printf 'driver-fault\\tno toolchain\\n'"}}}))
     fx.branch("feature/a", {"data.bin": "A\n"})
     fx.branch("feature/b", {"data.bin": "B\n"})
     fx.ready("a", "feature/a"); b = fx.ready("b", "feature/b")
@@ -505,7 +506,7 @@ def test_merge_fault_hook_driver_fault_is_the_planners_fault_not_the_branchs(fx)
 
 
 def test_prepare_scratch_hook_failure_stops_the_plan_with_a_named_fault(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"hooks": {"prepareScratch": "echo toolchain broken >&2; exit 4"}}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "hooks": {"prepareScratch": "echo toolchain broken >&2; exit 4"}}}))
     fx.branch("feature/a", {"a.txt": "1\n"})
     fx.ready("a", "feature/a")
     cfg = T.load_config(fx.work, fx.root / "c.json")
@@ -514,7 +515,7 @@ def test_prepare_scratch_hook_failure_stops_the_plan_with_a_named_fault(fx):
 
 
 def test_seed_dirs_are_hardlink_copies_and_reseeded_when_the_marker_changes(fx):
-    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"seedDirs": ["deps"], "seedMarker": "stamp"}}))
+    fx.root.joinpath("c.json").write_text(json.dumps({"train": {"branchOwnership": "any", "seedDirs": ["deps"], "seedMarker": "stamp"}}))
     deps = fx.work / "deps"
     deps.mkdir()
     (deps / "stamp").write_text("1")
@@ -847,8 +848,9 @@ def test_the_trains_own_comments_are_never_readys(fx):
     fx.comment(n, f"merge-train: not trained, `tip-moved`: `feature/own` @ `{new}`: re-post READY at this tip")
     q = fx.queue()
     assert (q[n]["state"], q[n]["named"]) == ("tip-moved", old)
-    picked = T.pick_ready(fx.cfg(), [{"body": "[swarm] train: landed `feature/own`, post READY elsewhere", "createdAt": None}])
-    assert picked is not None and picked["branch"] == "feature/own"                  # another prefix: a worker's words
+    picked = T.pick_ready(fx.cfg(), [{"body": "[swarm] train: READY `feature/own` (another prefix: a worker's words)", "createdAt": None}], 1)
+    assert picked is not None and picked["branch"] == "feature/own"
+    assert T.pick_ready(fx.cfg(), [{"body": "[swarm] train: landed `feature/own`, post READY elsewhere", "createdAt": None}], 1) is None   # mentions READY after a branch: no READY
     cfg = json.loads((fx.work / ".autocoder.json").read_text()); cfg["train"]["swarm"] = "[swarm] train"
     (fx.work / ".autocoder.json").write_text(json.dumps(cfg))
     fx.branch("feature/own2", {"own2.txt": "1\n"})
@@ -893,3 +895,169 @@ def test_the_queue_rows_carry_the_readys_time_and_the_listing_writes_the_ready_r
     sh(sys.executable, str(CLI), "--repo", str(fx.work), "--no-fetch", "queue")
     rows = [json.loads(ln) for ln in ledger.read_text().splitlines()]
     assert [(r["kind"], r["issue"], r["event"], r["ts"], r["repo"]) for r in rows] == [("change", n, "ready", row["readyAt"], T.repo_id(fx.cfg()))]
+
+
+# ── a READY says READY first, and its branch belongs to the issue (branchOwnership) ─────────
+# On one project an FYI on a landed issue ("no label change here: the commits ride in the stack on `<the
+# other issue's branch>` @ sha (READY posted on #<m> just now)") was read as that issue's newest READY: the
+# close-out reopened the landed issue, the queue took it at the other issue's branch, and the plan held both
+# out as conflicting. A READY comment says READY on its first line, and a branch it names must belong to
+# the issue (its name carries the number, or a `stack:` line declares it) or the item is `foreign-branch`.
+FYI = ("no label change here: slice 1a's three commits ride in the stack on `feature/issue-{m}-kickoff-deck` @ {sha} "
+       "(READY posted on #{m} just now, this issue closes when that stack lands).")
+MANAGER_NOTE = ("[swarm] manager: removing `ready-for-review`: `feature/issue-{m}-kickoff-deck` has a REAL merge conflict "
+                "with master in `app/x.txt`; rebase, resolve, re-run the checks and re-READY.")
+QUOTED = "For the record, #{m}'s READY was:\n> [swarm] READY: `feature/issue-{m}-kickoff-deck` @ {sha}, rebased on origin/master"
+STACK_READY = ("[swarm] READY (stack): `feature/issue-{m}-kickoff-deck` @ {sha}, one tree for both slices.\n"
+               "stack: `feature/issue-{m}-kickoff-deck` carries #{n} (slice 1a) and #{m}.")
+
+
+def test_ready_lead_takes_the_real_ready_shapes_and_refuses_mentions(fx):
+    cfg = fx.cfg()
+    for body in ("READY `feature/issue-7` @ abc1234 (enqueued from a host that does not gate)",
+                 "[swarm] READY: `feature/issue-7` @ 1fa7748735, rebased on origin/master d7443d1c",
+                 "[Other swarm] READY — branch `fix/7-shell` @ 242781c299 on origin/master 78a62cb2d4",
+                 "[swarm] **READY** (train). Branch `feat/7-zero` @ `5ba5835f0b`",
+                 "[swarm] worker `w`: **READY** — `fix/7-stop` @ `e52f4aab8`",
+                 "[swarm] worker `winfo`, worktree `wt-winfo`: claim and **READY, documents only**, branch `docs/7-pack` @ 2bd964db2a",
+                 "**[swarm]** READY: #7 lands combined with #8 on `feat/8-admin` @ `cd156a55a`",
+                 "[swarm] READY with #8: branch `fix/8-port` @ `ff8cc9e846`",
+                 "✅ READY `feature/issue-7`",
+                 "\n\n  [coordinator] READY again please"):
+        assert T.ready_lead(cfg, body) is not None, body
+    sha = "fee7171595"
+    for body in (FYI.format(m=9, sha=sha), MANAGER_NOTE.format(m=9), QUOTED.format(m=9, sha=sha),
+                 "FYI: #9's READY names `feature/issue-9-kickoff-deck`",
+                 "Landed on master: `fix/9-port` (READY ff8cc9e846, w)",
+                 "Progress. Branch `fix/7-sse` is at 0ac72b6f55 (prebank next, then READY).",
+                 "Tracker: #8 and #9 are both READY",
+                 "> [swarm] READY: `feature/issue-9-x` @ fee7171595",
+                 "one two three four five six seven eight nine ten eleven twelve thirteen READY `feature/issue-7`",
+                 "working on it\nREADY `feature/issue-7`"):   # not on the first line
+        assert T.ready_lead(cfg, body) is None, body
+    lead = T.ready_lead(cfg, "one two three four five six seven eight nine ten eleven twelve READY `feature/issue-7`")
+    assert lead is not None and len(lead.split()) == 12   # the twelfth word is the limit
+
+
+def test_is_ready_skips_the_trains_own_comments_and_mentions_ready_counts_the_word():
+    cfg = T.Config(repo=Path("."), swarm="[swarm] train")
+    assert T.is_ready(cfg, "READY `feature/issue-1`")
+    assert T.is_ready(cfg, None) is False and T.is_ready(cfg, "") is False
+    assert not T.is_ready(cfg, "[swarm] train: not trained, `tip-moved`: `feature/issue-1` @ abc; re-post READY at this tip")
+    assert T.mentions_ready(cfg, [{"body": "working", "createdAt": None}, {"body": FYI.format(m=2, sha="abc1234"), "createdAt": None}])
+    assert not T.mentions_ready(cfg, [{"body": "[swarm] train: re-post READY", "createdAt": None}, {"body": "ready-for-review", "createdAt": None}])
+
+
+def test_branch_names_issue_and_stack_declares():
+    for b in ("feature/issue-12", "enhancement/issue-12-auto", "fix/12-login", "12-login", "hotfix/x/issue-12-y", "feat/issue-12.1"):
+        assert T.branch_names_issue(b, 12), b
+    for b in ("feature/issue-120", "fix/112-login", "feature/x", "feature/issue-1", "fix/a12-b", "feature/issue12"):
+        assert not T.branch_names_issue(b, 12), b
+    assert T.stack_declares("READY `feature/issue-9-x` @ abc\nstack: `feature/issue-9-x` carries #8 (slice 1a) and #9", "feature/issue-9-x", 8)
+    assert T.stack_declares("READY\n- **Stack**: `origin/feature/issue-9-x` carries #8", "feature/issue-9-x", 8)
+    assert not T.stack_declares("READY `feature/issue-9-x`\nstack: `feature/issue-9-x` carries #80", "feature/issue-9-x", 8)   # #80 is not #8
+    assert not T.stack_declares("READY `feature/issue-9-x`\nthe stack: `feature/issue-9-x` carries #8", "feature/issue-9-x", 8)  # not a `stack:` line
+    assert not T.stack_declares("READY `feature/issue-9-x`\nstack: carries #8", "feature/issue-9-x", 8)                        # names no branch
+
+
+def test_branch_ownership_is_issue_by_default_and_a_typo_refuses_to_load(tmp_path):
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    assert fx.cfg().branch_ownership == "issue"
+    fx.root.joinpath("d.json").write_text(json.dumps({"train": {}}))
+    assert T.load_config(fx.work, fx.root / "d.json").branch_ownership == "issue"   # the default
+    fx.root.joinpath("t.json").write_text(json.dumps({"train": {"branchOwnership": "mine"}}))
+    with pytest.raises(SystemExit, match=r"train\.branchOwnership in .*t\.json .*'mine'"):
+        T.load_config(fx.work, fx.root / "t.json")
+
+
+def owned_ready(fx, title, suffix="x", body=None):
+    """An issue whose branch carries its number, READY posted; returns (issue, branch)."""
+    n = fx.issue(title)
+    b = f"feature/issue-{n}-{suffix}"
+    fx.branch(b, {f"{b.replace('/', '-')}.txt": "1\n"})
+    fx.comment(n, (body or "[swarm] READY: `{b}` @ {sha}").format(b=b, sha=T.short_tip(fx.cfg(), b), n=n))
+    return n, b
+
+
+def test_queue_plans_an_owned_branch_and_reports_a_foreign_one_without_planning_it(tmp_path):
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    own, own_b = owned_ready(fx, "own")
+    other, other_b = owned_ready(fx, "other")
+    foreign = fx.issue("foreign")
+    fx.comment(foreign, f"[swarm] READY: `{other_b}` @ {T.short_tip(fx.cfg(), other_b)} (the work is on the other branch)")
+    q = fx.queue()
+    assert q[own]["state"] == "queue" and q[own]["branch"] == own_b
+    assert q[foreign]["state"] == "foreign-branch" and q[foreign]["branch"] == other_b and q[foreign]["tip"] == T.short_tip(fx.cfg(), other_b)
+    assert f"`{other_b}` does not belong to #{foreign}" in q[foreign]["note"] and f"stack: `{other_b}` carries #{foreign}" in q[foreign]["note"]
+    out, fault = fx.plan()
+    assert fault is None and [ln.split("\t")[1] for ln in out if ln.startswith("train\t")] == sorted([str(own), str(other)], key=int)
+    assert any(ln.startswith(f"skip\t{foreign}\t{other_b}\tforeign-branch") for ln in out)   # reported, never a member
+    # the newest READY is the worker's word: a foreign branch in it is not papered over by an older READY naming an owned one
+    fx.comment(own, f"[swarm] READY: `{other_b}` @ {T.short_tip(fx.cfg(), other_b)}")
+    assert fx.queue()[own]["state"] == "foreign-branch"
+
+
+def test_queue_takes_a_declared_stack_and_the_fyi_shape_is_no_ready(tmp_path):
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    upper, upper_b = owned_ready(fx, "upper", "kickoff-deck")
+    sha = T.short_tip(fx.cfg(), upper_b)
+    lower = fx.issue("lower")
+    fx.comment(lower, FYI.format(m=upper, sha=sha).replace(f"issue-{upper}-kickoff-deck", upper_b.split("/", 1)[1]))
+    q = fx.queue()
+    assert q[lower]["state"] == "no-ready" and q[lower]["branch"] == "-" and "says READY on its first line" in q[lower]["note"]
+    assert q[upper]["state"] == "queue"
+    fx.comment(lower, f"[swarm] READY (stack): `{upper_b}` @ {sha}\nstack: `{upper_b}` carries #{lower} (slice 1a) and #{upper}.")
+    q = fx.queue()
+    assert q[lower]["state"] == "queue" and q[lower]["branch"] == upper_b and q[lower]["named"] == sha
+    out, _ = fx.plan()
+    assert sum(1 for ln in out if ln.startswith("train\t")) == 2   # the stack's tip is a member once; the lower slice rides on it
+
+
+def test_a_genuine_ready_is_not_shadowed_by_a_later_fyi(tmp_path):
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    n, b = owned_ready(fx, "n")
+    other, other_b = owned_ready(fx, "other")
+    fx.comment(n, FYI.format(m=other, sha=T.short_tip(fx.cfg(), other_b)).replace(f"issue-{other}-kickoff-deck", other_b.split("/", 1)[1]))
+    assert fx.queue()[n]["state"] == "queue" and fx.queue()[n]["branch"] == b
+
+
+def landed_and_closed(fx, title="lower"):
+    """An owned branch landed on master and its issue closed: (issue, branch, landed sha)."""
+    n, b = owned_ready(fx, title)
+    fx.land(b)
+    sh(sys.executable, str(ISSUES_FILE), "close", str(n), cwd=fx.work)
+    return n, b, T.git(fx.work, "rev-parse", "origin/master").stdout.strip()
+
+
+@pytest.mark.parametrize("shape", ["fyi", "manager-note", "quoted-ready"])
+def test_a_landed_issue_stays_closed_for_an_fyi_a_managers_note_or_a_quoted_ready(tmp_path, shape):
+    """The acceptance fixture: the FYI quoting another issue's READY and branch leaves the landed issue closed."""
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    n, b, landed = landed_and_closed(fx)
+    m, m_b = owned_ready(fx, "upper", "kickoff-deck")   # the other issue's branch, not carried by the landing
+    sha = T.short_tip(fx.cfg(), m_b)
+    body = {"fyi": FYI, "manager-note": MANAGER_NOTE, "quoted-ready": QUOTED}[shape].format(m=m, sha=sha)
+    fx.comment(n, body.replace(f"issue-{m}-kickoff-deck", m_b.split("/", 1)[1]))
+    cfg = fx.cfg()
+    assert T.newer_ready(cfg, n, b, landed) is None
+    assert T.reopen_if_newer_ready(cfg, n, b, landed) is False
+    assert json.loads(T.tracker(cfg, "issue_get", str(n)).stdout)["state"] == "CLOSED"
+
+
+def test_a_landed_issue_stays_closed_for_a_ready_on_a_foreign_branch_and_reopens_for_a_declared_stack(tmp_path):
+    fx = Fixture(tmp_path, {"branchOwnership": "issue"})
+    n, b, landed = landed_and_closed(fx)
+    m, m_b = owned_ready(fx, "upper", "kickoff-deck")
+    sha = T.short_tip(fx.cfg(), m_b)
+    cfg = fx.cfg()
+    fx.comment(n, f"[swarm] READY: `{m_b}` @ {sha}")   # a READY, but the branch is another issue's and no stack line says otherwise
+    assert T.newer_ready(cfg, n, b, landed) is None and T.reopen_if_newer_ready(cfg, n, b, landed) is False
+    assert fx.queue().get(n) is None   # closed: not listed
+    fx.comment(n, STACK_READY.format(m=m, sha=sha, n=n).replace(f"issue-{m}-kickoff-deck", m_b.split("/", 1)[1]))
+    assert T.reopen_if_newer_ready(cfg, n, b, landed) is True
+    issue = json.loads(T.tracker(cfg, "issue_get", str(n)).stdout)
+    assert issue["state"] == "OPEN" and m_b in issue["body"]
+    # (the file backend's `list` reads the directory bucket, which `update --status open` does not move, so the
+    # reopened issue is classified here directly; the GitHub backend lists it)
+    picked = T.pick_ready(cfg, T.ready_comments(issue), n)
+    assert picked["branch"] == m_b and T.classify(cfg, T.Overrides.read(cfg.overrides), n, picked, ())[0] == "queue"
