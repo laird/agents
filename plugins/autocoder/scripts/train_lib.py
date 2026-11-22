@@ -291,11 +291,23 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
 
     `ancestor`  tip is in ref's history (a merge or fast-forward landing);
     `patch`     every commit of tip is patch-equivalent to one in ref (a rebase landing, `git cherry`);
-    `content`   merging tip into ref adds nothing: the merge's tree IS ref's tree (`git merge-tree`).
-                A squash landing (one commit for a train of members, or for a branch with merge
-                commits) is proven only this way, and it survives later landings that touch other
-                hunks of the same files.
+    `content`   merging tip into ref adds nothing: the merge's tree IS ref's tree (`git merge-tree`, the
+                repository's merge drivers honoured). A squash landing (one commit for a train of members,
+                or for a branch with merge commits) is proven only this way, and it survives later landings
+                that touch other hunks of the same files.
+    `rows`      merging tip into ref changes nothing but the ORDER of lines inside files a merge driver
+                owns. A keyed-row driver writes the merged rows in an order it derives from the three
+                sides (the ancestor's rows first, then each side's additions), so a landing that went
+                through the driver with another ancestor than this proof's (the gate rebased the train
+                onto an integration branch that moved under it) holds the member's rows in another order,
+                and the re-merge puts them back. Same rows in a driver-owned file: the work is there. A
+                reorder in a file no driver owns is the branch's own change and proves nothing.
     A tip with no commit of its own (ref already is its tip) is `ancestor`.
+
+    A path merged by one of `regeneratedMergeDrivers` keeps ref's copy in the re-merge (its driver is
+    replaced by `true` for the probe): a landing regenerates it from its sources, so the branch's copy of
+    it is never what lands and its generator must not run here, from whatever tree this repository has
+    checked out.
     """
     ref = ref or cfg.ref
     if git(cfg.repo, "merge-base", "--is-ancestor", tip, ref).returncode == 0:
@@ -303,10 +315,64 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
     cherry = git(cfg.repo, "cherry", ref, tip)
     if cherry.returncode == 0 and not any(ln.startswith("+") for ln in cherry.stdout.splitlines()):
         return "patch"
-    merged = git(cfg.repo, "merge-tree", "--write-tree", "--no-messages", ref, tip)
-    if merged.returncode == 0 and merged.stdout.split("\n", 1)[0].strip() == git(cfg.repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip():
+    keep_ours = [x for d in cfg.regenerated_drivers for x in ("-c", f"merge.{d}.driver=true")]
+    merged = git(cfg.repo, *keep_ours, "merge-tree", "--write-tree", "--no-messages", ref, tip)
+    if merged.returncode != 0:
+        return ""
+    merged_tree = merged.stdout.split("\n", 1)[0].strip()
+    ref_tree = git(cfg.repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip()
+    if merged_tree == ref_tree:
         return "content"
+    if same_rows_in_driver_owned_paths(cfg, ref, ref_tree, merged_tree):
+        return "rows"
     return ""
+
+
+# merge drivers git implements itself; none of them reorders lines, so a line-order difference in a path
+# they own (or in a path with no driver) is a real change of the branch's, never a driver's artefact.
+BUILTIN_MERGE_DRIVERS = {"", "unspecified", "unset", "text", "binary", "union"}
+
+
+def merge_driver_attrs(cfg: Config, source, paths):
+    """{path: the `merge` attribute of <source>'s tree} (git 2.40+ reads the tree's .gitattributes; an older
+    git reads the working tree's)."""
+    if not paths:
+        return {}
+    stdin = "\0".join(paths) + "\0"   # on stdin, so a tree-wide list never hits the argv limit
+    r = git(cfg.repo, "check-attr", "-z", "--stdin", f"--source={source}", "merge", input=stdin)
+    if r.returncode != 0:
+        r = git(cfg.repo, "check-attr", "-z", "--stdin", "merge", input=stdin)
+    if r.returncode != 0:
+        return {}
+    fields = r.stdout.split("\0")
+    return {fields[i]: fields[i + 2] for i in range(0, len(fields) - 2, 3)}
+
+
+def same_rows_in_driver_owned_paths(cfg: Config, ref, ref_tree, merged_tree) -> bool:
+    """True when <merged_tree> differs from <ref_tree> only in the order of lines inside files whose `merge`
+    attribute (in <ref>'s tree) names a custom merge driver: every differing path is a modification (no
+    file added, deleted or retyped), its driver is not one of git's own, and the two copies hold the same
+    lines the same number of times."""
+    status = git(cfg.repo, "diff", "--name-status", "--no-renames", "-z", ref_tree, merged_tree).stdout.split("\0")
+    pairs = [(status[i], status[i + 1]) for i in range(0, len(status) - 1, 2)]
+    if not pairs or any(st != "M" for st, _ in pairs):
+        return False
+    paths = [p for _, p in pairs]
+    drivers = merge_driver_attrs(cfg, ref, paths)
+    for p in paths:
+        if drivers.get(p, "") in BUILTIN_MERGE_DRIVERS:
+            return False
+        if _line_counts(cfg, f"{ref_tree}:{p}") != _line_counts(cfg, f"{merged_tree}:{p}"):
+            return False
+    return True
+
+
+def _line_counts(cfg: Config, spec):
+    blob = subprocess.run(["git", "-C", str(cfg.repo), "cat-file", "-p", spec], capture_output=True).stdout
+    counts = {}
+    for ln in blob.splitlines(keepends=True):
+        counts[ln] = counts.get(ln, 0) + 1
+    return counts
 
 
 def regenerate_only(cfg: Config, ref, base=None):
