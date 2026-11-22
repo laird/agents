@@ -401,6 +401,7 @@ Based on user's choice:
 
 **If Approved (Option A/B/C):**
 ```bash
+: "${SCRIPT_DIR:?set SCRIPT_DIR to the path the Instructions block resolved}"
 APPROVED_OPTION="[User's choice: A/B/C]"
 APPROVED_APPROACH="[Name of the approach they chose]"
 
@@ -429,6 +430,7 @@ exit 0
 
 **If Rejected:**
 ```bash
+: "${SCRIPT_DIR:?set SCRIPT_DIR to the path the Instructions block resolved}"
 REJECT_REASON="[Ask user for rejection reason]"
 
 # Use the reject script

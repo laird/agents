@@ -21,18 +21,18 @@ for f in plugins/autocoder/commands/review-blocked.md .agent/workflows/review-bl
   has "$f: skips an issue whose cached analysis is fresh" "$F" 'echo "FRESH #$ISSUE_NUM"'
   has "$f: stores analyses under that key" "$F" 'blocked-analysis-cache.py" put "$ISSUE_NUM" --updated-at "$KEY"'
   has "$f: the interactive flow reuses a fresh analysis" "$F" 'get "$ISSUE_NUM" --updated-at "$ANALYSIS_KEY"'
-  # #330: a block that calls these scripts runs in a fresh shell, so it must stop
-  # at its first line while SCRIPT_DIR is unset, not resolve to /review-blocked-server.py.
+  # #330, #333: a block that calls a $SCRIPT_DIR script runs in a fresh shell, so it
+  # must stop at its first line while SCRIPT_DIR is unset, not resolve to /<script>.
   UNGUARDED=$(python3 - "$F" <<'PY'
 import re, sys
 for b in re.findall(r"```bash\n(.*?)```", open(sys.argv[1]).read(), re.S):
-    if "SCRIPT_DIR=$(" in b or not re.search(r"\$SCRIPT_DIR/(review-blocked-server|blocked-analysis-cache)\.py", b):
+    if "SCRIPT_DIR=$(" in b or not re.search(r"\$\{?SCRIPT_DIR\}?/", b):
         continue
     if not b.startswith(': "${SCRIPT_DIR:?'):
         print(b.splitlines()[0])
 PY
 )
-  [ -z "$UNGUARDED" ] && ok "$f: every analysis-cache block guards SCRIPT_DIR" \
+  [ -z "$UNGUARDED" ] && ok "$f: every block that calls a \$SCRIPT_DIR script guards it" \
     || bad "$f: blocks without a SCRIPT_DIR guard start: $UNGUARDED"
   PREP=$(sed -n '/^## Prepare Mode/,/^## Blocking Labels/p' "$F")
   [ -n "$PREP" ] && ok "$f: has a Prepare Mode section" || bad "$f: no Prepare Mode section"
