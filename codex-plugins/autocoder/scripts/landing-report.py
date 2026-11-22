@@ -352,7 +352,7 @@ def analyze(rows, since, until, bucket="week", ci=None):
     returned = set().union(*ret_by.values()) if ret_by else set()
 
     # per-change timings
-    build, wait, cycle, total = [], [], [], []
+    build, wait, cycle, total, launch = [], [], [], [], []
     landed_issues = []
     for i, es in ev.items():
         landed = [t for t, e, r in es if e == "landed" and inwin(r)]
@@ -360,6 +360,13 @@ def analyze(rows, since, until, bucket="week", ci=None):
         ready = [t for t, e, r in es if e == "ready"]
         if ready and claimed and any(since is None or t >= since for t in ready) and min(claimed) <= min(ready):
             build.append((min(ready) - min(claimed)).total_seconds())
+        # READY to launch: every `launched` row in the window (a cycle took the change), measured from the
+        # newest READY before it; the same change relaunched after a return counts once per launch.
+        for lt_, e_, r_ in es:
+            if e_ == "launched" and inwin(r_):
+                before = [t for t in ready if t <= lt_]
+                if before:
+                    launch.append((lt_ - max(before)).total_seconds())
         if not landed:
             continue
         lt = max(landed)
@@ -432,7 +439,8 @@ def analyze(rows, since, until, bucket="week", ci=None):
             "rebases_per_change": dist(rebases) if rebase_recorded else None,
             "prechecks_per_change": dist(prechecks) if precheck_recorded else None,
         },
-        "timings": {"build_s": dist(build), "wait_s": dist(wait), "cycle_s": dist(cycle), "claim_to_landed_s": dist(total)},
+        "timings": {"build_s": dist(build), "wait_s": dist(wait), "cycle_s": dist(cycle), "claim_to_landed_s": dist(total),
+                    "ready_to_launch_s": dist(launch)},
         "batches": {"count": len(batches), "size_distribution": {str(k): v for k, v in sorted(sizes.items())},
                     "assembly_s": dist(asm), "publish_s": dist(pub), "stage_s_total": dict(stage_tot),
                     "resyncs": resyncs, "push_rejected": pushrej, "red_by_cause": dict(red)},
@@ -886,6 +894,14 @@ def batch_outcomes(ev, batches):
 
 
 # ── markdown ───────────────────────────────────────────────────────────────
+def ready_to_launch_text(t):
+    """The READY-to-launch gap, or why it is n/a: a ledger written before the `launched` event existed carries none."""
+    d = t.get("ready_to_launch_s") or {"n": 0}
+    if not d["n"]:
+        return "n/a (no `launched` row: the cycle that writes it is not installed, or nothing was launched)"
+    return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']})"
+
+
 def render_week(a):
     """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
     w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
@@ -905,6 +921,7 @@ def render_week(a):
                    f"({w['share'] * 100:.0f}%)" + ("; by cause " + ", ".join(f"{k} {human(v)}" for k, v in sorted(w["by"].items(), key=lambda kv: -kv[1])) if w["by"] else ""))
     c = t["cycle_s"]
     out.append("- Median READY to landed: " + ("n/a" if not c["n"] else f"{human(c['p50'])} (p90 {human(c['p90'])}, n={c['n']})"))
+    out.append("- READY to launch (a cycle took it): " + ready_to_launch_text(t))
     out.append("- Planning: " + ("n/a (not recorded)" if p["s_total"] is None else f"{human(p['s_total'])} over {p['candidates']} candidate probes"))
     out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'])}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     if rg["count"]:
@@ -959,6 +976,7 @@ def render(a, week=None, batches=False):
                        ("Cycle (READY to landed)", "cycle_s"), ("Claim to landed", "claim_to_landed_s")):
         d = t[key]
         out.append(f"- {label}: " + ("n/a" if not d["n"] else f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']})"))
+    out.append("- READY to launch (a cycle took it): " + ready_to_launch_text(t))
     out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     out += ["", "## Batches", "", f"- Batches: {b['count']}; landed changes: {a['landed']}",
             "- Size distribution (members: batches): " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),

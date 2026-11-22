@@ -10,7 +10,9 @@ File: ${AUTOCODER_LANDING_TIMINGS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocod
 Writes are one O_APPEND write() of one line, so concurrent writers do not interleave.
 
   change --issue N --event EVENT [--batch ID] [--cause CAUSE] [--sha HEX] [--ts ISO]
-      EVENT: claimed | ready | batched | landed | returned | rebase | precheck
+      EVENT: claimed | ready | launched | batched | landed | returned | rebase | precheck
+      `launched` is the moment a train cycle took the change (planned it into a set), whoever ran
+      the cycle: the report's READY-to-launch gap is the newest `ready` before it to it.
       CAUSE (returned only): defect | conflict | stale-base | red-integration |
              infra | docs-resync | other
       Only `defect` is a useful rejection: the change itself was wrong.
@@ -65,7 +67,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-CHANGE_EVENTS = ("claimed", "ready", "batched", "landed", "returned", "rebase", "precheck")
+CHANGE_EVENTS = ("claimed", "ready", "launched", "batched", "landed", "returned", "rebase", "precheck")
 CAUSES = ("defect", "conflict", "stale-base", "red-integration", "infra", "docs-resync", "other")
 VERDICTS = ("green", "red", "aborted", "infra")
 PLAN_VERDICTS = ("train", "skip", "drop", "fault")

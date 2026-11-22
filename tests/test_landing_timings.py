@@ -914,3 +914,32 @@ def test_a_completed_run_without_a_conclusion_is_not_a_success(tmp_path):
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z")], "master", set())[0] == "inconclusive"
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "cancelled", "2026-11-03T10:00:00Z")], "master", set())[0] == "cancelled"
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "success", "2026-11-03T10:05:00Z")], "master", set())[:1] == ("success",)
+
+
+# ── READY to launch (the train daemon's row) ────────────────────────────────
+def test_writer_accepts_a_launched_change_row(tmp_path):
+    log = tmp_path / "l.jsonl"
+    assert write(log, "change", "--issue", "7", "--event", "launched", "--ts", "2026-11-02T10:05:00Z").returncode == 0
+    assert rows_of(log)[0]["event"] == "launched"
+
+
+def test_week_and_full_reports_show_ready_to_launch_from_the_newest_ready_before_each_launch(tmp_path):
+    p = tmp_path / "l.jsonl"
+    rows = [ch(1, "2026-11-02T10:00:00Z", "ready"), ch(1, "2026-11-02T10:05:00Z", "launched"),       # 5 min
+            ch(1, "2026-11-02T10:30:00Z", "batched", batch="b1"), ch(1, "2026-11-02T11:00:00Z", "returned", cause="defect", batch="b1"),
+            ch(1, "2026-11-02T12:00:00Z", "ready"), ch(1, "2026-11-02T12:15:00Z", "launched"),       # a relaunch: 15 min, from the NEWER READY
+            ch(1, "2026-11-02T12:20:00Z", "batched", batch="b2"), ch(1, "2026-11-02T13:00:00Z", "landed", batch="b2"),
+            ch(2, "2026-11-02T09:30:00Z", "ready"), ch(2, "2026-11-02T09:31:00Z", "launched"),       # 1 min
+            ch(3, "2026-11-02T09:00:00Z", "launched"),                                                 # no READY before it: not measured
+            ba("b2", "2026-11-02T13:00:00Z", [1], 2400, "green")]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    a = json.loads(report("--log", str(p), "--week", "2026-11-02", "--json").stdout)
+    assert a["timings"]["ready_to_launch_s"] == {"n": 3, "p50": 300, "p90": 780, "max": 900}   # p90 interpolates over 60, 300, 900
+    out = report("--log", str(p), "--week", "2026-11-02").stdout
+    assert "- READY to launch (a cycle took it): p50 5.0m, p90 13.0m, max 15.0m (n=3)" in out
+    assert out.count("READY to launch (a cycle took it)") == 2   # the week summary and the Time section
+
+
+def test_ready_to_launch_is_na_and_says_why_when_no_launched_row_exists(log):
+    out = report("--log", str(log), "--week", "2026-11-02").stdout
+    assert "- READY to launch (a cycle took it): n/a (no `launched` row" in out
