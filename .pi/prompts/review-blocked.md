@@ -62,10 +62,15 @@ is (re)generated.
 
 Run the Instructions block below first; with `--prepare` it prints
 `PREPARE_MODE=true` and saves the issue list, printing its path as `BLOCKED_FILE=...`.
-Set `BLOCKED_FILE` to that path in this block too, then sort the issues into fresh
-(skipped) and to-analyse:
+Each block below runs in a fresh shell, so set `BLOCKED_FILE` to that path in this
+block too, and set `SCRIPT_DIR` in every block to the directory the Instructions
+block resolved (or re-run that block's `SCRIPT_DIR=$(...)` lines). The blocks stop
+at their first line while either is unset; without that guard every call would
+resolve to `/review-blocked-server.py` and report every issue as `KEY_FAILED`.
+Then sort the issues into fresh (skipped) and to-analyse:
 
 ```bash
+: "${SCRIPT_DIR:?set SCRIPT_DIR to the path the Instructions block resolved}"
 : "${BLOCKED_FILE:?set BLOCKED_FILE to the path the fetch block printed}"
 for ISSUE_NUM in $(python3 -c "import json, sys; print(' '.join(str(i['number']) for i in json.load(sys.stdin)['issues']))" < "$BLOCKED_FILE"); do
   if ! KEY=$(python3 "$SCRIPT_DIR/review-blocked-server.py" --key "$ISSUE_NUM"); then
@@ -84,6 +89,7 @@ comments, read the code it names, find 2-3 approaches, pick one), then write it
 as JSON in the cache's schema and store it under that line's key (`KEY` below):
 
 ```bash
+: "${SCRIPT_DIR:?set SCRIPT_DIR to the path the Instructions block resolved}"
 ANALYSIS=$(mktemp "${TMPDIR:-/tmp}/review-blocked-analysis.XXXXXX")
 cat > "$ANALYSIS" <<'JSON'
 {"summary": "<one line: what the issue needs decided>",
@@ -318,6 +324,7 @@ fi
 Reuse a prepared analysis when there is a fresh one (see "Prepare Mode"):
 
 ```bash
+: "${SCRIPT_DIR:?set SCRIPT_DIR to the path the Instructions block resolved}"
 ANALYSIS_KEY=$(python3 "$SCRIPT_DIR/review-blocked-server.py" --key "$ISSUE_NUM" 2>/dev/null) || ANALYSIS_KEY=""
 CACHED_ANALYSIS=""
 if [ -n "$ANALYSIS_KEY" ]; then
