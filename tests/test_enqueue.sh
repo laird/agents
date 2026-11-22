@@ -34,7 +34,7 @@ git -C "$W" update-ref refs/remotes/origin/HEAD refs/remotes/origin/master
 echo ".autocoder.json" > "$W/.git/info/exclude"
 cat > "$W/.autocoder.json" <<JSON
 { "issueSource": "file", "issueDir": "$ISSUES",
-  "train": { "enqueue": {
+  "train": { "branchOwnership": "any", "enqueue": {
     "buildCmd": "echo build base=\$AUTOCODER_ENQUEUE_BASE changed=\$(grep -c . \"\$AUTOCODER_ENQUEUE_CHANGED_FILE\") >> \$LOG",
     "testCmd": "echo tests {files} >> \$LOG" } } }
 JSON

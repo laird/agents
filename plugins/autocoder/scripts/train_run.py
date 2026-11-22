@@ -511,15 +511,20 @@ class Cycle:
         return full if full.startswith(tip) else (full or tip)
 
     def tell_queue_verdicts(self, rows):
-        """Three queue verdicts are told to the issue ONCE per tip (a `<kind>.tsv` record in the state dir), so
+        """Four queue verdicts are told to the issue ONCE per tip (a `<kind>.tsv` record in the state dir), so
         the owner learns them without a train slot and never twice:
           regenerate-only  which files it changes and why no train takes it; never planned at that tip
           tip-moved        the tip carries work the READY did not name; not READY until one names it
+          foreign-branch   the READY names a branch that does not belong to the issue; never planned at that tip
           followed         a rebased or fast-forwarded tip was taken in the named sha's place (same patches)
-        The queue state keeps the first two out of the plan; the record only stops a second comment."""
+        The queue state keeps the first three out of the plan; the record only stops a second comment."""
         for r in rows:
             issue, tip = r["issue"], r["tip"]
-            if r["state"] == "regenerate-only" and not self.state.told("regenerate-only", issue, tip):
+            if r["state"] == "foreign-branch" and not self.state.told("foreign-branch", issue, tip):
+                self.say.say(issue, f"not trained, `foreign-branch`: {r['note']}.")
+                self.state.tell("foreign-branch", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}) is foreign-branch: told once, never planned at this tip")
+            elif r["state"] == "regenerate-only" and not self.state.told("regenerate-only", issue, tip):
                 self.say.say(issue, f"not trained, `regenerate-only`: `{r['branch']}` @ `{tip}` {r['note']} "
                              f"No train takes this tip; a tip that also changes a source rejoins the queue with a new READY.")
                 self.state.tell("regenerate-only", issue, tip)

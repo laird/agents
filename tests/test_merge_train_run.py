@@ -121,7 +121,7 @@ class Fx:
         (root / "gate.sh").write_text(GATE)
         (root / "timings.sh").write_text(TIMINGS_STUB)
         self.train = {"gate": f"bash {root / 'gate.sh'} {{train}} {{sha}}", "gateLogDir": str(root / "gatelogs"),
-                      "timingsCmd": f"bash {root / 'timings.sh'}", "size": 8, **(train or {})}
+                      "timingsCmd": f"bash {root / 'timings.sh'}", "size": 8, "branchOwnership": "any", **(train or {})}   # fixture branches carry no issue number
         self.write_config()
 
     def write_config(self):
@@ -782,3 +782,22 @@ git update-ref refs/remotes/origin/feature/m0 "$old"   # as a push from another 
     assert [m["tip"][:10] for m in cyc.record["members"]] == [new]     # the plan took the rebased tip, not the one fetched at open
     assert fx.on_master(0) and fx.state_of(issue) == "CLOSED"
     assert f"taking the rebased tip `{new}`" in fx.comments(issue)
+
+
+# ── a READY's branch must belong to the issue (train_lib.branch_owned) ───────────────────────
+def test_a_cycle_tells_a_foreign_branch_once_per_tip_and_plans_a_declared_stack(tmp_path):
+    """With `branchOwnership: issue` (the default) the fixture's `feature/m<n>` branches belong to nobody: the
+    cycle tells each such item once, plans none of them, and a READY whose `stack:` line declares the branch
+    for the issue is planned like any other."""
+    fx = Fx(tmp_path, {"branchOwnership": "issue"})
+    foreign = fx.member(0)
+    declared = fx.member(1)
+    sh(sys.executable, str(ISSUES_FILE), "comment", str(declared), "--body",
+       f"READY `feature/m1` @ {T.git(fx.work, 'rev-parse', '--short=10', 'origin/feature/m1').stdout.strip()}\nstack: `feature/m1` carries #{declared}", cwd=fx.work)
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1 and fx.gates()[0] == ["files/m1.txt"]   # m0 is not in the train
+    assert fx.state_of(declared) == "CLOSED" and fx.state_of(foreign) == "OPEN" and not fx.on_master(0)
+    told = fx.comments(foreign)
+    assert told.count("`foreign-branch`") == 1 and f"`feature/m0` does not belong to #{foreign}" in told and f"stack: `feature/m0` carries #{foreign}" in told
+    fx.run()   # a second cycle: no second comment, still not planned
+    assert fx.comments(foreign).count("`foreign-branch`") == 1 and len(fx.gates()) == 1 and fx.dropped() == []

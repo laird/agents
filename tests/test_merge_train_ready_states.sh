@@ -31,8 +31,8 @@ git -C "$W" add -A; git -C "$W" commit -q -m init; git -C "$W" push -q origin ma
 git -C "$W" update-ref refs/remotes/origin/HEAD refs/remotes/origin/master
 echo ".autocoder.json" > "$W/.git/info/exclude"
 config() {  # <readyStates JSON array or empty>: the queue config
-  if [ -n "$1" ]; then printf '{ "issueSource": "file", "issueDir": "%s", "train": { "readyStates": %s } }\n' "$ISSUES" "$1"
-  else printf '{ "issueSource": "file", "issueDir": "%s", "train": { } }\n' "$ISSUES"; fi > "$W/.autocoder.json"
+  if [ -n "$1" ]; then printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any", "readyStates": %s } }\n' "$ISSUES" "$1"
+  else printf '{ "issueSource": "file", "issueDir": "%s", "train": { "branchOwnership": "any" } }\n' "$ISSUES"; fi > "$W/.autocoder.json"
 }
 # ready <title> <branch>: a pushed branch and an open issue labelled ready-for-review whose newest
 # comment is a READY naming the branch; prints the issue number.
