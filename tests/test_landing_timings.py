@@ -171,6 +171,112 @@ def test_report_bad_date_exits_2(log):
     assert r.returncode == 2 and "cannot read --since" in r.stderr
 
 
+# ── week mode (the weekly report) ───────────────────────────────────────────
+def load_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("landing_report", REPORT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_week_window_is_monday_to_monday_and_last_is_the_completed_week():
+    from datetime import datetime, timezone
+    m = load_module()
+    iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")
+    since, until = m.week_window("2026-11-19")                       # a Thursday
+    assert (iso(since), iso(until)) == ("2026-11-16T00:00:00Z", "2026-11-23T00:00:00Z")
+    since, until = m.week_window("2026-11-16T23:59:00Z")             # the Monday itself, late
+    assert (iso(since), iso(until)) == ("2026-11-16T00:00:00Z", "2026-11-23T00:00:00Z")
+    monday_run = datetime(2026, 11, 23, 6, 17, tzinfo=timezone.utc)   # a Monday 06:17Z run reports the week that just ended
+    since, until = m.week_window("last", today=monday_run)
+    assert (iso(since), iso(until)) == ("2026-11-16T00:00:00Z", "2026-11-23T00:00:00Z")
+    since, until = m.week_window(None, today=datetime(2026, 11, 29, tzinfo=timezone.utc))  # a Sunday: still the last COMPLETED week
+    assert iso(since) == "2026-11-16T00:00:00Z"
+    assert m.week_window("not a date") is None
+
+
+def test_week_report_numbers_batches_and_regates(log):
+    r = report("--log", str(log), "--week", "2026-11-04", "--json")   # the week of Mon 2026-11-02 holds the whole fixture
+    assert r.returncode == 0, r.stderr
+    a = json.loads(r.stdout)
+    assert a["week"] == "2026-11-02" and a["window"] == {"since": "2026-11-02T00:00:00Z", "until": "2026-11-09T00:00:00Z"}
+    rows = {b["batch"]: b for b in a["batch_rows"]}
+    assert [b["batch"] for b in a["batch_rows"]] == ["b1", "b2", "b3"]              # time order
+    assert rows["b1"]["landed"] == [] and rows["b1"]["returned"] == {"1": "defect", "2": "stale-base"} and rows["b1"]["open"] == []
+    assert rows["b2"]["landed"] == [1, 2] and rows["b2"]["returned"] == {} and rows["b3"]["landed"] == [3]
+    # b2 gates again the members red b1 gated: a re-gate of red:defect, its 2400 s of gate time; b3 is not
+    assert rows["b1"]["regate_of"] is None and rows["b2"]["regate_of"] == "red:defect" and rows["b3"]["regate_of"] is None
+    assert a["regates"] == {"count": 1, "gate_s": 2400, "by": {"red:defect": {"n": 1, "s": 2400, "unmeasured": 0}}}
+
+
+def test_week_report_markdown_leads_with_the_week_and_lists_every_batch(log):
+    out = report("--log", str(log), "--week", "2026-11-02").stdout
+    assert out.startswith("# Landing report: week of 2026-11-02\n")
+    assert out.index("## Week in numbers") < out.index("## Batches") < out.index("## Waste") < out.index("## Time")
+    assert "- Batches: 3; members: 5 (1.7 per batch); sizes 1: 1, 2: 2" in out
+    assert "- Changes landed: 3; returned: 2 (useful, a defect in the change: 1; waste: 1); by cause defect 1, stale-base 1; dropped at planning: 0" in out
+    assert "- Gate-minutes: 1.7h in 3 measured batches; wasted 40.0m (40%); by cause red:defect 30.0m, re-gate after re-sync 10.0m" in out
+    assert "- Median READY to landed: 60.0m (p90 " in out
+    assert "- Planning: 3.5m over 3 candidate probes" in out
+    assert "- Re-gates: 1 batches, 40.0m of gate time; by reason red:defect 1 (40.0m)" in out
+    assert "| b1 | 2026-11-02T11:00:00Z | #1 #2 | red:defect | 30.0m | - | #1 (defect) #2 (stale-base) | - | - |" in out
+    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | #1 #2 | - | - | red:defect |" in out
+    assert "- Re-gates by reason: red:defect: 1 (40.0m)" in out            # the general section carries it too
+
+
+def test_week_report_with_no_batch_says_so_and_na(tmp_path):
+    p = tmp_path / "l.jsonl"
+    p.write_text(json.dumps(ch(9, "2026-11-04T00:00:00Z", "landed")) + "\n")
+    out = report("--log", str(p), "--week", "2026-11-04").stdout
+    assert "- Batches: 0; members: 0; sizes n/a" in out and "- Gate-minutes: n/a" in out
+    assert "- Median READY to landed: n/a" in out and "- Re-gates: 0" in out and "(no batch in the window)" in out
+
+
+def test_batches_flag_lists_batches_for_any_window_and_a_member_with_no_outcome_is_open(tmp_path):
+    p = tmp_path / "l.jsonl"
+    rows = [ch(4, "2026-11-05T09:00:00Z", "batched", batch="b4"), ba("b4", "2026-11-05T09:30:00Z", [4, 5], 600, "infra", "infra")]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = report("--log", str(p), "--since", "2026-11-05", "--batches").stdout
+    assert out.startswith("# Landing report\n") and "## Week in numbers" not in out
+    assert "| b4 | 2026-11-05T09:30:00Z | #4 #5 | infra:infra | 10.0m | - | - | #4 #5 | - |" in out
+
+
+def test_an_outcome_in_the_same_second_as_the_next_batched_row_belongs_to_the_batch_it_ends(tmp_path):
+    p = tmp_path / "l.jsonl"
+    rows = [ch(4, "2026-11-05T09:00:00Z", "batched", batch="b4"), ba("b4", "2026-11-05T09:30:00Z", [4], 600, "green"),
+            ch(4, "2026-11-05T09:40:00Z", "landed", batch="b4"), ch(4, "2026-11-05T09:40:00Z", "batched", batch="b5"),
+            ba("b5", "2026-11-05T10:00:00Z", [4], 600, "green")]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    a = json.loads(report("--log", str(p), "--json").stdout)
+    assert [(b["batch"], b["landed"], b["open"]) for b in a["batch_rows"]] == [("b4", [4], []), ("b5", [], [4])]
+
+
+def test_a_gate_row_and_a_train_row_with_one_batch_id_count_once(tmp_path):
+    # merge-to-integration.sh under AUTOCODER_LANDING_BATCH writes the seconds it measured; the train writes
+    # the verdict it judged: one batch, the train's verdict, the gate's seconds and re-syncs, the members unioned
+    p = tmp_path / "l.jsonl"
+    rows = [ba("t1", "2026-11-05T09:30:00Z", [4], 600, "red", "defect", discarded=120, resyncs=2, stages={"build": 100}),
+            {"v": 1, "ts": "2026-11-05T09:31:00Z", "kind": "batch", "batch": "t1", "members": [4, 5], "assembly_s": None, "stages": {},
+             "gate_s": 601, "discarded_gate_s": None, "publish_s": None, "verdict": "infra", "cause": "infra", "resyncs": None, "push_rejected": None}]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    a = json.loads(report("--log", str(p), "--json").stdout)
+    assert a["batches"]["count"] == 1 and a["batches"]["size_distribution"] == {"2": 1}
+    b = a["batch_rows"][0]
+    assert (b["members"], b["verdict"], b["cause"], b["gate_s"]) == ([4, 5], "infra", "infra", 601)
+    assert a["waste"]["gate_s_total"] == 601 and a["waste"]["by"] == {"infra:infra": 601}
+    assert a["batches"]["resyncs"] == 2 and a["batches"]["stage_s_total"] == {"build": 100}
+
+
+@pytest.mark.parametrize("args,needle", [
+    (["--week", "sometime"], "cannot read --week"),
+    (["--week", "2026-11-02", "--since", "2026-11-01"], "drop --since/--until"),
+])
+def test_week_refuses_a_bad_spec_or_a_second_window(log, args, needle):
+    r = report("--log", str(log), *args)
+    assert r.returncode == 2 and needle in r.stderr
+
+
 # ── history mode ────────────────────────────────────────────────────────────
 def git(cwd, *a, env=None):
     e = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.x", **(env or {})}

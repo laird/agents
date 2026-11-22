@@ -589,12 +589,19 @@ class Cycle:
                f"--issue {q(self.rc.gate_issue)} --integration {q(c.integration)}")
         return cmd + (f" --test-cmd {q(self.rc.test_cmd)}" if self.rc.test_cmd else "")
 
-    def run_gate(self, train, sha, tag):
+    def run_gate(self, train, sha, tag, members=()):
         self.rc.gate_log_dir.mkdir(parents=True, exist_ok=True)
         log_path = self.rc.gate_log_dir / f"{train.replace('/', '-')}-{tag}.log"
         t0 = time.time()
+        # The gate learns whose batch it is: merge-to-integration.sh then writes its landing-timings batch row
+        # under the train's id with these members (stage seconds, discarded gate time, re-syncs), instead of
+        # a solo batch of the gate issue beside the train's own row, which counted every gate twice. The
+        # members are the SET BEING GATED, passed in: the record's `gating` status is not reset on the half a
+        # bisection holds out, so reading it named siblings the gate never saw.
+        env = {**os.environ, "AUTOCODER_LANDING_BATCH": train.replace("/", "-"),
+               "AUTOCODER_LANDING_MEMBERS": ",".join(str(m["issue"]) for m in members)}
         with open(log_path, "w") as lf:
-            r = subprocess.run(["bash", "-c", self.gate_command(train, sha)], stdout=lf, stderr=subprocess.STDOUT, cwd=str(self.cfg.repo))
+            r = subprocess.run(["bash", "-c", self.gate_command(train, sha)], stdout=lf, stderr=subprocess.STDOUT, cwd=str(self.cfg.repo), env=env)
         self.gates += 1
         return r.returncode, log_path, int(time.time() - t0)
 
@@ -640,7 +647,7 @@ class Cycle:
             batch_id = train.replace("/", "-")
             for m in members:
                 self.timing("change", "--issue", m["issue"], "--event", "batched", "--batch", batch_id)
-            code, log_path, gate_s = self.run_gate(train, sha, f"g{self.gates + 1}")
+            code, log_path, gate_s = self.run_gate(train, sha, f"g{self.gates + 1}", members)
             verdict, line = self.judge(code, log_path, members)
             self.log(f"{train} ({' '.join('#' + m['issue'] for m in members)}): gate {verdict}" + (f" ({line})" if line else ""))
             self.timing("batch", "--batch", batch_id, "--members", ",".join(m["issue"] for m in members), "--gate-s", gate_s,

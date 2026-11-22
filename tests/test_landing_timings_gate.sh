@@ -3,7 +3,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255
 # tests/test_landing_timings_gate.sh — merge-to-integration.sh appends landing-timings rows:
 # a landing gives a green batch of one plus batched and landed; a gate that fails only on the
 # change gives a red batch (cause defect) and a returned change; a red integration branch gives a
-# red batch (cause red-integration), the change landing or coming back by the red-base setting.
+# red batch (cause red-integration), the change landing or coming back by the red-base setting; under a\n# train (AUTOCODER_LANDING_BATCH) the batch row is the train's and the gate issue gets no change row.
 
 PASS=0; FAIL=0
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)/plugins/autocoder/scripts"
@@ -74,6 +74,34 @@ AUTOCODER_MERGE_ON_RED_BASE=0 run_one 7104 more.txt 'echo "FAIL shared"; false'
 eq "red base, refused: red batch (red-integration), returned" "batch red red-integration gate
 change batched -
 change returned red-integration" "$(rows 7104)"
+
+# Inside a train (train_run.py exports both), the gate's batch row is the TRAIN's: its id, its members, the
+# gate's seconds; no change rows for the gate issue (the train writes the members' rows). Nothing else changes.
+AUTOCODER_LANDING_BATCH=train-20260101T000000Z-1 AUTOCODER_LANDING_MEMBERS=7201,7202 run_one 7105 in_train.txt true
+eq "under a train: the batch row is the train's, with its members, and no change row for the gate issue" "batch green - gate train-20260101T000000Z-1 7201,7202" \
+  "$(python3 - "$AUTOCODER_LANDING_TIMINGS" <<'PY'
+import json, sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["kind"] == "change" and r["issue"] == 7105: print("change", r["event"])
+    if r["kind"] == "batch" and r["batch"].startswith("train-"):
+        print("batch", r["verdict"], r["cause"] or "-", "gate" if r["gate_s"] is not None else "nogate", r["batch"], ",".join(map(str, r["members"])))
+PY
+)"
+
+# Under a train with NO gate run (the branch conflicts with master, so the gate stops before any test): no row
+# at all for the gate issue, neither a batch nor a `returned` change (the train owns its members' rows).
+# origin/master takes conflict.txt while the local master (the branch's base) stays behind, so the gate's merge conflicts.
+git checkout -q --detach master; echo master-side > conflict.txt; git add -A; git commit -q -m "master takes conflict.txt"
+git push -q origin HEAD:master; git checkout -q master
+AUTOCODER_LANDING_BATCH=train-20260101T000000Z-2 AUTOCODER_LANDING_MEMBERS=7301 run_one 7106 conflict.txt true
+eq "under a train, no gate run: no batch row, no change row for the gate issue" "" "$(rows 7106; python3 - "$AUTOCODER_LANDING_TIMINGS" <<'PY'
+import json, sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["kind"] == "batch" and r["batch"] == "train-20260101T000000Z-2": print("batch", r["verdict"])
+PY
+)"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

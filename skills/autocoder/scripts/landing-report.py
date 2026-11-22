@@ -6,7 +6,8 @@ rows for the period BEFORE the writer existed, from the issue tracker (through i
 source abstraction), git history of the integration branch and, when present, the plugin's own
 merge-events.jsonl, so a project can reproduce its baseline.
 
-  landing-report.py [--since DATE] [--until DATE] [--bucket day|week] [--log PATH] [--json]
+  landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
+                    [--log PATH] [--json]
                     [--history [--repo DIR] [--integration BRANCH] [--merge-events PATH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
                                [--rules JSON] [--export-rows PATH] [--limit N]]
@@ -15,6 +16,17 @@ Sections, in order: waste (gate-minutes thrown away; changes returned by cause; 
 pre-checks per change), then build time (claim to READY), wait after READY, cycle time, batch
 size distribution, capacity against demand, rejected pushes, red batches by cause.
 A figure the rows do not carry prints n/a, never 0.
+
+WEEK MODE (`--week`): the weekly report. The window is one calendar week, Monday 00:00Z to the next
+Monday: `--week 2026-11-16` is the week holding that date, a bare `--week` (or `--week last`) the
+last COMPLETED week, so a Monday run reports the week that just ended. It adds, before the sections
+above, "Week in numbers" (batches and members, changes landed, returned by cause and dropped at
+planning, gate-minutes wasted by cause, median READY-to-landed, planning time, re-gates by reason)
+and a table of every batch with each member's outcome (`--batches` adds that table to any window).
+A RE-GATE is a batch that gates again a change an earlier, non-green batch of the window already
+gated (the same members after an infrastructure red, the halves of a bisection after a red): its
+reason is that earlier batch's verdict and cause, so the gate-minutes a red costs beyond its own
+run are visible.
 """
 
 from __future__ import annotations
@@ -104,6 +116,24 @@ def bucket_key(d, bucket):
     return f"wk {monday}"
 
 
+def week_window(spec, today=None):
+    """(since, until) of one calendar week, Monday 00:00Z to the next Monday.
+
+    `spec` is a date inside the wanted week, or `last`/empty for the last COMPLETED week before
+    `today` (UTC now by default): on a Monday that is the week that just ended. None when the spec
+    is not a date."""
+    today = today or datetime.now(timezone.utc)
+    if spec in (None, "", "last"):
+        ref = today - timedelta(days=7)
+    else:
+        ref = parse_ts(spec)
+        if ref is None:
+            return None
+    monday = ref.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    monday -= timedelta(days=monday.weekday())
+    return monday, monday + timedelta(days=7)
+
+
 # ── reading rows ───────────────────────────────────────────────────────────
 def load_rows(path):
     rows, bad = [], 0
@@ -131,6 +161,27 @@ def default_log():
 
 
 # ── analysis ───────────────────────────────────────────────────────────────
+def merge_batches(batches):
+    """One row per batch id, in time order. A train's gate (merge-to-integration.sh under
+    AUTOCODER_LANDING_BATCH) and the train itself both write the train's id: the gate the seconds and
+    re-syncs it measured, the train the verdict it judged. Later non-null fields win; members and stages
+    are unioned; a field only one side carries is kept."""
+    by = {}
+    for b in sorted(batches, key=lambda b: parse_ts(b["ts"])):
+        cur = by.get(b["batch"])
+        if cur is None:
+            by[b["batch"]] = dict(b)
+            continue
+        for k, v in b.items():
+            if k == "members":
+                cur[k] = sorted(set(cur.get(k) or []) | set(v or []))
+            elif k == "stages":
+                cur[k] = {**(cur.get(k) or {}), **(v or {})}
+            elif v is not None:
+                cur[k] = v
+    return list(by.values())
+
+
 def analyze(rows, since, until, bucket="week"):
     def inwin(r):
         t = parse_ts(r["ts"])
@@ -142,7 +193,7 @@ def analyze(rows, since, until, bucket="week"):
             ev[r["issue"]].append((parse_ts(r["ts"]), r["event"], r))
     for v in ev.values():
         v.sort(key=lambda x: x[0])
-    batches = [r for r in rows if r["kind"] == "batch" and inwin(r)]
+    batches = merge_batches(r for r in rows if r["kind"] == "batch" and inwin(r))
     # planning: the train planner's candidate probes (one `plan` row each; seconds and verdict)
     plans = [r for r in rows if r["kind"] == "plan" and inwin(r) and isinstance(r.get("seconds"), (int, float))]
     plan_by = {}
@@ -209,6 +260,7 @@ def analyze(rows, since, until, bucket="week"):
     red = Counter(b.get("cause") or "unknown" for b in batches if b.get("verdict") in ("red", "aborted", "infra"))
     pushrej = sum(b.get("push_rejected") or 0 for b in batches)
     resyncs = sum(b.get("resyncs") or 0 for b in batches)
+    batch_rows, regates = batch_outcomes(ev, batches)
 
     # buckets: waste, returns and capacity vs demand
     bk = defaultdict(lambda: {"ready": 0, "landed": 0, "batches": 0, "gate_s": 0.0, "wasted_s": 0.0, "plan_s": 0.0,
@@ -259,14 +311,116 @@ def analyze(rows, since, until, bucket="week"):
                      "per_candidate_s": dist([r["seconds"] for r in plans]), "by_verdict": plan_by},
         "buckets": {k: {**v, "returned": len(v["returned"]), "seen": len(v["seen"])} for k, v in sorted(bk.items())},
         "landed": len(landed_issues),
+        "batch_rows": batch_rows,
+        "regates": regates,
     }
 
 
+def member_outcomes(es, bid, batch_ts):
+    """One member's outcome in batch `bid`, read from its events: `landed`, `returned:<cause>` or `open`
+    (no outcome row yet, or none the writer recorded). The span judged runs from the member's `batched`
+    row for this batch (else the batch row's time) to its next `batched` row for another batch, because
+    a train's `returned` rows name no batch."""
+    starts = [t for t, e, r in es if e == "batched" and r.get("batch") == bid and t <= batch_ts]
+    start = max(starts) if starts else batch_ts
+    ends = [t for t, e, r in es if e == "batched" and r.get("batch") != bid and t > start]
+    end = min(ends) if ends else None
+    # rows are second-resolution: an outcome stamped in the same second as the next `batched` row belongs here
+    span = [(e, r) for t, e, r in es if t >= start and (end is None or t < end or (t == end and e != "batched"))]
+    if any(e == "landed" and r.get("batch") in (bid, None) for e, r in span):
+        return "landed"
+    returned = [r for e, r in span if e == "returned"]
+    return f"returned:{returned[0].get('cause') or 'unknown'}" if returned else "open"
+
+
+def batch_outcomes(ev, batches):
+    """Per-batch rows (members and their outcomes) in time order, and the re-gates among them.
+
+    A re-gate is a batch that gates again a change an earlier NON-GREEN batch of the window already
+    gated: the same members after an infrastructure red, the halves of a bisection after a red, a
+    member innocent of a red gated again without the culprit. Its reason is the latest such earlier
+    batch's `verdict:cause`; counted once per batch with its gate seconds (n/a stays unmeasured).
+    The culprit's own next gate after a `defect` return, fixed and re-READY'd, counts too: the ledger
+    carries no tip to tell a fixed change from the same one, so the figure is a ceiling the README
+    says so about."""
+    rows, by, seen_red = [], {}, []
+    for b in sorted(batches, key=lambda b: parse_ts(b["ts"])):
+        bt, bid, members = parse_ts(b["ts"]), b["batch"], set(b["members"])
+        outcomes = {n: member_outcomes(ev.get(n, []), bid, bt) for n in b["members"]}
+        row = {"batch": bid, "ts": b["ts"], "members": list(b["members"]), "verdict": b.get("verdict"), "cause": b.get("cause"),
+               "gate_s": b.get("gate_s"), "landed": [n for n, o in outcomes.items() if o == "landed"],
+               "returned": {n: o.split(":", 1)[1] for n, o in outcomes.items() if o.startswith("returned:")},
+               "open": [n for n, o in outcomes.items() if o == "open"], "regate_of": None}
+        earlier = [(ts, reason) for ts, ms, reason in seen_red if ms & members]
+        if earlier:
+            reason = earlier[-1][1]
+            row["regate_of"] = reason
+            d = by.setdefault(reason, {"n": 0, "s": 0.0, "unmeasured": 0})
+            d["n"] += 1
+            if b.get("gate_s") is None:
+                d["unmeasured"] += 1
+            else:
+                d["s"] += b["gate_s"]
+        if b.get("verdict") in ("red", "aborted", "infra"):
+            seen_red.append((bt, members, f"{b['verdict']}:{b.get('cause') or 'unknown'}"))
+        rows.append(row)
+    return rows, {"count": sum(d["n"] for d in by.values()), "gate_s": sum(d["s"] for d in by.values()), "by": by}
+
+
 # ── markdown ───────────────────────────────────────────────────────────────
-def render(a):
+def render_week(a):
+    """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
+    w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
+    members = sum(len(r["members"]) for r in a["batch_rows"])
+    returned_total = sum(w["returned_by_cause"].values())
+    drop = (p["by_verdict"].get("drop") or {}).get("n", 0)
+    out = ["## Week in numbers", "",
+           f"- Batches: {b['count']}; members: {members}" + (f" ({members / b['count']:.1f} per batch)" if b["count"] else "")
+           + "; sizes " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),
+           f"- Changes landed: {a['landed']}; returned: {returned_total} (useful, a defect in the change: {w['useful_returned']}; "
+           f"waste: {returned_total - w['useful_returned']})" + ("; by cause " + ", ".join(f"{k} {v}" for k, v in sorted(w["returned_by_cause"].items(), key=lambda kv: -kv[1])) if returned_total else "")
+           + f"; dropped at planning: {drop}"]
+    if w["share"] is None:
+        out.append("- Gate-minutes: n/a (no batch row carries gate seconds)")
+    else:
+        out.append(f"- Gate-minutes: {human(w['gate_s_total'])} in {w['batches_measured']} measured batches; wasted {human(w['gate_s_wasted'])} "
+                   f"({w['share'] * 100:.0f}%)" + ("; by cause " + ", ".join(f"{k} {human(v)}" for k, v in sorted(w["by"].items(), key=lambda kv: -kv[1])) if w["by"] else ""))
+    c = t["cycle_s"]
+    out.append("- Median READY to landed: " + ("n/a" if not c["n"] else f"{human(c['p50'])} (p90 {human(c['p90'])}, n={c['n']})"))
+    out.append("- Planning: " + ("n/a (not recorded)" if p["s_total"] is None else f"{human(p['s_total'])} over {p['candidates']} candidate probes"))
+    if rg["count"]:
+        out.append(f"- Re-gates: {rg['count']} batches, {human(rg['gate_s'])} of gate time; by reason "
+                   + ", ".join(f"{k} {v['n']} ({human(v['s'])}{', ' + str(v['unmeasured']) + ' unmeasured' if v['unmeasured'] else ''})"
+                               for k, v in sorted(rg["by"].items(), key=lambda kv: -kv[1]["n"])))
+    else:
+        out.append("- Re-gates: 0")
+    return out + [""]
+
+
+def render_batches(a):
+    """Every batch of the window with each member's outcome: the row a reader checks a number against."""
+    out = ["## Batches", "", "| batch | gated (UTC) | members | verdict | gate | landed | returned | no outcome | re-gate of |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    for r in a["batch_rows"]:
+        verdict = (r["verdict"] or "n/a") + (f":{r['cause']}" if r["cause"] else "")
+        out.append(f"| {r['batch']} | {r['ts']} | {' '.join('#' + str(n) for n in r['members'])} | {verdict} | {human(r['gate_s'])} | "
+                   f"{' '.join('#' + str(n) for n in r['landed']) or '-'} | "
+                   f"{' '.join(f'#{n} ({c})' for n, c in r['returned'].items()) or '-'} | "
+                   f"{' '.join('#' + str(n) for n in r['open']) or '-'} | {r['regate_of'] or '-'} |")
+    if not a["batch_rows"]:
+        out.append("| (no batch in the window) | | | | | | | | |")
+    return out + [""]
+
+
+def render(a, week=None, batches=False):
     w, t, b = a["waste"], a["timings"], a["batches"]
-    out = ["# Landing report", "", f"Window: {a['window']['since'] or 'start'} to {a['window']['until'] or 'now'}", "",
-           "## Waste (leads: only a defect in the change is a useful rejection)", ""]
+    title = f"# Landing report: week of {week}" if week else "# Landing report"
+    out = [title, "", f"Window: {a['window']['since'] or 'start'} to {a['window']['until'] or 'now'}", ""]
+    if week:
+        out += render_week(a)
+    if week or batches:
+        out += render_batches(a)
+    out += ["## Waste (leads: only a defect in the change is a useful rejection)", ""]
     if w["share"] is None:
         out.append("- Gate-minutes thrown away: n/a (no batch row carries gate seconds)")
     else:
@@ -291,7 +445,8 @@ def render(a):
             f"- Assembly: " + ("n/a" if not b["assembly_s"]["n"] else f"p50 {human(b['assembly_s']['p50'])}, p90 {human(b['assembly_s']['p90'])}"),
             f"- Publish: " + ("n/a" if not b["publish_s"]["n"] else f"p50 {human(b['publish_s']['p50'])}, p90 {human(b['publish_s']['p90'])}"),
             f"- Re-syncs: {b['resyncs']}; rejected pushes: {b['push_rejected']}",
-            "- Red batches by cause: " + (", ".join(f"{k}: {v}" for k, v in sorted(b["red_by_cause"].items())) or "none")]
+            "- Red batches by cause: " + (", ".join(f"{k}: {v}" for k, v in sorted(b["red_by_cause"].items())) or "none"),
+            "- Re-gates by reason: " + (", ".join(f"{k}: {v['n']} ({human(v['s'])})" for k, v in sorted(a["regates"]["by"].items(), key=lambda kv: -kv[1]["n"])) or "none")]
     if b["stage_s_total"]:
         tot = sum(b["stage_s_total"].values())
         out.append("- Gate stage time: " + ", ".join(f"{k} {human(v)} ({pct(v, tot)})" for k, v in sorted(b["stage_s_total"].items(), key=lambda kv: -kv[1])))
@@ -453,6 +608,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--since")
     p.add_argument("--until")
+    p.add_argument("--week", nargs="?", const="last", help="one calendar week, Monday to Monday: a date inside it, or `last` (the default) for the last completed week")
+    p.add_argument("--batches", action="store_true", help="list every batch of the window with each member's outcome")
     p.add_argument("--bucket", choices=("day", "week"), default="week")
     p.add_argument("--log", default=None)
     p.add_argument("--json", action="store_true")
@@ -469,10 +626,20 @@ def main(argv=None):
     p.add_argument("--all-issues", action="store_true", help="read every tracker issue, not only those that landed in the window")
     p.add_argument("--limit", type=int, default=1000)
     a = p.parse_args(argv)
-    since, until = parse_ts(a.since), parse_ts(a.until)
+    since, until, week = parse_ts(a.since), parse_ts(a.until), None
     if (a.since and not since) or (a.until and not until):
         print(f"landing-report: cannot read --since/--until ({a.since!r}, {a.until!r}); use YYYY-MM-DD or ISO-8601", file=sys.stderr)
         return 2
+    if a.week is not None:
+        if a.since or a.until:
+            print("landing-report: --week names the whole window; drop --since/--until", file=sys.stderr)
+            return 2
+        window = week_window(a.week)
+        if window is None:
+            print(f"landing-report: cannot read --week {a.week!r}; use YYYY-MM-DD (a date inside the week) or `last`", file=sys.stderr)
+            return 2
+        since, until = window
+        week = since.strftime("%Y-%m-%d")
     rows, bad = load_rows(a.log or default_log())
     if bad:
         print(f"landing-report: skipped {bad} unreadable line(s) in {a.log or default_log()}", file=sys.stderr)
@@ -487,7 +654,9 @@ def main(argv=None):
             Path(a.export_rows).write_text("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in h))
         rows = h + rows
     res = analyze(rows, since, until, a.bucket)
-    sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res))
+    if week:
+        res["week"] = week
+    sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res, week=week, batches=a.batches))
     return 0
 
 

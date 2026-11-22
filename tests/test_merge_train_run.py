@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ TIP=$(git rev-parse FETCH_HEAD)
 git fetch -q origin master
 changed=$(git diff --name-only origin/master "$TIP" | sort | tr '\n' ' ')
 printf '%s\n' "$changed" >> "$FX_STATE/gates.log"
+printf '%s|%s\n' "${AUTOCODER_LANDING_BATCH:-}" "${AUTOCODER_LANDING_MEMBERS:-}" >> "$FX_STATE/gate-env.log"
 if [ -s "$FX_STATE/infra.script" ]; then
   first=$(head -1 "$FX_STATE/infra.script"); sed -i 1d "$FX_STATE/infra.script"
   if [ "$first" = infra ]; then echo "::error::check-disk-space: INFRASTRUCTURE -- full disk (/tmp)"; exit 1; fi
@@ -184,6 +186,30 @@ def test_a_green_batch_of_eight_lands_in_one_gate(fx):
     assert all("landed on `master`" in fx.comments(i) for i in issues)
     assert fx.dropped() == []
     assert R.State(fx.rc()).limit() == 9          # grew by one after a green batch
+
+
+def test_the_gate_learns_the_batch_id_and_members_it_gates(fx):
+    # merge-to-integration.sh writes its landing-timings batch row under this id with these members, so a
+    # train's gate is one batch row, not a solo row of the gate issue beside the train's
+    issues = fx.members(3)
+    code, _ = fx.run()
+    assert code == 0
+    envs = (fx.state / "gate-env.log").read_text().splitlines()
+    assert len(envs) == 1
+    batch, members = envs[0].split("|")
+    assert re.fullmatch(r"train-\d{8}T\d{6}Z-1", batch) and members == ",".join(map(str, issues))
+
+
+def test_each_bisection_gate_names_only_the_members_it_gates(fx):
+    # the record keeps the held-out half at `gating`, so the members come from the gated set, never the record
+    issues = [str(i) for i in fx.members(8, bad={7})]
+    code, _ = fx.run()
+    assert code == 0
+    gated = [ln.split("|")[1] for ln in (fx.state / "gate-env.log").read_text().splitlines()]
+    assert gated[0] == ",".join(issues)
+    assert all(set(g.split(",")) < set(issues) for g in gated[1:])          # every later gate is a strict subset
+    assert len(gated) >= 2 and issues[7] not in gated[-1].split(",")         # the last gate is a good set; the culprit is found by elimination
+    assert all(sorted(g.split(","), key=int) == g.split(",") for g in gated)
 
 
 def test_one_bad_member_in_the_last_position_is_found_in_three_further_gates_and_seven_land(fx):

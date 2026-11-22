@@ -101,7 +101,8 @@ Who writes what:
 ### `landing-report.py`
 
 ```
-landing-report.py [--since DATE] [--until DATE] [--bucket day|week] [--log PATH] [--json]
+landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
+                  [--log PATH] [--json]
                   [--history [--repo DIR] [--integration BRANCH] [--merge-events PATH] ...]
 ```
 
@@ -123,3 +124,26 @@ uses only rows older than the first writer row, so nothing is counted twice, and
 `--export-rows PATH` saves what it built. History has no gate seconds except from
 merge-events, so a project whose gates are not in merge-events reads n/a for the waste share
 until the writer has run.
+
+`--week` is the WEEKLY report: one calendar week, Monday 00:00Z to the next Monday (`--week
+2026-11-16` the week holding that date; a bare `--week`, or `--week last`, the last COMPLETED week,
+so a Monday run reports the week that just ended). Before the sections above it prints "Week in
+numbers" (batches and members, changes landed, returned by cause and dropped at planning,
+gate-minutes wasted by cause, the median READY-to-landed, planning time, re-gates by reason) and a
+table of every batch with each member's outcome (`landed`, `returned (<cause>)` or no outcome yet;
+`--batches` adds that table to any window). A RE-GATE is a batch that gates again a change an
+earlier non-green batch of the window already gated (the same members after an infrastructure
+red, the halves of a bisection after a red, an innocent member gated again without the culprit);
+its reason is that earlier batch's `verdict:cause`, so the gate-minutes a red costs beyond its own
+run are visible. It is a ceiling: the culprit's own next gate after a `defect` return (fixed,
+re-READY'd) counts too, because the ledger carries no tip to tell a fixed change from the same one.
+The JSON carries the same as `batch_rows`, `regates` and `week`.
+
+One row per batch id: a train's gate runs `merge-to-integration.sh` with `AUTOCODER_LANDING_BATCH`
+(the train's id) and `AUTOCODER_LANDING_MEMBERS` (its members) in its environment
+(the train runner sets both), so the gate writes its batch row under the train's id with the
+seconds, discarded gate time and re-syncs only it measures, and no change rows for the gate
+issue; the train writes the verdict it judged under the same id and the members' change rows.
+The report merges rows that share an id (later non-null fields win, members and stages are
+unioned), so a gate is counted once. Before this, every train counted twice: a solo batch of the
+gate issue from the gate beside the train's own row.
