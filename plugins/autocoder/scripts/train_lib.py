@@ -777,8 +777,56 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         rows.append({"order": n, "state": state, "issue": issue, "branch": picked["branch"] or "-", "tip": tip,
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
                      "named": (picked.get("named") or "-"),
-                     "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else ""})
+                     "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
+                     "readyAt": ledger_ts(picked.get("createdAt")) or ""})
     return rows
+
+
+def ledger_ts(ts):
+    """A tracker's comment time as the landing ledger writes it (`YYYY-MM-DDTHH:MM:SSZ`, UTC), or None
+    when the backend gave none or something unreadable (ADO and Jira give offsets and fractions)."""
+    if not ts:
+        return None
+    try:
+        d = datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def note_readys(cfg: Config, rows, write):
+    """A `ready` row in the landing ledger the FIRST time the queue sees a READY: once per (issue, READY
+    time), remembered in `ready-seen.tsv` under the state dir, with the comment's own time as the row's
+    `ts`, so the wait after READY and READY-to-landed are measured from when the worker posted, not from
+    when a cycle happened to run. `write(issue, ts)` appends the row. A re-bank is a new comment and a new
+    row; a READY naming no branch is still a READY (the wait starts there). Returns the issues written."""
+    seen_file = cfg.state_dir / "ready-seen.tsv"
+    seen = {tuple(r[:2]) for r in read_rows(seen_file)}
+    done = []
+    for r in rows:
+        ts = r.get("readyAt")
+        if not ts or (str(r["issue"]), ts) in seen:
+            continue
+        write(r["issue"], ts)
+        seen_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(seen_file, "a") as f:
+            f.write(f"{r['issue']}\t{ts}\t{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
+        seen.add((str(r["issue"]), ts))
+        done.append(r["issue"])
+    return done
+
+
+def repo_id(cfg: Config):
+    """repo-id-fns.sh's id of the repository (`<basename>-<8 hex>` over the git common dir), the value
+    every landing-ledger row carries as `repo`; None when the helper is missing."""
+    fns = SCRIPTS / "repo-id-fns.sh"
+    if not fns.is_file():
+        return None
+    r = subprocess.run(["bash", "-c", 'source "$1" && autocoder_repo_id "$2"', "_", str(fns), str(cfg.repo)], capture_output=True, text=True)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
 
 
 def status_line(rows, when=None):

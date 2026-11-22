@@ -32,6 +32,23 @@ def _ints(s):
     return [int(x) for x in (s or "").replace(",", " ").split()]
 
 
+def _ledger_ready(cfg, issue, ts):
+    import os
+    import subprocess
+    writer = T.SCRIPTS / "landing-timings.py"
+    if not writer.is_file():
+        return
+    env = dict(os.environ)
+    rid = T.repo_id(cfg)
+    if rid and not env.get("AUTOCODER_LANDING_REPO"):
+        env["AUTOCODER_LANDING_REPO"] = rid
+    try:
+        subprocess.run([sys.executable, str(writer), "change", "--issue", str(issue), "--event", "ready", "--ts", ts],
+                       capture_output=True, text=True, env=env)
+    except OSError:
+        pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default=".")
@@ -60,6 +77,9 @@ def main(argv=None):
     try:
         if a.cmd == "queue":
             rows = T.plan_queue(cfg, _ints(a.in_flight))
+            # The first sight of a READY is a `ready` row in the landing ledger (the comment's time as its
+            # `ts`), whichever reader sees it first: this listing or a cycle. Best effort, never a failure.
+            T.note_readys(cfg, rows, lambda issue, ts: _ledger_ready(cfg, issue, ts))
             if a.status_line:
                 print(T.status_line(rows))
             for x in rows:

@@ -7,8 +7,8 @@ source abstraction), git history of the integration branch and, when present, th
 merge-events.jsonl, so a project can reproduce its baseline.
 
   landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
-                    [--log PATH] [--json]
-                    [--history [--repo DIR] [--integration BRANCH] [--merge-events PATH]
+                    [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos]
+                    [--history [--integration BRANCH] [--merge-events PATH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
                                [--rules JSON] [--export-rows PATH] [--limit N]]
 
@@ -16,6 +16,15 @@ Sections, in order: waste (gate-minutes thrown away; changes returned by cause; 
 pre-checks per change), then build time (claim to READY), wait after READY, cycle time, batch
 size distribution, capacity against demand, rejected pushes, red batches by cause.
 A figure the rows do not carry prints n/a, never 0.
+
+ONE REPOSITORY PER REPORT. Every row names its repository (`repo`, repo-id-fns.sh's id; null in
+rows written before the field existed). Two repositories on one host share the default file, and a
+test run from a checkout without the private path once left fixture rows beside the real ones, which
+the week's page counted as returns and a red batch. The report keeps the rows of ONE repository: the
+`--repo-id` given, else the id of `--repo DIR` (default: the current directory) when the ledger holds
+rows of it, and says on stderr how many rows of which other ids it ignored. A ledger holding no row of
+the derived id is reported whole, with a notice naming the ids it does hold (a copy read on another
+host, or an older ledger), so a page is never empty by accident; `--all-repos` keeps every row.
 
 WEEK MODE (`--week`): the weekly report. The window is one calendar week, Monday 00:00Z to the next
 Monday: `--week 2026-11-16` is the week holding that date, a bare `--week` (or `--week last`) the
@@ -150,6 +159,37 @@ def load_rows(path):
             except json.JSONDecodeError:
                 bad += 1
     return rows, bad
+
+
+def repo_id_of(directory):
+    """repo-id-fns.sh's id of a directory (`<basename>-<8 hex>` over the git common dir), or None when
+    the helper is missing or the directory does not exist."""
+    fns = Path(__file__).resolve().parent / "repo-id-fns.sh"
+    if not fns.is_file() or not Path(directory).is_dir():
+        return None
+    r = subprocess.run(["bash", "-c", f'source "$1" && autocoder_repo_id "$2"', "_", str(fns), str(directory)],
+                       capture_output=True, text=True)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def one_repo(rows, repo_id, derived, log=lambda m: print(m, file=sys.stderr)):
+    """The rows of one repository: `repo_id` when given (strict: rows of other ids are dropped, however
+    many are left), else `derived` when at least one row names it. Rows naming no repository are kept.
+    Returns the rows kept; says what was ignored, or why nothing was."""
+    ids = Counter(r.get("repo") for r in rows if r.get("repo"))
+    want = repo_id or (derived if derived in ids else None)
+    if not want:
+        if derived and ids:
+            log(f"landing-report: no row names this repository ({derived}); the ledger holds rows of {', '.join(sorted(ids))}: "
+                f"reporting every row (name one with --repo-id ID)")
+        return rows
+    kept = [r for r in rows if r.get("repo") in (None, want)]
+    dropped = Counter(r.get("repo") for r in rows if r.get("repo") not in (None, want))
+    if dropped:
+        log(f"landing-report: ignored {sum(dropped.values())} row(s) of other repositories "
+            f"({', '.join(f'{k} {v}' for k, v in sorted(dropped.items()))}); reporting {want} (--all-repos keeps them)")
+    return kept
 
 
 def default_log():
@@ -614,7 +654,9 @@ def main(argv=None):
     p.add_argument("--log", default=None)
     p.add_argument("--json", action="store_true")
     p.add_argument("--history", action="store_true")
-    p.add_argument("--repo")
+    p.add_argument("--repo", help="the repository directory (default: the current directory): its id selects the rows; --history reads its tracker and git log")
+    p.add_argument("--repo-id", help="keep only the rows of this repository id (repo-id-fns.sh's `<basename>-<8 hex>`)")
+    p.add_argument("--all-repos", action="store_true", help="keep the rows of every repository in the file")
     p.add_argument("--integration", default="master")
     p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
@@ -640,9 +682,14 @@ def main(argv=None):
             return 2
         since, until = window
         week = since.strftime("%Y-%m-%d")
+    if a.repo_id and a.all_repos:
+        print("landing-report: --repo-id and --all-repos contradict each other", file=sys.stderr)
+        return 2
     rows, bad = load_rows(a.log or default_log())
     if bad:
         print(f"landing-report: skipped {bad} unreadable line(s) in {a.log or default_log()}", file=sys.stderr)
+    if not a.all_repos:
+        rows = one_repo(rows, a.repo_id, None if a.repo_id else repo_id_of(a.repo or os.getcwd()))
     if a.history:
         first = min((parse_ts(r["ts"]) for r in rows), default=None)
         try:

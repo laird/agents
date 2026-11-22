@@ -39,9 +39,16 @@ git fetch -q origin master
 changed=$(git diff --name-only origin/master "$TIP" | sort | tr '\n' ' ')
 printf '%s\n' "$changed" >> "$FX_STATE/gates.log"
 printf '%s|%s\n' "${AUTOCODER_LANDING_BATCH:-}" "${AUTOCODER_LANDING_MEMBERS:-}" >> "$FX_STATE/gate-env.log"
+printf '%s\n' "${AUTOCODER_LANDING_REPO:-}" >> "$FX_STATE/gate-repo.log"
 if [ -s "$FX_STATE/infra.script" ]; then
   first=$(head -1 "$FX_STATE/infra.script"); sed -i 1d "$FX_STATE/infra.script"
-  if [ "$first" = infra ]; then echo "::error::check-disk-space: INFRASTRUCTURE -- full disk (/tmp)"; exit 1; fi
+  if [ "$first" = infra ]; then
+    # a stage's refusal: the real gate's EXIT trap records its own gate-end, so this stub does too
+    printf '{"v":1,"ts":"%s","issue":0,"event":"gate-end","detail":{"outcome":"escalated"}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$AUTOCODER_ISSUE_EVENTS"
+    echo "::error::check-disk-space: INFRASTRUCTURE -- full disk (/tmp)"; exit 1
+  fi
+  # killed: the whole gate dies by SIGKILL (an OOM kill of its scope) with no verdict line and no trap
+  if [ "$first" = killed ]; then kill -KILL $$; fi
   # red-base: the plugin's refusal on a red base (the files that failed on the integrated tree fail on master alone too)
   if [ "$first" = red-base ]; then
     echo "❌ Tests fail on the integrated tree 73ed0986 (1 named failure(s))."
@@ -81,6 +88,7 @@ echo "✅ Issue #0 merged into 'master' and verified: tests passed."
 
 TIMINGS_STUB = """#!/bin/bash
 echo "$@" >> "$FX_STATE/timings.log"
+echo "${AUTOCODER_LANDING_REPO:-}" >> "$FX_STATE/timings-repo.log"
 """
 
 
@@ -507,10 +515,52 @@ def test_timing_rows_go_through_the_writer(fx):
     rows = (fx.state / "timings.log").read_text().splitlines()
     assert sum(r.startswith("change --issue") and "--event batched" in r for r in rows) == 3
     assert sum(r.startswith("change --issue") and "--event landed" in r for r in rows) == 3
+    # the verdict row carries the assembly and gate seconds; a green batch gets a second row with the publish
+    # seconds once the close-out is done (the report merges the rows of one id)
     batch = [r for r in rows if r.startswith("batch ")]
-    assert len(batch) == 1 and "--verdict green" in batch[0] and "--members" in batch[0]
+    assert len(batch) == 2 and all("--verdict green" in r and "--members" in r for r in batch)
+    assert "--assembly-s" in batch[0] and "--gate-s" in batch[0] and "--publish-s" in batch[1]
+    assert re.search(r"--assembly-s \d+ --gate-s \d+", batch[0]) and re.search(r"--publish-s \d+ --verdict green$", batch[1])
     plan = [r for r in rows if r.startswith("plan --issue")]
     assert len(plan) == 3 and all("--verdict train --seconds" in r for r in plan)
+    # every READY reached the ledger once, stamped with the comment's own time (the file backend keeps minutes)
+    ready = [r for r in rows if r.startswith("change --issue") and "--event ready" in r]
+    assert len(ready) == 3 and all(re.search(r"--event ready --ts \d{4}-\d\d-\d\dT\d\d:\d\d:00Z$", r) for r in ready)
+    fx.run()   # a second cycle sees the same READYs (closed issues are not listed) and writes no second row
+    rows2 = (fx.state / "timings.log").read_text().splitlines()
+    assert sum(r.startswith("change --issue") and "--event ready" in r for r in rows2) == 3
+
+
+def test_every_ledger_row_and_the_gate_learn_the_repository_id(fx):
+    fx.members(2)
+    fx.run()
+    rid = T.repo_id(fx.rc().cfg)
+    assert rid and re.fullmatch(r"work-[0-9a-f]{8}", rid)
+    assert set((fx.state / "timings-repo.log").read_text().split()) == {rid}
+    assert set((fx.state / "gate-repo.log").read_text().split()) == {rid}
+
+
+def test_a_gate_ended_by_a_signal_is_infra_and_the_train_records_the_gate_end_it_could_not(fx):
+    issues = fx.members(3)
+    (fx.state / "infra.script").write_text("killed\n")
+    fx.run()
+    assert len(fx.gates()) == 2 and fx.gates()[0] == fx.gates()[1]     # re-gated once, the same set
+    assert fx.dropped() == [] and [fx.state_of(i) for i in issues] == ["CLOSED"] * 3
+    rows = [ln.split() for ln in (fx.state / "timings.log").read_text().splitlines()]
+    verdicts = [(r[r.index("--verdict") + 1], r[r.index("--cause") + 1] if "--cause" in r else "") for r in rows if r[:1] == ["batch"] and "--verdict" in r]
+    assert verdicts[0] == ("infra", "infra") and ("green", "") in verdicts
+    events = [json.loads(ln) for ln in Path(os.environ["AUTOCODER_ISSUE_EVENTS"]).read_text().splitlines()]
+    ends = [e for e in events if e["event"] == "gate-end"]
+    assert len(ends) == 1 and ends[0]["issue"] == 0 and ends[0]["detail"]["outcome"] == "aborted"
+    assert ends[0]["branch"].startswith("train/") and "signal" in ends[0]["detail"]["reason"] and ends[0]["detail"]["duration_s"] >= 0
+
+
+def test_a_gate_that_recorded_its_own_end_gets_no_second_gate_end_from_the_train(fx):
+    fx.members(2)
+    (fx.state / "infra.script").write_text("infra\n")
+    fx.run()
+    events = [json.loads(ln) for ln in Path(os.environ["AUTOCODER_ISSUE_EVENTS"]).read_text().splitlines()]
+    assert [e["detail"]["outcome"] for e in events if e["event"] == "gate-end"] == ["escalated"]
 
 
 def test_the_gate_command_defaults_to_the_plugin_gate_contract(fx):

@@ -426,13 +426,42 @@ _merge_repo_id() {
 }
 # Landing timings. This job is a batch of one: its gate seconds, the gate seconds a re-sync
 # threw away, and why a change came back. LANDING_CAUSE is set where the reason is known.
+# Every row names this repository (landing-timings.py's --repo, read from the environment), so the
+# report can keep one repository's rows apart from another's in the shared file.
+[ -n "${AUTOCODER_LANDING_REPO:-}" ] || { AUTOCODER_LANDING_REPO="$(_merge_repo_id)"; export AUTOCODER_LANDING_REPO; }
 GATE_S=0 GATE_RUNS=0 GATE_LAST_S=0 DISCARDED_S=0 LANDING_CAUSE="" LANDING_BATCH=""
+# A gate run in flight: set when a run starts, cleared when it ends. A job that dies mid-run (a
+# signal from a memory-cap watcher, a host shutdown) reaches the EXIT trap with the run unrecorded;
+# the trap counts the seconds spent up to then, so the ledger shows the wasted gate time instead of
+# nothing, and a job that never reached a verdict is never a landing.
+GATE_INFLIGHT_T0=""
+# The stage runner's per-stage seconds (`--stage name=seconds` words) of the last INTEGRATED-tree
+# run, for the batch row: each run gets its own timings file through AUTOCODER_STAGE_TIMINGS_FILE,
+# which a gate command built on the plugin's stage runner honours; a command that writes none
+# leaves the stages empty, as before.
+STAGE_ARGS="" RUN_STAGE_ARGS=""
 _landing_gate_done() {  # <seconds one gate run took>
-  GATE_S=$((GATE_S + $1)) GATE_LAST_S="$1" GATE_RUNS=$((GATE_RUNS + 1))
+  GATE_S=$((GATE_S + $1)) GATE_LAST_S="$1" GATE_RUNS=$((GATE_RUNS + 1)) GATE_INFLIGHT_T0=""
 }
+_stage_timings_begin() {
+  if [ -z "${_STAGE_TIMINGS_CALLER:-}" ]; then
+    _STAGE_TIMINGS_N=$(( ${_STAGE_TIMINGS_N:-0} + 1 ))
+    export AUTOCODER_STAGE_TIMINGS_FILE="${TMP_ROOT}/autocoder-gate-stages-${ISSUE_NUM:-0}-$$-${_STAGE_TIMINGS_N}.json"
+  fi
+  rm -f "$AUTOCODER_STAGE_TIMINGS_FILE" 2>/dev/null || true
+}
+_stage_timings_end() {  # sets RUN_STAGE_ARGS from the run's timings file; nothing when none was written
+  RUN_STAGE_ARGS=""
+  [ -s "${AUTOCODER_STAGE_TIMINGS_FILE:-}" ] || return 0
+  RUN_STAGE_ARGS=$(python3 "${_MTI_DIR}/stage-runner.py" --stage-args "$AUTOCODER_STAGE_TIMINGS_FILE" 2>/dev/null || true)
+  [ -n "${_STAGE_TIMINGS_CALLER:-}" ] || rm -f "$AUTOCODER_STAGE_TIMINGS_FILE" 2>/dev/null || true
+}
+_STAGE_TIMINGS_CALLER="${AUTOCODER_STAGE_TIMINGS_FILE:-}"   # a caller's own file is read, never removed
 _emit_landing_rows() {  # <outcome> <rc>
   local outcome="$1" rc="$2" verdict="" cause="" issue="${ISSUE_NUM:-}"
   [ -n "$issue" ] || return 0
+  # A run still in flight when the job ends is gate time spent: count it, so the batch row says so.
+  [ -z "$GATE_INFLIGHT_T0" ] || _landing_gate_done $((SECONDS - GATE_INFLIGHT_T0))
   case "$outcome" in
     landed|parked) verdict=green ;;
     gate-failed) verdict=red cause="${LANDING_CAUSE:-defect}" ;;
@@ -448,27 +477,43 @@ _emit_landing_rows() {  # <outcome> <rc>
     # came back, so NO change row is written here, gate run or not (a conflict or a refusal before any run
     # used to count the gate issue as a returned change).
     LANDING_BATCH="$AUTOCODER_LANDING_BATCH"
+    # shellcheck disable=SC2086
     [ "$GATE_RUNS" -gt 0 ] && landing_batch --batch "$LANDING_BATCH" --members "${AUTOCODER_LANDING_MEMBERS:-$issue}" --gate-s "$GATE_S" \
       --discarded-gate-s "$DISCARDED_S" --resyncs "$PUSH_RETRIES" --push-rejected "$PUSH_RETRIES" \
-      --verdict "$verdict" ${cause:+--cause "$cause"}
+      --verdict "$verdict" ${cause:+--cause "$cause"} $STAGE_ARGS
     return 0
   fi
   if [ "$GATE_RUNS" -gt 0 ]; then
     LANDING_BATCH="solo-${issue}-${AUTOCODER_MERGE_ATTEMPT:-1}-$(date +%s)"
+    # shellcheck disable=SC2086
     landing_batch --batch "$LANDING_BATCH" --members "$issue" --gate-s "$GATE_S" \
       --discarded-gate-s "$DISCARDED_S" --resyncs "$PUSH_RETRIES" --push-rejected "$PUSH_RETRIES" \
-      --verdict "$verdict" ${cause:+--cause "$cause"}
+      --verdict "$verdict" ${cause:+--cause "$cause"} $STAGE_ARGS
     landing_change "$issue" batched --batch "$LANDING_BATCH"
   fi
   if [ -n "$MERGE_LANDED" ]; then landing_change "$issue" landed ${LANDING_BATCH:+--batch "$LANDING_BATCH"}
   elif [ "$outcome" = conflict ]; then landing_change "$issue" returned --cause conflict
-  elif [ "$rc" -ne 0 ] || [ "$outcome" = gate-failed ] || [ "$outcome" = escalated ]; then
+  elif [ "$rc" -ne 0 ] || [ "$outcome" = gate-failed ] || [ "$outcome" = escalated ] || [ "$outcome" = aborted ] || [ "$outcome" = failed ]; then
+    # (aborted: a killed job exits 0 through its trap; the change still came back, as infra)
     landing_change "$issue" returned --cause "${LANDING_CAUSE:-${cause:-other}}"
   fi
 }
 _emit_attempt_event() {
   local rc="$1" outcome="$MERGE_OUTCOME"
-  [ -n "$outcome" ] || { [ "$rc" -eq 0 ] && outcome=landed || outcome=failed; }
+  # No outcome was set: the job did not end on one of its own paths. A landing is MERGE_LANDED (the
+  # publish proof) and nothing else: bash runs this trap on a fatal signal with `$?` of the command
+  # it interrupted, usually 0, so a gate a memory-cap watcher or a host shutdown killed mid-run used
+  # to be recorded as `landed` with exit 0 and no sha. Such a job is `aborted` (a signal) or `failed`
+  # (a fault that exited non-zero outside the gate's paths); either way the gate reached no verdict,
+  # so its ledger rows say infra, not the change's defect.
+  if [ -z "$outcome" ]; then
+    if [ -n "$MERGE_LANDED" ]; then outcome=landed
+    else
+      [ "$rc" -eq 0 ] && outcome=aborted || outcome=failed
+      MERGE_REASON="${MERGE_REASON:-the job ended without a verdict (exit $rc: a signal, a kill or a fault outside the paths the gate knows); nothing landed}"
+      LANDING_CAUSE="${LANDING_CAUSE:-infra}"
+    fi
+  fi
   _emit_landing_rows "$outcome" "$rc"
   merge_event event=attempt outcome="$outcome" repo="$(_merge_repo_id)" issue="${ISSUE_NUM:-}" \
     branch="${FEATURE:-}" attempt="${AUTOCODER_MERGE_ATTEMPT:-}" escalated="$MERGE_ESCALATED" \
@@ -1158,9 +1203,11 @@ _gate_integrated_tree() {
   : > "$GATE_LAST"
   # A gate already ran on an earlier tree: that run is thrown away by this re-gate.
   DISCARDED_S=$((DISCARDED_S + GATE_LAST_S)) GATE_LAST_S=0
-  _g0=$SECONDS
+  _g0=$SECONDS GATE_INFLIGHT_T0=$SECONDS
+  _stage_timings_begin
   if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" "$GATE_LAST"; then
     _landing_gate_done $((SECONDS - _g0))
+    _stage_timings_end; STAGE_ARGS="$RUN_STAGE_ARGS"
     # The tested tree is the one the command LEFT. A gate command may commit inside its
     # worktree before its test stages (regenerated files, a baseline ratchet); its tests
     # then ran on that tree, and publishing it is right. Keeping the ordering (commits
@@ -1175,6 +1222,7 @@ _gate_integrated_tree() {
   fi
 
   _landing_gate_done $((SECONDS - _g0))
+  _stage_timings_end; STAGE_ARGS="$RUN_STAGE_ARGS"
   # The command may have committed inside its worktree before failing; the tree it left
   # is the one its fail record (and any refusal) is about as much as the one it started on.
   after=$(git rev-parse "HEAD^{tree}")
@@ -1201,11 +1249,13 @@ _gate_integrated_tree() {
     _fail 2 "tests fail on the integrated tree ${tree:0:8} (origin/${INTEGRATION_BRANCH} could not be gated alone)"
   fi
   seed_worktree_deps "$CALLER_DIR" "$BASE_WORKTREE_DIR"
-  _g0=$SECONDS
+  _g0=$SECONDS GATE_INFLIGHT_T0=$SECONDS
   _base_green=0
   base_at=$(_gate_log_size)
+  _stage_timings_begin   # the base run's stages are its own, not the batch's
   _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" && _base_green=1
   _landing_gate_done $((SECONDS - _g0))
+  _stage_timings_end
   _retest_report "$base_at" "$_base_green" "$retest_files"
   if [ "$_base_green" -eq 1 ]; then
     unset AUTOCODER_GATE_RETEST_FILES

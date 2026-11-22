@@ -18,7 +18,8 @@ REPORT = SCRIPTS / "landing-report.py"
 
 
 def write(log, *args):
-    return subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), *args], capture_output=True, text=True)
+    env = {k: v for k, v in os.environ.items() if k != "AUTOCODER_LANDING_REPO"}
+    return subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), *args], capture_output=True, text=True, env=env)
 
 
 def report(*args, env=None):
@@ -38,11 +39,11 @@ def test_writer_rows_and_nulls_not_zeros(tmp_path):
     assert write(log, "batch", "--batch", "b1", "--members", "7,8", "--stage", "build=10", "--stage", "test=20.5",
                  "--verdict", "green").returncode == 0
     ch, ba = rows_of(log)
-    assert ch == {"v": 1, "ts": "2026-11-01T10:00:00Z", "kind": "change", "issue": 7, "event": "ready", "batch": None, "cause": None}
+    assert ch == {"v": 1, "ts": "2026-11-01T10:00:00Z", "kind": "change", "issue": 7, "event": "ready", "batch": None, "cause": None, "repo": None}
     assert ba["gate_s"] == 30.5 and ba["stages"] == {"build": 10.0, "test": 20.5} and ba["members"] == [7, 8]
     assert ba["assembly_s"] is None and ba["discarded_gate_s"] is None and ba["push_rejected"] is None
     assert write(log, "plan", "--issue", "7", "--verdict", "skip", "--seconds", "12.5", "--ts", "2026-11-01T10:05:00Z").returncode == 0
-    assert rows_of(log)[2] == {"v": 1, "ts": "2026-11-01T10:05:00Z", "kind": "plan", "issue": 7, "verdict": "skip", "seconds": 12.5, "batch": None}
+    assert rows_of(log)[2] == {"v": 1, "ts": "2026-11-01T10:05:00Z", "kind": "plan", "issue": 7, "verdict": "skip", "seconds": 12.5, "batch": None, "repo": None}
 
 
 @pytest.mark.parametrize("args,needle", [
@@ -362,3 +363,83 @@ def test_history_failure_is_loud(tmp_path):
     repo.mkdir()
     r = report("--history", "--repo", str(repo), "--log", str(tmp_path / "none.jsonl"), env={"ISSUE_SOURCE": "github", "PATH": "/usr/bin:/bin"})
     assert r.returncode == 3 and "history mode failed" in r.stderr
+
+
+# ── one repository per report ───────────────────────────────────────────────
+def repo_id_of(d):
+    return subprocess.run(["bash", "-c", f'source "{SCRIPTS / "repo-id-fns.sh"}" && autocoder_repo_id "$1"', "_", str(d)],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_writer_names_the_repository_from_the_flag_or_the_environment_and_null_without(tmp_path):
+    log = tmp_path / "l.jsonl"
+    env = {k: v for k, v in os.environ.items() if k != "AUTOCODER_LANDING_REPO"}
+    assert subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), "--repo", "agents-0123abcd", "change", "--issue", "1", "--event", "ready"],
+                          capture_output=True, text=True, env=env).returncode == 0
+    assert subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), "batch", "--batch", "b1", "--members", "1"],
+                          capture_output=True, text=True, env={**env, "AUTOCODER_LANDING_REPO": "worker-9baf1db6"}).returncode == 0
+    assert subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), "plan", "--issue", "1", "--verdict", "train", "--seconds", "1"],
+                          capture_output=True, text=True, env=env).returncode == 0
+    assert [r["repo"] for r in rows_of(log)] == ["agents-0123abcd", "worker-9baf1db6", None]
+    r = subprocess.run([sys.executable, str(WRITER), "--log-path", str(log), "--repo", "not an id", "change", "--issue", "1", "--event", "ready"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 2 and "--repo" in r.stderr and len(rows_of(log)) == 3
+
+
+def two_repo_log(tmp_path, mine):
+    """A week of one repository (`mine`: a green batch of one, landed) beside a test run's fixture rows of
+    another (a red batch of 1 s and a returned change, the shape that once counted on a real week page)
+    and one row written before the field existed."""
+    p = tmp_path / "l.jsonl"
+    rows = [
+        {"v": 1, "ts": "2026-11-18T10:00:00Z", "kind": "change", "issue": 10, "event": "ready", "batch": None, "cause": None, "repo": mine},
+        {"v": 1, "ts": "2026-11-18T11:00:00Z", "kind": "change", "issue": 10, "event": "batched", "batch": "b1", "cause": None, "repo": mine},
+        {"v": 1, "ts": "2026-11-18T11:30:00Z", "kind": "batch", "batch": "b1", "members": [10], "assembly_s": None, "stages": {}, "gate_s": 1800.0,
+         "discarded_gate_s": None, "publish_s": None, "verdict": "green", "cause": None, "resyncs": 0, "push_rejected": 0, "repo": mine},
+        {"v": 1, "ts": "2026-11-18T11:30:00Z", "kind": "change", "issue": 10, "event": "landed", "batch": "b1", "cause": None, "repo": mine},
+        {"v": 1, "ts": "2026-11-18T12:00:00Z", "kind": "change", "issue": 11, "event": "landed", "batch": None, "cause": None},   # before the field
+        {"v": 1, "ts": "2026-11-19T03:28:59Z", "kind": "batch", "batch": "solo-19301-1-1", "members": [19301], "assembly_s": None, "stages": {}, "gate_s": 1.0,
+         "discarded_gate_s": 0.0, "publish_s": None, "verdict": "red", "cause": "red-integration", "resyncs": 0, "push_rejected": 0, "repo": "worker-9baf1db6"},
+        {"v": 1, "ts": "2026-11-19T03:28:59Z", "kind": "change", "issue": 19301, "event": "batched", "batch": "solo-19301-1-1", "cause": None, "repo": "worker-9baf1db6"},
+        {"v": 1, "ts": "2026-11-19T03:29:00Z", "kind": "change", "issue": 19301, "event": "returned", "batch": None, "cause": "other", "repo": "worker-9baf1db6"},
+    ]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return p
+
+
+def test_report_keeps_one_repositorys_rows_and_names_the_rows_it_ignored(tmp_path):
+    log = two_repo_log(tmp_path, "agents-0123abcd")
+    r = report("--log", str(log), "--week", "2026-11-18", "--json", "--repo-id", "agents-0123abcd")
+    assert r.returncode == 0, r.stderr
+    a = json.loads(r.stdout)
+    assert a["batches"]["count"] == 1 and a["landed"] == 2 and a["waste"]["returned_by_cause"] == {}
+    assert a["waste"]["gate_s_wasted"] == 0
+    assert "ignored 3 row(s) of other repositories (worker-9baf1db6 3); reporting agents-0123abcd" in r.stderr
+    # --all-repos keeps them: the fixture batch and its return count again
+    r = report("--log", str(log), "--week", "2026-11-18", "--json", "--all-repos")
+    a = json.loads(r.stdout)
+    assert a["batches"]["count"] == 2 and a["waste"]["returned_by_cause"] == {"other": 1} and "ignored" not in r.stderr
+    # the two flags contradict each other
+    r = report("--log", str(log), "--repo-id", "agents-0123abcd", "--all-repos")
+    assert r.returncode == 2 and "contradict" in r.stderr
+
+
+def test_report_derives_the_repository_from_the_directory_when_the_ledger_holds_its_rows(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    mine = repo_id_of(repo)
+    log = two_repo_log(tmp_path, mine)
+    r = report("--log", str(log), "--json", "--repo", str(repo))
+    assert r.returncode == 0 and json.loads(r.stdout)["batches"]["count"] == 1
+    assert f"ignored 3 row(s) of other repositories (worker-9baf1db6 3); reporting {mine}" in r.stderr
+    # run from inside the repository: the current directory is the default
+    r = subprocess.run([sys.executable, str(REPORT), "--log", str(log), "--json"], capture_output=True, text=True, cwd=repo)
+    assert r.returncode == 0 and json.loads(r.stdout)["batches"]["count"] == 1 and "ignored 3 row(s)" in r.stderr
+    # a ledger holding no row of this repository (a copy read elsewhere) is reported whole, with a notice, never empty
+    other = tmp_path / "other"
+    other.mkdir()
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    r = report("--log", str(log), "--json", "--repo", str(other))
+    assert r.returncode == 0 and json.loads(r.stdout)["batches"]["count"] == 2
+    assert f"no row names this repository ({repo_id_of(other)}); the ledger holds rows of {mine}, worker-9baf1db6: reporting every row" in r.stderr

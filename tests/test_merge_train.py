@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -856,3 +857,39 @@ def test_the_trains_own_comments_are_never_readys(fx):
     fx.commit_on("feature/own2", {"own2.txt": "2\n"})
     fx.comment(n2, f"[swarm] train: dropped at planning: `feature/own2` @ `{T.short_tip(fx.cfg(), 'feature/own2')}`: a reason. Fix, push, post READY")
     assert (fx.queue()[n2]["state"], fx.queue()[n2]["named"]) == ("tip-moved", old2)   # the configured prefix is skipped too
+
+
+# ── READY rows for the landing ledger ───────────────────────────────────────────────────
+def test_ledger_ts_normalises_a_trackers_comment_time_to_the_ledgers_shape():
+    assert T.ledger_ts("2026-11-22T01:02:03Z") == "2026-11-22T01:02:03Z"
+    assert T.ledger_ts("2026-11-22T01:02:03.123+02:00") == "2026-11-21T23:02:03Z"   # an offset and a fraction (ADO, Jira)
+    assert T.ledger_ts("2026-11-22T01:02:00Z") == "2026-11-22T01:02:00Z"
+    assert T.ledger_ts("") is None and T.ledger_ts(None) is None and T.ledger_ts("yesterday") is None
+
+
+def test_a_ready_is_noted_once_per_issue_and_comment_time_with_the_comments_time(fx):
+    cfg = fx.cfg()
+    written = []
+    rows = [{"issue": 5, "readyAt": "2026-11-22T01:00:00Z", "state": "queue"},
+            {"issue": 6, "readyAt": "2026-11-22T01:05:00Z", "state": "no-branch"},   # a READY naming nothing still starts the wait
+            {"issue": 7, "readyAt": "", "state": "queue"}]                             # a backend with no comment time: nothing to stamp
+    assert T.note_readys(cfg, rows, lambda i, ts: written.append((i, ts))) == [5, 6]
+    assert written == [(5, "2026-11-22T01:00:00Z"), (6, "2026-11-22T01:05:00Z")]
+    assert T.note_readys(cfg, rows, lambda i, ts: written.append((i, ts))) == []         # the same READYs: nothing new
+    rows[0]["readyAt"] = "2026-11-22T02:00:00Z"                                          # a re-bank is a new comment
+    assert T.note_readys(cfg, rows, lambda i, ts: written.append((i, ts))) == [5]
+    assert written[-1] == (5, "2026-11-22T02:00:00Z")
+    assert (cfg.state_dir / "ready-seen.tsv").read_text().count("\n") == 3
+
+
+def test_the_queue_rows_carry_the_readys_time_and_the_listing_writes_the_ready_row(fx, tmp_path, monkeypatch):
+    n = fx.ready("one", "feature/none-yet")
+    row = fx.queue()[n]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:00Z", row["readyAt"])
+    ledger = tmp_path / "ledger.jsonl"
+    monkeypatch.setenv("AUTOCODER_LANDING_TIMINGS", str(ledger))
+    monkeypatch.delenv("AUTOCODER_LANDING_REPO", raising=False)
+    sh(sys.executable, str(CLI), "--repo", str(fx.work), "--no-fetch", "queue")
+    sh(sys.executable, str(CLI), "--repo", str(fx.work), "--no-fetch", "queue")
+    rows = [json.loads(ln) for ln in ledger.read_text().splitlines()]
+    assert [(r["kind"], r["issue"], r["event"], r["ts"], r["repo"]) for r in rows] == [("change", n, "ready", row["readyAt"], T.repo_id(fx.cfg()))]

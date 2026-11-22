@@ -340,8 +340,15 @@ class Cycle:
         self.seq = 0
         self.record = {}
         self.landed_total, self.returned_total = [], []
+        self.repo_id = T.repo_id(rc.cfg)   # every ledger row names the repository (landing-timings.py --repo)
 
     # ----- timings (wqb's writer; best effort, never fails the cycle) -----
+    def _ledger_env(self):
+        env = dict(os.environ)
+        if self.repo_id and not env.get("AUTOCODER_LANDING_REPO"):
+            env["AUTOCODER_LANDING_REPO"] = self.repo_id
+        return env
+
     def timing(self, *args):
         cmd = self.rc.timings_cmd
         if not cmd:
@@ -350,7 +357,40 @@ class Cycle:
                 return
             cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(w))}"
         try:
-            subprocess.run(["bash", "-c", f'{cmd} "$@"', "_", *map(str, args)], capture_output=True, text=True)
+            subprocess.run(["bash", "-c", f'{cmd} "$@"', "_", *map(str, args)], capture_output=True, text=True, env=self._ledger_env())
+        except OSError:
+            pass
+
+    def note_readys(self, rows):
+        """The queue's READYs reach the ledger as `ready` rows once each, stamped with the comment's time
+        (train_lib.note_readys), so the report measures the wait after READY from the worker's post."""
+        done = T.note_readys(self.cfg, rows, lambda issue, ts: self.timing("change", "--issue", issue, "--event", "ready", "--ts", ts))
+        if done:
+            self.log(f"{len(done)} READY row(s) recorded in the landing ledger: " + " ".join(f"#{i}" for i in done))
+
+    def gate_end_event(self, since_iso, train, gate_s, reason):
+        """A gate the host killed outright (an OOM kill of its whole scope, SIGKILL) runs no EXIT trap, so
+        its lifecycle ledger has a `gate-start` and no `gate-end`; a gate that ended on a catchable signal
+        wrote its own `aborted`. When no `gate-end` for the gate issue follows this gate's start, the train
+        writes one: `aborted`, with the seconds and the line that decided the verdict. Best effort."""
+        lib = SCRIPTS / "issue-events-lib.sh"
+        if not lib.is_file():
+            return
+        path = Path(os.environ.get("AUTOCODER_ISSUE_EVENTS") or Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "autocoder" / "issue-events.jsonl")
+        issue = int(self.rc.gate_issue) if str(self.rc.gate_issue).isdigit() else None
+        if path.is_file():
+            for ln in reversed(path.read_text(errors="replace").splitlines()):
+                try:
+                    ev = json.loads(ln)
+                except ValueError:
+                    continue
+                if ev.get("event") == "gate-end" and ev.get("issue") == issue and (ev.get("ts") or "") >= since_iso:
+                    return   # the gate recorded its own end
+        env = {**os.environ, "AUTOCODER_WORKER": self.rc.swarm, "AUTOCODER_EVENT_BRANCH": train}
+        try:
+            subprocess.run(["bash", "-c", 'source "$1" && { [ ! -f "$2" ] || source "$2"; } && cd "$3" && issue_event gate-end "$4" outcome=aborted duration_s="$5" reason="$6"',
+                            "_", str(lib), str(SCRIPTS / "repo-id-fns.sh"), str(self.cfg.repo), str(self.rc.gate_issue), str(int(gate_s)), reason],
+                           capture_output=True, text=True, env=env)
         except OSError:
             pass
 
@@ -419,6 +459,7 @@ class Cycle:
             self.log(f"ABORT: git fetch {c.remote} failed in {c.repo} before the plan: {f.stderr.strip()}")
             return 3, []
         rows = T.plan_queue(c)
+        self.note_readys(rows)
         self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
         # sum, beside the gate time in the landing report. The merges run hooks off; the project's
@@ -598,7 +639,7 @@ class Cycle:
         # a solo batch of the gate issue beside the train's own row, which counted every gate twice. The
         # members are the SET BEING GATED, passed in: the record's `gating` status is not reset on the half a
         # bisection holds out, so reading it named siblings the gate never saw.
-        env = {**os.environ, "AUTOCODER_LANDING_BATCH": train.replace("/", "-"),
+        env = {**self._ledger_env(), "AUTOCODER_LANDING_BATCH": train.replace("/", "-"),
                "AUTOCODER_LANDING_MEMBERS": ",".join(str(m["issue"]) for m in members)}
         with open(log_path, "w") as lf:
             r = subprocess.run(["bash", "-c", self.gate_command(train, sha)], stdout=lf, stderr=subprocess.STDOUT, cwd=str(self.cfg.repo), env=env)
@@ -625,6 +666,10 @@ class Cycle:
         if red_base:
             return "red-base", red_base.group(0)[:300]
         first = next((ln for ln in text.splitlines() if ERROR_LINE_RE.match(ln)), "")
+        if not first and (rc_code < 0 or rc_code > 128):
+            # Ended by a signal (a memory-cap kill, a host shutdown) with no verdict line of its own: the
+            # host, not the tree, stopped it; nobody is blamed, bisected or held out.
+            return "infra", f"the gate ended by signal (exit {rc_code}) with no verdict"
         return "red", first[:300] or f"gate exited {rc_code} with no ::error:: line"
 
     def gate_set(self, members, first=False):
@@ -632,6 +677,7 @@ class Cycle:
         (nothing to land: the members are marked landed nothing and dropped at their tips)."""
         infra_left = self.rc.infra_regates
         while True:
+            t_asm = time.time()
             try:
                 train, sha, assembled, _ = self.assemble(members)
             except FaultError as e:
@@ -645,18 +691,28 @@ class Cycle:
             for m in members:
                 self.state.launched(m["issue"], m["tip"][:10])
             batch_id = train.replace("/", "-")
+            assembly_s = int(time.time() - t_asm)
             for m in members:
                 self.timing("change", "--issue", m["issue"], "--event", "batched", "--batch", batch_id)
+            gate_since = now_iso()
             code, log_path, gate_s = self.run_gate(train, sha, f"g{self.gates + 1}", members)
             verdict, line = self.judge(code, log_path, members)
             self.log(f"{train} ({' '.join('#' + m['issue'] for m in members)}): gate {verdict}" + (f" ({line})" if line else ""))
-            self.timing("batch", "--batch", batch_id, "--members", ",".join(m["issue"] for m in members), "--gate-s", gate_s,
+            member_ids = ",".join(m["issue"] for m in members)
+            # The train's batch row: assembly and gate seconds and the verdict it judged. The gate wrote the same
+            # id with the seconds it measured and its stages; the report merges the two. A green batch gets a second
+            # row with the publish seconds once the close-out is done.
+            self.timing("batch", "--batch", batch_id, "--members", member_ids, "--assembly-s", assembly_s, "--gate-s", gate_s,
                         "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted", "red-base": "red"}[verdict],
                         *(["--cause", "infra"] if verdict == "infra" else ["--cause", "other"] if verdict == "empty"
                           else ["--cause", "red-integration"] if verdict == "red-base" else []))
+            if verdict == "infra":
+                self.gate_end_event(gate_since, train, gate_s, line)
             if verdict == "green":
                 landed = T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip()
+                t_pub = time.time()
                 self.publish(train, members, landed, log_path)
+                self.timing("batch", "--batch", batch_id, "--members", member_ids, "--publish-s", int(time.time() - t_pub), "--verdict", "green")
                 return "green"
             T.git(self.cfg.repo, "push", "-q", self.cfg.remote, "--delete", train)
             if verdict == "empty":
