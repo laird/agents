@@ -249,7 +249,10 @@ nothing else pushes the branch.
   flight. A train marks its window with `batch-begin --pid PID` / `batch-end`. The checks are
   `AUTOCODER_FASTLANE_CHECK_CMD` (default `AUTOCODER_DOCS_RESYNC_CMD`); a change that fails them or
   conflicts is marked failed with the reason and costs nothing else. `enqueue` waits and reports the
-  landed commit (`--no-wait` to return at once).
+  landed commit (`--no-wait` to return at once). A train drains the lane when its cycle ends
+  (`merge-train-run.py` calls `drain` right after `batch-end`, whatever the batch's verdict), so an
+  entry that arrived during a batch lands right behind it under the leases, and a `--no-wait` entry
+  waits for no person; an empty lane costs the train nothing (no lease, no fetch).
 - **Record.** Every publish and rejection goes to the landing-timings file. A caller that passes its
   own `--batch` owns the batch row and reads the `publish-result` line (publish seconds, rejected
   pushes) for it; otherwise the publisher writes the row.

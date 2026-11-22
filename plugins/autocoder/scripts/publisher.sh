@@ -341,7 +341,11 @@ cmd_enqueue() {
   done
 }
 
-cmd_drain() { FASTLANE_ONLY=1 cmd_publish; }
+cmd_drain() {
+  # An empty lane is the usual case at a batch end: say so and take no lease, no fetch, no scratch.
+  [ -n "$(_pending_entries)" ] || { echo "fast lane empty: nothing to drain for $BRANCH"; return 0; }
+  FASTLANE_ONLY=1 cmd_publish
+}
 
 cmd_batch_begin() {
   [ -n "$PID" ] || die "batch-begin needs --pid" 2
