@@ -12,7 +12,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # never write
 #     tree names alone is this change's (exit 2); runs that name nothing cannot be compared
 #     (exit 2); nothing is pushed in either case;
 #   - under --own-issue the refusal escalates with a reason that opens with INFRASTRUCTURE;
-#   - AUTOCODER_GATE_INFRA_PATTERNS lets a repo add its own stage names.
+#   - AUTOCODER_GATE_INFRA_PATTERNS lets a repo add its own stage names;
+#   - the REBASE step reads the same patterns: a rebase the host stopped (ENOSPC) is retried
+#     once and then refused as INFRASTRUCTURE (exit 3), never escalated as a conflict.
 #
 # WHY: on 2026-11-16 a disk-space stage at exactly its threshold failed the integrated run
 # and the base run the same way; the script read "fails on both" as "the base is red
@@ -223,6 +225,94 @@ echo "$OUT" | grep -q "INFRASTRUCTURE" && bad "(j) a FAIL line read as an infras
 setup
 OUT=$(run "$RECORD; echo 'FAIL: an earlier test'; echo '      | fatal: write error: No space left on device'; false"); RC=$?
 [ "$RC" -eq 3 ] && ok "(j) a host line behind the excerpt prefix is still a refusal" || bad "(j) rc=$RC: $OUT"
+
+
+# ── (k) the REBASE step: a rebase the host stopped is not a conflict ──────────────────────
+# Git replaying the feature commits can die on the same conditions as a gate stage (ENOSPC on
+# a shared tmpfs under several concurrent gates); it leaves no conflicted file, so the stop
+# used to read as "failed without a conflict": exit 1 and a needs-clarification label for a
+# condition no human decision resolves. A git shim on PATH fails the next N `rebase` calls
+# with git's own ENOSPC line (the real git handles everything else, `--abort` included).
+REAL_GIT=$(command -v git)
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/git" <<SHIM
+#!/bin/bash
+# fail the next N non-abort rebases (N in \$REBASE_FAIL_COUNT_FILE) with \$REBASE_FAIL_MSG_FILE's text
+is_rebase=0; is_abort=0
+for a in "\$@"; do [ "\$a" = rebase ] && is_rebase=1; [ "\$a" = --abort ] && is_abort=1; done
+if [ "\$is_rebase" -eq 1 ] && [ "\$is_abort" -eq 0 ] && [ -s "\${REBASE_FAIL_COUNT_FILE:-/nonexistent}" ]; then
+  n=\$(cat "\$REBASE_FAIL_COUNT_FILE")
+  if [ "\$n" -gt 0 ]; then
+    echo \$((n - 1)) > "\$REBASE_FAIL_COUNT_FILE"
+    if [ -s "\$REBASE_FAIL_MSG_FILE.\$n" ]; then cat "\$REBASE_FAIL_MSG_FILE.\$n" >&2; else cat "\$REBASE_FAIL_MSG_FILE" >&2; fi
+    exit 1
+  fi
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$TMP/bin/git"
+export REBASE_FAIL_COUNT_FILE="$TMP/rebase-fails" REBASE_FAIL_MSG_FILE="$TMP/rebase-msg"
+printf 'error: unable to create file src/generated/big.txt: No space left on device\nerror: could not apply 1a2b3c4... fix\n' > "$REBASE_FAIL_MSG_FILE"
+run_shim() { PATH="$TMP/bin:$PATH" AUTOCODER_REBASE_INFRA_RETRY_DELAY=0 run "$@"; }
+rebase_fails() { echo "$1" > "$REBASE_FAIL_COUNT_FILE"; }
+
+# one host stop: retried once, then the merge proceeds and lands
+setup
+BEFORE=$(origin_master)
+rebase_fails 1
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 0 ] && ok "(k) one host stop of the rebase is retried and the merge lands (exit 0)" || bad "(k) rc=$RC: $OUT"
+[ "$(origin_master)" != "$BEFORE" ] && ok "(k) master moved after the retry" || bad "(k) master did not move: $OUT"
+echo "$OUT" | grep -q "stopped on a host condition, not a conflict (error: unable to create file src/generated/big.txt: No space left on device); retrying once" && ok "(k) the retry names the host line" || bad "(k) no retry line: $OUT"
+echo "$OUT" | grep -q "failed without a conflict\|Conflict rebasing\|INFRASTRUCTURE" && bad "(k) a retried stop was reported as a failure: $OUT" || ok "(k) a retried stop is neither a conflict nor a refusal"
+[ "$(cat "$REBASE_FAIL_COUNT_FILE")" -eq 0 ] && ok "(k) the shim's one failure was consumed" || bad "(k) shim count $(cat "$REBASE_FAIL_COUNT_FILE")"
+
+# two host stops: an INFRASTRUCTURE refusal (exit 3), nothing gated, nothing pushed
+setup
+BEFORE=$(origin_master)
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 3 ] && ok "(l) a second host stop of the rebase refuses as INFRASTRUCTURE (exit 3)" || bad "(l) rc=$RC: $OUT"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(l) nothing pushed" || bad "(l) master moved: $OUT"
+[ "$(gate_runs)" -eq 0 ] && ok "(l) the gate never ran" || bad "(l) gate ran $(gate_runs) time(s): $OUT"
+echo "$OUT" | grep -q "^::error::merge-to-integration: INFRASTRUCTURE -- the rebase onto origin/master did not complete, twice: error: unable to create file src/generated/big.txt: No space left on device" && ok "(l) the marker names the rebase and git's own line" || bad "(l) marker missing or wrong: $OUT"
+echo "$OUT" | grep -q "relaunch the merge once the host is fixed" && ok "(l) the refusal says what to do" || bad "(l) no relaunch advice: $OUT"
+echo "$OUT" | grep -q "failed without a conflict\|Conflict rebasing" && bad "(l) the host stop was reported as a conflict: $OUT" || ok "(l) never reported as a conflict"
+git -C "$TMP/worker" rev-parse --verify -q feature/code >/dev/null && ok "(l) the feature branch is intact" || bad "(l) feature branch gone"
+
+# --own-issue: the comment opens with INFRASTRUCTURE, never a conflict bounce
+setup claimed
+rebase_fails 2
+OUT=$(run_shim "$RECORD" --own-issue --summary-file "$TMP/summary.md"); RC=$?
+[ "$RC" -eq 3 ] && ok "(l) exit 3 under --own-issue" || bad "(l) own-issue rc=$RC: $OUT"
+issue_body | grep -q "INFRASTRUCTURE: rebasing .* onto origin/master stopped on a host condition twice" && issue_body | grep -q "Relaunch the merge once the host is fixed" && ok "(l) the issue's comment opens with INFRASTRUCTURE and says to relaunch" || bad "(l) comment: $(issue_body)"
+issue_body | grep -q "autocoder-bounce\|hit a conflict\|Conflicting files\|failed without a conflict" && bad "(l) the issue was told about a conflict: $(issue_body)" || ok "(l) the issue was never told about a conflict"
+
+# a stop that is neither a conflict nor a host condition keeps its own verdict (exit 1)
+setup
+BEFORE=$(origin_master)
+printf 'error: cannot rebase: You have unstaged changes.\nerror: Please commit or stash them.\n' > "$REBASE_FAIL_MSG_FILE"
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 1 ] && ok "(m) a non-host, non-conflict stop still exits 1" || bad "(m) rc=$RC: $OUT"
+echo "$OUT" | grep -q "failed without a conflict" && ok "(m) ... and says so" || bad "(m) verdict missing: $OUT"
+echo "$OUT" | grep -q "INFRASTRUCTURE\|retrying once" && bad "(m) a non-host stop was retried or refused as infrastructure: $OUT" || ok "(m) never read as a host condition"
+[ "$(cat "$REBASE_FAIL_COUNT_FILE")" -eq 1 ] && ok "(m) not retried (one shim failure consumed)" || bad "(m) shim count $(cat "$REBASE_FAIL_COUNT_FILE")"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(m) nothing pushed" || bad "(m) master moved"
+
+# a host stop whose abort could not clear the rebase: the retry's plain stop is the host's too
+setup
+BEFORE=$(origin_master)
+printf 'error: unable to create file src/generated/big.txt: No space left on device\n' > "$REBASE_FAIL_MSG_FILE.2"
+printf 'fatal: It seems that there is already a rebase-merge directory, and\nI wonder if you are in the middle of another rebase.\n' > "$REBASE_FAIL_MSG_FILE.1"
+rebase_fails 2
+OUT=$(run_shim "$RECORD"); RC=$?
+[ "$RC" -eq 3 ] && ok "(n) a plain stop right after a host stop refuses as INFRASTRUCTURE (exit 3)" || bad "(n) rc=$RC: $OUT"
+echo "$OUT" | grep -q "^::error::merge-to-integration: INFRASTRUCTURE -- the rebase onto origin/master did not complete, twice: error: unable to create file src/generated/big.txt: No space left on device" && ok "(n) the marker names the first stop's host line" || bad "(n) marker: $OUT"
+echo "$OUT" | grep -q "failed without a conflict" && bad "(n) read as a plain non-conflict stop: $OUT" || ok "(n) never read as a plain stop"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(n) nothing pushed" || bad "(n) master moved"
+rm -f "$REBASE_FAIL_MSG_FILE.1" "$REBASE_FAIL_MSG_FILE.2"
+unset REBASE_FAIL_COUNT_FILE REBASE_FAIL_MSG_FILE
 
 TOTAL=$((PASS + FAIL))
 echo "$PASS passed / $FAIL failed / $TOTAL total"

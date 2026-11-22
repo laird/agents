@@ -208,7 +208,12 @@
 #        → issue_escalate --label needs-clarification, comment with the reason and the
 #          last 40 lines of gate output (exit 3's reason opens with INFRASTRUCTURE and
 #          says the branch is intact and the merge is to be relaunched once the host is
-#          fixed; nothing about the change is in doubt)
+#          fixed; nothing about the change is in doubt). The rebase step is read the same
+#          way: a rebase the HOST stopped (ENOSPC writing a file, a memory death, a
+#          missing tool; its output matched against AUTOCODER_GATE_INFRA_PATTERNS) leaves
+#          no conflicted file, so it is not a conflict; it is retried once after
+#          AUTOCODER_REBASE_INFRA_RETRY_DELAY seconds (default 30) and a second such stop
+#          is the same exit 3 refusal, never "failed without a conflict" (exit 1).
 #     internal error AFTER the push succeeded
 #        → issue_park (the work is on the branch; nothing is lost), never an escalation
 #   Every transition converges: an issue that is already closed is left alone (the whole
@@ -315,7 +320,8 @@ GREEN_REF="${AUTOCODER_GREEN_REF:-${INTEGRATION_BRANCH}-green}"
 # Gate output is kept so a failure comment can quote it.
 GATE_LOG=$(mktemp "${TMP_ROOT}/autocoder-merge-${REPO_ID}-${ISSUE_NUM}.gate.XXXXXX")
 GATE_LAST="${GATE_LOG}.integrated"   # output of the latest integrated-tree gate only
-trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST"' EXIT
+REBASE_LOG="${GATE_LOG}.rebase"      # the latest rebase's own output, read for a host condition
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; rm -f "$GATE_LOG" "$GATE_LAST" "$REBASE_LOG"' EXIT
 
 # Per-host cap on concurrent gate runs. Slot k is held by flock on its lock file for as
 # long as the gate runs; a run tries slots 1..N-1 without waiting and blocks on slot N.
@@ -929,7 +935,7 @@ merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
 # A detached checkout of its tip commit carries the identical tree without that restriction.
 WORKTREE_OWNER="${WORKTREE_DIR}.owner"
 echo "$$" > "$WORKTREE_OWNER"
-trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST" "${CONFLICT_ATTEMPT_FILE:-}" "$WORKTREE_OWNER"' EXIT
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST" "$REBASE_LOG" "${CONFLICT_ATTEMPT_FILE:-}" "$WORKTREE_OWNER"' EXIT
 if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; then
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
@@ -1037,16 +1043,58 @@ _GIT_PINNED=(-c core.hooksPath=/dev/null -c rerere.enabled=false -c commit.gpgsi
 # REBASE_RESOLVED=1 when this rebase stopped on a conflict that merge-conflict-fns.sh
 # resolved: the tree then holds edits nobody gated, so a re-sync must re-gate it.
 REBASE_RESOLVED=0
+# A rebase the HOST stopped is not a conflict. Git writing the replayed tree can die on
+# the same conditions the gate stages do (ENOSPC on a shared tmpfs under several
+# concurrent gates, a memory death, a missing tool), and such a stop leaves no conflicted
+# file, so `_escalate_conflict` read it as "failed without a conflict": exit 1, the issue
+# labelled needs-clarification and a comment pointing a human at a conflict that never
+# existed. The rebase's own output is classified with the gate's infrastructure patterns
+# (AUTOCODER_GATE_INFRA_PATTERNS, the report-line filter included); a host stop is retried
+# once after AUTOCODER_REBASE_INFRA_RETRY_DELAY seconds (default 30: a tmpfs under gate
+# load drains in seconds), and a second one refuses as INFRASTRUCTURE (exit 3, the marker a
+# train's classifier reads and re-gates on), the branch intact.
+_rebase_infra_line() {  # the first infrastructure line of the latest rebase's output (rc 0), or nothing (rc 1)
+  local line
+  [ -s "$REBASE_LOG" ] || return 1
+  line=$(sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g' "$REBASE_LOG" | grep -avE "$GATE_REPORT_LINE" | grep -aE "$GATE_INFRA_PATTERNS" | sed -n 1p)
+  [ -n "$line" ] && printf '%s\n' "$line"
+}
+_refuse_rebase_infrastructure() {  # <line>: the output line that decided it
+  local line="$1"
+  echo "::error::merge-to-integration: INFRASTRUCTURE -- the rebase onto origin/${INTEGRATION_BRANCH} did not complete, twice: ${line}"
+  echo "   That is a host condition, not a conflict and not a test failure, so nothing is known about this change. NOT pushing."
+  echo "   Branch '${FEATURE}' is untouched; relaunch the merge once the host is fixed."
+  _fail 3 "INFRASTRUCTURE: rebasing ${FEATURE_SHA:0:8} onto origin/${INTEGRATION_BRANCH} stopped on a host condition twice (${line}). Not a conflict and not a test failure: nothing about this change is in doubt and nothing landed. Relaunch the merge once the host is fixed; branch \`${FEATURE}\` is intact"
+}
 _rebase_onto_integration() {
+  local attempt infra prior="" delay="${AUTOCODER_REBASE_INFRA_RETRY_DELAY:-30}"
   REBASE_RESOLVED=0
-  if ! git "${_GIT_PINNED[@]}" rebase "origin/${INTEGRATION_BRANCH}"; then
+  for attempt in 1 2; do
+    : > "$REBASE_LOG"
+    if git "${_GIT_PINNED[@]}" rebase "origin/${INTEGRATION_BRANCH}" > "$REBASE_LOG" 2>&1; then
+      cat "$REBASE_LOG"
+      break
+    fi
+    cat "$REBASE_LOG"
     if conflict_try_resolve; then
       REBASE_RESOLVED=1
       echo "ℹ️  Conflict resolved in the merge worktree (${CONFLICT_RESOLVED_BY}); the gate decides whether the result is right."
-    else
-      _escalate_conflict
+      break
     fi
-  fi
+    # A non-conflict stop right after a host stop is the host's too (the first stop can
+    # leave a rebase the abort could not clear), so the retry inherits the first line.
+    if [ -z "$(git diff --name-only --diff-filter=U 2>/dev/null)" ] && { infra=$(_rebase_infra_line) || { [ -n "$prior" ] && infra="$prior"; }; }; then
+      git rebase --abort 2>/dev/null || true
+      if [ "$attempt" -eq 1 ]; then
+        prior="$infra"
+        echo "⚠️  Rebasing ${FEATURE} onto origin/${INTEGRATION_BRANCH} stopped on a host condition, not a conflict (${infra}); retrying once in ${delay}s."
+        sleep "$delay"
+        continue
+      fi
+      _refuse_rebase_infrastructure "$infra"
+    fi
+    _escalate_conflict
+  done
   REBASE_ONTO=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
 }
 

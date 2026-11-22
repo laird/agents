@@ -8,6 +8,22 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- `merge-to-integration.sh` no longer reports a rebase the host stopped as a
+  conflict. Git replaying the feature commits onto the integration branch can die
+  on the same conditions a gate stage does (`No space left on device` on a shared
+  tmpfs under several concurrent gates, a memory death, a missing tool), and such
+  a stop leaves no conflicted file, so the script read it as "failed without a
+  conflict": exit 1, the issue labelled `needs-clarification` and a comment
+  sending a person after a conflict that never existed. The rebase's own output is
+  now classified with the gate's infrastructure patterns
+  (`AUTOCODER_GATE_INFRA_PATTERNS`, the report-line filter included): a host stop
+  is retried once after `AUTOCODER_REBASE_INFRA_RETRY_DELAY` seconds (default 30),
+  and a second one refuses as INFRASTRUCTURE (exit 3, the
+  `::error::merge-to-integration: INFRASTRUCTURE -- the rebase onto ... did not
+  complete, twice: <git's line>` marker a train's classifier reads, an issue
+  comment whose reason opens with INFRASTRUCTURE and says to relaunch), the
+  branch intact and nothing gated. A real conflict and a stop that is neither
+  (a dirty tree, a refused commit) keep their verdicts.
 - The merge train's landing proof (`train_lib.landing_proof`) no longer reads a
   member as "not in the integration branch" after a green landing when a
   keyed-row merge driver wrote its rows in another order. The gate rebases a
