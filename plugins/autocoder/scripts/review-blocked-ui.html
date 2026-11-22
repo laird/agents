@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Served by review-blocked-server.py (#311). Self-contained: no external
+     resources, no build step. Issue text is only ever set as text (#313). -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Review blocked issues</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --panel: #ffffff; --text: #1d1d21; --muted: #64646e;
+    --border: #dcdce2; --accent: #2457c5; --accent-text: #ffffff;
+    --ok: #1e7a3c; --bad: #b3261e; --warn: #8a5a00; --rec: #e8f0ff; --sel: #eef3ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --panel: #1f1f24; --text: #e6e6ea; --muted: #a0a0aa;
+      --border: #34343c; --accent: #6d9bff; --accent-text: #0d0d10;
+      --ok: #5cc27e; --bad: #ff8a80; --warn: #e0b04f; --rec: #1d2a44; --sel: #232c3f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+           padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; flex: 1 1 auto; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  textarea, select { font: inherit; color: var(--text); background: var(--bg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+  textarea { width: 100%; min-height: 56px; resize: vertical; }
+  main { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; min-height: calc(100vh - 50px); }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  #list { border-right: 1px solid var(--border); overflow-y: auto; padding: 8px 0; }
+  #list h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+             color: var(--muted); margin: 12px 16px 4px; }
+  .item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 16px; cursor: pointer; }
+  .item:hover { background: var(--sel); }
+  .item.current { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+  .item.decided { opacity: .55; }
+  .item .title { flex: 1 1 auto; overflow-wrap: anywhere; }
+  .badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px;
+           border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .badge.cached { color: var(--ok); border-color: var(--ok); }
+  .badge.stale { color: var(--warn); border-color: var(--warn); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.fail { color: var(--bad); border-color: var(--bad); }
+  #detail { padding: 16px 24px; overflow-y: auto; }
+  #detail h2 { margin: 0 0 4px; font-size: 18px; overflow-wrap: anywhere; }
+  #detail h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
+               color: var(--muted); margin: 20px 0 6px; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel);
+          border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 0;
+          max-height: 320px; overflow-y: auto; font: 13px/1.45 ui-monospace, monospace; }
+  .options { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .option { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .option.recommended { background: var(--rec); border-color: var(--accent); }
+  .option h4 { margin: 0 0 4px; font-size: 14px; overflow-wrap: anywhere; }
+  .option ul { margin: 4px 0; padding-left: 18px; }
+  .option .k { color: var(--muted); font-size: 12px; }
+  .decide { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .decide section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .decide section > div { margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  #status { min-height: 1.4em; }
+  #status.error, .error { color: var(--bad); }
+  .results ul { margin: 4px 0; padding-left: 18px; }
+  .results li { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Review blocked issues</h1>
+  <span id="status" role="status"></span>
+  <button id="select-fresh" type="button">Select all with a current analysis</button>
+  <button id="batch" class="primary" type="button" disabled>Accept recommended (0)</button>
+  <button id="refresh" type="button">Refresh</button>
+</header>
+<main>
+  <nav id="list" aria-label="Blocked issues"></nav>
+  <div id="detail"><p class="muted">Loading…</p></div>
+</main>
+<script>
+"use strict";
+// Must match BLOCKING_LABELS in review-blocked-server.py.
+const BLOCKING_LABELS = ["needs-approval", "needs-design", "needs-clarification",
+                         "needs-feedback", "too-complex", "future", "proposal"];
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+
+const state = { issues: [], current: null, selected: new Set(), decided: new Map() };
+const $ = (id) => document.getElementById(id);
+
+// Build DOM nodes. Strings become text nodes: issue text is never parsed as HTML.
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v === true) node.setAttribute(k, "");
+    else if (v !== false && v != null) node.setAttribute(k, String(v));
+  }
+  for (const c of children.flat()) {
+    if (c == null || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+// The only place the page talks to the server: every call carries the token.
+async function api(method, path, body) {
+  const opts = { method, headers: { "X-Review-Token": TOKEN }, cache: "no-store" };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  let data;
+  try { data = await res.json(); } catch (e) { data = { error: `HTTP ${res.status}` }; }
+  if (res.status === 403) throw new Error("The server refused the token. Open the exact URL the server printed at startup.");
+  return { status: res.status, data };
+}
+
+function setStatus(text, isError) {
+  const s = $("status");
+  s.textContent = text || "";
+  s.className = isError ? "error" : "";
+}
+
+const labelNames = (issue) => (issue.labels || []).map((l) => (l && typeof l === "object") ? l.name : l);
+const blockingLabels = (issue) => BLOCKING_LABELS.filter((l) => labelNames(issue).includes(l));
+const priorityOf = (issue) => labelNames(issue).find((n) => /^P[0-3]$/.test(n)) || null;
+// A batch approval only trusts an analysis written for the issue as it is now.
+const analysisState = (issue) => !issue.analysis ? (issue.stale ? "stale" : "missing")
+                                                 : (issue.stale ? "stale" : "cached");
+const batchable = (issue) => analysisState(issue) === "cached" && !state.decided.has(issue.number);
+const byNumber = (n) => state.issues.find((i) => i.number === n);
+
+function approachFor(analysis, index, note) {
+  const opt = analysis.options[index];
+  let text = `Option ${index + 1} of ${analysis.options.length}: ${opt.title} (effort: ${opt.effort})`;
+  if (index === analysis.recommended) text += " — the recommended option";
+  if (note && note.trim()) text += `\n\n${note.trim()}`;
+  return text;
+}
+
+async function load() {
+  setStatus("Loading blocked issues…");
+  $("refresh").disabled = true;
+  try {
+    const { status, data } = await api("GET", "/api/issues");
+    if (status !== 200) throw new Error(data.error || `HTTP ${status}`);
+    state.issues = Array.isArray(data.issues) ? data.issues : [];
+    state.decided.clear();
+    state.selected.clear();
+    if (!byNumber(state.current)) state.current = state.issues.length ? state.issues[0].number : null;
+    setStatus(`${state.issues.length} blocked issue(s)`);
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    $("refresh").disabled = false;
+    render();
+  }
+}
+
+function render() { renderList(); renderDetail(); renderBatch(); }
+
+function renderBatch() {
+  for (const n of [...state.selected]) if (!batchable(byNumber(n) || {})) state.selected.delete(n);
+  const b = $("batch");
+  b.textContent = `Accept recommended (${state.selected.size})`;
+  b.disabled = state.selected.size === 0;
+  $("select-fresh").disabled = !state.issues.some(batchable);
+}
+
+function renderList() {
+  const list = $("list");
+  list.replaceChildren();
+  if (!state.issues.length) {
+    list.append(el("p", { class: "muted", style: "padding: 0 16px" }, "No blocked issues."));
+    return;
+  }
+  const groups = new Map(BLOCKING_LABELS.map((l) => [l, []]));
+  for (const issue of state.issues) {
+    const first = blockingLabels(issue)[0];
+    if (first) groups.get(first).push(issue);
+  }
+  for (const [label, issues] of groups) {
+    if (!issues.length) continue;
+    list.append(el("h2", {}, `${label} (${issues.length})`));
+    for (const issue of issues) list.append(listItem(issue));
+  }
+}
+
+function listItem(issue) {
+  const decided = state.decided.get(issue.number);
+  const a = analysisState(issue);
+  const box = el("input", {
+    type: "checkbox", "aria-label": `Select #${issue.number} for batch approval`,
+    title: batchable(issue) ? "Include in batch approval" : "Batch approval needs a current analysis",
+    disabled: !batchable(issue), "data-issue": issue.number,
+    onclick: (ev) => ev.stopPropagation(),
+    onchange: (ev) => { ev.target.checked ? state.selected.add(issue.number) : state.selected.delete(issue.number); renderBatch(); },
+  });
+  box.checked = state.selected.has(issue.number);
+  const p = priorityOf(issue);
+  return el("div", {
+      class: "item" + (issue.number === state.current ? " current" : "") + (decided ? " decided" : ""),
+      "data-issue": issue.number,
+      onclick: () => { state.current = issue.number; renderList(); renderDetail(); },
+    },
+    box,
+    el("span", { class: "title" }, `#${issue.number} `, issue.title || "(untitled)"),
+    p ? el("span", { class: "badge" }, p) : null,
+    decided ? el("span", { class: "badge " + (decided.ok ? "ok" : "fail") }, decided.ok ? decided.action : "failed")
+            : el("span", { class: "badge " + a, title: `analysis ${a}` }, a === "cached" ? "analysis" : `analysis ${a}`));
+}
+
+function renderDetail() {
+  const d = $("detail");
+  d.replaceChildren();
+  const issue = byNumber(state.current);
+  if (!issue) {
+    d.append(el("p", { class: "muted" }, state.issues.length ? "Pick an issue." : "Nothing to review."));
+    return;
+  }
+  const labels = blockingLabels(issue);
+  d.append(el("h2", {}, `#${issue.number} `, issue.title || "(untitled)"));
+  d.append(el("div", { class: "muted" }, labelNames(issue).join(", ")));
+
+  const decided = state.decided.get(issue.number);
+  if (decided) d.append(resultBlock([decided], "decision"));
+
+  d.append(el("h3", {}, "Why it is blocked"));
+  d.append(issue.blockReason ? el("pre", { class: "text", id: "block-reason" }, issue.blockReason)
+                             : el("p", { class: "muted" }, "No comment explains the block."));
+  d.append(el("h3", {}, "Issue"));
+  d.append(el("pre", { class: "text", id: "body" }, issue.body || "(no description)"));
+
+  d.append(el("h3", {}, "Analysis"));
+  const a = analysisState(issue);
+  const analysis = issue.analysis;
+  if (a === "stale") d.append(el("p", { class: "error" },
+      "The issue changed after its analysis was prepared." + (analysis ? " Read it with care." : " Prepare it again with /review-blocked --prepare.")));
+  else if (a === "missing") d.append(el("p", { class: "muted" },
+      "No analysis is prepared. Approve with your own approach below, or prepare one with /review-blocked --prepare."));
+
+  const labelSelect = el("select", { id: "approve-label", "aria-label": "Blocking label to remove" },
+                         labels.map((l) => el("option", { value: l }, l)));
+  const note = el("textarea", { id: "approve-note", placeholder: "Optional note added to the approval" });
+  const busy = !!decided && decided.ok;
+
+  if (analysis && Array.isArray(analysis.options)) {
+    d.append(el("p", {}, analysis.summary || ""));
+    d.append(el("div", { class: "options" }, analysis.options.map((opt, i) => {
+      const rec = i === analysis.recommended;
+      return el("div", { class: "option" + (rec ? " recommended" : "") },
+        el("h4", {}, `${i + 1}. `, opt.title || "", rec ? el("span", { class: "badge ok" }, " recommended") : null),
+        el("div", { class: "k" }, "Effort: ", opt.effort || "?"),
+        el("div", { class: "k" }, "Pros"), el("ul", {}, (opt.pros || []).map((x) => el("li", {}, x))),
+        el("div", { class: "k" }, "Cons"), el("ul", {}, (opt.cons || []).map((x) => el("li", {}, x))),
+        el("button", { class: rec ? "primary" : "", type: "button", "data-approve": i, disabled: busy,
+                       onclick: () => submit(issue, { action: "approve", label: labelSelect.value,
+                                                      approach: approachFor(analysis, i, note.value) }) },
+           `Approve option ${i + 1}`));
+    })));
+  }
+
+  d.append(el("h3", {}, "Decide"));
+  const own = el("textarea", { id: "approve-own", placeholder: analysis ? "Or approve your own approach" : "The approach to approve" });
+  const reason = el("textarea", { id: "reject-reason", placeholder: "Why it will not be done" });
+  const question = el("textarea", { id: "ask-question", placeholder: "Your question for the issue" });
+  d.append(el("div", { class: "decide" },
+    el("section", {}, el("strong", {}, "Approve"),
+       el("div", {}, "Remove label ", labelSelect),
+       analysis ? note : null,
+       own,
+       el("div", {}, el("button", { type: "button", id: "approve-own-btn", disabled: busy,
+          onclick: () => {
+            if (!own.value.trim()) return setStatus("Write the approach to approve first.", true);
+            submit(issue, { action: "approve", label: labelSelect.value, approach: own.value.trim() });
+          } }, "Approve this approach"))),
+    el("section", {}, el("strong", {}, "Reject"), reason,
+       el("div", {}, el("button", { type: "button", id: "reject-btn", disabled: busy,
+          onclick: () => {
+            if (!reason.value.trim()) return setStatus("Give a reason to reject.", true);
+            submit(issue, { action: "reject", reason: reason.value.trim() });
+          } }, "Reject"))),
+    el("section", {}, el("strong", {}, "Ask a question"),
+       el("div", { class: "muted" }, "Posts a comment; the issue stays blocked."), question,
+       el("div", {}, el("button", { type: "button", id: "ask-btn",
+          onclick: () => {
+            if (!question.value.trim()) return setStatus("Write the question first.", true);
+            submit(issue, { action: "ask", question: question.value.trim() });
+          } }, "Ask"))),
+    el("section", {}, el("strong", {}, "Skip"),
+       el("div", { class: "muted" }, "Leave it blocked and go to the next issue."),
+       el("div", {}, el("button", { type: "button", id: "skip-btn",
+          onclick: () => submit(issue, { action: "skip" }) }, "Skip")))));
+}
+
+function resultBlock(results, id) {
+  return el("div", { id: id || "results", class: "results" }, el("ul", {}, results.map((r) =>
+    el("li", { class: r.ok ? "" : "error", "data-result": r.issue },
+       el("span", { class: "badge " + (r.ok ? "ok" : "fail") }, r.ok ? "ok" : "failed"),
+       ` #${r.issue} ${r.action}: `, r.detail || ""))));
+}
+
+function nextUndecided(after) {
+  const order = [];
+  const groups = new Map(BLOCKING_LABELS.map((l) => [l, []]));
+  for (const i of state.issues) { const f = blockingLabels(i)[0]; if (f) groups.get(f).push(i); }
+  for (const g of groups.values()) order.push(...g);
+  const start = order.findIndex((i) => i.number === after);
+  const rest = order.slice(start + 1).concat(order.slice(0, start + 1));
+  const next = rest.find((i) => !state.decided.has(i.number));
+  return next ? next.number : after;
+}
+
+async function submit(issue, decision) {
+  const body = Object.assign({ issue: issue.number }, decision);
+  setStatus(`Sending ${decision.action} for #${issue.number}…`);
+  try {
+    const { status, data } = await api("POST", "/api/decision", body);
+    const result = (data && typeof data === "object" && "ok" in data) ? data
+                 : { issue: issue.number, action: decision.action, ok: false, detail: data.error || `HTTP ${status}` };
+    // A question leaves the issue blocked; record it only when it failed.
+    if (decision.action !== "ask" || !result.ok) state.decided.set(issue.number, result);
+    state.selected.delete(issue.number);
+    setStatus(result.ok ? `#${issue.number}: ${decision.action} done` : `#${issue.number}: ${result.detail}`, !result.ok);
+    if (result.ok && decision.action !== "ask") state.current = nextUndecided(issue.number);
+    render();
+    if (result.ok && decision.action === "ask") $("detail").prepend(resultBlock([result]));
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+}
+
+async function batch() {
+  const decisions = [...state.selected].map(byNumber).filter(batchable).map((issue) => ({
+    issue: issue.number, action: "approve", label: blockingLabels(issue)[0],
+    approach: approachFor(issue.analysis, issue.analysis.recommended, ""),
+  }));
+  if (!decisions.length) return;
+  setStatus(`Approving ${decisions.length} issue(s)…`);
+  $("batch").disabled = true;
+  try {
+    const { status, data } = await api("POST", "/api/decision", decisions);
+    if (status !== 200 || !Array.isArray(data.results)) throw new Error(data.error || `HTTP ${status}`);
+    for (const r of data.results) state.decided.set(r.issue, r);
+    state.selected.clear();
+    const failed = data.results.filter((r) => !r.ok).length;
+    setStatus(failed ? `${failed} of ${data.results.length} approval(s) failed` : `${data.results.length} approved`, failed > 0);
+    render();
+    $("detail").prepend(resultBlock(data.results));
+  } catch (e) {
+    setStatus(e.message, true);
+    renderBatch();
+  }
+}
+
+$("refresh").addEventListener("click", load);
+$("batch").addEventListener("click", batch);
+$("select-fresh").addEventListener("click", () => {
+  for (const i of state.issues) if (batchable(i)) state.selected.add(i.number);
+  renderList(); renderBatch();
+});
+
+if (!TOKEN) setStatus("No token in the page address. Open the exact URL the server printed at startup.", true);
+load();
+</script>
+</body>
+</html>
