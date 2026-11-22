@@ -44,7 +44,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # ships, so it is the copy already under test.
 SOURCE_POOLS = ("plugins/autocoder/scripts", "scripts")
 
-SCRIPT_SUFFIXES = (".sh", ".py")
+# ".html" is the review page review-blocked-server.py serves from its own
+# directory (#314): a package that ships the server without it serves only a
+# placeholder. It is found the same way, by name, through the server's mention.
+SCRIPT_SUFFIXES = (".sh", ".py", ".html")
 
 # Per platform: the package directory that receives the scripts, the content
 # directories scanned for script mentions, and the launch entry points.
@@ -161,7 +164,7 @@ PLATFORMS = {
     },
 }
 
-SCRIPT_NAME = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|py))")
+SCRIPT_NAME = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*\.(?:sh|py|html))")
 
 # A script owned by one platform never ships to another. Without this the sets
 # collapse into the union: a Claude command that documents `codex-autocoder.sh`

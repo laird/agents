@@ -66,6 +66,7 @@ agents/
 │       │   ├── full-regression-test.md  # Run comprehensive test suite
 │       │   ├── improve-test-coverage.md # Analyze and improve coverage
 │       │   ├── review-blocked.md        # Review and unblock labeled issues
+│       │   ├── review-blocked-gui.md    # Review blocked issues in a local web page
 │       │   ├── monitor-workers.md       # Monitor workers, dispatch idle agents, deploy
 │       │   └── install.md               # Install all plugin components
 │       ├── agents/

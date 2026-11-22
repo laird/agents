@@ -8,7 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never
 # and a Chromium are installed, an end-to-end run: the server in a private temp
 # repo on the file backend, the page in headless Chromium driven over the
 # DevTools protocol, and each decision (approve, reject, ask, skip, batch)
-# checked on the issues themselves.
+# checked on the issues themselves. A browser that exits or never answers DevTools
+# reports SKIP (#336): an environment gap, not a page bug.
 
 PASS=0; FAIL=0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -142,16 +143,41 @@ DEVPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0));
   about:blank > "$TMP/chrome.log" 2>&1 &
 CHROME_PID=$!
 
+# Wait for DevTools to answer with a page target (#336). A cold Chromium on a CI
+# runner took 14 s to come up, past the driver's old 10 s wait. A browser that
+# exits, or never answers within the wait, is an environment gap, not a page bug:
+# report SKIP with its log, and keep the static checks' verdict.
+BROWSER_WAIT="${AUTOCODER_TEST_BROWSER_WAIT:-90}"
+DEVTOOLS_UP=false
+DEADLINE=$((SECONDS + BROWSER_WAIT))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  kill -0 "$CHROME_PID" 2>/dev/null || break
+  if curl -s --max-time 2 "http://127.0.0.1:$DEVPORT/json/list" 2>/dev/null | jq -e 'any(.[]; .type == "page")' >/dev/null 2>&1; then
+    DEVTOOLS_UP=true; break
+  fi
+  sleep 0.25
+done
+if [ "$DEVTOOLS_UP" != true ]; then
+  if kill -0 "$CHROME_PID" 2>/dev/null; then WHY="DevTools did not answer within ${BROWSER_WAIT}s"; else WHY="it exited"; fi
+  echo "SKIP: end-to-end checks: $CHROME did not start ($WHY). Its log:"
+  tail -5 "$TMP/chrome.log" | sed 's/^/  /'
+  echo ""
+  echo "Results: $PASS passed, $FAIL failed"
+  [ "$FAIL" -eq 0 ]; exit
+fi
+
 # The driver: one page, a step per argument; each step's result is printed as JSON.
 cat > "$TMP/drive.mjs" <<'JS'
 const [devport, url] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let targets;
-for (let i = 0; i < 100; i++) {
-  try { targets = await (await fetch(`http://127.0.0.1:${devport}/json/list`)).json(); break; }
-  catch { await sleep(100); }
+// The shell has already seen a page target; the retry only covers a slow answer.
+let page;
+for (let i = 0; i < 100 && !page; i++) {
+  try { page = (await (await fetch(`http://127.0.0.1:${devport}/json/list`)).json()).find((t) => t.type === "page"); }
+  catch { /* not answering yet */ }
+  if (!page) await sleep(100);
 }
-const page = targets.find((t) => t.type === "page");
+if (!page) throw new Error(`DevTools on port ${devport} lists no page target`);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
 let id = 0; const waiting = new Map();
