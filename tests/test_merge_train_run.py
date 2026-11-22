@@ -822,3 +822,141 @@ def test_a_resumed_close_out_names_no_commit_in_its_landed_row(fx):
     R.Cycle(fx.rc(), log=lambda m: None).reconcile()
     rows = [ln for ln in (fx.state / "timings.log").read_text().splitlines() if "--event landed" in ln]
     assert len(rows) == 1 and "--sha" not in rows[0]
+
+
+# ── the daemon: the train launches itself ───────────────────────────────────────────────
+def _timings(fx):
+    p = fx.state / "timings.log"
+    return p.read_text().splitlines() if p.exists() else []
+
+
+def test_a_cycle_writes_a_launched_row_per_member_when_it_takes_them(fx):
+    issues = fx.members(2)
+    code, _ = fx.run()
+    assert code == 0
+    launched = [ln for ln in _timings(fx) if "--event launched" in ln]
+    assert sorted(int(ln.split("--issue ")[1].split()[0]) for ln in launched) == sorted(issues)
+    assert all(fx.on_master(i) for i in range(2))
+
+
+def test_the_daemon_launches_a_cycle_when_the_queue_has_a_launchable_item(fx):
+    fx.members(2)
+    slept = []
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=7, once=True, sleep=slept.append)
+    assert d.loop() == 0
+    assert all(fx.on_master(i) for i in range(2))
+    assert len(fx.gates()) == 1
+    assert [ln for ln in _timings(fx) if "--event launched" in ln]
+    rec = json.loads((fx.rc().cfg.state_dir / "daemon.json").read_text())
+    assert rec["verdict"] == "cycle:0" and rec["note"] == "planned"
+    assert slept == []   # --once: no sleep after the tick
+
+
+def test_the_daemon_idles_and_sleeps_when_nothing_is_launchable(fx):
+    slept = []
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=7, max_ticks=2, sleep=slept.append)
+    assert d.loop() == 0
+    assert fx.gates() == []
+    assert slept == [7]   # a sleep between the two ticks, none after the last
+    assert json.loads((fx.rc().cfg.state_dir / "daemon.json").read_text())["verdict"] == "idle"
+
+
+def test_the_daemon_waits_while_a_train_holds_the_lease(fx):
+    fx.members(1)
+    held = R.Lease(R.State(fx.rc()))
+    ok, _ = held.acquire()
+    assert ok
+    try:
+        d = R.Daemon(fx.rc(), log=lambda m: None, interval=0, once=True)
+        assert d.tick() == "train-live"
+    finally:
+        held.release()
+    assert fx.gates() == []
+    assert not fx.on_master(0)
+    # the lease released, the next tick launches
+    assert R.Daemon(fx.rc(), log=lambda m: None, interval=0, once=True).tick() == "cycle:0:planned"
+    assert fx.on_master(0)
+
+
+def test_a_pause_file_holds_every_launch_and_says_why_once(fx):
+    fx.members(1)
+    rc = fx.rc()
+    (rc.cfg.state_dir).mkdir(parents=True, exist_ok=True)
+    (rc.cfg.state_dir / "daemon.pause").write_text("gate host is being rebooted\n")
+    said = []
+    d = R.Daemon(rc, log=said.append, interval=0)
+    assert d.tick() == "paused"
+    assert d.tick() == "paused"
+    assert sum("paused (gate host is being rebooted)" in m for m in said) == 1
+    assert fx.gates() == []
+    (rc.cfg.state_dir / "daemon.pause").unlink()
+    assert d.tick() == "cycle:0:planned"
+    assert fx.on_master(0)
+
+
+def test_a_stop_file_ends_the_loop_at_the_next_tick_and_is_consumed(fx):
+    fx.members(1)
+    rc = fx.rc()
+    rc.cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    (rc.cfg.state_dir / "daemon.stop").write_text("x\n")
+    d = R.Daemon(rc, log=lambda m: None, interval=0)
+    assert d.loop() == 0
+    assert not (rc.cfg.state_dir / "daemon.stop").exists()
+    assert fx.gates() == []   # stopped before launching
+
+
+def test_a_second_daemon_is_refused_while_the_lock_is_held(fx):
+    rc = fx.rc()
+    first = R.Daemon(rc, log=lambda m: None)
+    ok, _ = first.acquire()
+    assert ok
+    try:
+        said = []
+        assert R.Daemon(rc, log=said.append, interval=0, once=True).loop() == 1
+        assert any("a daemon already runs" in m and f"pid {os.getpid()}" in m for m in said)
+        assert R.Daemon.holder(R.State(rc)).startswith(f"pid {os.getpid()}")
+    finally:
+        first.release()
+    assert R.Daemon.holder(R.State(rc)) == ""
+
+
+def test_a_cycle_that_planned_nothing_sleeps_before_the_next_tick(fx):
+    """Launchable items the planner skips must not spin the daemon: one preflight per interval."""
+    fx.members(1)
+    slept = []
+
+    class Nothing:
+        record = {}
+
+        def run(self, size=None):
+            return 0, []
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=9, max_ticks=2, sleep=slept.append, cycle=Nothing)
+    assert d.loop() == 0
+    assert slept == [9]
+    assert json.loads((fx.rc().cfg.state_dir / "daemon.json").read_text())["note"] == "nothing planned"
+
+
+def test_the_daemon_tells_the_ready_age_of_what_it_launches(fx):
+    fx.members(1)
+    said = []
+    assert R.Daemon(fx.rc(), log=said.append, interval=0, once=True).loop() == 0
+    assert any(re.search(r"1 launchable item\(s\): #\d+ \(READY \d+m ago\); launching a cycle", m) for m in said)
+
+
+def test_the_cli_runs_a_daemon_tick_and_reports_pauses_stops_and_status(fx):
+    fx.members(1)
+    cwd = fx.work
+    r = sh(sys.executable, str(CLI), "daemon", "--pause", "maintenance", cwd=cwd)
+    assert "paused: maintenance" in r.stdout
+    r = sh(sys.executable, str(CLI), "daemon", "--once", "--interval", "0", cwd=cwd)
+    assert fx.gates() == []
+    r = sh(sys.executable, str(CLI), "daemon", "--status", cwd=cwd)
+    assert "not running" in r.stdout and "paused: maintenance" in r.stdout and "last tick" in r.stdout and "paused" in r.stdout
+    r = sh(sys.executable, str(CLI), "daemon", "--resume", cwd=cwd)
+    assert "resumed" in r.stdout
+    r = sh(sys.executable, str(CLI), "daemon", "--once", "--interval", "0", cwd=cwd)
+    assert r.returncode == 0 and fx.on_master(0)
+    r = sh(sys.executable, str(CLI), "daemon", "--stop", cwd=cwd)
+    assert "stop requested" in r.stdout
+    r = sh(sys.executable, str(CLI), "status", cwd=cwd)
+    assert "daemon: not running; stop requested; last tick" in r.stdout

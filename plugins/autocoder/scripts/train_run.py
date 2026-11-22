@@ -484,6 +484,10 @@ class Cycle:
             return 0, []
         self.record = {"started": now_iso(), "limit": limit, "members": members, "sets": []}
         self.state.save_cycle(self.record)
+        # One `launched` row per member at the moment a cycle took it: the report's READY-to-launch gap
+        # (the time a READY waited for someone, or the daemon, to launch a train) reads from it.
+        for m in members:
+            self.timing("change", "--issue", m["issue"], "--event", "launched")
         self.log(f"planned {len(members)} member(s) (limit {limit}) in {plan_s}s: " + " ".join(f"#{m['issue']}" for m in members))
         first = self.gate_set(members, first=True)
         if first == "red":
@@ -902,3 +906,178 @@ class Cycle:
 
 class FaultError(Exception):
     """The train's own machinery failed (scratch, toolchain, regeneration, push): no member is to blame."""
+
+
+# ── the daemon: launch a cycle whenever the queue has a launchable item ──────────────────
+def lease_free(state: State) -> bool:
+    """True when no train holds the state dir's lease right now (a probe: taken and released at once)."""
+    lease = Lease(state)
+    ok, _ = lease.acquire()
+    if ok:
+        lease.release()
+    return ok
+
+
+class Daemon:
+    """`merge-train-run.py daemon`: the train launches itself. Each tick reads the queue (one fetch, one
+    tracker listing, no scratch tree) and, when it holds a launchable item (`queue` state: not held, not
+    in a live gate's lane, not in a train, not launched at this tip) and no train holds the lease, runs
+    ONE cycle in this process; otherwise it sleeps `interval` seconds. A cycle that planned members is
+    followed by the next tick at once (the items past the batch limit are still waiting); any other
+    tick sleeps first, so a queue whose launchable items the planner skips (a conflict, a fault) costs
+    one preflight per interval, never a hot loop.
+
+    Why: measured on one project, a READY waited 2 to 15 minutes for a person to notice it and type
+    `run`, on every cycle, with the gate idle meanwhile. The holds and the lane are the queue's own
+    rules, so the daemon honours them by reading the queue; a `daemon.pause` file in the state dir
+    (its text is the reason) holds every launch while it exists, and a `daemon.stop` file ends the loop
+    at the next tick (a running cycle finishes first). One daemon per state dir: `daemon.lock`.
+
+    The READY-to-launch gap is a `launched` ledger row per member, written by the cycle (whoever ran
+    it), so the weekly report shows the row whether the launch was a person's or the daemon's.
+    """
+
+    def __init__(self, rc: RunConfig, log=None, interval=60, once=False, max_ticks=0, sleep=time.sleep, cycle=None):
+        self.rc, self.cfg = rc, rc.cfg
+        self.state = State(rc)
+        self.log = log or (lambda m: print(f"{now_iso()} merge-train-daemon: {m}", flush=True))
+        self.interval = max(0, int(interval))
+        self.once, self.max_ticks, self.sleep = once, int(max_ticks or 0), sleep
+        self.cycle = cycle or (lambda: Cycle(self.rc, log=self.log))
+        self.paused_said = ""
+        self.fd = None
+
+    # files in the state dir
+    @property
+    def lock_path(self):
+        return self.state.dir / "daemon.lock"
+
+    @property
+    def stop_path(self):
+        return self.state.dir / "daemon.stop"
+
+    @property
+    def pause_path(self):
+        return self.state.dir / "daemon.pause"
+
+    @property
+    def record_path(self):
+        return self.state.dir / "daemon.json"
+
+    def acquire(self):
+        self.fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            holder = os.pread(self.fd, 200, 0).decode(errors="replace").strip()
+            os.close(self.fd)
+            self.fd = None
+            return False, holder or "unknown holder"
+        os.ftruncate(self.fd, 0)
+        os.pwrite(self.fd, f"pid {os.getpid()} since {now_iso()}\n".encode(), 0)
+        return True, ""
+
+    def release(self):
+        if self.fd is not None:
+            try:
+                os.ftruncate(self.fd, 0)
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self.fd)
+                self.fd = None
+
+    @staticmethod
+    def holder(state: State):
+        """`pid N since TS` when a daemon holds the lock, else ""."""
+        path = state.dir / "daemon.lock"
+        if not path.exists():
+            return ""
+        fd = os.open(path, os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return os.pread(fd, 200, 0).decode(errors="replace").strip() or "unknown holder"
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return ""
+        finally:
+            os.close(fd)
+
+    def _record(self, verdict, launchable, note=""):
+        _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
+
+    def tick(self):
+        """One decision. Returns `stopped`, `paused`, `train-live`, `idle`, `error`, `cycle:<exit code>` or
+        `cycle:<exit code>:planned` (the cycle took members; the next tick follows at once)."""
+        if self.stop_path.exists():
+            self.stop_path.unlink(missing_ok=True)
+            self._record("stopped", [])
+            return "stopped"
+        if self.pause_path.exists():
+            reason = self.pause_path.read_text(errors="replace").strip() or "no reason given"
+            if reason != self.paused_said:
+                self.log(f"paused ({reason}); no train is launched while {self.pause_path} exists")
+                self.paused_said = reason
+            self._record("paused", [], reason)
+            return "paused"
+        self.paused_said = ""
+        if not lease_free(self.state):
+            self._record("train-live", [])
+            return "train-live"
+        c = self.cfg
+        f = T.git(c.repo, "fetch", c.remote, "-q")
+        if f.returncode != 0:
+            self.log(f"git fetch {c.remote} failed in {c.repo}: {f.stderr.strip()}; next tick in {self.interval}s")
+            self._record("error", [], f.stderr.strip()[:200])
+            return "error"
+        try:
+            rows = T.plan_queue(c)
+        except RuntimeError as e:
+            self.log(f"the queue could not be read ({e}); next tick in {self.interval}s")
+            self._record("error", [], str(e)[:200])
+            return "error"
+        launchable = [r for r in rows if r["state"] == "queue"]
+        if not launchable:
+            self._record("idle", [])
+            return "idle"
+        ages = []
+        now = datetime.now(timezone.utc)
+        for r in launchable:
+            ts = r.get("readyAt") or ""
+            try:
+                age = int((now - datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds())
+                ages.append(f"#{r['issue']} (READY {age // 60}m ago)")
+            except ValueError:
+                ages.append(f"#{r['issue']}")
+        self.log(f"{len(launchable)} launchable item(s): {' '.join(ages)}; launching a cycle")
+        self._record("launching", [int(r["issue"]) for r in launchable])
+        cyc = self.cycle()
+        code, _ = cyc.run()
+        planned = bool(getattr(cyc, "record", None))
+        self._record(f"cycle:{code}", [int(r["issue"]) for r in launchable], "planned" if planned else "nothing planned")
+        return f"cycle:{code}" + (":planned" if planned else "")
+
+    def loop(self):
+        """Exit 0 when stopped (the stop file, --once, --max-ticks), 1 when another daemon holds the lock."""
+        ok, holder = self.acquire()
+        if not ok:
+            self.log(f"a daemon already runs for this state dir ({holder}); one per state dir")
+            return 1
+        self.log(f"daemon started (pid {os.getpid()}, interval {self.interval}s, state {self.state.dir}); "
+                 f"stop: touch {self.stop_path}; pause: write a reason to {self.pause_path}")
+        ticks = 0
+        try:
+            while True:
+                v = self.tick()
+                ticks += 1
+                if v == "stopped":
+                    self.log("stop file seen; the daemon ends")
+                    return 0
+                if self.once or (self.max_ticks and ticks >= self.max_ticks):
+                    return 0
+                if v.endswith(":planned"):
+                    continue   # more may be waiting behind the batch limit
+                self.sleep(self.interval)
+        finally:
+            self.release()
+
