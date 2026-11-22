@@ -515,6 +515,8 @@ def test_timing_rows_go_through_the_writer(fx):
     rows = (fx.state / "timings.log").read_text().splitlines()
     assert sum(r.startswith("change --issue") and "--event batched" in r for r in rows) == 3
     assert sum(r.startswith("change --issue") and "--event landed" in r for r in rows) == 3
+    # every landed row names the landed commit (the landing report looks the CI verdict up by it)
+    assert all(re.search(r"--event landed --batch \S+ --sha [0-9a-f]{40}$", r) for r in rows if "--event landed" in r)
     # the verdict row carries the assembly and gate seconds; a green batch gets a second row with the publish
     # seconds once the close-out is done (the report merges the rows of one id)
     batch = [r for r in rows if r.startswith("batch ")]

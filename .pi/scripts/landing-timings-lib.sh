@@ -2,7 +2,7 @@
 # landing-timings-lib.sh — best-effort writer for landing-timings.jsonl (see landing-timings.py).
 # Source this file; do not execute it. A project's gate, queue or train script sources it and calls
 #
-#   landing_change <issue> <event> [--batch ID] [--cause CAUSE] [--ts ISO]
+#   landing_change <issue> <event> [--batch ID] [--cause CAUSE] [--sha HEX] [--ts ISO]
 #   landing_batch  --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECS ...]
 #                  [--gate-s N] [--discarded-gate-s N] [--publish-s N] [--verdict V] [--cause C]
 #                  [--resyncs N] [--push-rejected N]

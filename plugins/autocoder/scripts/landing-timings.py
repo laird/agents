@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append landing-timing rows: one per CHANGE event, one per BATCH, one per PLAN candidate.
+"""Append landing-timing rows: one per CHANGE event, one per BATCH, one per PLAN candidate, one CI VERDICT per landed commit.
 
 Generic by design: ids and numbers only, no project, branch or person names. A
 project's gate, queue or train script calls this at the moments it owns; the
@@ -9,11 +9,14 @@ landing-report.py reads the file.
 File: ${AUTOCODER_LANDING_TIMINGS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/landing-timings.jsonl}
 Writes are one O_APPEND write() of one line, so concurrent writers do not interleave.
 
-  change --issue N --event EVENT [--batch ID] [--cause CAUSE] [--ts ISO]
+  change --issue N --event EVENT [--batch ID] [--cause CAUSE] [--sha HEX] [--ts ISO]
       EVENT: claimed | ready | batched | landed | returned | rebase | precheck
       CAUSE (returned only): defect | conflict | stale-base | red-integration |
              infra | docs-resync | other
       Only `defect` is a useful rejection: the change itself was wrong.
+      SHA (landed only): the commit now on the integration branch that carries the change; every
+      member of one batch names the same one. The report looks the integration branch's CI verdict
+      up by it; a landed row without it has no CI figure (n/a, never 0).
   batch --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECONDS ...]
         [--gate-s N] [--discarded-gate-s N] [--publish-s N]
         [--verdict green|red|aborted|infra] [--cause CAUSE] [--resyncs N]
@@ -26,6 +29,14 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
       report shows it beside the gate time, because a probe that regenerates the tree per
       candidate is a fixed cost of every cycle nobody sees in a gate log.
 
+  ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--workflows A,B] [--ts ISO]
+      the integration branch's CI verdict on one landed commit, written ONCE by landing-report.py
+      when it first finds a terminal verdict (success, failure, cancelled, timed_out ...): run id,
+      conclusion, the time CI reached it, and the workflows it judged (null = every run on the
+      branch), so a verdict cached under one selection is never read under another. A pending run
+      or an unreachable forge is never cached, so `unknown` and `pending` are refused: the report
+      asks again next time.
+
   Every kind takes --repo ID (default $AUTOCODER_LANDING_REPO, else null): the repository the row
   belongs to (repo-id-fns.sh's autocoder_repo_id). Two repositories on one host share the default
   file, and a test run from a checkout that forgot the private path writes fixture rows beside the
@@ -36,6 +47,8 @@ Row schema (v1), also the contract for a project's own writers:
   {"v":1,"ts","kind":"batch","batch":ID,"members":[N..],"assembly_s","stages":{name:s},
    "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected","repo":ID|null}
   {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null,"repo":ID|null}
+  {"v":1,"ts","kind":"ci-verdict","sha":HEX,"run_id":ID|null,"conclusion":C,"verdict_ts":ISO,"workflows":[..]|null,"repo":ID|null}
+  A `landed` change row carries "sha":HEX when its writer knew the landed commit (absent before).
 Absent numbers are null, never 0: the report tells "not measured" from "took no time". `repo` is
 null only for a writer that named none (rows written before the field existed).
 """
@@ -54,6 +67,9 @@ CHANGE_EVENTS = ("claimed", "ready", "batched", "landed", "returned", "rebase", 
 CAUSES = ("defect", "conflict", "stale-base", "red-integration", "infra", "docs-resync", "other")
 VERDICTS = ("green", "red", "aborted", "infra")
 PLAN_VERDICTS = ("train", "skip", "drop", "fault")
+UNCACHEABLE_CONCLUSIONS = ("unknown", "pending", "none", "")   # not a verdict: the report asks the forge again
+SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+CONCLUSION_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 ISO_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
@@ -107,13 +123,37 @@ def _num(value, what: str):
     return value
 
 
+def _sha(value: str) -> str:
+    if not SHA_RE.match(value):
+        raise ValueError(f"--sha {value!r} is not a commit (7 to 64 lower-case hex digits)")
+    return value
+
+
 def change_row(a: argparse.Namespace) -> dict:
     if a.event == "returned" and a.cause is None:
         raise ValueError("a returned change needs --cause")
     if a.cause is not None and a.event != "returned":
         raise ValueError("--cause belongs to --event returned")
-    return {"v": 1, "ts": _ts(a.ts), "kind": "change", "issue": a.issue, "event": a.event,
-            "batch": _id(a.batch, "--batch") if a.batch else None, "cause": a.cause}
+    if a.sha is not None and a.event != "landed":
+        raise ValueError("--sha belongs to --event landed")
+    row = {"v": 1, "ts": _ts(a.ts), "kind": "change", "issue": a.issue, "event": a.event,
+           "batch": _id(a.batch, "--batch") if a.batch else None, "cause": a.cause}
+    if a.sha is not None:
+        row["sha"] = _sha(a.sha)
+    return row
+
+
+def ci_verdict_row(a: argparse.Namespace) -> dict:
+    if a.conclusion in UNCACHEABLE_CONCLUSIONS:
+        raise ValueError(f"--conclusion {a.conclusion!r} is not a verdict and is never cached (the report asks the forge again)")
+    if not CONCLUSION_RE.match(a.conclusion):
+        raise ValueError(f"--conclusion {a.conclusion!r} is not a conclusion token (lower-case letters, digits, _ -)")
+    if not ISO_RE.match(a.verdict_ts):
+        raise ValueError(f"--verdict-ts {a.verdict_ts!r} is not YYYY-MM-DDTHH:MM:SSZ")
+    workflows = sorted({w.strip() for w in (a.workflows or "").split(",") if w.strip()}) or None
+    return {"v": 1, "ts": _ts(a.ts), "kind": "ci-verdict", "sha": _sha(a.sha),
+            "run_id": _id(a.run_id, "--run-id") if a.run_id else None, "conclusion": a.conclusion, "verdict_ts": a.verdict_ts,
+            "workflows": workflows}
 
 
 def batch_row(a: argparse.Namespace) -> dict:
@@ -154,6 +194,7 @@ def parser() -> argparse.ArgumentParser:
     c.add_argument("--event", required=True, choices=CHANGE_EVENTS)
     c.add_argument("--batch")
     c.add_argument("--cause", choices=CAUSES)
+    c.add_argument("--sha", help="landed only: the commit on the integration branch that carries the change")
     c.add_argument("--ts")
     b = sub.add_parser("batch")
     b.add_argument("--batch", required=True)
@@ -174,13 +215,20 @@ def parser() -> argparse.ArgumentParser:
     pl.add_argument("--seconds", type=float, required=True)
     pl.add_argument("--batch")
     pl.add_argument("--ts")
+    cv = sub.add_parser("ci-verdict")
+    cv.add_argument("--sha", required=True)
+    cv.add_argument("--conclusion", required=True, help="the terminal conclusion CI reached (success, failure, cancelled, timed_out ...)")
+    cv.add_argument("--verdict-ts", required=True, help="when CI reached it (ISO, UTC)")
+    cv.add_argument("--run-id")
+    cv.add_argument("--workflows", help="the workflow names the verdict was judged over, comma-separated (default: every run on the branch)")
+    cv.add_argument("--ts")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     a = parser().parse_args(argv)
     try:
-        row = {"change": change_row, "batch": batch_row, "plan": plan_row}[a.kind](a)
+        row = {"change": change_row, "batch": batch_row, "plan": plan_row, "ci-verdict": ci_verdict_row}[a.kind](a)
         row["repo"] = _repo(a)
     except ValueError as e:
         print(f"landing-timings: {e}", file=sys.stderr)

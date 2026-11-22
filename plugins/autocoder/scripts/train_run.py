@@ -878,7 +878,7 @@ class Cycle:
         kept = bool(cur) and not T.landing_proof(c, cur, landed)
         self._set_status([m], "landed", landed[:10])
         self.landed_total.append(m["issue"])
-        self.timing("change", "--issue", m["issue"], "--event", "landed", "--batch", train.replace("/", "-"))
+        self.timing("change", "--issue", m["issue"], "--event", "landed", "--batch", train.replace("/", "-"), "--sha", landed)
         self.say.say(m["issue"], f"landed on `{c.integration}` as `{landed[:10]}` in **{train}** (the tested tree is the published tree; landing proof: {proof}). Branch `{m['branch']}` @ `{m['tip'][:10]}` merged"
                      + (f"; origin/{m['branch']} kept at `{cur[:10]}` (moved after the plan, not in the train: re-bank it if it adds work)." if kept else " and deleted."), close=True)
         try:

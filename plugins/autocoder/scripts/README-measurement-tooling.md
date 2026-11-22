@@ -66,20 +66,28 @@ only (no project, branch or person names), so any project can adopt it.
 
 ### `landing-timings.py` (writer) and `landing-timings-lib.sh`
 
-Appends one JSON row per CHANGE event and one per BATCH to
+Appends one JSON row per CHANGE event, one per BATCH, one per PLAN candidate and one CI VERDICT per landed commit to
 `${AUTOCODER_LANDING_TIMINGS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/landing-timings.jsonl}`
 (one O_APPEND write per line, mode 0600, no rotation). Bad input exits 2 and writes nothing; the
 shell wrappers drop errors so recording never fails or delays a gate.
 
 ```
 landing-timings.py [--repo ID] change --issue N --event claimed|ready|batched|landed|returned|rebase|precheck
-                          [--batch ID] [--cause CAUSE] [--ts ISO]
+                          [--batch ID] [--cause CAUSE] [--sha HEX] [--ts ISO]
 landing-timings.py [--repo ID] batch  --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECS ...]
                           [--gate-s N] [--discarded-gate-s N] [--publish-s N]
                           [--verdict green|red|aborted|infra] [--cause CAUSE]
                           [--resyncs N] [--push-rejected N] [--ts ISO]
 landing-timings.py [--repo ID] plan   --issue N --verdict train|skip|drop|fault --seconds S [--batch ID] [--ts ISO]
+landing-timings.py [--repo ID] ci-verdict --sha HEX --conclusion C --verdict-ts ISO [--run-id ID] [--workflows A,B] [--ts ISO]
 ```
+
+A `landed` row carries `--sha`, the commit now on the integration branch that carries the change
+(every member of one batch names the same one); the gate and the train both pass it. A
+`ci-verdict` row is the integration branch's CI verdict on one landed commit (run id, conclusion,
+the time CI reached it, the workflows it was judged over), written ONCE by `landing-report.py` when
+it first finds a terminal verdict; `unknown` and `pending` are refused, so a forge that could not
+answer is asked again next time.
 
 Every row names its repository: `--repo ID`, default `$AUTOCODER_LANDING_REPO`, which the gate, the
 train, `enqueue.sh` and the publisher export from `repo-id-fns.sh`'s `autocoder_repo_id` (the
@@ -98,7 +106,7 @@ Who writes what:
 - `merge-to-integration.sh` writes, for its single-change gate, one batch of one (gate seconds,
   discarded seconds, re-syncs, rejected pushes, verdict and cause, and the stage runner's per-stage
   seconds when the gate command wrote them to the `AUTOCODER_STAGE_TIMINGS_FILE` the gate hands each
-  run) plus `batched`, and `landed` or `returned`. `LANDING_CAUSE` is `defect` for a gate that fails
+  run) plus `batched`, and `landed` (with the landed commit) or `returned`. `LANDING_CAUSE` is `defect` for a gate that fails
   only with the change, `red-integration` when the integration branch fails alone too, `conflict`
   for a conflict, `infra` for a job that ended without a verdict. A LANDING IS THE PUBLISH PROOF: a
   job killed mid-run (a memory-cap watcher's signal, a host shutdown) reaches the gate's EXIT trap
@@ -124,7 +132,8 @@ Who writes what:
 ```
 landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
                   [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos]
-                  [--history [--integration BRANCH] [--merge-events PATH] ...]
+                  [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
+                  [--history [--merge-events PATH] ...]
 ```
 
 One repository per report. The rows kept are the `--repo-id` given (strict), else those of the id
@@ -173,6 +182,36 @@ its reason is that earlier batch's `verdict:cause`, so the gate-minutes a red co
 run are visible. It is a ceiling: the culprit's own next gate after a `defect` return (fixed,
 re-READY'd) counts too, because the ledger carries no tip to tell a fixed change from the same one.
 The JSON carries the same as `batch_rows`, `regates` and `week`.
+
+**Landing to CI verdict.** The gate is not the last word on a landing: the integration branch's own
+CI runs on the landed commit, and when its runners queue, a red surfaces hours after the landing
+while further landings stack on top of it. The report groups the window's `landed` rows by commit
+(one LANDING per commit, however many members) and, for each landing with no cached verdict, asks
+the forge ONCE for that commit's runs on `--integration` (`gh api .../actions/runs?head_sha=` in
+`--repo DIR`; for another forge or a test, `--ci-runs-cmd` or `$AUTOCODER_CI_RUNS_CMD`, a command
+given SHA and BRANCH that prints the commit's runs as a JSON array of `{id, name, status,
+conclusion, updated_at, head_branch}`). The verdict is the first failing run's conclusion at the
+time that run completed (when the red surfaced), `success` at the time the last judged run
+completed, `cancelled` when every run was superseded or skipped; a run still queued or running is
+`pending`, a commit with no run is `no run`, a forge that cannot be reached is `unknown`, never 0.
+A terminal verdict is cached as a `ci-verdict` row, so each commit is asked about once; `pending`
+and `unknown` are asked again next time. `--ci off` asks nothing and reads the cache. WHICH
+WORKFLOWS ARE THE VERDICT is the repository's to say: `ciWorkflows` in its `.autocoder.json` (a
+list of workflow names; `--ci-workflow NAME` overrides it) names the judging ones, because a
+repository whose every push also runs a workflow that is red for reasons of its own (a release
+validation with no credentials) or a code scan that takes an hour would otherwise read every
+landing as red at once, or pending for an hour; the cached row records the selection it was judged
+over and is not reused under another. Unset, every run on the branch counts. A landed row written
+before the writer named its commit is resolved at read time from the integration branch's
+first-parent log (a commit whose subject names the batch id, else the issue's own `#N` commit
+within a day before the row), never rewritten. "Week in numbers" and the Time section carry
+`Landing to CI verdict: p50, p75 (n of the landed commits; pending, no run, unknown, rows with no
+commit); judged red by CI: N landings; landings that happened before those verdicts: M` (M counts
+the other landings between a red landing and its verdict, the ones that stacked on a red nobody
+had seen yet); every row of the Batches table ends with its landing's verdict and lag (`failure
+2.5h (2 landed before the verdict)`). A ledger written before the landed rows carried their commit
+reads `n/a (no landed row carries its commit)`; the JSON is `ci` (`lag_s` with `p75`, `red`,
+`red_count`, `landings_before_red_verdicts`, each None, not 0, when the forge went unanswered).
 
 One row per batch id: a train's gate runs `merge-to-integration.sh` with `AUTOCODER_LANDING_BATCH`
 (the train's id) and `AUTOCODER_LANDING_MEMBERS` (its members) in its environment

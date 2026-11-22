@@ -59,6 +59,11 @@ run_one 7101 src_ok.txt true
 eq "landing: green batch, batched, landed" "batch green - gate
 change batched -
 change landed -" "$(rows 7101)"
+# The landed row names the commit now on the integration branch (the CI verdict is looked up by it).
+eq "landing: the landed row carries the landed commit" "$(git rev-parse HEAD)" "$(python3 -c 'import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["kind"] == "change" and r["issue"] == 7101 and r["event"] == "landed": print(r.get("sha"))' "$AUTOCODER_LANDING_TIMINGS")"
 
 run_one 7102 bad.txt 'test ! -f bad.txt'
 eq "change-only failure: red batch, defect, returned" "batch red defect gate
