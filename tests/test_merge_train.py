@@ -349,6 +349,127 @@ def test_landing_proof_names_how_master_carries_a_branch(fx):
     assert T.landing_proof(cfg, "origin/feature/squashed") == ""          # its work is no longer all there
 
 
+KEYED_ROW_DRIVER = """\
+import sys
+# A keyed-row merge driver over a file of one row per line (%O %A %B): the result is the rows either side
+# kept, in the order such drivers derive from the three sides (the ancestor's surviving rows first, then
+# the rows new in ours, then the rows new in theirs). The order therefore depends on WHICH commit was the
+# ancestor of the merge, which is the point of the tests that use it.
+o, a, b = [open(p).read().splitlines() for p in sys.argv[1:4]]
+removed = (set(o) - set(a)) | (set(o) - set(b))
+keep = [r for r in o if r not in removed] + [r for r in a if r not in o] + [r for r in b if r not in o]
+seen, out = set(), []
+for r in keep:
+    if r not in seen:
+        seen.add(r)
+        out.append(r)
+open(sys.argv[2], "w").write("".join(r + "\\n" for r in out))
+"""
+
+
+def install_keyed_driver(fx, tmp_path):
+    drv = tmp_path / "keyed-rows.py"
+    drv.write_text(KEYED_ROW_DRIVER)
+    sh("git", "config", "merge.keyed.driver", f"{sys.executable} {drv} %O %A %B", cwd=fx.work)
+    attrs = (fx.work / ".gitattributes").read_text()
+    fx.commit_on("master", {".gitattributes": attrs + "rows.txt merge=keyed\n", "rows.txt": "p\na\ne\n"}, "a keyed-row file")
+
+
+def land_through_a_moved_rebase(fx, member, omit_row=None):
+    """The landing path of 2026-11-22 (train 245): the member is merged onto the integration branch through the
+    keyed driver (ancestor: the member's base), the branch moves under the gate by a commit that reorders the
+    same rows, and the gate squashes the train's net change and REBASES it onto the moved branch, where the
+    driver runs with ANOTHER ancestor (the train's base) and so writes the same rows in another order. Returns
+    the landed sha. `omit_row` drops that row from the squash, a landing that lost the member's work."""
+    master1 = sh("git", "rev-parse", "origin/master", cwd=fx.work).stdout.strip()
+    sh("git", "checkout", "-q", "-B", "train", "origin/master", cwd=fx.work)
+    sh("git", "-c", "core.hooksPath=/dev/null", "merge", "-q", "--no-ff", "-m", "train", f"origin/{member}", cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", "train", cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    fx.commit_on("master", {"rows.txt": "p\na\ne\n"}, "a hotfix moved p back")        # moved under the gate
+    sh("git", "checkout", "-q", "--detach", "origin/train", cwd=fx.work)
+    sh("git", "reset", "-q", "--soft", master1, cwd=fx.work)
+    if omit_row:
+        rows = (fx.work / "rows.txt").read_text().splitlines()
+        (fx.work / "rows.txt").write_text("".join(r + "\n" for r in rows if r != omit_row))
+        sh("git", "add", "rows.txt", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", "train (squashed: the branch contained merge commits)", cwd=fx.work)
+    sh("git", "-c", "core.hooksPath=/dev/null", "rebase", "-q", "origin/master", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "HEAD:master", cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    return sh("git", "rev-parse", "origin/master", cwd=fx.work).stdout.strip()
+
+
+def test_landing_proof_rows_when_the_gates_rebase_wrote_a_keyed_files_rows_in_another_order(fx, tmp_path):
+    """Two branches each add to one keyed-row file; the first lands, the second's landing is rebased over it and
+    the driver, run with another ancestor, moves a row it did not add. The second's rows are all there, so it
+    is landed (`rows`), the queue reads it as on-master, and a re-merge byte for byte would have refused it."""
+    install_keyed_driver(fx, tmp_path)
+    fx.branch("feature/member", {"rows.txt": "p\na\ne\nr\n"})                       # adds r, cut from p a e
+    fx.commit_on("master", {"rows.txt": "a\ne\np\n"}, "an earlier landing moved p")   # the first branch's landing
+    landed = land_through_a_moved_rebase(fx, "feature/member")
+    assert sh("git", "show", f"{landed}:rows.txt", cwd=fx.work).stdout == "a\ne\np\nr\n"   # the member's row, another order
+    cfg = fx.cfg()
+    re_merged = sh("git", "merge-tree", "--write-tree", "--no-messages", landed, "origin/feature/member", cwd=fx.work).stdout.split()[0]
+    assert sh("git", "show", f"{re_merged}:rows.txt", cwd=fx.work).stdout == "p\na\ne\nr\n"   # the driver's own order
+    assert T.landing_proof(cfg, "origin/feature/member", landed) == "rows"
+    assert T.landing_proof(cfg, "origin/feature/member") == "rows"
+    n = fx.ready("member", "feature/member")
+    q = fx.queue()
+    assert q[n]["state"] == "on-master" and "landing proof: rows" in q[n]["note"]
+
+
+def test_landing_proof_refuses_a_reordered_keyed_file_that_lost_the_members_row(fx, tmp_path):
+    install_keyed_driver(fx, tmp_path)
+    fx.branch("feature/member", {"rows.txt": "p\na\ne\nr\n"})
+    fx.commit_on("master", {"rows.txt": "a\ne\np\n"}, "an earlier landing moved p")
+    landed = land_through_a_moved_rebase(fx, "feature/member", omit_row="r")
+    assert "r" not in sh("git", "show", f"{landed}:rows.txt", cwd=fx.work).stdout.split()   # the member's row never landed
+    assert T.landing_proof(fx.cfg(), "origin/feature/member", landed) == ""
+    n = fx.ready("member", "feature/member")
+    assert fx.queue()[n]["state"] == "queue"   # still launchable: its work is not there
+
+
+def test_landing_proof_refuses_a_reorder_in_a_file_no_driver_owns(fx):
+    """A line-order difference in a plain file is the branch's own change (git's own drivers never reorder), so
+    a branch that sorts a file and has not landed is not landed."""
+    fx.commit_on("master", {"list.txt": "b\na\nc\n"}, "a plain list")
+    fx.branch("feature/sorted", {"list.txt": "a\nb\nc\n"})
+    assert T.landing_proof(fx.cfg(), "origin/feature/sorted") == ""
+    fx.commit_on("master", {"list.txt": "c\nb\na\n"}, "reversed on master")
+    assert T.landing_proof(fx.cfg(), "origin/feature/sorted") == ""
+
+
+REGEN_DRIVER = "#!/bin/sh\nprintf 'regenerated by the probe, from whatever tree the repository has checked out\\n' > \"$2\"\n"
+
+
+def test_landing_proof_keeps_the_landed_copy_of_a_regenerated_path(tmp_path):
+    """A member changes a source and the file generated from it; the landing regenerates that file on the
+    assembled tree, so the landed copy is neither side's. The proof must not run the generator (here: a driver
+    that writes a third copy) and must judge the member by its source: with `regeneratedMergeDrivers` naming
+    the driver the member is `content`; without it the probe's regenerated copy differs and the member reads
+    as absent."""
+    fx = Fixture(tmp_path, {"regeneratedMergeDrivers": ["regen"]})
+    drv = tmp_path / "regen.sh"
+    drv.write_text(REGEN_DRIVER)
+    drv.chmod(0o755)
+    sh("git", "config", "merge.regen.driver", f"{drv} %O %A %B", cwd=fx.work)
+    attrs = (fx.work / ".gitattributes").read_text()
+    fx.commit_on("master", {".gitattributes": attrs + "gen.txt merge=regen\n", "src.txt": "1\n", "gen.txt": "generated from 1\n"}, "a generated file")
+    fx.branch("feature/member", {"src.txt": "2\n"})
+    fx.commit_on("feature/member", {"gen.txt": "generated from 2 (the branch's copy)\n"}, "regenerate on the branch")
+    fx.land("feature/member", how="squash")   # two commits squashed: no commit is patch-equivalent, the content decides
+    fx.commit_on("master", {"gen.txt": "generated from 2 (regenerated at the landing)\n"}, "regenerate on the assembled tree")
+    cfg = fx.cfg()
+    assert cfg.regenerated_drivers == ["regen"]
+    assert T.landing_proof(cfg, "origin/feature/member") == "content"
+    import dataclasses
+    assert T.landing_proof(dataclasses.replace(cfg, regenerated_drivers=[]), "origin/feature/member") == ""
+    fx.commit_on("master", {"src.txt": "1\n"}, "the source change is reverted")
+    assert T.landing_proof(cfg, "origin/feature/member") == ""   # the source is what proves it
+
+
 def test_queue_reads_a_squash_landed_branch_as_on_master_and_a_planner_never_retakes_it(fx):
     fx.branch("feature/sq", {"s.txt": "1\n"})
     fx.commit_on("feature/sq", {"t.txt": "1\n"})

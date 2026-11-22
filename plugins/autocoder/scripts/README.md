@@ -750,7 +750,7 @@ plan it although its tip was already launched. `#` lines and blank lines are ign
 of a live gate names its branch as a whole word, as a stack's upper slice or a lane launched under another
 number does; the note names the gate and its log, and the status line names the issues; a dead pid is a
 finished or killed gate, not a gate), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
-again), `stale` (`staleDays`), `on-master` (the integration branch carries the branch's work: an ancestor, a patch-equivalent rebase, or the content itself after a squash landing; the note names the proof),
+again), `stale` (`staleDays`), `on-master` (the integration branch carries the branch's work: an ancestor, a patch-equivalent rebase, the content itself after a squash landing, or the same rows in another order inside files a merge driver owns; the note names the proof),
 `regenerate-only` (every path the branch changes is merged by one of `regeneratedMergeDrivers`, so a landing
 would regenerate them from their sources and land nothing; the note names the files and `regeneratedAdvice`; a
 cycle tells the issue once per tip and never plans it: measured on one project, three bot PRs that edited only a

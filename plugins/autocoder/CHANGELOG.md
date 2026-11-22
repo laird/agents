@@ -6,6 +6,22 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- The merge train's landing proof (`train_lib.landing_proof`) no longer reads a
+  member as "not in the integration branch" after a green landing when a
+  keyed-row merge driver wrote its rows in another order. The gate rebases a
+  train onto an integration branch that moved under it, and a keyed-row driver
+  derives its row order from the merge's ancestor, so the landed file and the
+  proof's re-merge agree on the rows and not on their order; the proof's
+  byte-for-byte tree comparison then judged the member absent, left its issue
+  in the queue at the same tip and recorded the landing as nothing. A new
+  verdict, `rows`, accepts a re-merge that changes only the order of lines
+  inside files a merge driver owns (a reorder in a file no driver owns is still
+  the branch's own change). The probe also keeps the landed copy of every path a
+  `regeneratedMergeDrivers` driver merges, so a project's generator never runs
+  from whatever tree the repository has checked out.
+
 ### Added
 
 - `/review-blocked-gui` (#308): review blocked issues in a local web page. It
