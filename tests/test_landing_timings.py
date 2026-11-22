@@ -980,3 +980,41 @@ def test_week_and_full_reports_show_the_worker_idle_gap_from_the_lifecycle_ledge
 def test_the_idle_gap_is_na_and_says_why_without_a_lifecycle_ledger(log, tmp_path):
     out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(tmp_path / "none.jsonl")).stdout
     assert "- Worker idle gap (READY of the previous issue to the next claim): n/a (no worker claimed a second issue after a READY in the window; no `claimed` lifecycle event read: pass --issue-events)" in out
+
+
+# ── worker idle after a verdict (a PASS pre-check verdict to the issue's READY; the watchdog's nudges, #7134) ──
+def vev(ts, worker, issue, event, **detail):
+    return {**ev(ts, worker, issue, event=event), "detail": detail}
+
+
+def test_week_and_full_reports_show_the_idle_time_after_a_verdict_and_the_watchdog_nudges(tmp_path):
+    log = tmp_path / "l.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in [
+        ch(1, "2026-11-02T10:00:00Z", "ready"),                     # w1 banked #1 at 10:00
+        ch(2, "2026-11-02T11:00:00Z", "ready"),                     # w2 banked #2 at 11:00
+        ch(4, "2026-11-02T09:00:00Z", "ready"),                     # #4's READY is BEFORE its verdict: a later run, not measured
+        ba("b1", "2026-11-02T13:00:00Z", [1, 2, 4], 1800, "green")]))
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(e) + "\n" for e in [
+        vev("2026-11-02T09:41:00Z", "w1", 1, "verdict", verdict="PASS", at="2026-11-02T09:40:00Z", log="/tmp/prebank-1.log"),   # 20 min to the READY
+        vev("2026-11-02T10:51:00Z", "w2", 2, "verdict", verdict="PASS", at="2026-11-02T10:50:00Z", log="/tmp/prebank-2.log"),   # 10 min
+        vev("2026-11-02T11:01:00Z", "w3", 3, "verdict", verdict="PASS", at="2026-11-02T11:00:00Z", log="/tmp/prebank-3.log"),   # no READY after it: not measured
+        vev("2026-11-02T09:31:00Z", "w4", 4, "verdict", verdict="PASS", at="2026-11-02T09:30:00Z", log="/tmp/prebank-4.log"),   # READY before it only: not measured
+        vev("2026-11-02T09:00:00Z", "w1", 1, "verdict", verdict="FAIL", at="2026-11-02T08:59:00Z", log="/tmp/prebank-1a.log"),  # a FAIL: not a wait to bank
+        vev("2026-11-02T09:55:00Z", "w1", 1, "verdict-nudged", verdict="PASS", idle_s="900", log="/tmp/prebank-1.log"),         # the watchdog nudged w1 after 15 min
+        vev("2026-11-02T12:00:00Z", "w5", 9, "verdict-nudged", verdict="DEAD", idle_s="1800", log="/tmp/prebank-9.log"),        # a dead run nudged
+        vev("2026-11-09T12:00:00Z", "w5", 9, "verdict-nudged", verdict="DEAD", idle_s="99", log="/tmp/prebank-9.log"),          # next week: outside the window
+        ev("2026-11-02T08:00:00Z", "w1", 1),                                                                                 # a claim: another kind, ignored here
+    ]) + "garbage\n")
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--issue-events", str(events), "--all-repos").stdout)
+    assert a["verdicts"]["after_verdict_s"] == {"n": 2, "p50": 900.0, "p90": 1140.0, "max": 1200.0}   # 600 and 1200 seconds
+    assert a["verdicts"]["workers"] == 2 and a["verdicts"]["verdicts"] == 5
+    assert a["verdicts"]["nudges"] == 2 and a["verdicts"]["nudged_idle_s_total"] == 2700.0
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(events), "--all-repos").stdout
+    assert "- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): p50 15.0m, p90 19.0m, max 20.0m (n=2 over 2 workers); nudged 2 (45.0m idle when nudged)" in out
+    assert out.count("Worker idle after a verdict (a PASS pre-check verdict to the issue's READY)") == 2   # the week summary and the Time section
+
+
+def test_the_idle_time_after_a_verdict_is_na_and_says_why_without_verdict_events(log, tmp_path):
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(tmp_path / "none.jsonl")).stdout
+    assert "- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): n/a (no PASS verdict lifecycle event followed by a READY in the window; the verdict watchdog records them: pass --issue-events)" in out

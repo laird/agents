@@ -390,6 +390,31 @@ Corroborate an `idle`/`done` reading with one screen read
 shows a completed final message (e.g. "✻ Cogitated for Xm") with no spinner and no
 `Running…` tool call. Then apply the same git/working-label corroboration as tmux.
 
+### Step 3b: Nudge workers that never saw a pre-check verdict (#7134)
+
+A worker that backgrounds its pre-check (the project's prebank, a scratch typecheck) and
+waits for the shell's completion notification can miss it: the run finished, or died
+mid-stage, and the pane sits at an idle prompt until someone reads the log. Measured on one
+fleet: four such cases in a day, about four worker-hours idle, more than any gate
+inefficiency left. Every tick, after the idle check, run the verdict watchdog:
+
+```bash
+worker-verdict-watchdog --once          # the rows, and the nudges it sent
+worker-verdict-watchdog --dry-run       # the same decisions, nothing sent
+```
+
+It reads the pre-check logs the project names (`workers.verdictLogs` globs in
+`.autocoder.json`, with `verdictPattern`, `verdictStaleMin` and `verdictDeadMin`), keeps the
+newest log per issue, and for a verdict older than the stale window that no READY, comment or
+commit followed, on a pane `worker-idle` calls IDLE, sends the pane the verdict and the log
+path (once per log per cooldown). A log with no verdict that no process holds open past the
+dead window is nudged to re-run in the foreground. A busy pane, a running log, a fresh or
+seen verdict, a missing worktree or pane, or a cooldown is a row that says why, never a send.
+It records `verdict` and `verdict-nudged` lifecycle events, which the weekly report counts
+as worker minutes idle after a verdict. A nudge is a defect report against the worker rule
+(fix.md Step 3: a verdict is polled from the foreground, never awaited through a
+notification); a worker nudged twice in a week gets that rule restated in its next dispatch.
+
 ### Step 4: Detect Stale "working" Labels
 
 **First, sweep provably abandoned claims (no waiting, no question).** A claim whose
