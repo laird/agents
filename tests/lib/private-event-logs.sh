@@ -28,6 +28,11 @@ if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ] 
 fi
 export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS AUTOCODER_LANDING_TIMINGS
 
+# The merge job's context variables (#327), for a test run on its own from inside a
+# merge job's environment; run-shell-suite.sh drops them for the whole suite too.
+# shellcheck source=merge-job-env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/merge-job-env.sh"
+
 # Merge/sentinel state (#272). autocoder_tmp_root now defaults to the persistent
 # ~/.local/state/autocoder/merge, so a test that launches or polls a merge
 # without choosing AUTOCODER_TMP would leave fake .pid/.exit/.run.sh files there

@@ -36,6 +36,11 @@ cd "$ROOT" || exit 1
 # Drop every variable git itself clears when it changes repository.
 unset $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE
 
+# The merge job's own context (#327): a retest file list, ledger repo and train ids,
+# a stage-timings file. Tests that run a merge or the gate cache must not inherit them.
+# shellcheck source=lib/merge-job-env.sh
+source "$ROOT/tests/lib/merge-job-env.sh"
+
 # Tests drive merge jobs, which append merge-attempt events (#184). Keep those out
 # of the real ~/.local/state/autocoder/merge-events.jsonl.
 SUITE_EVENTS=$(mktemp "${TMPDIR:-/tmp}/suite-merge-events.XXXXXX")

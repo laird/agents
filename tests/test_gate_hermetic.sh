@@ -87,6 +87,11 @@ OUT=$(PATH="$TMP/nopy:$PATH" gate_cache_run . 'true' 2>&1) && bad "gate ran with
   || ok "an unreadable gate config fails the gate instead of falling back to host mode"
 ls "$AUTOCODER_GATE_CACHE_DIR" | grep -q envunreadable && bad "a record was written for an unreadable config" \
   || ok "nothing is recorded while the config is unreadable"
+# #327: a red-base retest adds a suffix after -envunreadable; it must still record nothing.
+OUT=$(AUTOCODER_GATE_RETEST_FILES="t_a.test" PATH="$TMP/nopy:$PATH" gate_cache_run . 'true' 2>&1) \
+  && bad "a retest gate ran with an unreadable config: $OUT" || ok "a retest gate with an unreadable config fails too"
+ls "$AUTOCODER_GATE_CACHE_DIR" | grep -q envunreadable && bad "a retest record was written for an unreadable config" \
+  || ok "nothing is recorded for a retest while the config is unreadable"
 git rm -q .autocoder.json; git commit -qm "host again 2"
 
 # A reader whose repository lacks the tree (another clone sharing the cache) still finds

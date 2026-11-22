@@ -68,6 +68,7 @@ _gate_cache_key() {  # <tree> "<cmd>" [git-dir]
   env_cfg=$(gate_env_config "$tree" "${3:-.}"); rc=$?
   if [ "$rc" -eq 3 ]; then
     suffix="-envunreadable"     # never written, never read: no verdict while the mode is unknown
+                                # (matched as *-envunreadable*: a retest suffix may follow, #327)
   elif [ "$rc" -eq 0 ] && [ -n "$env_cfg" ]; then
     suffix="-h$(printf '%s' "$env_cfg" | sha1sum | cut -c1-12)"
   fi
@@ -84,7 +85,7 @@ gate_cache_get() {  # <tree> "<cmd>" [git-dir]
   # elsewhere the mode cannot be read and the host key is used.
   local f
   f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2" "${3:-.}")"
-  case "$f" in *-envunreadable) return 1 ;; esac
+  case "$f" in *-envunreadable*) return 1 ;; esac
   [ -f "$f" ] || return 1
   awk 'NR==1 {print $1}' "$f"
 }
@@ -97,7 +98,7 @@ gate_cache_put() {  # <tree> "<cmd>" pass|fail [git-dir] [gate-log]
   dir="$(gate_cache_dir)"
   mkdir -p "$dir" || return 1
   f="$dir/$(_gate_cache_key "$tree" "$cmd" "${4:-.}")"
-  case "$f" in *-envunreadable) return 1 ;; esac
+  case "$f" in *-envunreadable*) return 1 ;; esac
   tmp=$(mktemp "$dir/.tmp.XXXXXX") || return 1
   {
     printf '%s %s\n' "$verdict" "$(date +%s)"
@@ -165,7 +166,7 @@ _gate_cache_escape() { sed 's/\\/\\\\/g' | awk 'NR > 1 { printf "\\n" } { printf
 _gate_cache_failed_tests() {  # <tree> "<cmd>" [git-dir]
   local f
   f="$(gate_cache_dir)/$(_gate_cache_key "$1" "$2" "${3:-.}")"
-  case "$f" in *-envunreadable) return 0 ;; esac
+  case "$f" in *-envunreadable*) return 0 ;; esac
   [ -f "$f" ] || return 0
   sed -n 's/^test //p' "$f"
 }
