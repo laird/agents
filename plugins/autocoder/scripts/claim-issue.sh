@@ -402,5 +402,17 @@ echo "✅ Created branch: feature/issue-${ISSUE_NUM}"
 echo "✅ Added 'working' label (concurrency lock)"
 echo "✅ Posted GitHub comment"
 echo ""
+# The claim is recorded for this worktree the way the fix-loop gate records its own
+# (worker-state-fns.sh), so a fix loop started later in this worktree, after a `/clear`,
+# a restart or a reboot, resumes this issue instead of claiming over it and stranding
+# the branch. A record the gate already wrote for this issue (its claim time settles
+# races) is kept as it is.
+if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
+  # shellcheck source=worker-state-fns.sh
+  source "${SCRIPT_DIR}/worker-state-fns.sh"
+  if ! { _f=$(worker_state_file 2>/dev/null) && [ -f "$_f" ] && [ "$(cut -d' ' -f1 "$_f")" = "$ISSUE_NUM" ]; }; then
+    worker_state_set "$ISSUE_NUM" "" "$(_worker_session_id)"
+  fi
+fi
 CLAIM_STATUS="claimed"
 exit 0

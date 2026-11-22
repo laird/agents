@@ -18,7 +18,7 @@ Repeats `/monitor-workers` on a recurring interval. Each iteration:
 
 1. Checks worker status via the swarm's multiplexer (tmux, cmux, or herdr)
 2. Detects stale `working` labels
-3. Dispatches idle workers to unblocked issues
+3. Dispatches idle workers to unblocked issues (a worker that runs its own fix loop, the default, takes a dispatch file written by `dispatch-issue.sh`, an override of its next pick, never a typed `/clear` + `/fix <N>` that would end its loop)
 4. Runs `/review-blocked` when all remaining issues are blocked
 
 `/monitor-workers` detects the hosting multiplexer itself from live state

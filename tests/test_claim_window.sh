@@ -188,6 +188,9 @@ issue_json "2026-11-17T02:26:57Z|$START" "2026-11-17T02:27:53Z|ðŸŽ¨ **Blocked â€
 jq '.labels += [{"name": "working"}]' "$FAKE_JSON" > "$FAKE_JSON.t" && mv "$FAKE_JSON.t" "$FAKE_JSON"
 run_claim
 assert_eq "e2e handoff with an ended start comment: claimed" 0 "$RC"
+# That claim recorded #144 for this worktree (worker-state-fns.sh): a run from here would now RESUME it,
+# and its start comment would be its own. The live-rival case is a worktree with NO record of #144.
+rm -f "$(git rev-parse --absolute-git-dir)/autocoder-worker-state"
 issue_json "2026-11-17T02:26:57Z|$START" > "$FAKE_JSON"
 jq '.labels += [{"name": "working"}]' "$FAKE_JSON" > "$FAKE_JSON.t" && mv "$FAKE_JSON.t" "$FAKE_JSON"
 run_claim

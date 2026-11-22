@@ -200,6 +200,23 @@ which drops `working`, posts a `🔓` release comment and clears the worker-stat
 record. It touches only the issue this worktree's gate recorded, and refuses once
 `feature/issue-<N>` exists, because then `/fix` owns the claim.
 
+**A manager's dispatch is an override, not a typed prompt (`dispatch-issue.sh`,
+`dispatch-fns.sh`).** Workers run the fix loop by default and claim their own next
+issue by priority. `dispatch-issue.sh <N> --worktree <wt>` writes
+`<main worktree>/.autocoder/dispatch/<worktree basename>` (`{"issue","ts","by","note"}`);
+the named worktree's next gate tick takes that issue ahead of its priority pick, ahead
+of triage and ahead of an idle exit (claimed through the same race rules, or resumed
+when it is the worktree's own held claim: its branch exists for that worktree), marks
+the plan `"dispatched": true` and removes the file; every other worktree's gate keeps
+off an issue a fresh dispatch names (`AUTOCODER_DISPATCH_TTL_S`, 7200 s; a stale file
+is dropped by its own gate and ignored by the rest). `--list` and `--clear <wt>` read
+and withdraw them. `claim-issue.sh` records every claim it makes in the worktree's
+worker-state record, so a loop started later in that worktree (after a `/clear`, a
+restart or a reboot) resumes a typed `/fix <N>`'s issue instead of claiming over it.
+Measured on one project: the typed `/clear` + `/fix <N>` dispatch left five workers idle
+10 to 60 minutes each in a day once their issue was done. Tests:
+`tests/test_dispatch_issue.sh`, `tests/test_claim_issue.sh`.
+
 ## C. Walkthrough: adding Jira
 
 1. **Decide the mapping.** Map Jira concepts onto the contract:

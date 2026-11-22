@@ -45,7 +45,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 3. **Detect stale "working" labels** — Find issues tagged "working" with no agent activity in the last hour; ask to remove (claims whose owner process is dead and that have no branch are released at once by `sweep-abandoned-claims.sh`)
 4. **Restart unhealthy workers** — Detect workers that are stalled AND consuming high memory (e.g. a wedged agent that ran out of context), and restart them in place on the same worktree/issue
 5. **Find unblocked issues** — List open issues without blocking labels
-6. **Dispatch idle workers** — Send `/fix <issue_number>` to idle workers via the multiplexer (tmux/cmux/herdr)
+6. **Dispatch idle workers** — Write a dispatch file (`dispatch-issue.sh`) for a worker that runs the fix loop (the default); send `/fix <issue_number>` via the multiplexer (tmux/cmux/herdr) only to a worker that runs none
 7. **Scale the fleet dynamically** — Create workers+worktrees (`add-worker`) when the claimable queue outgrows the fleet, and retire idle workers (`remove-worker --remove-worktree`) once their work is banked, so capacity tracks the queue in both directions
 8. **Review blocked issues** — When all open issues are blocked and workers are idle, automatically run `/review-blocked` to surface issues for human review
 9. **Deploy when ready** — When all workers complete all unblocked issues and integration has new commits, deploy
@@ -476,7 +476,9 @@ as a hard trigger. A worker loop that watches its own context and self-hands-off
 jam is more reliable than the manager catching it on a monitor tick.
 
 **Never `/clear` a mid-task worker without a handoff first** (only a *completed*-task worker
-takes a bare `/clear` + `/autocoder:fix-loop`).
+takes a bare `/clear` + `/fix-loop`; after any `/clear` the next prompt is `/fix-loop`, never
+`/fix <N>`: the loop resumes the worktree's recorded claim first, takes a dispatch file next, and keeps
+the worker busy afterwards).
 
 ### Step 5: Dispatch Work to Idle Workers
 
@@ -487,7 +489,29 @@ bucket already excludes blocked and working issues by directory):
 issue_list --state open | jq -r 'sort_by(.labels | map(select(.name | test("^P[0-3]$"))) | .[0].name // "P9") | .[].number'
 ```
 
-For each idle worker with an unworked issue available, send the fix command.
+**Workers that run the fix loop (the default, `AUTOCODER_ROUTE=self`) are steered with a
+dispatch file, never by typing into their pane.** A worker's loop claims its own next issue
+by priority between tasks; a `/clear` + `/fix <N>` typed into it ends the loop, and the
+worker idles at a prompt when that issue is done (measured on one project: five workers idle
+10 to 60 minutes each in a day, waiting for the next typed dispatch). Write the override
+instead:
+
+```bash
+"$SCRIPT_DIR/dispatch-issue.sh" <issue_number> --worktree <worktree path or name> --note "<why this worker>"
+"$SCRIPT_DIR/dispatch-issue.sh" --list              # pending dispatches (fresh | stale)
+"$SCRIPT_DIR/dispatch-issue.sh" --clear <worktree>  # withdraw one
+```
+
+The named worktree's next gate tick (at most one loop interval away) claims that issue ahead
+of its own pick, or resumes it when it is the worktree's own held claim, marks the plan
+`"dispatched": true`, and carries on looping afterwards; every other worker's gate keeps off
+the issue while the dispatch is fresh (`AUTOCODER_DISPATCH_TTL_S`, 2 h). The command refuses
+a closed or blocked issue and one `working` on a branch the target does not hold. A typed
+`/fix <N>` still works inside a loop session (the gate sees its own claim as in flight)
+and is the way to interrupt an idle loop session at once; it is never preceded by `/clear`.
+The typed form below is for `AUTOCODER_ROUTE=manager` workers, which run no loop.
+
+For each idle worker with an unworked issue available and no loop, send the fix command.
 
 **The Enter must be its own `send-keys` call.** `send-keys "$text" Enter` in one
 call reliably leaves the text UNSUBMITTED in the agent's input box: the TUI takes

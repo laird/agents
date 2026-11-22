@@ -914,3 +914,69 @@ def test_a_completed_run_without_a_conclusion_is_not_a_success(tmp_path):
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z")], "master", set())[0] == "inconclusive"
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "cancelled", "2026-11-03T10:00:00Z")], "master", set())[0] == "cancelled"
     assert lr.judge_runs([run(1, "completed", None, "2026-11-03T10:00:00Z"), run(2, "completed", "success", "2026-11-03T10:05:00Z")], "master", set())[:1] == ("success",)
+
+
+# ── READY to launch (the train daemon's row) ────────────────────────────────
+def test_writer_accepts_a_launched_change_row(tmp_path):
+    log = tmp_path / "l.jsonl"
+    assert write(log, "change", "--issue", "7", "--event", "launched", "--ts", "2026-11-02T10:05:00Z").returncode == 0
+    assert rows_of(log)[0]["event"] == "launched"
+
+
+def test_week_and_full_reports_show_ready_to_launch_from_the_newest_ready_before_each_launch(tmp_path):
+    p = tmp_path / "l.jsonl"
+    rows = [ch(1, "2026-11-02T10:00:00Z", "ready"), ch(1, "2026-11-02T10:05:00Z", "launched"),       # 5 min
+            ch(1, "2026-11-02T10:30:00Z", "batched", batch="b1"), ch(1, "2026-11-02T11:00:00Z", "returned", cause="defect", batch="b1"),
+            ch(1, "2026-11-02T12:00:00Z", "ready"), ch(1, "2026-11-02T12:15:00Z", "launched"),       # a relaunch: 15 min, from the NEWER READY
+            ch(1, "2026-11-02T12:20:00Z", "batched", batch="b2"), ch(1, "2026-11-02T13:00:00Z", "landed", batch="b2"),
+            ch(2, "2026-11-02T09:30:00Z", "ready"), ch(2, "2026-11-02T09:31:00Z", "launched"),       # 1 min
+            ch(3, "2026-11-02T09:00:00Z", "launched"),                                                 # no READY before it: not measured
+            ba("b2", "2026-11-02T13:00:00Z", [1], 2400, "green")]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    a = json.loads(report("--log", str(p), "--week", "2026-11-02", "--json").stdout)
+    assert a["timings"]["ready_to_launch_s"] == {"n": 3, "p50": 300, "p90": 780, "max": 900}   # p90 interpolates over 60, 300, 900
+    out = report("--log", str(p), "--week", "2026-11-02").stdout
+    assert "- READY to launch (a cycle took it): p50 5.0m, p90 13.0m, max 15.0m (n=3)" in out
+    assert out.count("READY to launch (a cycle took it)") == 2   # the week summary and the Time section
+
+
+def test_ready_to_launch_is_na_and_says_why_when_no_launched_row_exists(log):
+    out = report("--log", str(log), "--week", "2026-11-02").stdout
+    assert "- READY to launch (a cycle took it): n/a (no `launched` row" in out
+
+
+# ── the worker idle gap (READY of the previous issue to the worker's next claim) ──────────
+def ev(ts, worker, issue, event="claimed", repo=None):
+    return {"v": 1, "ts": ts, "repo": repo, "issue": issue, "worker": worker, "branch": None, "event": event, "detail": {}}
+
+
+def test_week_and_full_reports_show_the_worker_idle_gap_from_the_lifecycle_ledgers_claims(tmp_path):
+    log = tmp_path / "l.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in [
+        ch(1, "2026-11-02T10:00:00Z", "ready"),                     # w1 banked #1 at 10:00
+        ch(2, "2026-11-02T11:00:00Z", "ready"),                     # w2 banked #2 at 11:00
+        ch(3, "2026-11-02T12:00:00Z", "ready"),                     # w1 banked #3 at 12:00
+        ba("b1", "2026-11-02T13:00:00Z", [1, 2, 3], 1800, "green")]))
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(e) + "\n" for e in [
+        ev("2026-11-02T08:00:00Z", "w1", 1), ev("2026-11-02T10:30:00Z", "w1", 3),    # w1: 30 min idle after #1's READY
+        ev("2026-11-02T12:05:00Z", "w1", 5),                                           # w1: 5 min after #3's READY
+        ev("2026-11-02T09:00:00Z", "w2", 2), ev("2026-11-02T11:40:00Z", "w2", 4),    # w2: 40 min after #2's READY
+        ev("2026-11-02T09:00:00Z", "w3", 6), ev("2026-11-02T10:00:00Z", "w3", 7),    # w3: #6 never reached READY: not measured
+        ev("2026-11-02T10:00:00Z", "w1", 1, event="released"),                       # another event kind: ignored
+        ev("2026-11-02T10:00:00Z", "w9", 1, repo="other-00000000"), ev("2026-11-02T10:10:00Z", "w9", 3, repo="other-00000000"),
+    ]) + "garbage\n")
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--issue-events", str(events), "--all-repos").stdout)
+    # --all-repos: w9's rows count too (10 min); without it the rows name a repository this fixture is not run from
+    assert a["workers"]["claims"] == 9
+    assert a["workers"]["idle_gap_s"] == {"n": 4, "p50": 1200.0, "p90": 2220.0, "max": 2400.0} and a["workers"]["workers"] == 3   # 300, 600, 1800, 2400
+    a = json.loads(report("--log", str(log), "--week", "2026-11-02", "--json", "--issue-events", str(events), "--repo-id", "mine-00000000").stdout)
+    assert a["workers"]["idle_gap_s"]["n"] == 3 and a["workers"]["idle_gap_s"]["max"] == 2400.0, "rows naming another repository are dropped under --repo-id"
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(events), "--repo-id", "mine-00000000").stdout
+    assert "- Worker idle gap (READY of the previous issue to the next claim): p50 30.0m, p90 38.0m, max 40.0m (n=3 over 2 workers)" in out
+    assert out.count("Worker idle gap (READY of the previous issue to the next claim)") == 2   # the week summary and the Time section
+
+
+def test_the_idle_gap_is_na_and_says_why_without_a_lifecycle_ledger(log, tmp_path):
+    out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(tmp_path / "none.jsonl")).stdout
+    assert "- Worker idle gap (READY of the previous issue to the next claim): n/a (no worker claimed a second issue after a READY in the window; no `claimed` lifecycle event read: pass --issue-events)" in out
