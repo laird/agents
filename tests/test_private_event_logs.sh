@@ -60,7 +60,7 @@ got=$(AUTOCODER_ISSUE_EVENTS="$TMP/mine.jsonl" AUTOCODER_MERGE_EVENTS="$TMP/m.js
 [ "$got" = "$TMP/mine.jsonl $TMP/m.jsonl" ] && ok "inherited paths kept" || bad "inherited paths replaced: $got"
 
 echo "=== the merge job's context variables are dropped (#327) ==="
-JOB_VARS="AUTOCODER_GATE_RETEST_FILES AUTOCODER_LANDING_REPO AUTOCODER_LANDING_BATCH AUTOCODER_LANDING_MEMBERS AUTOCODER_STAGE_TIMINGS_FILE AUTOCODER_SCRIPTS_DIR AUTOCODER_MERGE_ATTEMPT"
+JOB_VARS="AUTOCODER_GATE_RETEST_FILES AUTOCODER_LANDING_REPO AUTOCODER_LANDING_BATCH AUTOCODER_LANDING_MEMBERS AUTOCODER_STAGE_TIMINGS_FILE AUTOCODER_SCRIPTS_DIR AUTOCODER_MERGE_ATTEMPT AUTOCODER_LANDING_LEASE_HELD"
 got=$(env $(for v in $JOB_VARS; do printf '%s=leak ' "$v"; done) TMPDIR="$TMP" bash -c '
   source "$1"; for v in $2; do [ -z "${!v+set}" ] || printf "%s " "$v"; done' _ "$PRELUDE" "$JOB_VARS")
 [ -z "$got" ] && ok "the prelude drops every merge-job variable" || bad "still set after the prelude: $got"

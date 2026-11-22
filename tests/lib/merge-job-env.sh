@@ -8,9 +8,11 @@
 # the gate-cache functions) themselves; inheriting the outer job's values made them
 # test a different run than they set up. AUTOCODER_GATE_RETEST_FILES changes every
 # gate-cache key, and AUTOCODER_LANDING_REPO renames every ledger row. So master
-# was red only inside the merge job, never in CI or by hand.
+# was red only inside the merge job, never in CI or by hand. publisher.sh's
+# held-lease flag would let a nested publisher skip the lease it should take.
 #
 # A test that needs one of these sets it itself after sourcing the prelude.
 unset AUTOCODER_GATE_RETEST_FILES \
       AUTOCODER_LANDING_REPO AUTOCODER_LANDING_BATCH AUTOCODER_LANDING_MEMBERS \
-      AUTOCODER_STAGE_TIMINGS_FILE AUTOCODER_SCRIPTS_DIR AUTOCODER_MERGE_ATTEMPT
+      AUTOCODER_STAGE_TIMINGS_FILE AUTOCODER_SCRIPTS_DIR AUTOCODER_MERGE_ATTEMPT \
+      AUTOCODER_LANDING_LEASE_HELD
