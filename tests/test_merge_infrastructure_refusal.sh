@@ -214,7 +214,7 @@ OUT=$(run "$RECORD; echo 'PASS: an earlier test'; echo 'fatal: write error: No s
 # so the failure was never attributed and the merge was relaunched unchanged.
 setup
 BEFORE=$(origin_master)
-FAILQ='echo "FAIL  test_cache.sh"; echo "      | FAIL: writes the cache: No space left on device"; echo "FAIL: forks a worker: Cannot allocate memory"; echo "not ok 3 - heap: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"; echo "  ✗ writes the log: No space left on device"; false'
+FAILQ='echo "FAIL  test_cache.sh"; echo "      | FAIL: writes the cache: No space left on device"; echo "FAIL: forks a worker: Cannot allocate memory"; echo "not ok 3 - heap: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"; echo "  ✗ writes the log: No space left on device"; echo "FAILED  test_disk.sh: No space left on device"; echo "  × spawns a child: Cannot allocate memory"; false'
 OUT=$(run "$RECORD; if [ -f src/app.sh ]; then $FAILQ; fi"); RC=$?
 [ "$RC" -eq 2 ] && ok "(j) FAIL lines quoting a strerror leave a plain red (exit 2)" || bad "(j) rc=$RC: $OUT"
 echo "$OUT" | grep -q "INFRASTRUCTURE" && bad "(j) a FAIL line read as an infrastructure refusal: $OUT" || ok "(j) never read as infrastructure"
