@@ -47,8 +47,9 @@ WT="$AUTOCODER_TMP/autocoder-merge-worktree-${REPO_ID}"
 new_feature a
 KEY=$(merge_queue_key "$TMP/w" master)
 echo "issue #999 (pid 1, since 00:00:00)" > "$AUTOCODER_TMP/autocoder-land-${KEY}.holder"
-flock "$AUTOCODER_TMP/autocoder-land-${KEY}.lock" sleep 6 &
-HOLDER=$!; sleep 0.3
+flock "$AUTOCODER_TMP/autocoder-land-${KEY}.lock" sleep 30 &
+HOLDER=$!
+for _ in $(seq 1 50); do flock -n "$AUTOCODER_TMP/autocoder-land-${KEY}.lock" true || break; sleep 0.1; done
 (cd "$TMP/w" && AUTOCODER_MERGE_QUEUE_WAIT=0 bash "$MTI" --feature feature/a --issue 301 \
   --integration master --test-cmd "true" > "$TMP/q.log" 2>&1) &
 JOB=$!
@@ -56,7 +57,7 @@ for _ in $(seq 1 40); do grep -q "Queued: issue #999" "$TMP/q.log" 2>/dev/null &
 grep -q "Queued: issue #999" "$TMP/q.log" && ok "the job is waiting in the landing queue" || bad "the job never queued: $(cat "$TMP/q.log")"
 [ ! -e "${WT}-301" ] && ok "a queued job has no worktree yet" || bad "a queued job already holds ${WT}-301"
 git -C "$TMP/w" worktree list | grep -q "worktree-${REPO_ID}-301" && bad "a queued job registered a worktree" || ok "a queued job registered no worktree"
-kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+pkill -P "$HOLDER" 2>/dev/null; kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
 wait "$JOB"
 grep -q "merged into 'master'" "$TMP/q.log" && ok "once let in, the job merges" || bad "the job did not merge: $(cat "$TMP/q.log")"
 [ ! -e "${WT}-301" ] && [ ! -e "${WT}-301.owner" ] && ok "the job removes its worktree and owner file" || bad "leftovers: $(ls "$AUTOCODER_TMP")"
@@ -74,6 +75,7 @@ add_wt "${WT}-504"; echo "$DEAD" > "$AUTOCODER_TMP/autocoder-merge-${REPO_ID}-50
 echo "$DEAD" > "${WT}-505.owner"                               # owner file with no worktree
 OTHER="$AUTOCODER_TMP/autocoder-merge-worktree-otherrepo-abc123-600"
 mkdir -p "$OTHER"; echo "$DEAD" > "${OTHER}.owner"              # another repo's, dead
+PREFIXED="${WT}-foo-5e6f7a8b-12"; mkdir -p "$PREFIXED"            # a repo whose id starts with ours
 
 new_feature b
 (cd "$TMP/w" && bash "$MTI" --feature feature/b --issue 302 --integration master --test-cmd "true" > "$TMP/p.log" 2>&1)
@@ -86,6 +88,7 @@ grep -q "left by a dead job for issue #500" "$TMP/p.log" && ok "the removal is l
 [ ! -e "${WT}-504" ] && ok "an ownerless worktree whose launcher is dead is removed" || bad "dead launcher's worktree kept"
 [ ! -e "${WT}-505.owner" ] && ok "a dead owner file with no worktree is removed" || bad "litter owner file kept"
 [ -d "$OTHER" ] && [ -f "${OTHER}.owner" ] && ok "another repo's worktree is left alone" || bad "another repo's worktree was touched"
+[ -d "$PREFIXED" ] && ok "a repo whose id has ours as a prefix is left alone" || bad "a prefixed repo's worktree was pruned"
 LIST=$(git -C "$TMP/w" worktree list)
 printf '%s\n' "$LIST" | grep -qE -- "-(500|502|504) " && bad "git still lists a pruned worktree: $LIST" || ok "git's worktree list drops the pruned worktrees"
 printf '%s\n' "$LIST" | grep -q -- "-501 " && ok "git still lists the live worktree" || bad "the live worktree lost its registration: $LIST"

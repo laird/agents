@@ -46,6 +46,9 @@ merge_worktree_prune_stale() {
     name="${d##*/}"
     issue="${name#"$prefix"}"; issue="${issue%-base}"
     [ -n "$issue" ] && [ "$issue" != "$own" ] || continue
+    # An issue id is a number or a tracker key (PROJ-12). Anything else is another repo
+    # whose id starts with ours plus "-": not ours to judge.
+    [[ "$issue" =~ ^[A-Za-z0-9_]+(-[0-9]+)?$ ]] || continue
     merge_worktree_owner_alive "$root" "$repo" "$issue" && continue
     echo "🧹 Removing a merge worktree left by a dead job for issue #${issue}: ${d}"
     git -C "$caller" worktree remove --force "$d" 2>/dev/null || rm -rf "$d" 2>/dev/null || true
@@ -60,6 +63,7 @@ merge_worktree_prune_stale() {
     [ -f "$d" ] || continue
     name="${d##*/}"; issue="${name#"$prefix"}"; issue="${issue%.owner}"
     [ "$issue" != "$own" ] || continue
+    [[ "$issue" =~ ^[A-Za-z0-9_]+(-[0-9]+)?$ ]] || continue
     [ -d "${root}/${prefix}${issue}" ] || [ -d "${root}/${prefix}${issue}-base" ] && continue
     merge_worktree_owner_alive "$root" "$repo" "$issue" || rm -f "$d"
   done
