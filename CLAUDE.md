@@ -10,6 +10,7 @@ Two plugins, shipped for several agent platforms:
 - **autocoder** (`plugins/autocoder/`): autonomous issue resolution. `/fix`,
   `/fix-loop`, `/monitor-workers`, parallel worktree swarms, a detached merge
   pipeline, and pluggable issue backends (GitHub, file, Jira, Azure DevOps).
+  Configure the backend with `/set-issue-source` before `/fix`.
 - **modernize** (`plugins/modernize/`): assess → plan → modernize → retro for
   migration projects, with specialist agents.
 
@@ -40,15 +41,18 @@ Two plugins, shipped for several agent platforms:
 - **Versions:** never bump in an issue branch (see Landing work below). A release
   bumps every manifest together; `tests/test_manifest_versions.sh` checks them.
 - **Tests that touch the issue layer** must run in a private temp repo with its own
-  `.autocoder.json`: from inside this checkout, `issueSource: github` wins over
-  `ISSUE_SOURCE=file` and the test acts on the real tracker.
+  `.autocoder.json`: a checkout's `issueSource` wins over `ISSUE_SOURCE=file`, so a
+  test run inside a github-configured worktree would act on the real tracker.
 
 Details, mapping tables and the reasons behind each rule: `docs/maintaining.md`.
 
 ## Issue tracking
 
-Issues come from the backend named in `.autocoder.json` (here: GitHub). Each
-backend implements the same verbs (list, get, update, comment, close, create,
+Issues come from the backend named in `.autocoder.json` (`issueSource`: file,
+GitHub, Jira, or Azure DevOps). That file is per-checkout and is not committed.
+Run `/set-issue-source` before `/fix` (or set `issueSource` yourself). With no
+source configured, issue commands exit with "No issue source configured."
+Each backend implements the same verbs (list, get, update, comment, close, create,
 claim, release, any-claimable). Credentials come from the environment, never the
 repo. Setup: `docs/issue-backends.md`, `docs/jira-setup.md`, `docs/ado-setup.md`.
 
@@ -65,9 +69,11 @@ This section configures the `/fix` command for autonomous issue resolution.
 ```bash
 bash tests/run-shell-suite.sh
 ```
-The merge gate uses this, not `plugins/autocoder/scripts/regression-test.sh`:
-that script prints "All tests passed" and exits 0 even when a suite fails, so a
-gate on it passes anything.
+The merge gate uses this wrapper directly.
+`plugins/autocoder/scripts/regression-test.sh` is a separate report runner: it
+reads its unit-test command from `### Unit Tests Only` below and writes under
+**Test Reports**. It exits non-zero when a suite fails or when nothing ran
+(#195 / `d7f388f`, also #73).
 
 ### Unit Tests Only
 ```bash
