@@ -134,6 +134,13 @@ other repositories (...)`). A ledger holding no row of the derived id (a copy re
 an older ledger) is reported whole, with a notice naming the ids it does hold, never empty by
 accident; `--all-repos` keeps every row.
 
+A train's own gate passes are not batches: before the gate learned the train's id, every gate pass
+of a train wrote a solo batch of the issue the gate runs under (`train.gateIssue` in the repository's
+`.autocoder.json`) beside the train's own row, so a week's batches, landings and gate-minutes were
+counted twice. A batch row whose only member is that issue, and that issue's change and plan rows,
+are dropped (`--train-gate-issue N` names it, default the configured one, `0` keeps them) and the
+run says how many; the train rows own the passes.
+
 Waste leads: gate-minutes thrown away (red, aborted or infra batches, plus the gate time a
 re-sync discarded) as a share of all gate-minutes, with the breakdown; changes returned at least
 once, by cause, and how many returns were useful; rebases and pre-checks per landed change. Then
