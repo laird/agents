@@ -19,7 +19,7 @@ Start the local review page for blocked issues and print its URL (#314, part of 
 
 In the page you can approve (remove the blocking label and post the chosen approach), reject (close with a reason), ask (post a question and keep the label) or skip each issue, or approve several issues with fresh analyses at once in batch mode. Each decision runs `approve-blocked-issue.sh`, `reject-blocked-issue.sh` or `issue_comment`, just as `/review-blocked` does.
 
-The server's pid file and log, which holds the URL with its token, live in the repository's git directory (`autocoder-review-blocked-server.pid` and `.log`), and the log is written owner-only.
+The server's pid file and log, which holds the URL with its token, live in the worktree's git directory (`autocoder-review-blocked-server.pid` and `.log`), so each worktree has its own server, and the log is written owner-only.
 
 ## Instructions
 
@@ -47,7 +47,8 @@ fi
 # The server runs the issue scripts from its working directory: the repository root.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
   || { echo "❌ /review-blocked-gui must run inside the repository whose issues you are reviewing" >&2; exit 1; }
-GIT_DIR_ABS=$(git rev-parse --path-format=absolute --git-common-dir)
+# Per worktree: each worktree's server runs that worktree's scripts and tracker config.
+GIT_DIR_ABS=$(git rev-parse --path-format=absolute --git-dir)
 PID_FILE="$GIT_DIR_ABS/autocoder-review-blocked-server.pid"
 LOG_FILE="$GIT_DIR_ABS/autocoder-review-blocked-server.log"
 
@@ -106,7 +107,7 @@ else
   if [ -z "$URL" ]; then
     echo "❌ The review server did not start:" >&2
     sed 's/^/   /' "$LOG_FILE" >&2
-    kill "$(cat "$PID_FILE")" 2>/dev/null
+    server_alive && kill "$(cat "$PID_FILE")" 2>/dev/null
     rm -f "$PID_FILE"
     exit 1
   fi
@@ -127,8 +128,10 @@ url = sys.argv[1]
 base, _, query = url.partition("/?")
 token = urllib.parse.parse_qs(query).get("token", [""])[0]
 req = urllib.request.Request(base + "/api/issues", headers={"X-Review-Token": token})
+# No proxy: the server is on 127.0.0.1, and an http_proxy setting must not reroute it.
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with opener.open(req, timeout=120) as resp:
         issues = json.load(resp).get("issues", [])
 except Exception as e:
     print(f"⚠️  Could not list the blocked issues through the server: {e}")
