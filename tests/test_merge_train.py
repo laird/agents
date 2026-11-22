@@ -34,7 +34,9 @@ class Fixture:
         self.origin = root / "origin.git"
         self.work = root / "work"
         self.issues = root / "issues"
+        (root / "gates").mkdir(exist_ok=True)   # the host's own live gates (its /tmp) are never this fixture's
         self.env = {"ISSUE_DIR_PATH": str(self.issues), "XDG_STATE_HOME": str(root / "state"), "AUTOCODER_TRAIN_SCRATCH": str(root / "scratch"),
+                    "AUTOCODER_TRAIN_GATE_DIRS": str(root / "gates"),
                     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
                     "AUTOCODER_ISSUE_EVENTS": str(root / "events.jsonl")}
         os.environ.update(self.env)
@@ -1059,3 +1061,142 @@ def test_a_landed_issue_stays_closed_for_a_ready_on_a_foreign_branch_and_reopens
     assert issue["state"] == "OPEN" and m_b in issue["body"]
     # the reopened issue rejoins the queue through `list` on the file backend too (#325)
     assert fx.queue()[n]["state"] == "queue" and fx.queue()[n]["branch"] == m_b
+
+
+# ── live gates: in-lane, and the launcher's refusal ────────────────────────────────────
+def _exited_pid():
+    """A pid that has exited: a shell that printed its own pid and ended (asserted dead, so a reuse is named)."""
+    pid = int(subprocess.run(["bash", "-c", "echo $$"], capture_output=True, text=True).stdout.strip())
+    assert not T.pid_alive(pid), f"pid {pid} was reused before the test read it"
+    return pid
+
+
+def test_queue_skips_an_issue_whose_gate_is_live_and_plans_one_whose_gate_is_dead(fx, tmp_path, monkeypatch):
+    gates = tmp_path / "live-gates"
+    gates.mkdir()
+    monkeypatch.setenv("AUTOCODER_TRAIN_GATE_DIRS", str(gates))
+    fx.branch("feature/lane", {"lane.txt": "1\n"})
+    fx.branch("feature/done", {"done.txt": "1\n"})
+    fx.branch("feature/other", {"other.txt": "1\n"})
+    lane = fx.ready("lane", "feature/lane", labels=("ready-for-review", "hotfix"))   # the lane label ranks it first: the double-gate shape
+    done = fx.ready("done", "feature/done")
+    other = fx.ready("other", "feature/other")
+    (gates / f"autocoder-merge-{lane}.pid").write_text(f"{os.getpid()}\n")                     # a manager's lane: live
+    (gates / f"autocoder-merge-myrepo-0a1b2c3d-{done}.pid").write_text(f"{_exited_pid()}\n")   # a worker's job that ended: not a gate
+    (gates / f"autocoder-merge-{other}.pid").write_text("not a pid\n")                         # unreadable: not a gate
+    q = fx.queue()
+    assert q[lane]["state"] == "in-lane"
+    assert f"a live gate for #{lane} (pid {os.getpid()}," in q[lane]["note"] and "second gate" in q[lane]["note"]
+    assert q[done]["state"] == "queue" and q[other]["state"] == "queue"
+    rows, fault = fx.plan()
+    assert fault is None
+    assert rows[0] == f"skip\t{lane}\tfeature/lane\tin-lane: {q[lane]['note']}"
+    assert kinds(rows)[1:] == [("train", done), ("train", other)]
+    line = T.status_line(T.plan_queue(fx.cfg()), when="W")
+    assert line.endswith(f"| 2 queue | 1 in-lane (#{lane})")
+    out = sh(sys.executable, str(CLI), "--repo", str(fx.work), "--no-fetch", "queue", "--status-line", cwd=fx.work).stdout
+    assert f"1 in-lane (#{lane})" in out.splitlines()[0]
+    assert any(ln.split("\t")[1:3] == ["in-lane", str(lane)] for ln in out.splitlines()[1:])
+
+
+def test_queue_skips_a_branch_a_live_gate_of_another_issue_names_in_its_log(fx, tmp_path, monkeypatch):
+    gates = tmp_path / "live-gates"
+    gates.mkdir()
+    monkeypatch.setenv("AUTOCODER_TRAIN_GATE_DIRS", f"{tmp_path / 'missing'}:{gates}")   # a missing dir is none
+    fx.branch("feature/x", {"x.txt": "1\n"})
+    fx.branch("feature/xy", {"xy.txt": "1\n"})
+    x = fx.ready("x", "feature/x")
+    xy = fx.ready("xy", "feature/xy")
+    (gates / "autocoder-merge-900.pid").write_text(f"{os.getpid()}\n")
+    (gates / "autocoder-merge-900.log").write_text("ℹ️  Rebased feature/x (abc12345) onto origin/master (def67890): 1 commit(s)\n")
+    q = fx.queue()
+    assert q[x]["state"] == "in-lane" and "the live gate of #900" in q[x]["note"] and "names `feature/x`" in q[x]["note"]
+    assert q[xy]["state"] == "queue"   # `feature/x` is a prefix of its name, not the branch
+    (gates / "autocoder-merge-900.log").write_text("checkout refs/heads/feature/x; rebased origin/feature/x\n")   # a ref form of the branch
+    assert fx.queue()[x]["state"] == "in-lane"
+    (gates / "autocoder-merge-900.log").unlink()   # a live gate with no log holds only its own issue
+    assert fx.queue()[x]["state"] == "queue"
+
+
+def test_live_gates_reads_the_issue_as_the_last_number_of_this_repos_pidfiles_and_the_cli_lists_them(fx, tmp_path):
+    gates = tmp_path / "live-gates"
+    gates.mkdir()
+    me = os.getpid()
+    cfg = T.load_config(fx.work, env={"AUTOCODER_TRAIN_GATE_DIRS": str(gates)})
+    rid = T.repo_id(cfg)
+    assert rid and rid.endswith(tuple("0123456789abcdef"))   # `<basename>-<8 hex>`: the id's tail looks like digits
+    (gates / "autocoder-merge-45.pid").write_text(f"{me}\n")                  # a project launcher's bare pidfile
+    (gates / f"autocoder-merge-{rid}-4501.pid").write_text(f"{me}\n")         # merge-launch.sh's, this repository's id
+    (gates / "autocoder-merge-other-1a2b3c4d-46.pid").write_text(f"{me}\n")   # another repository's gate: not ours
+    (gates / "autocoder-merge-7.pid").write_text(f"{_exited_pid()}\n")
+    (gates / "autocoder-merge-8.launch.log").write_text("not a pidfile\n")
+    (gates / "autocoder-merge-9.pid").write_text("")
+    (gates / "autocoder-merge-10.pid").write_text(f"{me}\n")                  # a finished job: its .exit is written
+    (gates / "autocoder-merge-10.exit").write_text("0\n")
+    assert cfg.gate_dirs == [gates]
+    got = [(g["issue"], g["pid"], g["log"].name) for g in T.live_gates(cfg)]
+    assert got == [(45, me, "autocoder-merge-45.log"), (4501, me, f"autocoder-merge-{rid}-4501.log")]
+    assert [g["issue"] for g in T.live_gates(cfg, repo="")] == [45, 46, 4501]   # no repo id to hold to: every prefix counts
+    real_uid = os.getuid
+    T.os.getuid = lambda: real_uid() + 1   # another user's files in the shared temp directory are nobody's gate
+    try:
+        assert T.live_gates(cfg) == []
+    finally:
+        T.os.getuid = real_uid
+    assert T.gate_carrying(T.live_gates(cfg), 450, "feature/z") == ""
+    out = sh(sys.executable, str(CLI), "--repo", str(fx.work), "gates", cwd=fx.work, env={"AUTOCODER_TRAIN_GATE_DIRS": str(gates)}).stdout
+    assert [ln.split("\t")[:2] for ln in out.splitlines()] == [["45", str(me)], ["4501", str(me)]]
+
+
+def test_a_queued_gate_names_its_branch_in_the_launchers_wrapper_before_its_log_does(fx, tmp_path, monkeypatch):
+    gates = tmp_path / "live-gates"
+    gates.mkdir()
+    monkeypatch.setenv("AUTOCODER_TRAIN_GATE_DIRS", str(gates))
+    fx.branch("feature/q", {"q.txt": "1\n"})
+    q = fx.ready("q", "feature/q")
+    (gates / "autocoder-merge-77.pid").write_text(f"{os.getpid()}\n")
+    (gates / "autocoder-merge-77.log").write_text("⏳ Queued: issue #1 is landing; waiting for it to push\n")   # no branch yet
+    (gates / "autocoder-merge-77.run.sh").write_text("exec merge-to-integration.sh --feature feature/q --issue 77\n")
+    (gates / "autocoder-merge-77.scripts.abc").mkdir()   # a sibling directory is skipped, not read
+    assert fx.queue()[q]["state"] == "in-lane"
+
+
+def test_gate_dirs_come_from_the_config_or_default_to_the_launchers_tmp_root_and_the_temp_dir(tmp_path):
+    fx = Fixture(tmp_path, {"gateDirs": ["/var/tmp/gates", "~/gates"]})
+    assert T.load_config(fx.work, env={"AUTOCODER_TRAIN_GATE_DIRS": ""}).gate_dirs == [Path("/var/tmp/gates"), Path("~/gates").expanduser()]
+    assert fx.cfg().gate_dirs == [tmp_path / "gates"]   # the environment wins over the config
+    (fx.work / ".autocoder.json").write_text(json.dumps({"issueSource": "file", "issueDir": str(fx.issues), "train": {}}))
+    (tmp_path / "private").mkdir()
+    cfg = T.load_config(fx.work, env={"AUTOCODER_TMP": str(tmp_path / "private"), "TMPDIR": str(tmp_path / "shared")})
+    assert cfg.gate_dirs == [tmp_path / "private", tmp_path / "shared", Path("/tmp")]   # a session TMPDIR never hides the host's /tmp
+    home = tmp_path / "home"
+    (home / ".local/state/autocoder/merge").mkdir(parents=True)
+    uid_dir = [Path(f"/tmp/autocoder-{os.getuid()}")] if Path(f"/tmp/autocoder-{os.getuid()}").is_dir() else []   # the fallback root, when a launcher once used it
+    cfg = T.load_config(fx.work, env={"AUTOCODER_TMP": "", "XDG_STATE_HOME": "", "HOME": str(home), "TMPDIR": ""})
+    assert cfg.gate_dirs == [home / ".local/state/autocoder/merge", *uid_dir, Path("/tmp")]
+    cfg = T.load_config(fx.work, env={"AUTOCODER_TMP": "", "XDG_STATE_HOME": "", "HOME": str(tmp_path / "nohome"), "TMPDIR": ""})
+    assert cfg.gate_dirs == [*uid_dir, Path("/tmp")] and not (tmp_path / "nohome").exists()   # a listing creates nothing
+
+
+def test_train_carries_reads_the_live_trains_members_and_the_cli_says_so(fx):
+    import fcntl
+    cfg = fx.cfg()
+    assert T.train_carries(cfg, "feature/a") is None
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.state_dir / "current.tsv").write_text("12\tfeature/a\tabc1234\n13\tfeature/b\tdef5678\n")
+    assert T.train_carries(cfg, "feature/a") is None   # no runner holds the lease: a killed run's leftovers carry nothing
+    lease = os.open(cfg.state_dir / "lease.lock", os.O_RDWR | os.O_CREAT, 0o644)
+    assert T.train_carries(cfg, "feature/a") is None   # a lease file nobody holds is the same
+    fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)   # the test is the runner now
+    assert T.train_live(cfg)
+    assert T.train_carries(cfg, "feature/a") == {"issue": "12", "branch": "feature/a", "tip": "abc1234"}
+    for name in ("refs/heads/feature/b", "origin/feature/b", "refs/remotes/origin/feature/b"):
+        assert T.train_carries(cfg, name)["issue"] == "13", name
+    assert T.train_carries(cfg, "feature/ab") is None
+    r = sh(sys.executable, str(CLI), "--repo", str(fx.work), "carried", "--branch", "feature/a", cwd=fx.work)
+    assert r.stdout.strip() == "in-train\t12\tfeature/a\tabc1234"
+    r = sh(sys.executable, str(CLI), "--repo", str(fx.work), "carried", "--branch", "feature/c", cwd=fx.work, check=False)
+    assert (r.returncode, r.stdout.strip()) == (1, "not-carried")
+    os.close(lease)   # the runner died: the OS released the lease
+    r = sh(sys.executable, str(CLI), "--repo", str(fx.work), "carried", "--branch", "feature/a", cwd=fx.work, check=False)
+    assert (r.returncode, r.stdout.strip()) == (1, "not-carried")

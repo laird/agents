@@ -693,6 +693,8 @@ queue and planner half; it changes nothing on the remote and writes only its scr
 merge-train.py [--repo DIR] [--config FILE] [--no-fetch] queue [--in-flight N,N] [--status-line]
 merge-train.py ...                                           plan  [--size N] [--in-flight N,N]
 merge-train.py ...                                           reopen --issue N --member-branch B --landed SHA [--launched TS]
+merge-train.py ...                                           carried --branch B
+merge-train.py ...                                           gates
 ```
 
 **READY pickup** goes through the issue-source abstraction (`issue_list`, `issue_get`), so every
@@ -743,7 +745,11 @@ orders by `first` overrides, then lane labels (`laneLabels`), then priority (`pr
 plan it although its tip was already launched. `#` lines and blank lines are ignored.
 
 **Item states** printed by `queue`: `queue` (launchable), `launched` (this tip already launched), `hold`,
-`in-flight` (`--in-flight`), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
+`in-flight` (the caller's `--in-flight`), `in-lane` (a live gate on this host holds it: a pidfile
+`autocoder-merge-[<repo-id>-]<issue>.pid` under `gateDirs` with a live pid names its issue, or the sibling `.log`
+of a live gate names its branch as a whole word, as a stack's upper slice or a lane launched under another
+number does; the note names the gate and its log, and the status line names the issues; a dead pid is a
+finished or killed gate, not a gate), `in-train`, `train-dropped` (a train dropped this tip; re-bank to offer it
 again), `stale` (`staleDays`), `on-master` (the integration branch carries the branch's work: an ancestor, a patch-equivalent rebase, or the content itself after a squash landing; the note names the proof),
 `regenerate-only` (every path the branch changes is merged by one of `regeneratedMergeDrivers`, so a landing
 would regenerate them from their sources and land nothing; the note names the files and `regeneratedAdvice`; a
@@ -782,13 +788,37 @@ Rows: `train <issue> <branch> <tip> <note>`, `skip <issue> <branch> <reason>`,
 `drop <issue> <branch> <tip> <reason>`, and a final `fault <reason>` with exit 2 when the plan cannot be
 trusted (nothing blames a branch for a fault of the scratch).
 
+**Live gates and the lane** (`in-lane`, `carried`, `gates`). A READY whose branch is already being gated
+alone (a hotfix lane, a worker's own merge job) must not be planned too: the queue would read the same READY,
+a lane label ranks it first, and two gates then carry the same commits, so whichever publishes second pays a
+full re-gate (measured on one project: 20 to 40 gate-minutes, twice in one morning, with `hold` rows typed by
+hand before every launch as the remedy). So the queue reads the host's live gates itself, once per listing
+(`live_gates`: every `autocoder-merge-[<repo-id>-]<issue>.pid` under `gateDirs` that is this user's file, carries no
+repo id or this repository's (two repositories on one host share issue numbers, never state; the shared temp
+directory is anyone's to write), has no `.exit` sibling (the job ended, whoever has its pid now) and whose pid is
+alive; the issue number is the last `-<digits>` before `.pid`, so a repo id ending in hex digits never reads as
+one), and an item a live gate holds is `in-lane`, never planned. The branch check reads the gate's sibling files
+(`<stem>.log`, and `<stem>.run.sh`, which names the branch from the moment of launch: a job queued behind
+another landing has printed nothing but its wait), bare or as `<remote>/<b>`, `refs/heads/<b>` or
+`refs/remotes/<remote>/<b>`. The other direction is the launcher's: `merge-launch.sh` asks
+`merge-train.py carried --branch B` before it starts a job and REFUSES (exit 4, naming the member and its tip)
+when the live train carries the branch (`current.tsv`: planned, assembled and gating members, while a runner
+holds the state dir's lease; a killed run's leftover members refuse nothing); a check that cannot run is said
+and does not block, since the train owns that state. A project's own lane launcher should
+ask the same question. `gates` lists the live gates the queue sees (`<issue> <pid> <pidfile> <log>`), for
+checking why an item reads `in-lane`. `gateDirs` defaults to merge-launch.sh's private temp root
+(the candidates of repo-id-fns.sh's `autocoder_tmp_root` that exist: `AUTOCODER_TMP`, else the state dir, else
+`<tmp>/autocoder-<uid>`; a listing creates nothing), the session's `TMPDIR` when set, and `/tmp` itself (where a
+project's own launcher may write `autocoder-merge-<issue>.pid`; a session with a private TMPDIR still shares the
+host's /tmp); `AUTOCODER_TRAIN_GATE_DIRS` (colon-separated) overrides them all.
+
 **`reopen`** reopens (state open, ready labels back, a comment saying why) an issue a landing closed while its
 newest READY names a branch that landing did not carry; it prints `reopened` or `not reopened`. The READY is
 read by the queue's rules: a comment that only mentions READY is none, and a branch that does not belong to the
 issue never reopens it (the FYI above left the landed issue closed once this held).
 
 **Configuration**: the `train` object of the main worktree's `.autocoder.json` (environment:
-`AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`):
+`AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`, `_GATE_DIRS`):
 
 ```json
 { "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
@@ -798,6 +828,7 @@ issue never reopens it (the FYI above left the landed issue closed once this hel
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
              "regeneratedMergeDrivers": ["regenerate", "keep-ours"], "regeneratedAdvice": "Change the source and regenerate.",
+             "gateDirs": ["/tmp", "~/.local/state/autocoder/merge"],
              "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh" } } }
 ```
 
@@ -813,7 +844,7 @@ conflict: a failing hook stops the plan with a named fault. `hooks.mergeFault` r
 on the first stdin line and the merge output after it, and may print `driver-fault<TAB>detail` (the
 scratch's fault: stop) or `generator-failed<TAB>detail` (this candidate's merge: drop it for this plan).
 
-Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend).
+Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend); `tests/test_merge_launch_train_carries.sh` (the launcher's refusal).
 
 ### Enqueue from a host that does not gate (`enqueue.sh`)
 

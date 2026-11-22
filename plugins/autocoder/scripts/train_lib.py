@@ -70,6 +70,17 @@ BLOCKQUOTE_COMMENT_RE = re.compile(r"^> \*\*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}[^*
 # plan over 17 candidates took 27 minutes. Merge DRIVERS are not hooks and still run.
 HOOKS_OFF = ["-c", "core.hooksPath=/dev/null"]
 
+# A live gate is a pidfile `autocoder-merge-[<repo-id>-]<issue>.pid` whose pid is alive: merge-launch.sh
+# writes `<private tmp root>/autocoder-merge-<repo-id>-<issue>.pid` (repo-id-fns.sh), a project's own
+# launcher may write `/tmp/autocoder-merge-<issue>.pid`. The issue number is the last `-<digits>` before
+# `.pid`, so a repo id ending in hex digits never reads as the issue; a repo id that is not this repo's is
+# another repository's gate (two repos on one host share issue numbers, never state). The gate's own
+# files are its siblings: `<stem>.log` (the job's output), `<stem>.run.sh` (merge-launch.sh's wrapper,
+# which names the branch from the moment of launch, before a queued job has printed it), `<stem>.exit`
+# (written when the job ended: a pidfile beside one is a finished gate whatever its pid now is).
+GATE_PIDFILE_RE = re.compile(r"^autocoder-merge-(?:(?P<repo>.+)-)?(?P<issue>\d+)\.pid$")
+GATE_LOG_HEAD = 256 * 1024   # bytes of each sibling file the branch check reads (the branch is named in the first lines)
+
 
 # ── configuration ───────────────────────────────────────────────────────────────────────
 @dataclass
@@ -100,6 +111,7 @@ class Config:
     hooks: dict = field(default_factory=dict)
     regenerated_drivers: list = field(default_factory=list)   # merge drivers of paths a landing regenerates
     regenerated_advice: str = ""    # appended to a regenerate-only item's note and comment (the project's remedy)
+    gate_dirs: list = field(default_factory=list)   # where live gates leave `autocoder-merge-*.pid` (default: the launcher's tmp root and the temp dir)
 
     @property
     def ref(self):
@@ -161,12 +173,44 @@ def _branch_ownership(raw, path) -> str:
     return value
 
 
+def default_gate_dirs(env=None) -> list:
+    """Where gates leave their pidfiles when the project configures nothing: merge-launch.sh's private temp
+    root (the candidates of repo-id-fns.sh's autocoder_tmp_root, in its order: `AUTOCODER_TMP`, else
+    `$XDG_STATE_HOME`/`~/.local/state` `/autocoder/merge`, else `<tmp>/autocoder-<uid>`; the ones that exist,
+    since a listing creates nothing), the session's `TMPDIR` when set, and `/tmp` itself (a project's own
+    launcher's `/tmp/autocoder-merge-<issue>.pid`: a session with its own TMPDIR still shares the host's /tmp)."""
+    env = {**os.environ, **dict(env or {})}
+    tmp = Path(env.get("TMPDIR") or "/tmp")
+    private = []
+    if env.get("AUTOCODER_TMP"):
+        private.append(Path(env["AUTOCODER_TMP"]))
+    else:
+        state = env.get("XDG_STATE_HOME") or (f"{env['HOME']}/.local/state" if env.get("HOME") else "")
+        if state:
+            private.append(Path(state) / "autocoder" / "merge")
+        private.append(tmp / f"autocoder-{os.getuid()}")
+    out = []
+    for d in [x for x in private if x.is_dir()] + [tmp, Path("/tmp")]:
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def _gate_dirs(env_value, raw, env) -> list:
+    """`AUTOCODER_TRAIN_GATE_DIRS` (colon-separated) wins, then the config's `gateDirs`, else the defaults."""
+    if env_value:
+        return [Path(x) for x in env_value.split(":") if x]
+    if raw:
+        return [Path(x).expanduser() for x in raw]
+    return default_gate_dirs(env)
+
+
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
     keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
-    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, hooks{prepareScratch, mergeFault};
+    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{prepareScratch, mergeFault};
     `enqueue` is enqueue.sh's (see there).
     """
     env = os.environ if env is None else env
@@ -209,6 +253,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         hooks=dict(raw.get("hooks") or {}),
         regenerated_drivers=list(raw.get("regeneratedMergeDrivers") or []),
         regenerated_advice=str(raw.get("regeneratedAdvice") or ""),
+        gate_dirs=_gate_dirs(env.get("AUTOCODER_TRAIN_GATE_DIRS"), raw.get("gateDirs"), env),
     )
     if cfg.size < 1:
         raise SystemExit(f"merge-train: train size must be a positive integer, got {cfg.size}")
@@ -562,6 +607,131 @@ def train_state(cfg: Config, issue, tip):
     return "train-dropped" if dropped and dropped == tip else ""
 
 
+def train_live(cfg: Config) -> bool:
+    """True while a train runner holds the state dir's lease (train_run.Lease: an flock the OS releases when
+    the holder dies). A state dir whose lease is free, or that has no lease file, has no live train: its
+    `current.tsv` is what a killed or rebooted run left behind, which the next run recovers."""
+    import fcntl
+    path = cfg.state_dir / "lease.lock"
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)   # granted only while no holder has it exclusively
+    except OSError:
+        return True
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+    return False
+
+
+def train_carries(cfg: Config, branch: str):
+    """The live train's member row {issue, branch, tip} carrying <branch> (current.tsv: its planned, assembled
+    and gating members, while a runner holds the lease), else None. A lane launch refuses on it: the
+    train's gate lands this work, and a second gate over the same commits makes whichever publishes
+    second pay a full re-gate. `refs/heads/<b>`, `<remote>/<b>` and `refs/remotes/<remote>/<b>` name <b>."""
+    cur = cfg.state_dir / "current.tsv"
+    if not cur.is_file() or not train_live(cfg):
+        return None
+    names = {branch, branch.removeprefix("refs/heads/"), branch.removeprefix(f"refs/remotes/{cfg.remote}/"), branch.removeprefix(f"{cfg.remote}/")}
+    for ln in cur.read_text().splitlines():
+        parts = ln.rstrip("\n").split("\t")
+        if len(parts) >= 2 and parts[1] in names:
+            return {"issue": parts[0], "branch": parts[1], "tip": parts[2] if len(parts) > 2 else ""}
+    return None
+
+
+# ── live gates: what the queue never plans beside ───────────────────────────────────────
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True   # someone else's live process
+    except (OverflowError, ValueError):
+        return False
+    return True
+
+
+def live_gates(cfg: Config, repo=None) -> list:
+    """Every live gate of this repository on this host: [{issue, pid, pidfile, log}], one per
+    `autocoder-merge-[<repo-id>-]<issue>.pid` under `gateDirs` (GATE_PIDFILE_RE) that is this user's, carries
+    no repo id or this repository's (repo_id; any id when the helper cannot say), has no `.exit` sibling, and
+    whose pid is alive. A dead pid, a written `.exit` (the job ended; its pid may be anyone's by now), another
+    user's file (the shared temp directory is anyone's to write) or another repository's are not gates; an
+    unreadable file or directory is none. Whoever launched the gate (a worker's merge-launch.sh, a manager's
+    lane), its pidfile is the one record every launcher leaves."""
+    repo = repo_id(cfg) if repo is None else repo
+    uid = os.getuid()
+    gates, seen = [], set()
+    for d in cfg.gate_dirs:
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for name in names:
+            m = GATE_PIDFILE_RE.match(name)
+            if not m or (m.group("repo") and repo and m.group("repo") != repo):
+                continue
+            path = Path(d) / name
+            try:
+                if path.stat().st_uid != uid or path.with_suffix(".exit").exists():
+                    continue
+                pid = int(path.read_text().split()[0])
+            except (OSError, ValueError, IndexError):
+                continue
+            if pid <= 0 or not pid_alive(pid) or (path.parent.resolve(), name) in seen:
+                continue
+            seen.add((path.parent.resolve(), name))
+            gates.append({"issue": int(m.group("issue")), "pid": pid, "pidfile": path, "log": path.with_suffix(".log")})
+    return gates
+
+
+def _gate_log_head(gate: dict) -> str:
+    """The first GATE_LOG_HEAD bytes of each of the gate's sibling files (`<stem>.log`, `<stem>.run.sh`, an
+    archived attempt's log; never the pidfile), joined; read once per gate per listing."""
+    if "head" not in gate:
+        stem = gate["pidfile"].name[: -len(".pid")]
+        heads = []
+        try:
+            names = sorted(os.listdir(gate["pidfile"].parent))
+        except OSError:
+            names = []
+        for name in names:
+            if not name.startswith(stem + ".") or name == stem + ".pid":
+                continue
+            path = gate["pidfile"].parent / name
+            try:
+                if not path.is_file():
+                    continue
+                with open(path, "rb") as f:
+                    heads.append(f.read(GATE_LOG_HEAD).decode("utf-8", "replace"))
+            except OSError:
+                continue
+        gate["head"] = "\n".join(heads)
+    return gate["head"]
+
+
+def gate_carrying(gates: list, issue, branch: str, remote: str = "origin") -> str:
+    """The note of the live gate that holds this item, else "": a gate for the issue itself (whoever launched
+    it), or a gate whose files name the branch as a whole word, bare or as `<remote>/<b>`, `refs/heads/<b>`,
+    `refs/remotes/<remote>/<b>` (a stack's upper slice gated under another number, a lane launched under the
+    issue's twin). Measured on one project: a READY whose branch was in a hotfix lane was planned by the next
+    train twice in one morning, so two gates carried the same commits."""
+    for g in gates:
+        if g["issue"] == int(issue):
+            return f"a live gate for #{issue} (pid {g['pid']}, {g['log']}) holds it; a second gate would carry the same commits"
+    if branch:
+        prefixes = "|".join(re.escape(x) for x in (f"refs/remotes/{remote}/", "refs/heads/", f"{remote}/"))
+        pat = re.compile(rf"(?<![A-Za-z0-9_./-])(?:{prefixes})?{re.escape(branch)}(?![A-Za-z0-9_./-])")
+        for g in gates:
+            if pat.search(_gate_log_head(g)):
+                return f"the live gate of #{g['issue']} (pid {g['pid']}, {g['log']}) names `{branch}`; it is being landed there"
+    return ""
+
+
 # ── prefilter and real merge ────────────────────────────────────────────────────────────
 def merge_prefilter(cfg: Config, repo, ref, base):
     """A millisecond verdict before any real merge, from `git merge-tree`.
@@ -723,7 +893,7 @@ def list_items(cfg: Config):
     return items
 
 
-def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None):
+def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None, gates=()):
     """(state, tip, note, named) of one item; `named` is followed_tip()'s (kind, text) for a tip that is not
     the sha the READY named (("", "") when there is nothing to say); plan_queue appends the text to the note. States:
 
@@ -733,7 +903,9 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
                 issue`: no `issue-<n>` or `<n>-` in its name, no `stack:` line naming it with #<n>); never planned
                 (a cycle tells the issue once per tip)
     hold        a `hold <issue>` row
-    in-flight   a gate for the issue is live
+    in-flight   the caller said a gate for the issue is live (`--in-flight`)
+    in-lane     a live gate on this host holds it (live_gates: its own issue's pidfile, or a live gate whose log
+                names the branch); the note names the gate. Never planned: that gate lands the work
     in-train    the live train holds it
     train-dropped  a train dropped this tip; re-bank to offer it again
     stale       the READY is older than staleDays
@@ -762,6 +934,9 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
         return ("hold", tip, ov.hold[str(issue)], ("", ""))
     if issue in in_flight:
         return ("in-flight", tip, "-", ("", ""))
+    lane = gate_carrying(gates, issue, branch, cfg.remote)
+    if lane:
+        return ("in-lane", tip, lane, ("", ""))
     ts = train_state(cfg, issue, tip)
     if ts == "in-train":
         return ("in-train", tip, "in the live train", ("", ""))
@@ -857,6 +1032,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
     ov = Overrides.read(cfg.overrides)
     items = list_items(cfg)
     in_flight = {int(x) for x in in_flight}
+    gates = live_gates(cfg)   # once per listing: the host's live gates, which no item is planned beside
 
     def key(it):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
@@ -873,7 +1049,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
                              "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": ""})
             continue   # labelled ready-for-review but says READY nowhere: not an item
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
-        state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now)
+        state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates)
         if not skip and state in ("queue", "launched"):
             found += 1
         basis = picked.get("basis") or "ready"
@@ -935,20 +1111,20 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, nob, preflight = {}, None, [], 0
+    counts, nxt, named, preflight = {}, None, {"no-branch": [], "in-lane": []}, 0
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
         preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
             nxt = f"#{r['issue']} {r['branch']} @ {r['tip']}"
-        if r["state"] == "no-branch":
-            nob.append(f"#{r['issue']}")
-    order = ["queue", "in-flight", "in-train", "launched", "hold", "conflict", "generator-failed", "driver-fault",
+        if r["state"] in named:
+            named[r["state"]].append(f"#{r['issue']}")
+    order = ["queue", "in-flight", "in-lane", "in-train", "launched", "hold", "conflict", "generator-failed", "driver-fault",
              "stale", "train-dropped", "tip-moved", "on-master", "regenerate-only", "unchecked", "no-branch"]
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     for s in order:
         if counts.get(s):
-            line += f" | {counts[s]} {s}" + (f" ({','.join(nob)})" if s == "no-branch" else "")
+            line += f" | {counts[s]} {s}" + (f" ({','.join(named[s])})" if s in named else "")
     if preflight:
         line += f" | {preflight} preflight"
     return line
