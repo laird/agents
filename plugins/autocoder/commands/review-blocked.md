@@ -56,11 +56,13 @@ An issue whose cached analysis is still fresh is skipped. A stale or missing one
 is (re)generated.
 
 Run the Instructions block below first; with `--prepare` it prints
-`PREPARE_MODE=true` and saves the issue list. Then sort the issues into fresh
+`PREPARE_MODE=true` and saves the issue list, printing its path as `BLOCKED_FILE=...`.
+Set `BLOCKED_FILE` to that path in this block too, then sort the issues into fresh
 (skipped) and to-analyse:
 
 ```bash
-for ISSUE_NUM in $(python3 -c "import json; print(' '.join(str(i['number']) for i in json.load(open('/tmp/blocked-issues.json'))['issues']))"); do
+: "${BLOCKED_FILE:?set BLOCKED_FILE to the path the fetch block printed}"
+for ISSUE_NUM in $(python3 -c "import json, sys; print(' '.join(str(i['number']) for i in json.load(sys.stdin)['issues']))" < "$BLOCKED_FILE"); do
   if ! KEY=$(python3 "$SCRIPT_DIR/review-blocked-server.py" --key "$ISSUE_NUM"); then
     echo "KEY_FAILED #$ISSUE_NUM"
   elif python3 "$SCRIPT_DIR/blocked-analysis-cache.py" get "$ISSUE_NUM" --updated-at "$KEY" >/dev/null 2>&1; then
@@ -69,6 +71,7 @@ for ISSUE_NUM in $(python3 -c "import json; print(' '.join(str(i['number']) for 
     echo "ANALYSE #$ISSUE_NUM $KEY"
   fi
 done
+rm -f "$BLOCKED_FILE"   # prepare mode is done with the list once it is sorted
 ```
 
 For each `ANALYSE` line, do the analysis Step 2 describes (read the issue and its
