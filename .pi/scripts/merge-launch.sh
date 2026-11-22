@@ -69,6 +69,8 @@
 #      no job was started, so there is nothing to poll
 #   1  bad arguments, no test command resolvable, or (breaker open) the push, PR or
 #      label change failed
+#   4  refused: a merge train already carries the branch (merge-train.py carried), so its gate
+#      lands this work and a second gate would carry the same commits
 set -uo pipefail
 
 FEATURE=""
@@ -152,6 +154,30 @@ if [ -f "$PIDFILE" ]; then
   # including a snapshot a killed job never got to remove (#212).
   rm -f "$PIDFILE" "$RUNSCRIPT"
   rm -rf "${STATE}".scripts.*
+fi
+
+# A merge train carrying this branch is already gating it: a second gate over the same commits
+# makes whichever publishes second pay a full re-gate (measured on one project: 20 to 40
+# gate-minutes, twice in one morning). merge-train.py reads the train's own state (its
+# planned, assembled and gating members); a check that cannot run is said and does not block,
+# since the train, not this launch, owns that state. Checked after the duplicate-job check.
+if ! [ -f "${_MLI_DIR}/merge-train.py" ] || ! command -v python3 >/dev/null 2>&1; then
+  echo "⚠️  Could not ask the merge train whether it carries ${FEATURE} ($([ -f "${_MLI_DIR}/merge-train.py" ] && echo "no python3 on PATH" || echo "no merge-train.py beside ${_MLI_DIR##*/}/merge-launch.sh")). Launching as configured." >&2
+else
+  _ml_err=$(mktemp "${TMP_ROOT}/merge-train-carried.err.XXXXXX" 2>/dev/null || echo /dev/null)
+  _ml_carried=$(python3 "${_MLI_DIR}/merge-train.py" --repo "$PWD" --no-fetch carried --branch "$FEATURE" 2>"$_ml_err"); _ml_crc=$?
+  _ml_member=$(printf '%s\n' "$_ml_carried" | awk -F'\t' '$1 == "in-train" {print "#" $2 " @ " $4}')
+  if [ "$_ml_crc" -eq 0 ] && [ -n "$_ml_member" ]; then
+    echo "⛔ A merge train already carries ${FEATURE} (${_ml_member}): its gate lands this work, and a second gate would carry the same commits. Not launching." >&2
+    echo "   Wait for the train to land it, or abandon the train (merge-train-run.py abandon) and launch again." >&2
+    [ "$_ml_err" != /dev/null ] && rm -f "$_ml_err"
+    exit 4
+  elif [ "$_ml_crc" -ne 1 ] || [ "$_ml_carried" != "not-carried" ]; then
+    # Any other outcome is a check that did not run to its answer (an import error exits 1 too, so the
+    # answer is judged by its text, not its code): say so and launch as configured.
+    echo "⚠️  Could not ask the merge train whether it carries ${FEATURE} (merge-train.py carried exited ${_ml_crc}: $(tr '\n' ' ' <"$_ml_err" 2>/dev/null | tail -c 300)). Launching as configured." >&2
+  fi
+  [ "$_ml_err" != /dev/null ] && rm -f "$_ml_err"
 fi
 
 # Revert circuit breaker (#252): while an open `revert-breaker` issue exists, the merge

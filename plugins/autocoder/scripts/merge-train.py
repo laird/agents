@@ -12,6 +12,13 @@
   reopen  --issue N --member-branch B --landed SHA [--launched TS]
                                               reopen an issue a landing closed while a newer READY names
                                               a branch that landing did not carry
+  carried --branch B                          exit 0 and print `in-train <issue> <branch> <tip>` (TSV) when the
+                                              live train carries the branch (a lane launch refuses on it: the
+                                              train's gate lands that work), else print `not-carried`, exit 1;
+                                              never fetches
+  gates                                       the live gates on this host (what the queue's `in-lane` reads):
+                                              `<issue> <pid> <pidfile> <log>` (TSV) per live pidfile under
+                                              `gateDirs`; never fetches
 
 Common: --repo DIR (default: the current directory), --config FILE (default: the main worktree's
 .autocoder.json, key `train`), --no-fetch. Configuration and the overrides file are documented in
@@ -66,9 +73,23 @@ def main(argv=None):
     r.add_argument("--member-branch", required=True)
     r.add_argument("--landed", required=True)
     r.add_argument("--launched")
+    c = sub.add_parser("carried")
+    c.add_argument("--branch", required=True)
+    sub.add_parser("gates")
     a = ap.parse_args(argv)
 
     cfg = T.load_config(a.repo, a.config)
+    if a.cmd == "carried":
+        row = T.train_carries(cfg, a.branch)
+        if row is None:
+            print("not-carried")
+            return 1
+        print("\t".join(["in-train", row["issue"], row["branch"], row["tip"]]))
+        return 0
+    if a.cmd == "gates":
+        for g in T.live_gates(cfg):
+            print("\t".join(str(x) for x in (g["issue"], g["pid"], g["pidfile"], g["log"])))
+        return 0
     if not a.no_fetch:
         f = T.git(cfg.repo, "fetch", cfg.remote, "-q")
         if f.returncode != 0:
