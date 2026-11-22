@@ -57,6 +57,7 @@ Based on what you find, give contextual guidance:
 | `/fix` | Fix highest-priority issue or a specific issue |
 | `/fix-loop` | Run continuous issue resolution |
 | `/review-blocked` | Interactively review blocked issues (run alongside fix-loop) |
+| `/review-blocked-gui` | Review blocked issues in a local web page (`--stop` ends its server) |
 | `/stop-loop` | Stop the continuous loop |
 
 ### Design & Brainstorming

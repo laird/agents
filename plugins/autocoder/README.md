@@ -324,7 +324,29 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 /review-blocked --label needs-design    # Filter to specific blocking label
 /review-blocked --priority P0       # Filter to specific priority
 /review-blocked 123                 # Jump directly to issue #123
+/review-blocked --prepare           # Analyse every blocked issue now, ask nothing
 ```
+
+### Review Page (`/review-blocked-gui`)
+
+`/review-blocked-gui` starts a local web page over the same scripts, for reviewing
+many blocked issues at once. It runs `review-blocked-server.py` on `127.0.0.1`,
+prints a URL carrying a per-run token, and leaves the server running until
+`/review-blocked-gui --stop`. The page lists the blocked issues by label and
+priority; for each one it shows why it is blocked, the issue body, and the options
+and recommendation from `/review-blocked --prepare`. You approve an option (or
+write your own approach), reject with a reason, ask a question or skip, and you can
+approve several issues with fresh analyses in one batch.
+
+```bash
+/review-blocked --prepare   # optional, but the page shows no options without it
+/review-blocked-gui         # prints: Open: http://127.0.0.1:<port>/?token=...
+/review-blocked-gui --stop
+```
+
+The server uses only the Python standard library and runs the same approve and
+reject scripts as `/review-blocked`, so it works with every issue backend. The
+token in the URL can approve and close issues: keep it to yourself.
 
 ### Benefits
 
@@ -344,6 +366,7 @@ When fix-loop encounters issues it cannot handle autonomously, it adds blocking 
 | `/monitor-workers` | Monitor worker agents, dispatch idle workers, scale fleet with `add-worker`, detect stale locks, deploy when done |
 | `/monitor-loop` | Start continuous monitor-workers loop (default manager session startup command) |
 | `/review-blocked` | Interactive review of blocked issues (auto-triggered by monitor-workers when all issues blocked) |
+| `/review-blocked-gui` | Review blocked issues in a local web page; `--stop` ends its server |
 | `/retro` | Analyze history log + git log + issue tracker; write `IMPROVEMENTS.md` with 3–5 workflow recommendations |
 | `/list-proposals` | List pending enhancement proposals |
 | `/approve-proposal <number>` | Approve a proposal for implementation |

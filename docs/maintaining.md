@@ -28,6 +28,7 @@ Detailed rules for keeping the platform copies, skills and manifests in step.
 - `/fix-loop`: `plugins/autocoder/commands/fix-loop.md` ↔ `.agent/workflows/fix-loop.md`
 - `/full-regression-test`: `plugins/autocoder/commands/full-regression-test.md` ↔ `.agent/workflows/full-regression-test.md`
 - `/review-blocked`: `plugins/autocoder/commands/review-blocked.md` ↔ `.agent/workflows/review-blocked.md`
+- `/review-blocked-gui`: `plugins/autocoder/commands/review-blocked-gui.md` ↔ `.agent/workflows/review-blocked-gui.md`
 - `/install`: `plugins/autocoder/commands/install.md` ↔ `.agent/workflows/install.md`
 
 **Key parallel scripts:**

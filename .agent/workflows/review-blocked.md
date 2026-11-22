@@ -42,7 +42,7 @@ Interactive planning session to review and unblock issues that fix-loop has labe
 
 `--prepare` is the unattended half of the review (#312, part of #308): the agent
 analyses every blocked issue now, and a human reviews later, in the review page
-(`review-blocked-server.py`) or in the interactive flow below. It asks **no**
+(`/review-blocked-gui`, which starts `review-blocked-server.py`) or in the interactive flow below. It asks **no**
 question (never AskUserQuestion), changes no label and posts no comment. It only
 writes the analysis cache (`blocked-analysis-cache.py`).
 
