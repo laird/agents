@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Per-issue cache of the agent's analysis of a blocked issue (#310, part of #308).
 
-An analysis is prepared ahead of time (by `/review-blocked --prepare`) and read
-back by the review GUI, so a human sees the options without waiting for an
-agent. Each entry is keyed by the issue's `updatedAt`: when the issue changes,
+An analysis is prepared ahead of time and read back later, so a human sees the
+options without waiting for an agent. The planned callers are
+`/review-blocked --prepare` (#312) and the review GUI server (#311). Each entry is keyed by the issue's `updatedAt`: when the issue changes,
 the cached analysis no longer describes it and reads as stale.
 
     blocked-analysis-cache.py put <N> --updated-at <ts> --file analysis.json
@@ -12,7 +12,8 @@ the cached analysis no longer describes it and reads as stale.
 
 `put` validates the analysis and refuses a malformed one (exit 2). `get` prints
 the analysis as JSON, or exits 1 when nothing is cached or the cached
-`updatedAt` differs from the one given. `list` never touches the network: it
+`updatedAt` differs from the one given. Any other failure (not in a git
+repository, unreadable input, an unwritable cache) exits 2. `list` never touches the network: it
 prints every entry with its `updatedAt`, and a `stale` flag computed against
 `--current` (a JSON list of issues, or an object with an `issues` list, each
 with `number` and `updatedAt`; `fetch-blocked-issues.sh` output fits). Without
@@ -36,6 +37,7 @@ Analysis schema:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,8 +55,9 @@ def cache_dir():
             check=True, capture_output=True, text=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        sys.exit("blocked-analysis-cache: not inside a git repository "
-                 "(set AUTOCODER_BLOCKED_CACHE_DIR to use another directory)")
+        print("blocked-analysis-cache: not inside a git repository "
+              "(set AUTOCODER_BLOCKED_CACHE_DIR to use another directory)", file=sys.stderr)
+        sys.exit(2)
     return os.path.join(common, CACHE_SUBDIR)
 
 
@@ -62,6 +65,15 @@ def issue_number(text):
     if not text.isdigit() or int(text) <= 0:
         raise argparse.ArgumentTypeError(f"not an issue number: {text!r}")
     return int(text)
+
+
+def updated_at(text):
+    if not text.strip():
+        raise argparse.ArgumentTypeError("--updated-at must not be empty")
+    return text
+
+
+ENTRY_NAME = re.compile(r"^([0-9]+)\.json$")
 
 
 def entry_path(number):
@@ -141,19 +153,22 @@ def cmd_put(args):
             print(f"  - {p}", file=sys.stderr)
         return 2
     directory = cache_dir()
-    os.makedirs(directory, exist_ok=True)
     entry = {"number": args.number, "updatedAt": args.updated_at, "analysis": analysis}
-    # Write then rename, so a reader never sees half an entry.
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{args.number}.", suffix=".tmp")
+    tmp = None
     try:
+        os.makedirs(directory, exist_ok=True)
+        # Write then rename, so a reader never sees half an entry.
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{args.number}.", suffix=".tmp")
         with os.fdopen(fd, "w") as f:
             json.dump(entry, f, indent=2)
             f.write("\n")
         os.replace(tmp, entry_path(args.number))
-    except BaseException:
-        if os.path.exists(tmp):
+    except OSError as e:
+        if tmp and os.path.exists(tmp):
             os.unlink(tmp)
-        raise
+        print(f"blocked-analysis-cache: cannot write the cache in {directory}: {e}",
+              file=sys.stderr)
+        return 2
     print(f"blocked-analysis-cache: cached analysis for #{args.number} (updatedAt {args.updated_at})")
     return 0
 
@@ -195,7 +210,7 @@ def cmd_list(args):
             return 2
     directory = cache_dir()
     names = os.listdir(directory) if os.path.isdir(directory) else []
-    numbers = sorted(int(n[:-5]) for n in names if n.endswith(".json") and n[:-5].isdigit())
+    numbers = sorted(int(m.group(1)) for m in map(ENTRY_NAME.match, names) if m)
     rows = []
     for number in numbers:
         entry = read_entry(entry_path(number))
@@ -215,13 +230,13 @@ def main(argv=None):
 
     p = sub.add_parser("put", help="store an analysis")
     p.add_argument("number", type=issue_number)
-    p.add_argument("--updated-at", required=True)
+    p.add_argument("--updated-at", required=True, type=updated_at)
     p.add_argument("--file", required=True)
     p.set_defaults(func=cmd_put)
 
     p = sub.add_parser("get", help="print a fresh cached analysis")
     p.add_argument("number", type=issue_number)
-    p.add_argument("--updated-at", required=True)
+    p.add_argument("--updated-at", required=True, type=updated_at)
     p.set_defaults(func=cmd_get)
 
     p = sub.add_parser("list", help="list cached entries")

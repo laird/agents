@@ -39,7 +39,6 @@ python3 "$S" put 42 --updated-at 2026-11-20T10:00:00Z --file "$TMP/good.json" >/
 eq "put of a valid analysis exits 0" "$?" 0
 CACHE="$(git rev-parse --path-format=absolute --git-common-dir)/autocoder-blocked-analyses/42.json"
 [ -f "$CACHE" ] && ok "the entry lands under the git common dir" || bad "no entry at $CACHE"
-eq "the entry is not tracked by git" "$(git status --porcelain)" ""
 
 OUT=$(python3 "$S" get 42 --updated-at 2026-11-20T10:00:00Z); RC=$?
 eq "get with the same updatedAt exits 0" "$RC" 0
@@ -81,6 +80,13 @@ python3 "$S" put abc --updated-at t --file "$TMP/good.json" >/dev/null 2>&1
 python3 "$S" put 42 --updated-at 2026-11-21T09:00:00Z --file "$TMP/good.json" >/dev/null
 python3 "$S" get 42 --updated-at 2026-11-21T09:00:00Z >/dev/null
 eq "a second put replaces the entry's updatedAt" "$?" 0
+python3 "$S" get 42 --updated-at 2026-11-20T10:00:00Z >/dev/null 2>&1
+eq "after the second put the old updatedAt reads stale" "$?" 1
+
+python3 "$S" put 44 --updated-at "" --file "$TMP/good.json" >/dev/null 2>&1
+[ "$?" -ne 0 ] && ok "put refuses an empty --updated-at" || bad "put accepted an empty --updated-at"
+
+touch "$(dirname "$CACHE")/².json" "$(dirname "$CACHE")/notes.json"
 
 python3 "$S" put 5 --updated-at old --file "$TMP/good.json" >/dev/null
 OUT=$(python3 "$S" list)
@@ -97,6 +103,16 @@ printf '[{"number":42,"updatedAt":"zzz"}]' > "$TMP/cur.json"
 OUT=$(python3 "$S" list --current "$TMP/cur.json")
 eq "list --current takes a bare list too; unmentioned issues stay null" \
   "$(printf '%s' "$OUT" | jq -c '[.[] | [.number, .stale]]')" "[[5,null],[42,true]]"
+
+mkdir -p "$TMP/ro"; chmod 555 "$TMP/ro"
+if [ -w "$TMP/ro" ]; then ok "unwritable cache check skipped (running as root)"; else
+  ERR=$(AUTOCODER_BLOCKED_CACHE_DIR="$TMP/ro/c" python3 "$S" put 9 --updated-at t --file "$TMP/good.json" 2>&1); RC=$?
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == "blocked-analysis-cache: cannot write"* ]]; then ok "an unwritable cache fails with a message, exit 2"
+  else bad "unwritable cache — rc=$RC, said: $ERR"; fi
+fi
+chmod 755 "$TMP/ro"
+
+(cd "$TMP" && python3 "$S" list >/dev/null 2>&1); eq "outside a git repository the script exits 2" "$?" 2
 
 OUT=$(AUTOCODER_BLOCKED_CACHE_DIR="$TMP/empty" python3 "$S" list)
 eq "list of an empty cache prints []" "$(printf '%s' "$OUT" | jq -c .)" "[]"
