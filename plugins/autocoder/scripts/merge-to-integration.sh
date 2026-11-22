@@ -158,7 +158,10 @@
 #   main checkout's basename plus a hash of its git common dir), so two repos on one host
 #   never share a worktree, log or state file for the same issue number:
 #     autocoder-merge-<repo-id>-<issue>.gate.XXXXXX   gate output, for the failure comment
-#     autocoder-merge-worktree-<repo-id>-<issue>[-base]  the throwaway worktrees
+#     autocoder-merge-worktree-<repo-id>-<issue>[-base]  the throwaway worktrees, created
+#                                                     only once the landing queue lets the job in
+#     autocoder-merge-worktree-<repo-id>-<issue>.owner   the job's pid; a later job removes a
+#                                                     worktree whose owner is dead (#144)
 #   merge-launch.sh keys its .pid/.log/.exit/.run.sh files the same way.
 #
 # USAGE:
@@ -271,6 +274,8 @@ source "${_MTI_DIR}/issue-fns.sh"
 source "${_MTI_DIR}/regate-fns.sh"
 # shellcheck source=worktree-deps-fns.sh
 source "${_MTI_DIR}/worktree-deps-fns.sh"
+# shellcheck source=merge-worktree-fns.sh
+source "${_MTI_DIR}/merge-worktree-fns.sh"   # #144: prune worktrees left by dead jobs
 # shellcheck source=test-cmd-fns.sh
 source "${_MTI_DIR}/test-cmd-fns.sh"
 # shellcheck source=gate-cache-fns.sh
@@ -898,26 +903,35 @@ _cleanup_worktrees() {
   git -C "$CALLER_DIR" worktree prune 2>/dev/null || true
 }
 _cleanup_worktrees
+# A job that died without running its EXIT trap left its checkout behind (#144). Remove
+# this repo's leftovers; a live job's worktrees are kept (merge-worktree-fns.sh).
+merge_worktree_prune_stale "$TMP_ROOT" "$REPO_ID" "$CALLER_DIR" "$ISSUE_NUM"
 
 # node_modules/dist seeding for throwaway worktrees lives in worktree-deps-fns.sh, shared
 # with main-sentinel.sh (and it carries the #1967 cross-device and dist/mtime notes).
 
+# 0. Wait our turn (#189): one landing per integration branch per host, held from this
+#    fetch until the push is verified, so the tip we sync onto is still the tip when we
+#    push. Jobs behind us sync only once we have landed. See merge-queue-fns.sh.
+#    The worktree is created only once our turn has come (#144): a queued job holds no
+#    checkout, so N jobs waiting on one branch cost one checkout's disk, not N.
+merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
+
+# The owner file comes first, so the stale-worktree prune never sees a live job's
+# worktree without one (merge-worktree-fns.sh).
 # --detach on the raw SHA (not the branch name) is required: $FEATURE is very likely still
 # checked out in $CALLER_DIR, and git refuses to check out the same branch in two worktrees.
 # A detached checkout of its tip commit carries the identical tree without that restriction.
+WORKTREE_OWNER="${WORKTREE_DIR}.owner"
+echo "$$" > "$WORKTREE_OWNER"
+trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST" "${CONFLICT_ATTEMPT_FILE:-}" "$WORKTREE_OWNER"' EXIT
 if ! git -C "$CALLER_DIR" worktree add --detach "$WORKTREE_DIR" "$FEATURE_SHA"; then
   echo "❌ Could not create isolated worktree for ${FEATURE} (${FEATURE_SHA})." >&2
   _fail 1 "could not create the isolated merge worktree for ${FEATURE_SHA:0:8}"
 fi
-trap '_rc=$?; merge_queue_release >/dev/null 2>&1; _emit_attempt_event "$_rc"; _cleanup_worktrees; rm -f "$GATE_LOG" "$GATE_LAST" "${CONFLICT_ATTEMPT_FILE:-}"' EXIT
 
 cd "$WORKTREE_DIR" || { echo "❌ Could not enter isolated worktree ${WORKTREE_DIR}." >&2; _fail 1 "could not enter ${WORKTREE_DIR}"; }
 seed_worktree_deps "$CALLER_DIR" "$WORKTREE_DIR"
-
-# 0. Wait our turn (#189): one landing per integration branch per host, held from this
-#    fetch until the push is verified, so the tip we sync onto is still the tip when we
-#    push. Jobs behind us sync only once we have landed. See merge-queue-fns.sh.
-merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
 issue_event gate-start "$ISSUE_NUM" repo="$(_merge_repo_id)" attempt="${AUTOCODER_MERGE_ATTEMPT:-}"
 
 # 1. Bring the latest integration state INTO the feature branch so the eventual push
