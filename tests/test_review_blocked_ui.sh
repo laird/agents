@@ -100,6 +100,8 @@ C=$(new_issue "Add a dark mode" "later");         block "$C" future
 D=$(new_issue "Unclear request" "what?");         block "$D" needs-clarification
 E=$(new_issue "Batch one" "e");                   block "$E" needs-approval
 F=$(new_issue "Batch two" "f");                   block "$F" needs-approval
+G=$(new_issue "Bad analysis" "g");               block "$G" needs-approval
+H=$(new_issue "Two blocks" "h");                  block "$H" needs-approval; block "$H" needs-design
 IF issue_comment "$A" --body "🎨 **Blocked — Needs Design**: two storage options, no winner" >/dev/null 2>&1
 
 cat > "$TMP/analysis.json" <<'JSON'
@@ -124,10 +126,15 @@ BASE=${URL%%/\?*}; TOKEN=${URL##*token=}
 
 # Cache analyses under the keys the server computes, so A, E and F read as current.
 KEYS=$(curl -s -H "X-Review-Token: $TOKEN" "$BASE/api/issues")
-for n in "$A" "$E" "$F"; do
-  key=$(printf '%s' "$KEYS" | jq -r --argjson n "$n" '.issues[] | select(.number == $n) | .analysisKey')
-  python3 "$SCRIPTS/blocked-analysis-cache.py" put "$n" --updated-at "$key" --file "$TMP/analysis.json" >/dev/null
+key_of() { printf '%s' "$KEYS" | jq -r --argjson n "$1" '.issues[] | select(.number == $n) | .analysisKey'; }
+for n in "$A" "$E" "$F" "$H"; do
+  python3 "$SCRIPTS/blocked-analysis-cache.py" put "$n" --updated-at "$(key_of "$n")" --file "$TMP/analysis.json" >/dev/null
 done
+# A malformed entry, written past the cache's validation, must not break the page.
+CACHE_DIR="$(git rev-parse --path-format=absolute --git-common-dir)/autocoder-blocked-analyses"
+jq -n --argjson n "$G" --arg k "$(key_of "$G")" \
+  '{number: $n, updatedAt: $k, analysis: {summary: "s", options: [{title: "a", pros: "oops", cons: [], effort: "e"}], recommended: 5}}' \
+  > "$CACHE_DIR/$G.json"
 
 DEVPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
 "$CHROME" --headless=new --no-sandbox --disable-gpu --no-first-run --no-default-browser-check \
@@ -160,7 +167,8 @@ await send("Page.enable");
 await send("Runtime.enable");
 await send("Page.navigate", { url });
 const out = {};
-out.loaded = await until(`document.querySelectorAll("#list .item").length >= 6`);
+out.loaded = await until(`document.querySelectorAll("#list .item").length >= 8`);
+out.batchable = await evaluate(`return [...document.querySelectorAll("#list .item input:not([disabled])")].map((b) => b.dataset.issue).sort();`);
 out.list = await evaluate(`return [...document.querySelectorAll("#list h2, #list .item")].map((n) => n.tagName === "H2" ? n.textContent : n.dataset.issue + ":" + n.querySelector(".badge:last-child").textContent);`);
 for (const step of process.argv.slice(4)) {
   const [name, n, ...rest] = step.split(":");
@@ -168,16 +176,24 @@ for (const step of process.argv.slice(4)) {
   await evaluate(`[...document.querySelectorAll("#list .item")].find((x) => x.dataset.issue === "${n}")?.click();`);
   await until(`document.querySelector("#detail h2")?.textContent.startsWith("#${n} ")`);
   if (name === "inspect") {
-    out.inspect = await evaluate(`return { body: document.getElementById("body").textContent,
+    out["inspect" + n] = await evaluate(`return { body: document.getElementById("body").textContent,
       reason: document.getElementById("block-reason")?.textContent || null,
       injected: document.querySelectorAll("#detail img, #detail script, #detail b").length,
       pwned: !!window.__pwned,
       options: document.querySelectorAll("#detail .option").length,
-      recommended: document.querySelector("#detail .option.recommended h4")?.textContent || null };`);
+      recommended: document.querySelector("#detail .option.recommended h4")?.textContent || null,
+      error: document.querySelector("#detail p.error")?.textContent || null };`);
     continue;
   }
   const before = await evaluate(`return document.getElementById("status").textContent;`);
   if (name === "approve") await evaluate(`document.querySelector('[data-approve="${arg}"]').click();`);
+  if (name === "double") {
+    // Two clicks before the first answer: only one approval may be sent.
+    await evaluate(`const b = document.querySelector('[data-approve="${arg}"]'); b.click(); b.click();`);
+    await until(`!document.getElementById("status").textContent.startsWith("Sending")`);
+    out.double = await evaluate(`return document.getElementById("status").textContent;`);
+    continue;
+  }
   if (name === "reject") await evaluate(`const t = document.getElementById("reject-reason"); t.value = ${JSON.stringify(arg)}; document.getElementById("reject-btn").click();`);
   if (name === "ask") await evaluate(`const t = document.getElementById("ask-question"); t.value = ${JSON.stringify(arg)}; document.getElementById("ask-btn").click();`);
   if (name === "skip") await evaluate(`document.getElementById("skip-btn").click();`);
@@ -199,28 +215,36 @@ JS
 # The batch selects every issue with a current analysis: A (approved first, so no
 # longer batchable), E and F.
 OUT=$(timeout 90 node "$TMP/drive.mjs" "$DEVPORT" "$URL" \
-  "inspect:$A" "approve:$A:0" "reject:$B:not worth it" "ask:$D:which page do you mean?" "skip:$C" "batch:$E" 2>"$TMP/drive.err")
+  "inspect:$A" "inspect:$G" "double:$A:0" "reject:$B:not worth it" "ask:$D:which page do you mean?" "skip:$C" "batch:$E" 2>"$TMP/drive.err")
 [ -n "$OUT" ] || bad "the browser driver printed nothing: $(tail -5 "$TMP/drive.err") $(tail -3 "$TMP/chrome.log")"
 
 eq "the page lists every blocked issue" "$(printf '%s' "$OUT" | jq -r .loaded)" "true"
 eq "issues are grouped by blocking label, each with its analysis state" \
   "$(printf '%s' "$OUT" | jq -c .list)" \
-  "[\"needs-approval (2)\",\"$E:analysis\",\"$F:analysis\",\"needs-design (1)\",\"$A:analysis\",\"needs-clarification (1)\",\"$D:analysis missing\",\"too-complex (1)\",\"$B:analysis missing\",\"future (1)\",\"$C:analysis missing\"]"
+  "[\"needs-approval (4)\",\"$E:analysis\",\"$F:analysis\",\"$G:analysis invalid\",\"$H:analysis\",\"needs-design (1)\",\"$A:analysis\",\"needs-clarification (1)\",\"$D:analysis missing\",\"too-complex (1)\",\"$B:analysis missing\",\"future (1)\",\"$C:analysis missing\"]"
 
-eq "the body is shown as text, markup and all" "$(printf '%s' "$OUT" | jq -r .inspect.body | head -1)" "$XSS"
-eq "issue markup creates no elements" "$(printf '%s' "$OUT" | jq -r .inspect.injected)" 0
-eq "issue markup runs no script" "$(printf '%s' "$OUT" | jq -r .inspect.pwned)" "false"
-case "$(printf '%s' "$OUT" | jq -r .inspect.reason)" in
+eq "only issues with a current analysis and one blocking label can be batched" \
+  "$(printf '%s' "$OUT" | jq -c .batchable)" "$(printf '%s\n' "$A" "$E" "$F" | jq -R . | jq -sc 'sort')"
+eq "a malformed analysis shows no options" "$(printf '%s' "$OUT" | jq -r ".inspect$G.options")" 0
+case "$(printf '%s' "$OUT" | jq -r ".inspect$G.error")" in
+  *malformed*) ok "a malformed analysis is reported, and the pane still renders" ;;
+  *) bad "malformed analysis: $(printf '%s' "$OUT" | jq -c ".inspect$G")" ;;
+esac
+eq "the body is shown as text, markup and all" "$(printf '%s' "$OUT" | jq -r ".inspect$A.body" | head -1)" "$XSS"
+eq "issue markup creates no elements" "$(printf '%s' "$OUT" | jq -r .inspect$A.injected)" 0
+eq "issue markup runs no script" "$(printf '%s' "$OUT" | jq -r .inspect$A.pwned)" "false"
+case "$(printf '%s' "$OUT" | jq -r .inspect$A.reason)" in
   *"Needs Design"*) ok "the detail pane shows the comment that explains the block" ;;
-  *) bad "block reason: $(printf '%s' "$OUT" | jq -r .inspect.reason)" ;;
+  *) bad "block reason: $(printf '%s' "$OUT" | jq -r .inspect$A.reason)" ;;
 esac
-eq "the analysis shows each option" "$(printf '%s' "$OUT" | jq -r .inspect.options)" 2
-case "$(printf '%s' "$OUT" | jq -r .inspect.recommended)" in
+eq "the analysis shows each option" "$(printf '%s' "$OUT" | jq -r .inspect$A.options)" 2
+case "$(printf '%s' "$OUT" | jq -r .inspect$A.recommended)" in
   *"JSON files"*recommended*) ok "the recommended option is highlighted" ;;
-  *) bad "recommended: $(printf '%s' "$OUT" | jq -r .inspect.recommended)" ;;
+  *) bad "recommended: $(printf '%s' "$OUT" | jq -r .inspect$A.recommended)" ;;
 esac
 
-eq "approve reports success" "$(printf '%s' "$OUT" | jq -r .approve)" "#$A: approve done"
+eq "approve reports success" "$(printf '%s' "$OUT" | jq -r .double)" "#$A: approve done"
+eq "a double click sends one approval" "$(text_of "$A" | grep -c 'Approved for Implementation')" 1
 case ",$(labels_of "$A")," in *,needs-design,*) bad "approve left needs-design on #$A" ;; *) ok "approve removed the blocking label" ;; esac
 case "$(text_of "$A")" in *"Option 1 of 2: SQLite (effort: small)"*) ok "approve posted the chosen option" ;; *) bad "approval text: $(text_of "$A" | tail -5)" ;; esac
 

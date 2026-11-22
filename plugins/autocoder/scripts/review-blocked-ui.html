@@ -93,7 +93,7 @@ const BLOCKING_LABELS = ["needs-approval", "needs-design", "needs-clarification"
                          "needs-feedback", "too-complex", "future", "proposal"];
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 
-const state = { issues: [], current: null, selected: new Set(), decided: new Map() };
+const state = { issues: [], current: null, selected: new Set(), decided: new Map(), inflight: false };
 const $ = (id) => document.getElementById(id);
 
 // Build DOM nodes. Strings become text nodes: issue text is never parsed as HTML.
@@ -135,10 +135,26 @@ function setStatus(text, isError) {
 const labelNames = (issue) => (issue.labels || []).map((l) => (l && typeof l === "object") ? l.name : l);
 const blockingLabels = (issue) => BLOCKING_LABELS.filter((l) => labelNames(issue).includes(l));
 const priorityOf = (issue) => labelNames(issue).find((n) => /^P[0-3]$/.test(n)) || null;
-// A batch approval only trusts an analysis written for the issue as it is now.
-const analysisState = (issue) => !issue.analysis ? (issue.stale ? "stale" : "missing")
-                                                 : (issue.stale ? "stale" : "cached");
-const batchable = (issue) => analysisState(issue) === "cached" && !state.decided.has(issue.number);
+// The cache validates analyses when they are stored; check again here, so one bad
+// entry cannot break the page. Returns the analysis with list fields made safe, or null.
+function normalizeAnalysis(a) {
+  if (!a || typeof a !== "object" || !Array.isArray(a.options) || !a.options.length) return null;
+  if (!a.options.every((o) => o && typeof o === "object" && typeof o.title === "string")) return null;
+  if (!Number.isInteger(a.recommended) || a.recommended < 0 || a.recommended >= a.options.length) return null;
+  const list = (v) => Array.isArray(v) ? v.map(String) : [];
+  return { summary: typeof a.summary === "string" ? a.summary : "", recommended: a.recommended,
+           options: a.options.map((o) => ({ title: o.title, effort: String(o.effort ?? "?"),
+                                             pros: list(o.pros), cons: list(o.cons) })) };
+}
+const analysisState = (issue) => issue.analysisInvalid ? "invalid"
+                               : !issue.analysis ? (issue.stale ? "stale" : "missing")
+                               : (issue.stale ? "stale" : "cached");
+// Approve and reject end the review of an issue; skip, ask and failures do not.
+const isFinal = (n) => { const d = state.decided.get(n); return !!d && d.ok && (d.action === "approve" || d.action === "reject"); };
+// A batch approval only trusts an analysis written for the issue as it is now, and
+// only for an issue with one blocking label, which the approval then removes.
+const batchable = (issue) => analysisState(issue) === "cached" && blockingLabels(issue).length === 1
+                             && !isFinal(issue.number);
 const byNumber = (n) => state.issues.find((i) => i.number === n);
 
 function approachFor(analysis, index, note) {
@@ -156,6 +172,11 @@ async function load() {
     const { status, data } = await api("GET", "/api/issues");
     if (status !== 200) throw new Error(data.error || `HTTP ${status}`);
     state.issues = Array.isArray(data.issues) ? data.issues : [];
+    for (const issue of state.issues) {
+      const raw = issue.analysis;
+      issue.analysis = normalizeAnalysis(raw);
+      issue.analysisInvalid = raw != null && issue.analysis === null;
+    }
     state.decided.clear();
     state.selected.clear();
     if (!byNumber(state.current)) state.current = state.issues.length ? state.issues[0].number : null;
@@ -174,8 +195,16 @@ function renderBatch() {
   for (const n of [...state.selected]) if (!batchable(byNumber(n) || {})) state.selected.delete(n);
   const b = $("batch");
   b.textContent = `Accept recommended (${state.selected.size})`;
-  b.disabled = state.selected.size === 0;
-  $("select-fresh").disabled = !state.issues.some(batchable);
+  b.disabled = state.inflight || state.selected.size === 0;
+  $("select-fresh").disabled = state.inflight || !state.issues.some(batchable);
+}
+
+// While a decision is in flight, no second one can be sent.
+function setInflight(on) {
+  state.inflight = on;
+  for (const b of document.querySelectorAll("#detail button[data-decision]"))
+    b.disabled = on || (b.dataset.final === "1");
+  renderBatch();
 }
 
 function renderList() {
@@ -202,7 +231,8 @@ function listItem(issue) {
   const a = analysisState(issue);
   const box = el("input", {
     type: "checkbox", "aria-label": `Select #${issue.number} for batch approval`,
-    title: batchable(issue) ? "Include in batch approval" : "Batch approval needs a current analysis",
+    title: batchable(issue) ? "Include in batch approval"
+                            : "Batch approval needs a current analysis and a single blocking label",
     disabled: !batchable(issue), "data-issue": issue.number,
     onclick: (ev) => ev.stopPropagation(),
     onchange: (ev) => { ev.target.checked ? state.selected.add(issue.number) : state.selected.delete(issue.number); renderBatch(); },
@@ -247,27 +277,32 @@ function renderDetail() {
   const analysis = issue.analysis;
   if (a === "stale") d.append(el("p", { class: "error" },
       "The issue changed after its analysis was prepared." + (analysis ? " Read it with care." : " Prepare it again with /review-blocked --prepare.")));
+  else if (a === "invalid") d.append(el("p", { class: "error" },
+      "The cached analysis is malformed. Prepare it again with /review-blocked --prepare."));
   else if (a === "missing") d.append(el("p", { class: "muted" },
       "No analysis is prepared. Approve with your own approach below, or prepare one with /review-blocked --prepare."));
 
   const labelSelect = el("select", { id: "approve-label", "aria-label": "Blocking label to remove" },
                          labels.map((l) => el("option", { value: l }, l)));
   const note = el("textarea", { id: "approve-note", placeholder: "Optional note added to the approval" });
-  const busy = !!decided && decided.ok;
+  const final = isFinal(issue.number);
+  // Decision buttons: disabled once the issue is approved or rejected, or while a request runs.
+  const btn = (props, label) => el("button", Object.assign({ type: "button", "data-decision": "",
+    "data-final": final ? "1" : "0", disabled: final || state.inflight }, props), label);
 
-  if (analysis && Array.isArray(analysis.options)) {
+  if (analysis) {
     d.append(el("p", {}, analysis.summary || ""));
     d.append(el("div", { class: "options" }, analysis.options.map((opt, i) => {
       const rec = i === analysis.recommended;
       return el("div", { class: "option" + (rec ? " recommended" : "") },
         el("h4", {}, `${i + 1}. `, opt.title || "", rec ? el("span", { class: "badge ok" }, " recommended") : null),
-        el("div", { class: "k" }, "Effort: ", opt.effort || "?"),
-        el("div", { class: "k" }, "Pros"), el("ul", {}, (opt.pros || []).map((x) => el("li", {}, x))),
-        el("div", { class: "k" }, "Cons"), el("ul", {}, (opt.cons || []).map((x) => el("li", {}, x))),
-        el("button", { class: rec ? "primary" : "", type: "button", "data-approve": i, disabled: busy,
-                       onclick: () => submit(issue, { action: "approve", label: labelSelect.value,
-                                                      approach: approachFor(analysis, i, note.value) }) },
-           `Approve option ${i + 1}`));
+        el("div", { class: "k" }, "Effort: ", opt.effort),
+        el("div", { class: "k" }, "Pros"), el("ul", {}, opt.pros.map((x) => el("li", {}, x))),
+        el("div", { class: "k" }, "Cons"), el("ul", {}, opt.cons.map((x) => el("li", {}, x))),
+        btn({ class: rec ? "primary" : "", "data-approve": i,
+              onclick: () => submit(issue, { action: "approve", label: labelSelect.value,
+                                             approach: approachFor(analysis, i, note.value) }) },
+            `Approve option ${i + 1}`));
     })));
   }
 
@@ -280,27 +315,27 @@ function renderDetail() {
        el("div", {}, "Remove label ", labelSelect),
        analysis ? note : null,
        own,
-       el("div", {}, el("button", { type: "button", id: "approve-own-btn", disabled: busy,
+       el("div", {}, btn({ id: "approve-own-btn",
           onclick: () => {
             if (!own.value.trim()) return setStatus("Write the approach to approve first.", true);
             submit(issue, { action: "approve", label: labelSelect.value, approach: own.value.trim() });
           } }, "Approve this approach"))),
     el("section", {}, el("strong", {}, "Reject"), reason,
-       el("div", {}, el("button", { type: "button", id: "reject-btn", disabled: busy,
+       el("div", {}, btn({ id: "reject-btn",
           onclick: () => {
             if (!reason.value.trim()) return setStatus("Give a reason to reject.", true);
             submit(issue, { action: "reject", reason: reason.value.trim() });
           } }, "Reject"))),
     el("section", {}, el("strong", {}, "Ask a question"),
        el("div", { class: "muted" }, "Posts a comment; the issue stays blocked."), question,
-       el("div", {}, el("button", { type: "button", id: "ask-btn",
+       el("div", {}, btn({ id: "ask-btn",
           onclick: () => {
             if (!question.value.trim()) return setStatus("Write the question first.", true);
             submit(issue, { action: "ask", question: question.value.trim() });
           } }, "Ask"))),
     el("section", {}, el("strong", {}, "Skip"),
        el("div", { class: "muted" }, "Leave it blocked and go to the next issue."),
-       el("div", {}, el("button", { type: "button", id: "skip-btn",
+       el("div", {}, btn({ id: "skip-btn",
           onclick: () => submit(issue, { action: "skip" }) }, "Skip")))));
 }
 
@@ -323,8 +358,10 @@ function nextUndecided(after) {
 }
 
 async function submit(issue, decision) {
+  if (state.inflight) return;
   const body = Object.assign({ issue: issue.number }, decision);
   setStatus(`Sending ${decision.action} for #${issue.number}…`);
+  setInflight(true);
   try {
     const { status, data } = await api("POST", "/api/decision", body);
     const result = (data && typeof data === "object" && "ok" in data) ? data
@@ -332,41 +369,51 @@ async function submit(issue, decision) {
     // A question leaves the issue blocked; record it only when it failed.
     if (decision.action !== "ask" || !result.ok) state.decided.set(issue.number, result);
     state.selected.delete(issue.number);
+    state.inflight = false;
     setStatus(result.ok ? `#${issue.number}: ${decision.action} done` : `#${issue.number}: ${result.detail}`, !result.ok);
-    if (result.ok && decision.action !== "ask") state.current = nextUndecided(issue.number);
+    if (!result.ok) {
+      // Keep the pane, and whatever was typed in it, so the decision can be retried.
+      renderList(); setInflight(false);
+      return;
+    }
+    if (decision.action !== "ask") state.current = nextUndecided(issue.number);
     render();
-    if (result.ok && decision.action === "ask") $("detail").prepend(resultBlock([result]));
+    if (decision.action === "ask" && state.current === issue.number) $("detail").prepend(resultBlock([result]));
   } catch (e) {
     setStatus(e.message, true);
+    setInflight(false);
   }
 }
 
 async function batch() {
+  if (state.inflight) return;
   const decisions = [...state.selected].map(byNumber).filter(batchable).map((issue) => ({
     issue: issue.number, action: "approve", label: blockingLabels(issue)[0],
     approach: approachFor(issue.analysis, issue.analysis.recommended, ""),
   }));
   if (!decisions.length) return;
   setStatus(`Approving ${decisions.length} issue(s)…`);
-  $("batch").disabled = true;
+  setInflight(true);
   try {
     const { status, data } = await api("POST", "/api/decision", decisions);
     if (status !== 200 || !Array.isArray(data.results)) throw new Error(data.error || `HTTP ${status}`);
     for (const r of data.results) state.decided.set(r.issue, r);
     state.selected.clear();
+    state.inflight = false;
     const failed = data.results.filter((r) => !r.ok).length;
     setStatus(failed ? `${failed} of ${data.results.length} approval(s) failed` : `${data.results.length} approved`, failed > 0);
     render();
     $("detail").prepend(resultBlock(data.results));
   } catch (e) {
     setStatus(e.message, true);
-    renderBatch();
+    setInflight(false);
   }
 }
 
 $("refresh").addEventListener("click", load);
 $("batch").addEventListener("click", batch);
 $("select-fresh").addEventListener("click", () => {
+  if (state.inflight) return;
   for (const i of state.issues) if (batchable(i)) state.selected.add(i.number);
   renderList(); renderBatch();
 });
