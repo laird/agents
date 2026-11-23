@@ -368,6 +368,7 @@ token in the URL can approve and close issues: keep it to yourself.
 | `/review-blocked` | Interactive review of blocked issues (auto-triggered by monitor-workers when all issues blocked) |
 | `/review-blocked-gui` | Review blocked issues in a local web page; `--stop` ends its server |
 | `/retro` | Analyze history log + git log + issue tracker; write `IMPROVEMENTS.md` with 3–5 workflow recommendations |
+| `/retro-apply` | Apply the approved `IMPROVEMENTS.md` recommendations to the protocols, scripts and docs (shared with the modernize plugin) |
 | `/list-proposals` | List pending enhancement proposals |
 | `/approve-proposal <number>` | Approve a proposal for implementation |
 | `/list-needs-design` | List issues requiring design/architecture work |
@@ -593,6 +594,7 @@ The manager session is your control center. Use these commands:
 | `/list-proposals` | Review AI-generated enhancement proposals. |
 | `/approve-proposal N` | Approve a proposal so workers can implement it. |
 | `/retro` | After a batch of work, analyze history and produce `IMPROVEMENTS.md` with recommendations. |
+| `/retro-apply` | Apply the recommendations you approve from `IMPROVEMENTS.md`. |
 
 You can also tell the manager agent directly to scale the fleet:
 
@@ -974,7 +976,9 @@ After running a batch of fixes, use `/retro` to produce evidence-backed improvem
 
 The command reads the history log, git log (reverts, corrections, multiple fix attempts), and issue tracker (blocking-label breakdown, proposal rates), then writes `IMPROVEMENTS.md` to your project root with 3–5 specific recommendations for improving the autocoder workflow.
 
-**Recommended cadence**: run after every 20–30 issues. Review `IMPROVEMENTS.md`, apply approved changes to `plugins/autocoder/commands/` manually, then run `/retro` again to measure improvement.
+**Recommended cadence**: run after every 20–30 issues. Review `IMPROVEMENTS.md`, run `/retro-apply` to apply the recommendations you approve, then run `/retro` again to measure improvement.
+
+`/retro-apply` is the modernize plugin's protocol, shipped in both plugins from one source (`plugins/modernize/commands/retro-apply.md`; the packager copies it here). It reads the `IMPROVEMENTS.md` title to tell an autocoder retrospective from a modernization one and edits that plugin's protocols.
 
 ### `append-to-history.sh`
 

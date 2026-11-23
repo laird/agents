@@ -39,6 +39,16 @@ Detailed rules for keeping the platform copies, skills and manifests in step.
 - `approve-blocked-issue.sh`: `plugins/autocoder/scripts/approve-blocked-issue.sh` ↔ `.agent/scripts/approve-blocked-issue.sh`
 - `reject-blocked-issue.sh`: `plugins/autocoder/scripts/reject-blocked-issue.sh` ↔ `.agent/scripts/reject-blocked-issue.sh`
 
+**Shared commands (#150).** `/retro-apply` ships in both plugins from one source,
+`plugins/modernize/commands/retro-apply.md`. `scripts/package-plugin-scripts.py`
+copies it byte-for-byte to `plugins/autocoder/commands/retro-apply.md`
+(`SHARED_COMMANDS`), `--check` fails on drift, and so does
+`tests/test_retro_apply_shared.sh`. Edit the modernize copy and re-run the
+packager; an edit to the autocoder copy is overwritten. Antigravity has one
+namespace, so `.agent/workflows/retro-apply.md` serves both plugins and is kept in
+step by hand. Script names in a shared copy do not seed the receiving plugin's
+script package: they belong to the source plugin.
+
 `.agent/scripts/` is a **generated mirror** (#153): `scripts/package-plugin-scripts.py`
 fills it, and `tests/test_script_packaging.sh` fails on drift. Edit the plugin copy
 and re-run the packager. The exceptions are the scripts listed as `local` for the

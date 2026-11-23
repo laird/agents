@@ -218,6 +218,11 @@ def mentioned_scripts(directories: list[str]) -> set[str]:
         if not base.is_dir():
             continue
         for path in base.rglob("*"):
+            # A shared command's copy (#150) names the scripts of the plugin it
+            # comes from, often as examples to write in the project; they are not
+            # this package's to ship, and a copy here would shadow their source.
+            if path.relative_to(ROOT).as_posix() in SHARED_COMMANDS:
+                continue
             if path.is_file() and path.suffix in (".md", ".json"):
                 try:
                     found |= set(SCRIPT_NAME.findall(path.read_text(errors="ignore")))
@@ -300,6 +305,12 @@ PI_PROMPTS = {
     "autocoder-help": ("plugins/autocoder/commands/autocoder-help.md", None),
 }
 PI_PROMPT_DIR = ".pi/prompts"
+
+# Commands both plugins ship from one source (#150): each copy is byte-identical
+# to its source, so an edit to one plugin's protocol reaches the other.
+SHARED_COMMANDS = {
+    "plugins/autocoder/commands/retro-apply.md": "plugins/modernize/commands/retro-apply.md",
+}
 
 
 def _first_paragraph(text: str) -> str:
@@ -439,10 +450,32 @@ def sync_prompts(check_only: bool = False) -> int:
     return problems
 
 
+def sync_shared_commands(check_only: bool = False) -> int:
+    problems = 0
+    for copy_rel, source_rel in SHARED_COMMANDS.items():
+        source, copy = ROOT / source_rel, ROOT / copy_rel
+        if not source.is_file():
+            print(f"MISSING SOURCE  {source_rel} (shared command {copy_rel})")
+            problems += 1
+        elif check_only:
+            if not copy.exists():
+                print(f"MISSING  {copy_rel}  (copy of {source_rel})")
+                problems += 1
+            elif not filecmp.cmp(source, copy, shallow=False):
+                print(f"STALE    {copy_rel}  differs from {source_rel}")
+                problems += 1
+        elif not copy.exists() or not filecmp.cmp(source, copy, shallow=False):
+            shutil.copy2(source, copy)
+    if not check_only:
+        print(f"shared   {len(SHARED_COMMANDS):3d} command(s) copied between plugins")
+    return problems
+
+
 def sync() -> int:
     # Skills and prompts first: they are content the script closure reads its
     # seeds from, so generating them afterwards would need a second pass to
     # converge -- and a single sync would leave --check reporting drift.
+    sync_shared_commands()
     sync_skills()
     sync_prompts()
     index = build_index()
@@ -485,6 +518,7 @@ def check() -> int:
                     print(f"STALE    {rel}/{name}  differs from {src.relative_to(ROOT)}")
                     problems += 1
             print(f"{'OK' if not problems else '--':8s} {platform:8s} {len(names):3d} scripts in {rel}")
+    problems += sync_shared_commands(check_only=True)
     problems += sync_skills(check_only=True)
     problems += sync_prompts(check_only=True)
     if problems:

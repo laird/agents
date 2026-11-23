@@ -24,6 +24,15 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- `/retro-apply` (#150): apply the approved recommendations in `IMPROVEMENTS.md`.
+  Autocoder had `/retro` but no way to apply what it found. The command is the
+  modernize plugin's protocol, shipped in both plugins from one source:
+  `scripts/package-plugin-scripts.py` copies
+  `plugins/modernize/commands/retro-apply.md` to `plugins/autocoder/commands/`,
+  and `--check` and `tests/test_retro_apply_shared.sh` fail on drift. The
+  protocol now reads the `IMPROVEMENTS.md` title to tell an autocoder
+  retrospective from a modernization one. `/retro`, the help, the README and the
+  Codex, Droid, Gemini and pi command mappings point to it.
 - `/review-blocked-gui` (#308): review blocked issues in a local web page. It
   starts `review-blocked-server.py` (#311) on `127.0.0.1`, prints a URL with a
   per-run token, and suggests `/review-blocked --prepare` when issues have no

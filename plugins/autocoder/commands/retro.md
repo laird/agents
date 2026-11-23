@@ -358,7 +358,7 @@ the autocoder agent analyzed its history to identify process improvements.
 ## Next Steps
 
 1. Review each recommendation above
-2. Apply approved changes to `plugins/autocoder/commands/` manually
+2. Run `/retro-apply` to apply the approved recommendations to the protocols
 3. Run `/retro` again after 20+ more issues to measure improvement
 
 ---
@@ -370,6 +370,6 @@ After writing the file, print:
 ```
 ✅ IMPROVEMENTS.md written to project root.
 
-Review the recommendations, apply the approved changes to plugins/autocoder/commands/,
-then run /retro again in a few weeks to measure improvement.
+Review the recommendations, then run /retro-apply to apply the approved ones.
+Run /retro again in a few weeks to measure improvement.
 ```

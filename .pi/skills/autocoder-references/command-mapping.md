@@ -15,6 +15,8 @@
 | `/list-needs-design` | Query issues with `needs-design` |
 | `/list-needs-feedback` | Query issues with feedback-related blocking labels |
 | `/brainstorm-issue` | Produce implementation options and recommended direction for one issue |
+| `/retro` | Follow `plugins/autocoder/commands/retro.md`: analyze the history log, git log and tracker, and write `IMPROVEMENTS.md` |
+| `/retro-apply` | Follow `plugins/autocoder/commands/retro-apply.md` (shared with modernize) to apply the approved `IMPROVEMENTS.md` recommendations |
 | `/set-issue-source` | Switch issue backend (file or GitHub) |
 | `/record-issue` | Create a new issue in the configured backend |
 | `/list-issues` | List issues in the current backend |

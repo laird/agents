@@ -1,6 +1,11 @@
 # Retro-Apply Command
 
-**Description**: Apply the process improvement recommendations from IMPROVEMENTS.md to agent protocols and project configuration
+<!-- Shared by the autocoder and modernize plugins (#150). The source is
+     plugins/modernize/commands/retro-apply.md; scripts/package-plugin-scripts.py
+     copies it to plugins/autocoder/commands/retro-apply.md, and
+     tests/test_retro_apply_shared.sh fails when the copies differ. -->
+
+**Description**: Apply the process improvement recommendations from IMPROVEMENTS.md (written by the autocoder or the modernize `/retro`) to agent protocols and project configuration
 
 ---
 
@@ -9,7 +14,7 @@
 **Version**: 1.0
 **Purpose**: Apply approved process improvements from IMPROVEMENTS.md to agent protocols
 **Team**: All specialist agents (Migration Coordinator, Security, Architect, Coder, Tester, Documentation)
-**Input**: `IMPROVEMENTS.md` (from `/retro` command)
+**Input**: `IMPROVEMENTS.md` (from either plugin's `/retro` command)
 **Output**: Updated protocol files, configuration, automation scripts
 **Duration**: 3-8 hours (depends on recommendation complexity)
 
@@ -180,11 +185,35 @@ Recommendation 2 and 4 are independent
 
 #### 3.1 Identify Affected Protocols
 
-**Common protocol locations**:
+**Which plugin's protocols.** Both plugins' `/retro` write `IMPROVEMENTS.md` in the same shape; the title and each recommendation's **Affected Components** say whose protocols it changes:
+
+| `IMPROVEMENTS.md` title | Written by | Protocols it changes |
+|---|---|---|
+| `# Autocoder Process Improvement Recommendations` | autocoder `/retro` | `plugins/autocoder/commands/*.md` (most often `fix.md`), `plugins/autocoder/scripts/` |
+| any other (modernization retrospective) | modernize `/retro` | `plugins/modernize/commands/*.md`, `plugins/modernize/agents/*.md` |
+
+```bash
+# Whose protocols this IMPROVEMENTS.md targets.
+if head -1 IMPROVEMENTS.md | grep -q '^# Autocoder Process Improvement Recommendations'; then
+  echo "autocoder: plugins/autocoder/commands/ and plugins/autocoder/scripts/"
+else
+  echo "modernize: plugins/modernize/commands/ and plugins/modernize/agents/"
+fi
+```
+
+In a repository that keeps the plugin source (this one does), an edited command also has an Antigravity copy in `.agent/workflows/` (agents: `.agent/rules/`) that must get the same edit, and an edited script under `plugins/autocoder/scripts/` is mirrored to the other platforms by `python3 scripts/package-plugin-scripts.py`. Read the repository's `CLAUDE.md` or `AGENTS.md` for its own mirror rules before editing.
+
+**Common protocol locations (modernize)**:
 - `commands/modernize.md` - Main modernization protocol
 - `commands/assess.md` - Assessment protocol
 - `commands/plan.md` - Planning protocol
 - Project-specific protocols
+
+**Common protocol locations (autocoder)**:
+- `commands/fix.md` - Issue-resolution protocol every worker follows
+- `commands/monitor-workers.md` - Manager protocol
+- `commands/review-blocked.md` - Blocked-issue review
+- `scripts/` - The gate, claim, merge and issue-backend scripts the protocols call
 
 **Example**: Recommendation "Front-load dependency analysis"
 - Affects: `commands/assess.md` (add dependency analysis step)
@@ -977,7 +1006,7 @@ Next: Validate improvements in next modernization project
 **Document Owner**: Migration Coordinator
 **Protocol Version**: 1.0
 **Last Updated**: 2025-11-01
-**Prerequisite**: `/retro` command must be run first
+**Prerequisite**: `/retro` (autocoder or modernize) must be run first
 **Input**: IMPROVEMENTS.md
 
 **Remember**: **Improvements are worthless if not applied. Make changes permanent through automation and protocols.** ✅

@@ -4,7 +4,10 @@ description: Apply improvements from retrospective
 
 # Retrospective Application Workflow
 
-This workflow applies the recommendations from `IMPROVEMENTS.md`.
+This workflow applies the recommendations from `IMPROVEMENTS.md`, written by either the autocoder or
+the modernize `/retro` (#150). The file's title says which: `# Autocoder Process Improvement
+Recommendations` targets the autocoder protocols (`fix.md` and the other autocoder workflows,
+and the scripts they call); any other title targets the modernize protocols.
 
 1. **Review & Plan**
     Switch to **Migration Coordinator**:
@@ -17,7 +20,9 @@ This workflow applies the recommendations from `IMPROVEMENTS.md`.
 
     a.  **Protocol Updates**:
         Switch to **Documentation**:
-        - Update guidelines in `.agent/rules/` or workflows.
+        - Update guidelines in `.agent/rules/` or workflows, for the plugin the title names.
+          In a repository that keeps the plugin source, give the Claude copy
+          (`plugins/<plugin>/commands/`, agents in `plugins/<plugin>/agents/`) the same edit.
 
     b.  **Automation**:
         Switch to **Coder**:

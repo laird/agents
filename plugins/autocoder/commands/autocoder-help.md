@@ -59,6 +59,8 @@ Based on what you find, give contextual guidance:
 | `/review-blocked` | Interactively review blocked issues (run alongside fix-loop) |
 | `/review-blocked-gui` | Review blocked issues in a local web page (`--stop` ends its server) |
 | `/stop-loop` | Stop the continuous loop |
+| `/retro` | Analyze the history log, git log and tracker; write `IMPROVEMENTS.md` |
+| `/retro-apply` | Apply the approved recommendations in `IMPROVEMENTS.md` to the protocols |
 
 ### Design & Brainstorming
 
