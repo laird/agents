@@ -32,8 +32,11 @@ and the scripts they call); any other title targets the modernize protocols.
 
     b.  **Automation**:
         Switch to **Coder**:
-        - Create/Update scripts in `scripts/`.
-        - Configure CI/CD or hooks.
+        - Create/Update scripts in `scripts/`, except the merge gate, claim, merge and install
+          scripts: file those as an issue, as in 2a.
+        - Configure CI/CD or hooks only when the user, in this session, names that file and
+          says to apply it here; otherwise file it as an issue. Approving the recommendation
+          is not enough.
 
     c.  **Documentation**:
         - Update `README.md`, `CHANGELOG.md`.

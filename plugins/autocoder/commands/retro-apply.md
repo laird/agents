@@ -203,7 +203,7 @@ fi
 
 In a repository that keeps the plugin source (this one does), an edited command also has an Antigravity copy in `.agent/workflows/` (agents: `.agent/rules/`) that must get the same edit, and an edited script under `plugins/autocoder/scripts/` is mirrored to the other platforms by `python3 scripts/package-plugin-scripts.py`. Read the repository's `CLAUDE.md` or `AGENTS.md` for its own mirror rules before editing.
 
-**High-risk targets are filed, not applied.** A recommendation that changes the merge gate, the claim or merge scripts, CI workflows (`.github/workflows/`), git hooks, or install scripts can switch off the checks that protect the integration branch. Do not edit those here. File it as an issue instead (autocoder: `/record-issue`), quoting the recommendation and its evidence, so it is built on its own branch and goes through the repository's normal review (in autocoder, `/fix`'s pre-landing review gate and `risk.high` tiers). Phase 4's hook and CI examples apply only where the user approved that recommendation by number and no such review process exists.
+**High-risk targets are filed, not applied.** A recommendation that changes the merge gate, the claim or merge scripts, CI workflows (`.github/workflows/`), git hooks, or install scripts can switch off the checks that protect the integration branch. Do not edit those here. File it as an issue instead (autocoder: `/record-issue`), quoting the recommendation and its evidence, so it is built on its own branch and goes through the repository's normal review (in autocoder, `/fix`'s pre-landing review gate and `risk.high` tiers). This includes Phase 4's hook and CI examples: write one directly only when the user, in this session, names that file and says to apply it here instead of filing it. Approval of the recommendation in 1.2 is not enough.
 
 **Common protocol locations (modernize)**:
 - `commands/modernize.md` - Main modernization protocol
@@ -685,7 +685,8 @@ echo "Exit code: $?"
 # Stage only the files this application changed, by name: never `git add -A`,
 # which also sweeps up unrelated work and untracked secrets such as .env.
 git status --short
-git add <each protocol, script and doc file changed above> IMPROVEMENTS.md
+CHANGED_FILES=( )   # fill in: every protocol, script and doc file changed above
+git add -- "${CHANGED_FILES[@]}" IMPROVEMENTS.md
 
 git commit -m "$(cat <<'EOF'
 Apply process improvements from IMPROVEMENTS.md
