@@ -738,6 +738,23 @@ Moved to `.agent/shared/fix-complex-issues.md` (#240). Read it when Step 1 rates
 
 ### Step 3: Commit and Close
 
+**Never wait on a background-job notification for a verdict you need (#7134).** A pre-check
+(the project's prebank, a scratch typecheck) launched in a background shell finishes without
+you when the shell's completion notification is lost, and four such losses in one day cost a
+fleet about four worker-hours of idle time. Run it in the FOREGROUND within your tool's time
+ceiling (the project may offer a one-command bank step that does so, e.g. the plugin's
+`enqueue.sh`); when the run is longer than the ceiling, background it and then POLL ITS
+VERDICT LINE on a timer from the foreground, in chunks under the ceiling, until it appears:
+
+```bash
+until grep -qE '^=== (prebank|pre-check)[^:]*: (PASS|FAIL)' "$LOG" || ! kill -0 "$PID" 2>/dev/null; do sleep 30; done
+tail -40 "$LOG"   # the block: act on PASS or FAIL now, never on "it will notify me"
+```
+
+A run with no verdict and no live process is dead: re-run it, do not wait. The manager's
+`worker-verdict-watchdog.sh` re-prompts a pane that sat idle past a verdict, and its nudge is
+a defect report against this rule, not a service to rely on.
+
 After verification passes:
 
 ```bash

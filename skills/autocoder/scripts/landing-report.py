@@ -360,7 +360,65 @@ def worker_idle_gaps(claims, ev, since, until):
     return {"idle_gap_s": dist(gaps), "workers": len(workers), "claims": len(claims)}
 
 
-def analyze(rows, since, until, bucket="week", ci=None, claims=None):
+def load_verdicts(path, repo_id=None):
+    """The lifecycle ledger's `verdict` and `verdict-nudged` events (worker-verdict-watchdog.sh, #7134): a
+    pre-check verdict the watchdog saw (detail: verdict, at, log) and a pane it nudged because the verdict
+    sat unread past the stale window (detail: verdict, idle_s). Same repository rule as load_claims."""
+    out = {"verdicts": [], "nudges": []}
+    if not path or not Path(path).exists():
+        return out
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict) or e.get("event") not in ("verdict", "verdict-nudged") or not parse_ts(e.get("ts")):
+            continue
+        if repo_id and e.get("repo") and e.get("repo") != repo_id:
+            continue
+        d = e.get("detail") if isinstance(e.get("detail"), dict) else {}
+        try:
+            issue = int(e.get("issue"))
+        except (TypeError, ValueError):
+            continue
+        if e["event"] == "verdict":
+            at = parse_ts(d.get("at")) or parse_ts(e["ts"])
+            out["verdicts"].append((at, str(e.get("worker") or ""), issue, str(d.get("verdict") or "")))
+        else:
+            try:
+                idle = float(d.get("idle_s"))
+            except (TypeError, ValueError):
+                idle = None
+            out["nudges"].append((parse_ts(e["ts"]), str(e.get("worker") or ""), issue, idle))
+    out["verdicts"].sort(); out["nudges"].sort()
+    return out
+
+
+def verdict_idle(verdicts, ev, since, until):
+    """Per PASS pre-check verdict, the gap to the issue's first READY after it: the time a worker sat on a
+    green result before banking it (#7134: an unseen background verdict). A verdict with no READY after it
+    (a FAIL, a run re-done, an issue still open) measures nothing; the READY must be in the window. Also the
+    nudges the watchdog sent in the window and the idle seconds they found."""
+    gaps, workers = [], set()
+    for at, worker, issue, verdict in verdicts.get("verdicts", []):
+        if verdict != "PASS":
+            continue
+        ready = [t for t, e, r in ev.get(issue, []) if e == "ready" and t >= at]
+        if not ready:
+            continue
+        t = min(ready)
+        if (since is not None and t < since) or (until is not None and t >= until):
+            continue
+        gaps.append((t - at).total_seconds())
+        workers.add(worker)
+    nudges = [(t, w, i, idle) for t, w, i, idle in verdicts.get("nudges", [])
+              if (since is None or t >= since) and (until is None or t < until)]
+    idle_known = [idle for _, _, _, idle in nudges if idle is not None]
+    return {"after_verdict_s": dist(gaps), "workers": len(workers), "verdicts": len(verdicts.get("verdicts", [])),
+            "nudges": len(nudges), "nudged_idle_s_total": sum(idle_known) if idle_known else None}
+
+
+def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=None):
     def inwin(r):
         t = parse_ts(r["ts"])
         return (since is None or t >= since) and (until is None or t < until)
@@ -503,6 +561,7 @@ def analyze(rows, since, until, bucket="week", ci=None, claims=None):
         "regates": regates,
         "ci": ci_res,
         "workers": worker_idle_gaps(claims or [], ev, since, until),
+        "verdicts": verdict_idle(verdicts or {}, ev, since, until),
     }
 
 
@@ -965,6 +1024,17 @@ def idle_gap_text(a):
     return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']} over {w['workers']} workers)"
 
 
+def verdict_idle_text(a):
+    """A worker's wait between a green pre-check verdict and its READY, with the watchdog's nudges, or why n/a."""
+    v = a.get("verdicts") or {"after_verdict_s": {"n": 0}, "workers": 0, "verdicts": 0, "nudges": 0, "nudged_idle_s_total": None}
+    d = v["after_verdict_s"]
+    nudged = (f"; nudged {v['nudges']}" + (f" ({human(v['nudged_idle_s_total'])} idle when nudged)" if v["nudged_idle_s_total"] is not None else "")) if v["nudges"] else ""
+    if not d["n"]:
+        return ("n/a (no PASS verdict lifecycle event followed by a READY in the window"
+                + ("; the verdict watchdog records them: pass --issue-events" if not v["verdicts"] else "") + ")" + nudged)
+    return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']} over {v['workers']} workers){nudged}"
+
+
 def render_week(a):
     """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
     w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
@@ -994,6 +1064,7 @@ def render_week(a):
     else:
         out.append("- Re-gates: 0")
     out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
+    out.append("- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): " + verdict_idle_text(a))
     return out + [""]
 
 
@@ -1043,6 +1114,7 @@ def render(a, week=None, batches=False):
     out.append("- READY to launch (a cycle took it): " + ready_to_launch_text(t))
     out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
+    out.append("- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): " + verdict_idle_text(a))
     out += ["", "## Batches", "", f"- Batches: {b['count']}; landed changes: {a['landed']}",
             "- Size distribution (members: batches): " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),
             f"- Assembly: " + ("n/a" if not b["assembly_s"]["n"] else f"p50 {human(b['assembly_s']['p50'])}, p90 {human(b['assembly_s']['p90'])}"),
@@ -1230,7 +1302,7 @@ def main(argv=None):
     p.add_argument("--ci-workflow", action="append", default=[], help="judge only this workflow name (repeatable; default: `ciWorkflows` of the repository's .autocoder.json, else every run on the branch)")
     p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
     p.add_argument("--issue-events", default=os.environ.get("AUTOCODER_ISSUE_EVENTS") or default_issue_events(),
-                   help="the lifecycle ledger (issue-events-lib.sh): its `claimed` events name the worker, for the worker idle gap")
+                   help="the lifecycle ledger (issue-events-lib.sh): its `claimed` events name the worker, for the worker idle gap; its `verdict` and `verdict-nudged` events (worker-verdict-watchdog.sh, #7134) for the idle time after a verdict")
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
     p.add_argument("--skip-subject-regex", default=r"(?i)\(mechanical\)|\(documents-only\)|^docs\(|^merge |^re-sync")
     p.add_argument("--ready-regex", default=r"^\W*(\[[^\]]*\]\s*)?(\w+:\s*)?READY\b")
@@ -1313,7 +1385,8 @@ def main(argv=None):
     # The lifecycle ledger's rows name their repository the same way: strict under --repo-id, else this
     # directory's id (a row naming another repository is dropped), everything under --all-repos.
     claims = load_claims(a.issue_events, None if a.all_repos else (a.repo_id or derived))
-    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims)
+    watchdog = load_verdicts(a.issue_events, None if a.all_repos else (a.repo_id or derived))
+    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims, verdicts=watchdog)
     if week:
         res["week"] = week
     sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res, week=week, batches=a.batches))
