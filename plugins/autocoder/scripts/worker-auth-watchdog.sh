@@ -19,6 +19,12 @@
 #   This script does that mechanical part at zero token cost, and raises ONE
 #   herdr notification per outage so the human knows to reauth.
 #
+# REQUESTED COMPACTION (#373): a fix-loop worker that must compact before its next
+#   issue cannot type /compact into itself. It records the request
+#   (compact-request.sh), which stops its gate claiming, and ends its turn with a
+#   line opening with COMPACT_REQUESTED. An idle pane whose latest turn ends that way
+#   is sent /compact at once, with no credential probe, under the same cooldown.
+#
 # DETECTION (per herdr agent pane, excluding the pane running this script):
 #   - agent_status is idle or done (a working pane is already recovering;
 #     a blocked pane is waiting on a human dialog and is left alone), AND
@@ -142,7 +148,12 @@ if block_start is None:
     print("none"); sys.exit()
 first = lines[block_start].strip()[1:].strip()
 block = "\n".join(lines[block_start:])
-if not (re.search(os.environ["ERROR_START_RE"], first) and re.search(os.environ["ERROR_RE"], block)):
+# A worker asking to be compacted (#373) ends its turn with a line that opens with
+# COMPACT_REQUESTED, alone or after GATE_CLAIM_RELEASED #N. Prose naming it mid-line is not one.
+asked = re.compile(r"^(GATE_CLAIM_RELEASED #\d+\s+)?COMPACT_REQUESTED\b")
+if any(asked.match(l.strip().lstrip("●⎿").strip()) for l in lines[block_start:]):
+    print("requested")
+elif not (re.search(os.environ["ERROR_START_RE"], first) and re.search(os.environ["ERROR_RE"], block)):
     print("none")
 elif re.search(os.environ["COMPACT_RE"], block):
     print("compact")
@@ -183,7 +194,7 @@ notify() {
 
 # ── One tick ─────────────────────────────────────────────────────────────────
 tick() {
-  local dry="$1" panes pane status text action stalled=()
+  local dry="$1" panes pane status text action stalled=() requested=()
 
   panes=$(list_agent_panes) || { log "❌ herdr unreachable (herdr agent list failed)"; return 1; }
 
@@ -193,8 +204,26 @@ tick() {
     text=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" \
       herdr pane read "$pane" --source recent-unwrapped --lines 80 2>/dev/null) || continue
     action=$(printf '%s\n' "$text" | classify_pane_text)
-    [ "$action" = none ] || stalled+=("$pane:$action")
+    case "$action" in
+      none) ;;
+      requested) requested+=("$pane") ;;
+      *) stalled+=("$pane:$action") ;;
+    esac
   done <<<"$panes"
+
+  # A worker that asked for /compact (#373) needs no credential probe: send it now.
+  for pane in ${requested[@]+"${requested[@]}"}; do
+    if in_cooldown "$pane"; then
+      log "SKIP $pane (requested compact) — nudged within the last ${COOLDOWN}s"
+    elif [ "$dry" = true ]; then
+      log "DRY-RUN would send $pane: /compact (the worker asked for it)"
+    elif send_herdr_command "$pane" "/compact"; then
+      mark_nudged "$pane"
+      log "COMPACTED $pane (the worker asked for it)"
+    else
+      log "❌ send to $pane failed"
+    fi
+  done
 
   if [ ${#stalled[@]} -eq 0 ]; then
     [ "$dry" = true ] || rm -f "$STATE_DIR/outage"

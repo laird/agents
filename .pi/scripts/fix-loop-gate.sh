@@ -131,6 +131,17 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
   fi
 fi
 
+# ── 0a. A worker waiting to be compacted claims nothing new (#373) ─────────
+# The session asked for /compact (compact-request.sh) and would only release a fresh
+# claim again. After the resume step on purpose: an issue already held is the same
+# context, so it carries on. AUTOCODER_NEXT_FIX_FILE runs every issue in a fresh
+# process, so the request means nothing there.
+if [ -z "${AUTOCODER_NEXT_FIX_FILE:-}" ] && [ -f "${SCRIPT_DIR}/compact-request.sh" ] \
+   && PENDING="$(bash "${SCRIPT_DIR}/compact-request.sh" pending)"; then
+  echo "fix-loop-gate: waiting for a requested compaction (${PENDING#compact-request: }); not claiming" >&2
+  exit 1
+fi
+
 # ── 0b. A manager's dispatch overrides this tick's own pick (dispatch-fns.sh) ──
 # Workers run the fix loop by default; a manager steers one by writing a dispatch file
 # for its worktree (dispatch-issue.sh) instead of typing into its pane, which would end

@@ -37,8 +37,16 @@ WORK_JSON="${AUTOCODER_WORK_JSON:-/tmp/autocoder-work.json}"
 bash "$SCRIPT_DIR/fix-loop-gate.sh"; GATE_RC=$?
 ```
 
+**A compaction you asked for (#373).** If an earlier tick recorded a compaction request
+(see "Declining the issue" below) and this session has been compacted or cleared since
+(your context opens with a compaction summary, or you have no record of that tick), run
+`bash "$SCRIPT_DIR/compact-request.sh" clear` **before** the gate, so it claims again.
+
 Branch on `$GATE_RC`:
 
+- **1 (idle), and the gate printed `waiting for a requested compaction`:** this session is still waiting
+  for the `/compact` it asked for. Emit exactly `COMPACT_REQUESTED` and stop, so the watchdog
+  sees the request again.
 - **1 (idle):** emit exactly `IDLE_NO_WORK_AVAILABLE` and stop. No further tool calls. Do NOT use `SendMessage` or any other tool to notify another session of your idle status — silent stop is correct.
 - **2 (config error):** emit `GATE_CONFIG_ERROR` and stop.
 - **0 (work):** `PHASE=$(jq -r .phase "$WORK_JSON")` then act:
@@ -149,3 +157,18 @@ worktree's gate recorded, and refuses once `feature/issue-<N>` exists (work has 
 use `/fix`'s explicit release then) or once another worker has claimed the issue since.
 A `"resume": true` plan whose branch does not exist yet may be released the same way. Never
 run it for an `"in_flight": true` plan, which is work this session already has under way.
+
+**Declining to compact (#373).** In inline `/loop` mode you cannot type `/compact` into
+your own session, and a request to a person can wait for hours. When the reason you
+declined is that you must compact first, also record the request:
+
+```bash
+bash "$SCRIPT_DIR/compact-request.sh" request "holding #$(jq -r .issue "$WORK_JSON") for context compaction"
+```
+
+and emit `GATE_CLAIM_RELEASED #<issue> COMPACT_REQUESTED` (on one line, first in your
+reply) instead of the bare `GATE_CLAIM_RELEASED`. While the request is pending the gate
+claims nothing new, so no issue is claimed and released again every tick.
+`worker-auth-watchdog.sh` (cron, every 2 minutes; `--ensure` installs it) sends `/compact`
+to an idle pane whose turn ends that way. A request nobody answers expires after an hour
+(`AUTOCODER_COMPACT_REQUEST_TTL`), and the gate claims again.

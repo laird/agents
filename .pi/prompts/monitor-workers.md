@@ -689,7 +689,11 @@ mechanical — do not hand-nudge each worker. `worker-auth-watchdog.sh` finds pa
 whose latest turn ended in a credential error, raises one herdr notification per
 outage while credentials are still invalid, and once they are valid sends
 `/compact` to compaction-wedged panes and a resume prompt to the rest (each pane
-at most once per 10 minutes). It costs zero tokens; install it once per host:
+at most once per 10 minutes). The same tick answers a fix-loop worker that asked to be
+compacted (#373): an inline `/loop` worker cannot type `/compact` into itself, so it records
+the request (`compact-request.sh`, which stops its gate claiming) and ends its turn with
+`COMPACT_REQUESTED`; the watchdog sends that pane `/compact` with no credential check. It
+costs zero tokens; install it once per host:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --ensure    # cron, every 2 min

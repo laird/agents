@@ -114,6 +114,33 @@ cat > "$T/panes/wP_p1" <<EOF
 $CHROME
 EOF
 
+# A fix-loop worker that must compact before its next issue asked for it (#373).
+cat > "$T/panes/wC_p1" <<EOF
+❯ /autocoder:gate
+  Ran 2 shell commands
+● GATE_CLAIM_RELEASED #372 COMPACT_REQUESTED
+
+  Released #372; this worker must compact before it starts a new issue.
+✻ Brewed for 40s · done 9:12 AM
+$CHROME
+EOF
+
+# A later idle tick of the same worker, still waiting.
+cat > "$T/panes/wD_p1" <<EOF
+❯ /autocoder:gate
+● COMPACT_REQUESTED
+✻ Brewed for 3s · done 9:16 AM
+$CHROME
+EOF
+
+# Prose that names the marker mid-line is not a request.
+cat > "$T/panes/wE_p1" <<EOF
+❯ what does the gate print now?
+● It ends the turn with COMPACT_REQUESTED when the worker needs a compaction.
+✻ Brewed for 3s · done 9:20 AM
+$CHROME
+EOF
+
 cp "$T/panes/wT_p1" "$T/panes/wZ_p1"    # same error, but still working
 cp "$T/panes/wT_p1" "$T/panes/wW_p1"    # the pane running the watchdog
 
@@ -189,6 +216,24 @@ agents_json w11:p1:idle w13:p1:done > "$T/agents.json"
 OUT=$(run 1 --once)
 assert_contains "no stall reports OK" "OK no worker stalled" "$OUT"
 assert_not_contains "no stall never notifies, even with bad creds" "notification show" "$(cat "$T/argv")"
+
+# ── A worker that asked for /compact gets it, whatever the credentials say (#373) ──
+rm -rf "$T/state"
+agents_json wC:p1:idle wD:p1:done wE:p1:idle w13:p1:done > "$T/agents.json"
+OUT=$(run 1 --once)
+S=$(sends)
+assert_contains "a released claim with COMPACT_REQUESTED gets /compact" "pane send-text wC:p1 /compact" "$S"
+assert_contains "a bare COMPACT_REQUESTED tick gets /compact" "pane send-text wD:p1 /compact" "$S"
+assert_contains "the send is submitted" "pane send-keys wC:p1 enter" "$(cat "$T/argv")"
+assert_not_contains "prose naming the marker is not a request" "wE:p1" "$S"
+assert_not_contains "a requested compact needs no credential alarm" "notification show" "$(cat "$T/argv")"
+assert_contains "the send is logged" "COMPACTED wC:p1" "$OUT"
+OUT=$(run 1 --once)
+[ -z "$(sends)" ] && pass "a requested compact honours the cooldown" || fail "a requested compact honours the cooldown — $(sends)"
+rm -rf "$T/state"
+OUT=$(run 1 --dry-run)
+assert_contains "dry-run reports the requested compact" "DRY-RUN would send wC:p1: /compact" "$OUT"
+[ -z "$(sends)" ] && pass "dry-run sends no requested compact" || fail "dry-run sends no requested compact — $(sends)"
 
 # ── herdr unreachable fails loudly ───────────────────────────────────────────
 rm -f "$T/agents.json"

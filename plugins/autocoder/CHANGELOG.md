@@ -8,6 +8,11 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- An inline `/loop` fix-loop worker that must compact no longer stalls until a person types
+  `/compact`, claiming and releasing the same issue every tick (#373). It records the request
+  with the new `compact-request.sh`; `fix-loop-gate.sh` claims nothing new while it is pending
+  (it expires after an hour), and `worker-auth-watchdog.sh` sends `/compact` to a pane whose
+  turn ends with `COMPACT_REQUESTED`.
 - `merge-to-integration.sh` no longer reports a rebase the host stopped as a
   conflict. Git replaying the feature commits onto the integration branch can die
   on the same conditions a gate stage does (`No space left on device` on a shared
