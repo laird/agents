@@ -284,10 +284,28 @@ def git(repo, *args, check=False, input=None, env=None):
     return r
 
 
+# #367: a transport failure, not an answer. On one host the GitHub API timed out 22 times in under 7 hours.
+TRANSPORT_ERROR_RE = re.compile(r"i/o timeout|connection reset|connection refused|TLS handshake timeout|unexpected EOF"
+                                r"|\bHTTP 50[234]\b|Bad Gateway|Service Unavailable|Gateway Time-?out", re.IGNORECASE)
+TRACKER_READS = ("issue_list", "issue_get", "issue_view")   # safe to repeat; a write that timed out may have landed
+TRACKER_RETRIES = 2          # extra attempts for a read that failed on transport
+TRACKER_RETRY_PAUSE = 5.0    # seconds before each extra attempt
+
+
 def tracker(cfg: Config, *args, check=True):
-    """Run one `issue_*` function of issue-fns.sh from the repo (so issue-config.sh finds its config)."""
-    r = subprocess.run(["bash", "-c", 'source "$1" || exit 99; shift; "$@"', "_", str(ISSUE_FNS), *args],
-                       capture_output=True, text=True, cwd=str(cfg.repo))
+    """Run one `issue_*` function of issue-fns.sh from the repo (so issue-config.sh finds its config).
+
+    A READ (`TRACKER_READS`) that fails with a transport error (`TRANSPORT_ERROR_RE`: a timeout, a reset, a 502,
+    503 or 504) is tried again up to TRACKER_RETRIES times, TRACKER_RETRY_PAUSE seconds apart, before it fails
+    (#367). Any other failure fails at once. A write is never repeated: a timed-out comment may have posted, and
+    the train's writes already go through a retry queue (train_run.Reporter)."""
+    attempts = 1 + (TRACKER_RETRIES if args and args[0] in TRACKER_READS else 0)
+    for attempt in range(attempts):
+        r = subprocess.run(["bash", "-c", 'source "$1" || exit 99; shift; "$@"', "_", str(ISSUE_FNS), *args],
+                           capture_output=True, text=True, cwd=str(cfg.repo))
+        if r.returncode == 0 or attempt + 1 == attempts or not TRANSPORT_ERROR_RE.search(r.stderr + r.stdout):
+            break
+        time.sleep(TRACKER_RETRY_PAUSE)
     if check and r.returncode != 0:
         raise RuntimeError(f"tracker call `{' '.join(args)}` exited {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}")
     return r
@@ -1169,8 +1187,13 @@ NO_READY_NOTE = ("the word READY appears only inside a comment (an FYI, a quote,
                  "(`[swarm] READY: `feature/issue-N` @ <sha>`); labelled but not READY")
 
 
-def plan_queue(cfg: Config, in_flight=(), now=None):
+def plan_queue(cfg: Config, in_flight=(), now=None, on_unread=None):
     """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis, named, followed}].
+
+    `on_unread(issue, error)`, when given, is called for an item whose issue cannot be read (its `issue_get`
+    still fails after the tracker's retries), and the item is left out of this queue rather than failing the
+    whole listing (#367): the daemon's cycle plans without it and the next tick reads it again. Without it, the
+    failure raises. The listing itself and the red-master guard always raise: no plan stands without them.
 
     `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
     its first full test; a launchable one's note says so), else `ready`. `named` is the sha the READY names
@@ -1195,7 +1218,13 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
     rows, found = [], 0
     for n, it in enumerate(sorted(items, key=key), 1):
         issue = it["number"]
-        comments = ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout))
+        try:
+            comments = ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout))
+        except RuntimeError as e:
+            if on_unread is None:
+                raise
+            on_unread(issue, e)
+            continue
         picked = pick_ready(cfg, comments, issue)
         if picked is None:
             if mentions_ready(cfg, comments):   # the word appears, but no comment SAYS READY (an FYI, a quote, a note): say so

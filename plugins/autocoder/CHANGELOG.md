@@ -8,6 +8,13 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- The merge-train daemon no longer loses a cycle to one GitHub API timeout (#367).
+  `train_lib.tracker` retries a read (`issue_list`, `issue_get`, `issue_view`) that
+  fails on a transport error (an i/o timeout, a reset connection, a TLS handshake
+  timeout, HTTP 502, 503 or 504) up to twice, 5 s apart; other failures and every
+  write fail at once, as before (a write that timed out may have posted). Inside a
+  cycle, a queue item whose issue still cannot be read is logged and left out of
+  that plan instead of ending the cycle; the next tick reads it again.
 - `merge-to-integration.sh` no longer reports a rebase the host stopped as a
   conflict. Git replaying the feature commits onto the integration branch can die
   on the same conditions a gate stage does (`No space left on device` on a shared

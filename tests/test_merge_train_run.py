@@ -1166,3 +1166,35 @@ def test_the_cli_runs_a_daemon_tick_and_reports_pauses_stops_and_status(fx):
     assert "stop requested" in r.stdout
     r = sh(sys.executable, str(CLI), "status", cwd=cwd)
     assert "daemon: not running; stop requested; last tick" in r.stdout
+
+
+# ── #367: one unreadable member does not end the cycle ──────────────────────────────────
+def test_a_member_whose_issue_cannot_be_read_is_left_out_and_the_cycle_lands_the_rest(fx, monkeypatch):
+    """On 2026-11-23 an `issue_get` that timed out inside the cycle's plan ended the cycle after its planning
+    was done. The unreadable item now sits out this cycle; the others are planned, gated and landed."""
+    a, b = fx.members(2)
+    real = T.tracker
+
+    def flaky(cfg, *args, **kw):
+        if args[:2] == ("issue_get", str(a)):
+            raise RuntimeError(f"tracker call `issue_get {a}` exited 1: dial tcp: i/o timeout")
+        return real(cfg, *args, **kw)
+
+    monkeypatch.setattr(T, "tracker", flaky)
+    said = []
+    cyc = R.Cycle(fx.rc(), log=said.append)
+    code, _ = cyc.run()
+    assert code == 0 and len(fx.gates()) == 1
+    assert cyc.landed_total == [str(b)] and fx.on_master(1) and not fx.on_master(0)
+    assert any(f"#{a} could not be read" in m and "next tick reads it again" in m for m in said)
+    monkeypatch.setattr(T, "tracker", real)
+    assert fx.state_of(a) == "OPEN"                                    # still READY, the next cycle takes it
+
+
+def test_the_queue_listing_without_a_handler_still_raises_on_an_unreadable_item(fx, monkeypatch):
+    a, = fx.members(1)
+    real = T.tracker
+    monkeypatch.setattr(T, "tracker", lambda cfg, *args, **kw: (_ for _ in ()).throw(RuntimeError("i/o timeout"))
+                        if args[:2] == ("issue_get", str(a)) else real(cfg, *args, **kw))
+    with pytest.raises(RuntimeError):
+        T.plan_queue(fx.rc().cfg)

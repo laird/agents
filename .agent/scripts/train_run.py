@@ -482,7 +482,7 @@ class Cycle:
         if f.returncode != 0:
             self.log(f"ABORT: git fetch {c.remote} failed in {c.repo} before the plan: {f.stderr.strip()}")
             return 3, []
-        rows = T.plan_queue(c)
+        rows = T.plan_queue(c, on_unread=self.unread)
         self.note_readys(rows)
         self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
@@ -533,6 +533,10 @@ class Cycle:
             self._set_status(left, "requeued", "left in the queue, unfaulted")
         self.state.clear_cycle()
         return 0, []
+
+    def unread(self, issue, err):
+        """An item whose issue could not be read (#367) is left out of this plan; one tracker timeout no longer ends the cycle."""
+        self.log(f"#{issue} could not be read ({err}); left out of this cycle, the next tick reads it again")
 
     def _full(self, tip, branch):
         r = T.git(self.cfg.repo, "rev-parse", "--verify", "--quiet", self.cfg.remote_ref(branch) + "^{commit}")
@@ -1127,7 +1131,7 @@ class Daemon:
             self._record("error", [], f.stderr.strip()[:200])
             return "error"
         try:
-            rows = T.plan_queue(c)
+            rows = T.plan_queue(c, on_unread=lambda issue, err: self.log(f"#{issue} could not be read ({err}); not counted this tick"))
         except RuntimeError as e:
             self.log(f"the queue could not be read ({e}); next tick in {self.interval}s")
             self._record("error", [], str(e)[:200])

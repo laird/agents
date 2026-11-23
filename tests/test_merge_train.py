@@ -1411,3 +1411,71 @@ def test_red_master_guard_ignores_a_label_match_whose_title_is_not_the_prefix_an
     sh(sys.executable, str(ISSUES_FILE), "close", str(closed), "--comment", "fixed", cwd=fx.work)
     code = fx.ready("an ordinary change", "feature/code")
     assert fx.queue()[code]["state"] == "queue"
+
+
+# ── #367: a transport error on a tracker read is retried; anything else fails at once ──────
+FAKE_FNS = r"""
+n=$(cat "$FX_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FX_COUNT"
+_fail() { if [ "$n" -le "${FX_FAILS:-0}" ]; then echo "$FX_ERR" >&2; return 1; fi; echo '{"ok":true}'; }
+issue_get() { _fail; }
+issue_comment() { _fail; }
+"""
+
+
+class _Cfg:
+    def __init__(self, repo):
+        self.repo = repo
+
+
+@pytest.fixture
+def fake_fns(tmp_path, monkeypatch):
+    fns = tmp_path / "issue-fns.sh"
+    fns.write_text(FAKE_FNS)
+    monkeypatch.setattr(T, "ISSUE_FNS", fns)
+    monkeypatch.setattr(T, "TRACKER_RETRY_PAUSE", 0)
+    monkeypatch.setenv("FX_COUNT", str(tmp_path / "count"))
+
+    def setup(fails, err):
+        monkeypatch.setenv("FX_FAILS", str(fails))
+        monkeypatch.setenv("FX_ERR", err)
+        (tmp_path / "count").unlink(missing_ok=True)
+
+    def calls():
+        return int((tmp_path / "count").read_text())
+    return _Cfg(tmp_path), setup, calls
+
+
+@pytest.mark.parametrize("err", ['Post "https://api.github.com/graphql": dial tcp 1.2.3.4:443: i/o timeout',
+                                 "read tcp: connection reset by peer", "net/http: TLS handshake timeout",
+                                 "HTTP 502: Bad Gateway (https://api.github.com/graphql)", "HTTP 504"])
+def test_a_tracker_read_that_fails_on_transport_is_retried(fake_fns, err):
+    cfg, setup, calls = fake_fns
+    setup(2, err)
+    assert json.loads(T.tracker(cfg, "issue_get", "7").stdout) == {"ok": True}
+    assert calls() == 3
+
+
+def test_a_tracker_read_still_failing_after_the_retries_raises(fake_fns):
+    cfg, setup, calls = fake_fns
+    setup(9, "dial tcp: i/o timeout")
+    with pytest.raises(RuntimeError, match="i/o timeout"):
+        T.tracker(cfg, "issue_get", "7")
+    assert calls() == 1 + T.TRACKER_RETRIES
+
+
+@pytest.mark.parametrize("err", ["HTTP 404: Not Found", "HTTP 401: Bad credentials", "issue 7 not found"])
+def test_a_tracker_read_that_fails_otherwise_raises_at_once(fake_fns, err):
+    cfg, setup, calls = fake_fns
+    setup(1, err)
+    with pytest.raises(RuntimeError):
+        T.tracker(cfg, "issue_get", "7")
+    assert calls() == 1
+
+
+def test_a_tracker_write_is_never_repeated(fake_fns):
+    """A comment that timed out may have posted; a repeat would post it twice."""
+    cfg, setup, calls = fake_fns
+    setup(1, "dial tcp: i/o timeout")
+    with pytest.raises(RuntimeError):
+        T.tracker(cfg, "issue_comment", "7", "--body", "x")
+    assert calls() == 1
