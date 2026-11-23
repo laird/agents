@@ -14,6 +14,15 @@ The train launches itself. Each tick reads the queue (one fetch and one tracker 
 
 Why: measured on one project, a READY waited 2 to 15 minutes on every cycle for a person to notice it and type `run`, with the gate idle meanwhile. With `train.redMaster` set (README.md "Merge trains": an open tracker issue carrying the configured label whose title starts with the configured prefix is a red integration branch), a tick whose every launchable item is `held` is `idle` with the note `<n> held: red master #N`, logged once per change: only the red's own fix, a lane-labelled branch or a documents-only diff launches a cycle while it is open. The gap is now a ledger row: the cycle writes `launched` per member at the moment it takes it (whoever ran the cycle), and the weekly report shows **READY to launch** (p50, p90, max) from the newest READY before it.
 
+A tracker call that died in transport is retried before it counts (issue #367). `train_lib.tracker` matches the
+failure text against `TRACKER_TRANSPORT_ERROR` (a connect that timed out or was refused, a reset, a TLS handshake
+timeout, an unexpected EOF, a name that did not resolve, a gateway 502/503/504) and retries after each pause of
+`TRACKER_RETRY_PAUSES` (2, 8 and 30 seconds), whatever `check` says, because a transport error is never the
+tracker's answer; the last attempt's result is what `check` judges, and the error then names the attempts. Any other
+failure raises at once. Why: measured on one host, `api.github.com` resolved to one of six addresses at a time, one of
+them refused connects for about a minute while the other five answered in milliseconds, and in one day two of five
+planned cycles and three close-out writes were lost to single timeouts that a fresh dial would have survived.
+
 ## Red-batch rules
 
 | Failure | What happens |

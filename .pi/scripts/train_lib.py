@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -284,13 +285,39 @@ def git(repo, *args, check=False, input=None, env=None):
     return r
 
 
-def tracker(cfg: Config, *args, check=True):
-    """Run one `issue_*` function of issue-fns.sh from the repo (so issue-config.sh finds its config)."""
-    r = subprocess.run(["bash", "-c", 'source "$1" || exit 99; shift; "$@"', "_", str(ISSUE_FNS), *args],
-                       capture_output=True, text=True, cwd=str(cfg.repo))
-    if check and r.returncode != 0:
-        raise RuntimeError(f"tracker call `{' '.join(args)}` exited {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}")
-    return r
+# A tracker call that died in transport (the API edge refusing a TCP connect, a reset, a TLS handshake
+# that timed out, a gateway 5xx) is retried a bounded number of times with these pauses, because a fresh
+# dial usually reaches another edge: measured on one host, `api.github.com` resolved to one of six
+# addresses at a time, one of the six refused connects for a minute or so, and every call in that minute
+# failed while the other five addresses answered in milliseconds. Any other failure raises at once.
+TRACKER_TRANSPORT_ERROR = re.compile(
+    r"i/o timeout|connection reset|connection refused|TLS handshake timeout|unexpected EOF|no such host|"
+    r"network is unreachable|context deadline exceeded|HTTP (502|503|504)\b|Bad Gateway|Service Unavailable|Gateway Timeout",
+    re.I)
+TRACKER_RETRY_PAUSES = (2, 8, 30)
+
+
+def tracker(cfg: Config, *args, check=True, sleep=time.sleep):
+    """Run one `issue_*` function of issue-fns.sh from the repo (so issue-config.sh finds its config).
+
+    A transport error is retried after each pause of TRACKER_RETRY_PAUSES, whatever `check` says (a
+    transport error is never the tracker's answer); the last attempt's result is what `check` judges."""
+    attempt = 0
+    while True:
+        r = subprocess.run(["bash", "-c", 'source "$1" || exit 99; shift; "$@"', "_", str(ISSUE_FNS), *args],
+                           capture_output=True, text=True, cwd=str(cfg.repo))
+        out = (r.stderr or r.stdout).strip()
+        if r.returncode != 0 and attempt < len(TRACKER_RETRY_PAUSES) and TRACKER_TRANSPORT_ERROR.search(out):
+            pause = TRACKER_RETRY_PAUSES[attempt]
+            attempt += 1
+            print(f"tracker call `{' '.join(args)}` died in transport (attempt {attempt} of {len(TRACKER_RETRY_PAUSES) + 1}): "
+                  f"{out[:160]}; retrying in {pause}s", file=sys.stderr)
+            sleep(pause)
+            continue
+        if check and r.returncode != 0:
+            tries = f" after {attempt + 1} attempts" if attempt else ""
+            raise RuntimeError(f"tracker call `{' '.join(args)}` exited {r.returncode}{tries}: {out[:300]}")
+        return r
 
 
 def branch_exists(cfg: Config, branch: str) -> bool:
