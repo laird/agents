@@ -23,6 +23,12 @@ and the scripts they call); any other title targets the modernize protocols.
         - Update guidelines in `.agent/rules/` or workflows, for the plugin the title names.
           In a repository that keeps the plugin source, give the Claude copy
           (`plugins/<plugin>/commands/`, agents in `plugins/<plugin>/agents/`) the same edit.
+          For autocoder that is mostly `fix.md` and the scripts it calls
+          (`plugins/autocoder/scripts/`, then re-run the script packager as `CLAUDE.md` says);
+          `retro-apply.md` itself is edited only in the modernize source.
+        - File, do not apply, a change to the merge gate, claim or merge scripts, CI
+          workflows, git hooks or install scripts: record it as an issue so it goes
+          through the repository's normal review.
 
     b.  **Automation**:
         Switch to **Coder**:
@@ -38,4 +44,4 @@ and the scripts they call); any other title targets the modernize protocols.
 
 4. **Completion**
     - Update `IMPROVEMENTS.md` status to "Implemented".
-    - Commit changes.
+    - Commit changes, staging the changed files by name (never `git add -A`).

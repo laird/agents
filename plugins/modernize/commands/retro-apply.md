@@ -189,7 +189,7 @@ Recommendation 2 and 4 are independent
 
 | `IMPROVEMENTS.md` title | Written by | Protocols it changes |
 |---|---|---|
-| `# Autocoder Process Improvement Recommendations` | autocoder `/retro` | `plugins/autocoder/commands/*.md` (most often `fix.md`), `plugins/autocoder/scripts/` |
+| `# Autocoder Process Improvement Recommendations` | autocoder `/retro` | `plugins/autocoder/commands/*.md` (most often `fix.md`; not `retro-apply.md`, a generated copy of this file), `plugins/autocoder/scripts/` |
 | any other (modernization retrospective) | modernize `/retro` | `plugins/modernize/commands/*.md`, `plugins/modernize/agents/*.md` |
 
 ```bash
@@ -202,6 +202,8 @@ fi
 ```
 
 In a repository that keeps the plugin source (this one does), an edited command also has an Antigravity copy in `.agent/workflows/` (agents: `.agent/rules/`) that must get the same edit, and an edited script under `plugins/autocoder/scripts/` is mirrored to the other platforms by `python3 scripts/package-plugin-scripts.py`. Read the repository's `CLAUDE.md` or `AGENTS.md` for its own mirror rules before editing.
+
+**High-risk targets are filed, not applied.** A recommendation that changes the merge gate, the claim or merge scripts, CI workflows (`.github/workflows/`), git hooks, or install scripts can switch off the checks that protect the integration branch. Do not edit those here. File it as an issue instead (autocoder: `/record-issue`), quoting the recommendation and its evidence, so it is built on its own branch and goes through the repository's normal review (in autocoder, `/fix`'s pre-landing review gate and `risk.high` tiers). Phase 4's hook and CI examples apply only where the user approved that recommendation by number and no such review process exists.
 
 **Common protocol locations (modernize)**:
 - `commands/modernize.md` - Main modernization protocol
@@ -680,7 +682,10 @@ echo "Exit code: $?"
 **Commit Structure**:
 
 ```bash
-git add -A
+# Stage only the files this application changed, by name: never `git add -A`,
+# which also sweeps up unrelated work and untracked secrets such as .env.
+git status --short
+git add <each protocol, script and doc file changed above> IMPROVEMENTS.md
 
 git commit -m "$(cat <<'EOF'
 Apply process improvements from IMPROVEMENTS.md
