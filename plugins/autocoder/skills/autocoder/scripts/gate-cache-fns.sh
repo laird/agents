@@ -19,7 +19,10 @@
 #
 # gate_cache_run reuses a recorded pass unconditionally and a recorded fail only when
 # GATE_CACHE_REUSE_FAIL=1 (a bisect wants that; a merge retry does not, since the fail
-# may be flake). It prints one line saying whether it hit or ran, for logs.
+# may be flake), and treats a recorded pass as a miss when GATE_CACHE_RERUN_PASS=1 (a
+# merge job's base-alone retest, #375: a pass recorded by another change's diff-scoped
+# run is no evidence for the files this run must check). It prints one line saying
+# whether it hit or ran, for logs.
 #
 # Flaky sightings (#191). A fail record also lists the tests that failed and an excerpt
 # of each failure (lines after the first; gate_cache_get reads only line 1). When
@@ -204,7 +207,11 @@ gate_cache_run() {
   local dir="$1" cmd="$2" tree recorded
   tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
   if recorded=$(gate_cache_get "$tree" "$cmd" "$dir"); then
-    if [ "$recorded" = pass ] || [ "${GATE_CACHE_REUSE_FAIL:-0}" = 1 ]; then
+    # GATE_CACHE_RERUN_PASS=1 (#375): the caller cannot trust a pass recorded under this
+    # key for its selection (a base-alone retest), so a pass is a miss; a fail still
+    # follows GATE_CACHE_REUSE_FAIL.
+    if { [ "$recorded" = pass ] && [ "${GATE_CACHE_RERUN_PASS:-0}" != 1 ]; } \
+       || { [ "$recorded" = fail ] && [ "${GATE_CACHE_REUSE_FAIL:-0}" = 1 ]; }; then
       echo "gate-cache: ${recorded} recorded for tree ${tree:0:8}$([ -n "$(gate_env_config "$tree" "$dir")" ] && echo ' (hermetic)'); not re-running"
       [ "$recorded" = pass ]
       return

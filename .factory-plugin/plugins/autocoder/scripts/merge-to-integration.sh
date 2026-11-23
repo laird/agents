@@ -102,6 +102,14 @@
 #         and the refusal or landing names red <integration>, never the change; a change that
 #         broke something besides is charged for its own failures, the base's named apart.
 #       AUTOCODER_MERGE_ON_RED_BASE  default 1; 0 restores exit 2 on a red base.
+#     The base gated alone is the one the integrated tree was built on (its merge base with
+#     a freshly fetched origin/<integration>), never a tip that moved during the gate
+#     (#375). When the tip has moved, the failure is not judged at all: the change is
+#     re-synced onto the new tip and gated again, at most AUTOCODER_MOVED_BASE_REGATES
+#     (default 2) times per job; after that the old base is the one measured. The base
+#     run never reuses a cached pass recorded under the plain command (another change's
+#     diff-scoped run may not have selected the failing files); under a retest list its
+#     key is that list, so a pass recorded for it stands.
 #   - Both relaxations exist because a sentinel re-gates the integration tip after the
 #     fact. Until one has proven a green tip at least once, there is nobody to catch what
 #     a skipped re-gate or a red-base landing lets through, so both are OFF: every re-sync
@@ -1260,6 +1268,10 @@ echo "ℹ️  Rebased ${FEATURE} (${FEATURE_SHA:0:8}) onto origin/${INTEGRATION_
 #    Only tested and docs-only let _close_or_park close the issue; the rest park it.
 TESTED_TREE=""
 PUBLISH_BASIS=""
+# Re-syncs a failed gate made because origin/<integration> moved past the tree's base (#375).
+MOVED_BASE_REGATES=0
+MOVED_BASE_REGATE_MAX="${AUTOCODER_MOVED_BASE_REGATES:-2}"
+[[ "$MOVED_BASE_REGATE_MAX" =~ ^[0-9]+$ ]] || MOVED_BASE_REGATE_MAX=2
 RED_INTEGRATED_TREE=""
 RED_BASE_TREE=""
 RED_BASE_FAILURES=""
@@ -1348,7 +1360,27 @@ _gate_integrated_tree() {
   # selects tests by the tree's diff selects nothing on the base, whose diff is empty, so
   # the base run is told which files to re-run. The command may honour the variable.
   retest_files=$(sed -E $'s/\e\\[[0-9;]*[A-Za-z]//g' "$GATE_LAST" | _gate_failed_files | paste -sd' ' -)
-  base_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+  # The base to measure is the one this tree was built on, not whatever origin/<integration>
+  # points at now (#375): a sibling's fetch, or the one below, can move the ref during the
+  # gate, and a fix that landed meanwhile then makes the base "pass alone" and the change is
+  # blamed for a red it never had. When the tip has moved past the base, re-sync onto it and
+  # gate again (at most AUTOCODER_MOVED_BASE_REGATES times) instead of judging either tree.
+  local tip_sha
+  git_net_long fetch origin "$INTEGRATION_BRANCH" >/dev/null 2>&1 || true   # a stale ref only skips the re-sync
+  tip_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
+  base_sha=$(git merge-base HEAD "$tip_sha" 2>/dev/null) || base_sha="$tip_sha"
+  if [ "$base_sha" != "$tip_sha" ] && [ "$MOVED_BASE_REGATES" -lt "$MOVED_BASE_REGATE_MAX" ]; then
+    MOVED_BASE_REGATES=$((MOVED_BASE_REGATES + 1))
+    echo "❌ Tests fail on the integrated tree ${tree:0:8}, built on origin/${INTEGRATION_BRANCH} ${base_sha:0:8}; origin/${INTEGRATION_BRANCH} has since moved to ${tip_sha:0:8}."
+    echo "ℹ️  Re-syncing onto ${tip_sha:0:8} and re-gating (${MOVED_BASE_REGATES}/${MOVED_BASE_REGATE_MAX}) instead of judging this change against a base it was not built on (#375)."
+    _rebase_onto_integration
+    if [ "$(git rev-parse HEAD)" = "$tip_sha" ]; then
+      _nothing_left_to_land "$tip_sha"
+    fi
+    INT_SEEN_SHA="$tip_sha"
+    _gate_integrated_tree
+    return
+  fi
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."
   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."
@@ -1366,7 +1398,13 @@ _gate_integrated_tree() {
   _base_green=0
   base_at=$(_gate_log_size)
   _stage_timings_begin   # the base run's stages are its own, not the batch's
+  # A cached pass on the base tree is evidence only for the selection that run made (#375):
+  # a diff-scoped gate that recorded it for another change never ran the failing files.
+  # Under a retest list the key is that list (#298), so its pass is this selection's; with
+  # no list, the plain key could hold anyone's pass, so the base is gated again.
+  if [ -z "$retest_files" ]; then export GATE_CACHE_RERUN_PASS=1; fi
   _gate_in_slot "$BASE_WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG" && _base_green=1
+  unset GATE_CACHE_RERUN_PASS
   _landing_gate_done $((SECONDS - _g0))
   _stage_timings_end
   _retest_report "$base_at" "$_base_green" "$retest_files"

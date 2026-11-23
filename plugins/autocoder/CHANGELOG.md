@@ -8,6 +8,19 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- The merge job no longer blames a change for a red the integration branch fixed
+  while the change's gate was running (#375). When the integrated tree failed, the
+  job gated `origin/<integration>` alone to decide whose failure it was, but it used
+  the branch's current tip. A fix that landed during the gate made that tip pass,
+  so the change was bounced, and in a train the member was returned to its owner.
+  The job now fetches, and if the tip has moved past the base the tree was built
+  on, it re-syncs onto the new tip and gates again (at most
+  `AUTOCODER_MOVED_BASE_REGATES`, default 2, times). After that, the base it gates
+  alone is the one the tree was built on. The base-alone run also no longer reuses
+  a cached pass recorded under the plain command, which another change's
+  diff-scoped run may have recorded without running the failing files
+  (`GATE_CACHE_RERUN_PASS=1` in `gate-cache-fns.sh`).
+
 - `reboot-recover.sh --boot` no longer gives up on a swarm whose manager pane
   herdr has not finished restoring (#372). After a reboot, recovery found the
   manager's pane, got `agent_not_found` from it on all three attempts, and
