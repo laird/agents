@@ -1447,7 +1447,8 @@ def fake_fns(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("err", ['Post "https://api.github.com/graphql": dial tcp 1.2.3.4:443: i/o timeout',
                                  "read tcp: connection reset by peer", "net/http: TLS handshake timeout",
-                                 "HTTP 502: Bad Gateway (https://api.github.com/graphql)", "HTTP 504"])
+                                 "HTTP 502: Bad Gateway (https://api.github.com/graphql)", "HTTP 504",
+                                 "dial tcp 1.2.3.4:443: connect: connection timed out", "context deadline exceeded"])
 def test_a_tracker_read_that_fails_on_transport_is_retried(fake_fns, err):
     cfg, setup, calls = fake_fns
     setup(2, err)

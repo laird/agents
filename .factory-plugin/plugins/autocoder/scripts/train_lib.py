@@ -286,6 +286,7 @@ def git(repo, *args, check=False, input=None, env=None):
 
 # #367: a transport failure, not an answer. On one host the GitHub API timed out 22 times in under 7 hours.
 TRANSPORT_ERROR_RE = re.compile(r"i/o timeout|connection reset|connection refused|TLS handshake timeout|unexpected EOF"
+                                r"|connection timed out|context deadline exceeded|Client\.Timeout exceeded"
                                 r"|\bHTTP 50[234]\b|Bad Gateway|Service Unavailable|Gateway Time-?out", re.IGNORECASE)
 TRACKER_READS = ("issue_list", "issue_get", "issue_view")   # safe to repeat; a write that timed out may have landed
 TRACKER_RETRIES = 2          # extra attempts for a read that failed on transport
@@ -1190,10 +1191,12 @@ NO_READY_NOTE = ("the word READY appears only inside a comment (an FYI, a quote,
 def plan_queue(cfg: Config, in_flight=(), now=None, on_unread=None):
     """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis, named, followed}].
 
-    `on_unread(issue, error)`, when given, is called for an item whose issue cannot be read (its `issue_get`
-    still fails after the tracker's retries), and the item is left out of this queue rather than failing the
-    whole listing (#367): the daemon's cycle plans without it and the next tick reads it again. Without it, the
-    failure raises. The listing itself and the red-master guard always raise: no plan stands without them.
+    `on_unread(issue, error)`, when given, is called for an item whose issue cannot be read because of a
+    transport error (its `issue_get` still times out after the tracker's retries), and the item is left out of
+    this queue rather than failing the whole listing (#367): the daemon's cycle plans without it, ahead of it if
+    it was pinned `first` or in the lane, and the next tick reads it again. Any other failure (bad credentials,
+    a deleted issue) raises, as it does without the handler, so it is seen rather than skipping every item. The
+    listing itself and the red-master guard always raise: no plan stands without them.
 
     `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
     its first full test; a launchable one's note says so), else `ready`. `named` is the sha the READY names
@@ -1221,7 +1224,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None, on_unread=None):
         try:
             comments = ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout))
         except RuntimeError as e:
-            if on_unread is None:
+            if on_unread is None or not TRANSPORT_ERROR_RE.search(str(e)):
                 raise
             on_unread(issue, e)
             continue

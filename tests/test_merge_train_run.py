@@ -1198,3 +1198,13 @@ def test_the_queue_listing_without_a_handler_still_raises_on_an_unreadable_item(
                         if args[:2] == ("issue_get", str(a)) else real(cfg, *args, **kw))
     with pytest.raises(RuntimeError):
         T.plan_queue(fx.rc().cfg)
+
+
+def test_an_item_unreadable_for_another_reason_than_transport_still_ends_the_listing(fx, monkeypatch):
+    """Bad credentials fail every read: skipping would quietly empty the queue, so it raises and is seen."""
+    a, = fx.members(1)
+    real = T.tracker
+    monkeypatch.setattr(T, "tracker", lambda cfg, *args, **kw: (_ for _ in ()).throw(RuntimeError("HTTP 401: Bad credentials"))
+                        if args[:2] == ("issue_get", str(a)) else real(cfg, *args, **kw))
+    with pytest.raises(RuntimeError, match="401"):
+        T.plan_queue(fx.rc().cfg, on_unread=lambda *_: None)
