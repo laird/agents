@@ -107,65 +107,79 @@ class H(BaseHTTPRequestHandler):
         m = re.search(r"/_apis/wit/workitems/(\d+)/comments$", path)
         if m:
             n = int(m.group(1))
-            if n in ITEMS:
-                return self._send(200, {"comments": [{"text": t} for t in ITEMS[n]["comments"]]})
-            return self._send(200, {"comments": []})
-        m = re.search(r"/_apis/wit/workitems/(\d+)$", path)
-        if m:
-            n = int(m.group(1))
-            if n in ITEMS:
-                return self._send(200, self._view(n))
-            return self._send(404, {"message": "does not exist"})
-        return self._send(404, {"message": "not found"})
+            if n not in ITEMS:
+                return self._send(404)
+            comments = [{"text": c} for c in ITEMS[n]["comments"]]
+            return self._send(200, {"comments": comments})
 
-    def _apply_patch(self, n, ops):
-        for op in ops:
-            path = op.get("path", "")
-            if path.startswith("/fields/"):
-                ITEMS[n]["fields"][path[len("/fields/"):]] = op.get("value")
-
-    def do_POST(self):
-        path = self.path.split("?", 1)[0]
-        low = path.lower()
-        body = self._body()
-        if low.endswith("/_apis/wit/wiql"):
-            q = body.get("query", "")
-            hits = [n for n in sorted(ITEMS) if wiql_matches(n, q)]
-            return self._send(200, {"workItems": [{"id": n} for n in hits]})
-        if low.endswith("/_apis/wit/workitemsbatch"):
-            ids = body.get("ids", [])
-            fields = body.get("fields")
-            val = [self._view(n, fields) for n in ids if n in ITEMS]
-            return self._send(200, {"value": val})
-        m = re.search(r"/_apis/wit/workitems/%24", low)
-        if m:  # create
-            n = NEXT[0]; NEXT[0] += 1
-            ITEMS[n] = {"fields": {"System.State": "New"}, "comments": []}
-            self._apply_patch(n, body if isinstance(body, list) else [])
-            return self._send(200, self._view(n))
-        m = re.search(r"/_apis/wit/workitems/(\d+)/comments$", low)
-        if m:
-            n = int(m.group(1))
-            if n in ITEMS:
-                ITEMS[n]["comments"].append(body.get("text", ""))
-                return self._send(200, {"id": 1, "text": body.get("text", "")})
-            return self._send(404, {"message": "no item"})
-        return self._send(404, {"message": "not found"})
-
-    def do_PATCH(self):
-        path = self.path.split("?", 1)[0].lower()
-        body = self._body()
         m = re.search(r"/_apis/wit/workitems/(\d+)$", path)
         if m:
             n = int(m.group(1))
             if n not in ITEMS:
-                return self._send(404, {"message": "no item"})
-            self._apply_patch(n, body if isinstance(body, list) else [])
+                return self._send(404)
             return self._send(200, self._view(n))
-        return self._send(404, {"message": "not found"})
+
+        self._send(404)
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0].lower()
+        body = self._body()
+
+        if "/_apis/wit/wiql" in path:
+            q = body.get("query", "")
+            matched = [n for n in ITEMS if wiql_matches(n, q)]
+            return self._send(200, {"workItems": [{"id": n} for n in matched]})
+
+        if "/_apis/wit/workitemsbatch" in path:
+            ids = body.get("ids", [])
+            fields = body.get("fields")
+            value = [self._view(n, fields) for n in ids if n in ITEMS]
+            return self._send(200, {"value": value})
+
+        m = re.search(r"/_apis/wit/workitems/\$([^/?]+)$", path)
+        if m:
+            # Create work item
+            n = NEXT[0]; NEXT[0] += 1
+            fields = {}
+            for op in body:
+                if op.get("op") == "add" and op.get("path", "").startswith("/fields/"):
+                    fields[op["path"].split("/")[-1]] = op["value"]
+            ITEMS[n] = {"fields": fields, "comments": []}
+            return self._send(200, self._view(n))
+
+        m = re.search(r"/_apis/wit/workitems/(\d+)/comments$", path)
+        if m:
+            n = int(m.group(1))
+            if n not in ITEMS:
+                return self._send(404)
+            text = body.get("text", "")
+            ITEMS[n]["comments"].append(text)
+            return self._send(200, {"id": n, "text": text})
+
+        self._send(404)
+
+    def do_PATCH(self):
+        path = self.path.split("?", 1)[0].lower()
+        body = self._body()
+
+        m = re.search(r"/_apis/wit/workitems/(\d+)$", path)
+        if m:
+            n = int(m.group(1))
+            if n not in ITEMS:
+                return self._send(404)
+            for op in body:
+                if op.get("op") == "replace" and op.get("path", "").startswith("/fields/"):
+                    f = op["path"].split("/")[-1]
+                    ITEMS[n]["fields"][f] = op["value"]
+                elif op.get("op") == "add" and op.get("path", "").startswith("/fields/"):
+                    f = op["path"].split("/")[-1]
+                    ITEMS[n]["fields"][f] = op["value"]
+            return self._send(200, self._view(n))
+
+        self._send(404)
 
 if __name__ == "__main__":
-    requested = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    server = ThreadingHTTPServer(("127.0.0.1", requested), H)
-    print("LISTENING %d" % server.server_address[1], flush=True)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    _, port = server.server_address
+    print(f"LISTENING {port}", flush=True)
     server.serve_forever()
