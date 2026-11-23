@@ -415,8 +415,11 @@ _gate_failed_files() {
   rm -f "$t"
 }
 _gate_named_failures() {  # <offset>: the run's failure names, one per line, sorted unique
+  # A duration anywhere in the line is `<n>` (#7130: a stage runner's summary, `FAIL (... fail wall 1084.7 s; failed:
+  # db-tests ...)`, differed between the integrated and the base run by its wall time alone, so the base's red read as
+  # the change's and a train returned its member for master's failure); a trailing one is dropped as before.
   _gate_slice "$1" | grep -aE "$GATE_FAILURE_PATTERNS" | _gate_unpath \
-    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*\(?[0-9]+(\.[0-9]+)?[[:space:]]?(ms|s|m|min)\)?$//; s/[0-9a-f]{7,40}/<sha>/g' \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*\(?[0-9]+(\.[0-9]+)?[[:space:]]?(ms|s|m|min)\)?$//; s/([^A-Za-z0-9_.])[0-9]+(\.[0-9]+)?[[:space:]]?(ms|s|m|min)([^A-Za-z0-9_]|$)/\1<n>\4/g; s/[0-9a-f]{7,40}/<sha>/g' \
     | sort -u
 }
 _join_lines() { awk '{ a = a (NR > 1 ? "`, `" : "") $0 } END { printf "%s", a }'; }  # x`, `y for a `...` list in a message

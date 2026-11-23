@@ -210,7 +210,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
 
     keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
-    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{prepareScratch, mergeFault};
+    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{preflight, prepareScratch, mergeFault, regenerate, attribute, landed, redBase};
     `enqueue` is enqueue.sh's (see there).
     """
     env = os.environ if env is None else env
