@@ -29,7 +29,16 @@ hold_lease() {
   python3 - "$AUTOCODER_TRAIN_STATE/lease.lock" <<'HOLD' &
 import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)
-fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+# Retry: the readiness probe below takes a momentary LOCK_SH, and one try that lands
+# inside it would leave no holder and fail the fixture under load (#354).
+for _ in range(100):
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        time.sleep(0.05)
+else:
+    sys.exit(1)
 print("held", flush=True)
 time.sleep(120)
 HOLD
