@@ -1031,7 +1031,11 @@ def red_master_open(cfg: Config) -> list:
     g = cfg.red_master
     if not g:
         return []
-    r = tracker(cfg, "issue_list", "--state", "open", "--label", g["label"], "--limit", "100")
+    # `--state all`, never `open`: a backend's open list is the CLAIMABLE list (issues-gh.sh BLOCKING_LABELS,
+    # issues-file.py's buckets), which drops a red the moment a worker claims it (`working`) or a lane labels it, so
+    # the guard lifted while the red was being fixed and a train planned eight members onto it (2026-11-23). The
+    # state check below keeps the open ones.
+    r = tracker(cfg, "issue_list", "--state", "all", "--label", g["label"], "--limit", "100")
     out = []
     for it in json.loads(r.stdout or "[]"):
         if str(it.get("state", "OPEN")).upper() != "OPEN":
