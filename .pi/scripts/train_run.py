@@ -632,7 +632,7 @@ class Cycle:
             if T.git(scratch, "merge-base", "--is-ancestor", m["tip"], "HEAD").returncode == 0:
                 assembled.append(m)   # a stack's lower slice carried by an earlier member
                 continue
-            verdict, detail = T.merge_into(c, scratch, m["tip"], message=f"member #{m['issue']}")
+            verdict, detail = T.merge_into(c, scratch, m["tip"], message=f"member #{m['issue']}", phase="assemble")
             if verdict == "clean":
                 assembled.append(m)
                 if now_tip and now_tip != m["tip"]:
@@ -651,19 +651,57 @@ class Cycle:
         self.record.setdefault("trainBranches", []).append(train)
         return train, sha, assembled, [m for m, _ in conflicted]
 
+    def _run_regenerate_hook(self, hook, scratch, base):
+        env = {**os.environ, "AUTOCODER_TRAIN_BASE": base, "AUTOCODER_TRAIN_SCRATCH": str(scratch)}
+        return subprocess.run(["bash", "-c", hook], capture_output=True, text=True, cwd=str(scratch), env=env)
+
+    def attribute_regeneration(self, hook, scratch, base, members):
+        """The members whose tree ALONE fails the regeneration: each is merged onto the base by itself (a
+        chain merge under the train switch, in the scratch the failed assembly no longer needs) and the
+        hook is run on that tree. A member that does not merge alone is not this failure's. Every member
+        failing alone names nobody (the regeneration itself is broken, as a path every member touches
+        names nobody in named_members). The rare path (#364): the per-candidate generation the planner
+        used to pay for a `generator-failed` verdict on every plan is gone, so the verdict is found here,
+        once, only when an assembled regeneration fails."""
+        failed = []
+        for m in members:
+            T.scratch_prepare(self.cfg, base)
+            ok, why = T.prepare_toolchain(self.cfg, scratch)
+            if not ok:
+                self.log(f"regeneration attribution stopped: the scratch toolchain is not working ({why})")
+                return []
+            verdict, detail = T.merge_into(self.cfg, scratch, m["tip"], message=f"member #{m['issue']} alone", phase="attribute")
+            if verdict != "clean":
+                self.log(f"regeneration attribution: #{m['issue']} does not merge alone ({verdict}: {detail[:120]}); not this failure's")
+                continue
+            r = self._run_regenerate_hook(hook, scratch, base)
+            self.log(f"regeneration attribution: #{m['issue']} alone {'fails' if r.returncode else 'passes'} the regeneration")
+            if r.returncode != 0:
+                failed.append(m)
+        return failed if len(failed) < len(members) else []
+
     def regenerate(self, scratch, base, assembled):
         """The project's regeneration on the ASSEMBLED tree, committed, so the tree the gate records is the
-        tree it publishes. A failure names the members whose diff touches the files its output names, else
-        it is nobody's (a FaultError): the cycle ends, no member is blamed."""
+        tree it publishes. A failure names the members whose diff touches the files its output names; when
+        it names nobody and the set has more than one member, each member is tried alone
+        (attribute_regeneration) and the members whose own tree fails are returned to their owners, so the
+        next cycle trains the rest. A failure no member's tree reproduces is the train's own (a FaultError):
+        the cycle ends, no member is blamed."""
         hook = self.rc.hooks.get("regenerate")
         if not hook:
             return
-        env = {**os.environ, "AUTOCODER_TRAIN_BASE": base, "AUTOCODER_TRAIN_SCRATCH": str(scratch)}
-        r = subprocess.run(["bash", "-c", hook], capture_output=True, text=True, cwd=str(scratch), env=env)
+        r = self._run_regenerate_hook(hook, scratch, base)
         if r.returncode != 0:
             tail = (r.stdout + r.stderr).strip()
+            last = tail.splitlines()[-1][:200] if tail else "(no output)"
             blamed = self.named_members(base, assembled, tail)
-            raise FaultError(f"regeneration failed (exit {r.returncode}): {tail.splitlines()[-1][:200] if tail else '(no output)'}"
+            if not blamed and len(assembled) > 1:
+                alone = self.attribute_regeneration(hook, scratch, base, assembled)
+                if alone:
+                    for m in alone:
+                        self._return_to_owner(m, f"the regeneration on the assembled tree failed (exit {r.returncode}: {last}), and it fails on this member's tree alone (merged onto `{self.cfg.ref}` by itself, then regenerated)", cause="regenerate", log_path=None)
+                    raise FaultError(f"regeneration failed (exit {r.returncode}): {last}; it fails alone for {', '.join('#' + m['issue'] for m in alone)}, returned to their owners; the next cycle trains the rest")
+            raise FaultError(f"regeneration failed (exit {r.returncode}): {last}"
                              + (f"; members whose diff touches the files it names: {', '.join('#' + m['issue'] for m in blamed)}" if blamed else ""))
         if T.git(scratch, "status", "--porcelain").stdout.strip():
             T.git(scratch, "add", "-A", check=True)
