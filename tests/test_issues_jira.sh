@@ -214,6 +214,21 @@ OUT=$(cd "$TMP" && PATH="$TMP/bin:$PATH" JIRA_BASE_URL="" JIRA_PROJECT="" JIRA_E
   "$ABS_BACKEND" list 2>/dev/null); RC=$?
 assert_eq "missing config exits 3" "3" "$RC"
 
+# ── link (#343): "ENG-7 is blocked by ENG-9" is a Blocks link, ENG-9 outward ──
+run link 7 --blocked-by 9
+assert_eq "link exits 0" "0" "$RC"
+LINK=$(awk -F'\t' '$2 ~ /\/rest\/api\/2\/issueLink$/ {print $1" "$3}' "$CURL_CAPTURE" | tail -1)
+assert_contains "link POSTs to /rest/api/2/issueLink" "POST " "$LINK"
+assert_contains "link uses the Blocks link type"        '"type": {"name": "Blocks"}' "$LINK"
+assert_contains "the blocker is the outward issue"      '"outwardIssue": {"key": "ENG-9"}' "$LINK"
+assert_contains "the blocked issue is the inward issue" '"inwardIssue": {"key": "ENG-7"}' "$LINK"
+run link 7
+assert_eq "link without --blocked-by exits 2" "2" "$RC"
+run list --state open
+assert_contains "search asks for issuelinks" '"issuelinks"' "$(last_data)"
+run get 7
+assert_contains "get asks for issuelinks" 'issuelinks' "$(tail -1 "$CURL_CAPTURE" | cut -f2)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

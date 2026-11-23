@@ -12,6 +12,7 @@
 #   <backend> claim <number>
 #   <backend> release <number>
 #   <backend> any-claimable
+#   <backend> link <number> --blocked-by <number>   (a Predecessor relation, #343)
 #
 # Exit codes:
 #   0 — success / work exists
@@ -20,7 +21,9 @@
 #   3 — backend error (curl failure, auth failure, parse error, config missing)
 #
 # Output schema for list/get matches the other backends' gh-compatible shape
-# (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]).
+# (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]), plus
+# blockedBy[]: the ids of this item's Predecessors (relation
+# System.LinkTypes.Dependency-Reverse), which issue-deps.sh gates on (#343).
 #
 # Identifier mapping:
 #   Azure DevOps work items have org-wide integer IDs, so `number` IS the work
@@ -209,7 +212,7 @@ cmd_list() {
   batch=$(IDS="$ids" python3 -c '
 import json, os
 ids = [int(x) for x in os.environ["IDS"].split()]
-print(json.dumps({"ids": ids, "fields": ["System.Id","System.Title","System.Description","System.Tags","System.State"]}))')
+print(json.dumps({"ids": ids, "$expand": "Relations"}))')
   _ado_request_ok POST "/_apis/wit/workitemsbatch?api-version=${API_VERSION}" "$batch"
   DONE="$ADO_DONE_STATES" RESP="$_ADO_BODY" python3 - <<'PY' || exit 3
 import json, os
@@ -219,6 +222,17 @@ try:
 except Exception:
     print("issues-ado.sh: could not parse workitemsbatch response", file=__import__("sys").stderr)
     raise SystemExit(3)
+PRED = "System.LinkTypes.Dependency-Reverse"
+def blocked_by(it):
+    # A Predecessor relation names the item this one waits on (#343).
+    out = []
+    for r in (it.get("relations") or []):
+        if r.get("rel") != PRED:
+            continue
+        tail = (r.get("url") or "").rstrip("/").rsplit("/", 1)[-1]
+        if tail.isdigit() and int(tail) not in out:
+            out.append(int(tail))
+    return out
 out = []
 for it in data.get("value", []):
     f = it.get("fields", {}) or {}
@@ -229,6 +243,7 @@ for it in data.get("value", []):
         "body": f.get("System.Description") or "",
         "labels": [{"name": t} for t in tags],
         "state": "CLOSED" if (f.get("System.State") in done) else "OPEN",
+        "blockedBy": blocked_by(it),
     })
 print(json.dumps(out))
 PY
@@ -237,7 +252,7 @@ PY
 # ── get ──────────────────────────────────────────────────────────────────────
 cmd_get() {
   local id="$1"
-  if ! _ado_request GET "/_apis/wit/workitems/${id}?api-version=${API_VERSION}"; then
+  if ! _ado_request GET "/_apis/wit/workitems/${id}?\$expand=relations&api-version=${API_VERSION}"; then
     echo "issues-ado.sh: request to Azure DevOps failed (network/curl error)" >&2; exit 3
   fi
   if [ "$_ADO_CODE" = "404" ]; then
@@ -261,6 +276,17 @@ try:
 except Exception:
     print("issues-ado.sh: could not parse work item response", file=__import__("sys").stderr)
     raise SystemExit(3)
+PRED = "System.LinkTypes.Dependency-Reverse"
+def blocked_by(it):
+    # A Predecessor relation names the item this one waits on (#343).
+    out = []
+    for r in (it.get("relations") or []):
+        if r.get("rel") != PRED:
+            continue
+        tail = (r.get("url") or "").rstrip("/").rsplit("/", 1)[-1]
+        if tail.isdigit() and int(tail) not in out:
+            out.append(int(tail))
+    return out
 f = it.get("fields", {}) or {}
 tags = [t.strip() for t in (f.get("System.Tags") or "").split(";") if t.strip()]
 comments = [{"body": c.get("text") or ""} for c in (cm.get("comments") or [])]
@@ -271,6 +297,7 @@ print(json.dumps({
     "labels": [{"name": t} for t in tags],
     "state": "CLOSED" if (f.get("System.State") in done) else "OPEN",
     "comments": comments,
+    "blockedBy": blocked_by(it),
 }))
 PY
 }
@@ -459,6 +486,35 @@ cmd_requeue() {
   return 0
 }
 
+# ── link (#343) ──────────────────────────────────────────────────────────────
+# "N is blocked by M": add M to N as a Predecessor. ADO rejects a relation that
+# already exists, and one to a missing item, with HTTP 400, so both are checked
+# for first: a missing blocker is a clean negative (exit 1), not a backend error.
+cmd_link() {
+  local n="${1:-}" blocker=""; shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --blocked-by) blocker="$2"; shift 2 ;; *) echo "link: unknown option $1" >&2; exit 2 ;; esac
+  done
+  [ -n "$n" ] && [ -n "$blocker" ] || { echo "Usage: issues-ado.sh link <number> --blocked-by <number>" >&2; exit 2; }
+  local current
+  current=$(cmd_get "$n") || exit $?
+  printf '%s' "$current" | jq -e --argjson b "$blocker" '(.blockedBy // []) | index($b)' >/dev/null 2>&1 && return 0
+  ( cmd_get "$blocker" >/dev/null ) || exit $?
+  local patch
+  patch=$(URL="${ADO_ORG_URL%/}/_apis/wit/workItems/${blocker}" python3 -c '
+import json, os
+print(json.dumps([{"op": "add", "path": "/relations/-",
+                   "value": {"rel": "System.LinkTypes.Dependency-Reverse", "url": os.environ["URL"]}}]))')
+  if ! _ado_request PATCH "/_apis/wit/workitems/${n}?api-version=${API_VERSION}" "$patch" "application/json-patch+json"; then
+    echo "issues-ado.sh: request to Azure DevOps failed (network/curl error)" >&2; exit 3
+  fi
+  case "$_ADO_CODE" in
+    2??) return 0 ;;
+    404) echo "issues-ado.sh: work item $n or $blocker not found" >&2; exit 1 ;;
+    *)   echo "issues-ado.sh: Azure DevOps returned HTTP $_ADO_CODE linking $n to $blocker" >&2; exit 3 ;;
+  esac
+}
+
 # ── any-claimable ────────────────────────────────────────────────────────────
 cmd_any_claimable() {
   _ado_wiql_ids "$(_ado_state_wiql open)"
@@ -469,7 +525,7 @@ cmd_any_claimable() {
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-ado.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|link|any-claimable) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -488,5 +544,6 @@ case "$verb" in
   park)          shift; cmd_park "$@" ;;
   escalate)      shift; cmd_escalate "$@" ;;
   requeue)       shift; cmd_requeue "$@" ;;
+  link)          shift; cmd_link "$@" ;;
   any-claimable) cmd_any_claimable ;;
 esac

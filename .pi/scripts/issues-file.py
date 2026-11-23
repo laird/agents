@@ -27,6 +27,10 @@ Usage:
   issues-file.py park <number> [--comment "..."]
   issues-file.py escalate <number> --label <blocking-label> [--comment "..."]
   issues-file.py requeue <number> [--comment "..."]
+  issues-file.py link <number> --blocked-by <number>
+
+`link` records a native dependency edge (#343) in the `blocked_by:` front-matter
+list; list/get report it as `blockedBy`, which issue-deps.sh gates on.
 
 Lifecycle verbs (handoff, park, escalate, requeue) are the issue state machine
 a detached merge job drives after a worker's `claim`:
@@ -184,12 +188,12 @@ def _parse_frontmatter(text: str) -> dict:
 def _format_issue(data: dict) -> str:
     body = data.get("body", "")
     lines = []
-    for key in ("number", "title", "priority", "labels", "status", "assignee"):
+    for key in ("number", "title", "priority", "labels", "status", "assignee", "blocked_by"):
         if key not in data:
             continue
         val = data[key]
         if isinstance(val, list):
-            lines.append(f"{key}: [{', '.join(val)}]")
+            lines.append(f"{key}: [{', '.join(str(v) for v in val)}]")
         else:
             lines.append(f"{key}: {val}")
     front = "\n".join(lines)
@@ -257,7 +261,21 @@ def to_gh_json(data: dict) -> dict:
         "state": state,
         "labels": labels,
         "comments": [],
+        "blockedBy": _blocked_by(data),
     }
+
+
+def _blocked_by(data: dict) -> list:
+    """The `blocked_by:` front-matter list as issue numbers (#343)."""
+    raw = data.get("blocked_by") or []
+    if not isinstance(raw, list):
+        raw = [raw]
+    out = []
+    for v in raw:
+        m = re.fullmatch(r"#?(\d+)", str(v).strip())
+        if m and int(m.group(1)) not in out:
+            out.append(int(m.group(1)))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +626,26 @@ def cmd_requeue(args):
                 status="open", comment=args.comment, target_bucket=_blocked_or_open)
 
 
+def cmd_link(args):
+    """Record that <number> is blocked by --blocked-by (#343). Idempotent."""
+    issues_dir = get_issues_dir()
+    try:
+        _, p = resolve_path(issues_dir, args.number)
+    except FileNotFoundError:
+        sys.exit(1)
+    with open(p, "r+") as f:
+        lock_ex(f.fileno())
+        try:
+            data = parse_issue_file_fd(f)
+            deps = _blocked_by(data)
+            if args.blocked_by not in deps:
+                deps.append(args.blocked_by)
+            data["blocked_by"] = [str(d) for d in deps]
+            write_issue_file_fd(f, data)
+        finally:
+            unlock(f.fileno())
+
+
 def cmd_any_claimable(args):
     issues_dir = get_issues_dir()
     open_dir = issues_dir / "open"
@@ -811,6 +849,10 @@ def main():
     p_requeue.add_argument("number", type=int)
     p_requeue.add_argument("--comment")
 
+    p_link = sub.add_parser("link")
+    p_link.add_argument("number", type=int)
+    p_link.add_argument("--blocked-by", dest="blocked_by", type=int, required=True)
+
     sub.add_parser("any-claimable")
     sub.add_parser("migrate-layout")
     sub.add_parser("find-main-worktree")
@@ -832,6 +874,7 @@ def main():
         "park": cmd_park,
         "escalate": cmd_escalate,
         "requeue": cmd_requeue,
+        "link": cmd_link,
         "any-claimable": cmd_any_claimable,
         "migrate-layout": cmd_migrate_layout,
         "find-main-worktree": lambda _: cmd_find_main_worktree(),

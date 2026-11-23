@@ -31,6 +31,7 @@ create --title "..." --body "..." [--label L ...]
 claim <number>
 release <number>
 any-claimable
+link <number> --blocked-by <number>
 ```
 
 **Uniform output.** `list` and `get` emit the same JSON shape as
@@ -47,6 +48,15 @@ label); `working` = claimed (`working` label/tag); `blocked` = gated on a human
 decision (`needs-design`, `needs-approval`, …); `closed` = done. `claim` /
 `release` toggle the `working` marker; `any-claimable` is the cheap "is there
 anything to do?" probe the loop polls.
+
+**Dependencies (#343).** `link N --blocked-by M` records "N waits on M" in the
+tracker's own relation: a `blocked_by:` front-matter list (file), a "Blocks"
+issue link with M as the blocking side (Jira), a Predecessor relation (Azure
+DevOps), a native "blocked by" relationship (GitHub). The file, Jira and ADO
+backends report these edges in a `blockedBy` array of issue numbers on `list`
+and `get` (Jira keeps only same-project links). `issue-deps.sh` gates on them
+exactly as on a `Depends on:` / `Blocked by:` body line: N stays out of the
+claimable queue until M is closed. Call it as `issue_link N --blocked-by M`.
 
 ## Backends
 

@@ -5,10 +5,14 @@ minimal WIQL evaluator so list/any-claimable/blocked genuinely filter.
 
 Covers (project prefix ignored; routing keys off the /_apis/wit/... suffix):
   POST /_apis/wit/wiql                    {query}         -> {workItems:[{id}]}
-  POST /_apis/wit/workitemsbatch          {ids,fields}    -> {value:[{id,fields}]}
+  POST /_apis/wit/workitemsbatch          {ids,fields} or {ids,$expand} -> {value:[{id,fields,relations?}]}
+                                          (both at once is a 400, as on real ADO)
   POST /_apis/wit/workitems/$Type         json-patch      -> {id,fields}   (create)
   GET  /_apis/wit/workitems/{id}                          -> {id,fields} / 404
+  GET  /_apis/wit/workitems/{id}?$expand=relations       -> {id,fields,relations}
   PATCH/_apis/wit/workitems/{id}          json-patch      -> {id,fields}
+                                          (op add /relations/- appends a relation;
+                                          a duplicate is a 400, as on real ADO)
   GET  /_apis/wit/workItems/{id}/comments                 -> {comments:[{text}]}
   POST /_apis/wit/workItems/{id}/comments {text}          -> {id,text}
 
@@ -96,11 +100,14 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
 
-    def _view(self, n, fields=None):
+    def _view(self, n, fields=None, relations=False):
         f = ITEMS[n]["fields"]
         if fields:
             f = {k: f.get(k) for k in fields if k in f or k == "System.Id"}
-        return {"id": n, "fields": {k: v for k, v in ITEMS[n]["fields"].items()}}
+        view = {"id": n, "fields": {k: v for k, v in ITEMS[n]["fields"].items()}}
+        if relations:
+            view["relations"] = list(ITEMS[n].get("relations", []))
+        return view
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].lower()
@@ -114,7 +121,7 @@ class H(BaseHTTPRequestHandler):
         if m:
             n = int(m.group(1))
             if n in ITEMS:
-                return self._send(200, self._view(n))
+                return self._send(200, self._view(n, relations="$expand=relations" in self.path.lower()))
             return self._send(404, {"message": "does not exist"})
         return self._send(404, {"message": "not found"})
 
@@ -123,6 +130,16 @@ class H(BaseHTTPRequestHandler):
             path = op.get("path", "")
             if path.startswith("/fields/"):
                 ITEMS[n]["fields"][path[len("/fields/"):]] = op.get("value")
+            elif path == "/relations/-":
+                rel = op.get("value") or {}
+                target = (rel.get("url") or "").rstrip("/").rsplit("/", 1)[-1]
+                if not target.isdigit() or int(target) not in ITEMS:
+                    return "work item %s does not exist" % target
+                rels = ITEMS[n].setdefault("relations", [])
+                if any(r.get("rel") == rel.get("rel") and r.get("url") == rel.get("url") for r in rels):
+                    return "Relation already exists"
+                rels.append({"rel": rel.get("rel"), "url": rel.get("url"), "attributes": {}})
+        return None
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -135,7 +152,10 @@ class H(BaseHTTPRequestHandler):
         if low.endswith("/_apis/wit/workitemsbatch"):
             ids = body.get("ids", [])
             fields = body.get("fields")
-            val = [self._view(n, fields) for n in ids if n in ITEMS]
+            expand = str(body.get("$expand") or "").lower()
+            if fields and expand:
+                return self._send(400, {"message": "The expand parameter can not be used with the fields parameter."})
+            val = [self._view(n, fields, relations=expand in ("relations", "all")) for n in ids if n in ITEMS]
             return self._send(200, {"value": val})
         m = re.search(r"/_apis/wit/workitems/%24", low)
         if m:  # create
@@ -160,7 +180,9 @@ class H(BaseHTTPRequestHandler):
             n = int(m.group(1))
             if n not in ITEMS:
                 return self._send(404, {"message": "no item"})
-            self._apply_patch(n, body if isinstance(body, list) else [])
+            err = self._apply_patch(n, body if isinstance(body, list) else [])
+            if err:
+                return self._send(400, {"message": err})
             return self._send(200, self._view(n))
         return self._send(404, {"message": "not found"})
 

@@ -15,6 +15,7 @@
 #   <backend> park <number> [--comment "..."]
 #   <backend> escalate <number> --label <blocking-label> [--comment "..."]
 #   <backend> requeue <number> [--comment "..."]
+#   <backend> link <number> --blocked-by <number>     (native dependency edge, #343)
 #
 # The last four are the lifecycle a detached merge job drives after a worker's
 # claim (see issues-file.py's docstring). On GitHub they are label edits: the
@@ -290,6 +291,20 @@ cmd_requeue() {
   return 0
 }
 
+# ── link (#343) ────────────────────────────────────────────────────────────
+# A native "blocked by" relationship (issue dependencies). The REST endpoint
+# wants the blocker's database id, not its number.
+cmd_link() {
+  local n="${1:-}" blocker=""; shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --blocked-by) blocker="$2"; shift 2 ;; *) echo "link: unknown option $1" >&2; exit 2 ;; esac
+  done
+  [ -n "$n" ] && [ -n "$blocker" ] || { echo "Usage: issues-gh.sh link <number> --blocked-by <number>" >&2; exit 2; }
+  local id
+  id=$(gh api "repos/{owner}/{repo}/issues/${blocker}" --jq .id 2>/dev/null) || { echo "issues-gh.sh: issue #$blocker not found" >&2; exit 1; }
+  gh api -X POST "repos/{owner}/{repo}/issues/${n}/dependencies/blocked_by" -F issue_id="$id" >/dev/null || exit 3
+}
+
 # ── any-claimable ──────────────────────────────────────────────────────────
 cmd_any_claimable() {
   local open count
@@ -312,6 +327,7 @@ case "${1:-}" in
   park)          shift; cmd_park "$@" ;;
   escalate)      shift; cmd_escalate "$@" ;;
   requeue)       shift; cmd_requeue "$@" ;;
+  link)          shift; cmd_link "$@" ;;
   any-claimable) cmd_any_claimable ;;
   "")            echo "Usage: issues-gh.sh <verb> [args...]" >&2; exit 2 ;;
   *)             echo "Unknown verb: $1" >&2; exit 2 ;;

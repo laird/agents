@@ -58,6 +58,14 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- Native dependency edges on every backend (#343). A new `link <n> --blocked-by <m>`
+  verb (`issue_link`) writes the tracker's own relation: `blocked_by:` front-matter
+  on the file backend, a "Blocks" issue link on Jira, a Predecessor relation on
+  Azure DevOps, a "blocked by" relationship on GitHub. The file, Jira and ADO
+  backends report the edges as `blockedBy` on `list` and `get`, and `issue-deps.sh`
+  gates the claimable queue and explicit dispatch on them like a `Blocked by #m`
+  body line.
+
 - `/review-blocked-gui` (#308): review blocked issues in a local web page. It
   starts `review-blocked-server.py` (#311) on `127.0.0.1`, prints a URL with a
   per-run token, and suggests `/review-blocked --prepare` when issues have no

@@ -156,6 +156,23 @@ check "GitHub blocked-by keeps only open blockers" "$NATIVE" '{"5":[3],"6":[]}'
 NATIVE=$(bash -c "gh() { return 1; }; source '$SCRIPT_DIR/issue-deps.sh'; _ideps_gh_blockers")
 check "GitHub blocked-by fails open" "$NATIVE" "{}"
 
+# #343: a native edge written by issue_link gates like a body line. The file
+# backend keeps it in blocked_by: front-matter and reports it as blockedBy.
+issue open 50 "Native dependent" "No dependency in the body."
+issue open 51 "Native blocker"   "Nothing."
+OUT=$(run "issue_link 50 --blocked-by 51; echo rc=\$?")
+check "issue_link writes a native edge" "$OUT" "rc=0"
+check "the edge is stored as blocked_by front-matter" "$(grep -c '^blocked_by: \[51\]$' "$ISSUES_DIR/open/050.md")" "1"
+OUT=$(run "issue_get 50 | jq -c .blockedBy")
+check "get reports the edge as blockedBy" "$OUT" "[51]"
+OUT=$(run "issue_list --state open | jq -c '[.[].number | select(. == 50 or . == 51)]'")
+check "the queue holds back an issue with an open native blocker" "$OUT" "[51]"
+OUT=$(run "issue_unmet_dependencies 50")
+check "explicit dispatch names the native blocker" "$OUT" "#51"
+run "issue_close 51" >/dev/null
+OUT=$(run "issue_unmet_dependencies 50; echo rc=\$?")
+check "closing the native blocker frees the issue" "$OUT" "rc=0"
+
 [ -f "$TMP/gh-was-called" ] && bad "gh was invoked: $(cat "$TMP/gh-was-called")"
 
 echo ""

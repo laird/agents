@@ -156,6 +156,22 @@ ABS="$(pwd)/$BACKEND"
 OUT=$(cd "$TMP" && PATH="$TMP/bin:$PATH" ADO_ORG_URL="" ADO_ORG="" ADO_PROJECT="" ADO_PAT="" "$ABS" list 2>/dev/null); RC=$?
 assert_eq "missing config exits 3" "3" "$RC"
 
+# ── link (#343): "7 is blocked by 9" adds 9 to 7 as a Predecessor ───────────
+run link 7 --blocked-by 9
+assert_eq "link exits 0" "0" "$RC"
+PATCH=$(data_for_method PATCH)
+assert_contains "link adds a relation"            '"path": "/relations/-"' "$PATCH"
+assert_contains "the relation is a Predecessor"   '"rel": "System.LinkTypes.Dependency-Reverse"' "$PATCH"
+assert_contains "the relation points at the blocker" '"url": "https://dev.azure.com/acme/_apis/wit/workItems/9"' "$PATCH"
+run link 7
+assert_eq "link without --blocked-by exits 2" "2" "$RC"
+run list --state open
+BATCH=$(awk -F'\t' '$2 ~ /workitemsbatch/ {print $3}' "$CURL_CAPTURE" | tail -1)
+assert_contains "list expands relations"                     '"$expand": "Relations"' "$BATCH"
+assert_not_contains "list sends no fields list alongside \$expand" '"fields"' "$BATCH"
+run get 7
+assert_contains "get expands relations" '$expand=relations' "$(awk -F'\t' '$2 ~ /workitems\/7\?/ {print $2}' "$CURL_CAPTURE" | head -1)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

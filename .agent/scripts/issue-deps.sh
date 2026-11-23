@@ -18,6 +18,11 @@
 #   - on GitHub, as a native "blocked by" relationship (issue dependencies),
 #     read for every open issue in one GraphQL query. Prefer these where you
 #     can: they are explicit and no wording can create one by accident.
+#   - on the file, Jira and Azure DevOps backends, as a native edge their
+#     list/get report in a `blockedBy` array of issue numbers (#343): the
+#     file backend's `blocked_by:` front-matter, a Jira "Blocks" issue link,
+#     an ADO Predecessor relation. `issue_link <n> --blocked-by <m>` writes one
+#     on any backend. These count exactly like body lines.
 #
 # An issue never waits on itself, on its parent (the "Sub-task of #N" line), or
 # on its own sub-tasks (issues whose body says "Sub-task of #<it>"): a parent
@@ -39,8 +44,8 @@
 #                marks, a heading, a list marker, a checkbox, "[", bold/italics.
 #   parent_num:  issue object → the number on its "Sub-task of #N" line (a line
 #                that starts with it, like a dependency), or null.
-#   decl_deps:   issue object → sorted numbers its body declares, minus itself
-#                and its parent.
+#   decl_deps:   issue object → sorted numbers its body declares or its
+#                `blockedBy` array names, minus itself and its parent.
 _IDEPS_JQ_DEFS='
 def decl_prefix:
   "(?i)^\\s*(>\\s*)*(#{1,6}\\s+)?([-*+]\\s+|[0-9]+[.)]\\s+)?(\\[[ xX]\\]\\s+)?\\[?\\s*([*_]{1,2}\\s*)?";
@@ -50,10 +55,11 @@ def parent_num:
     | capture("(?i)sub-?task of\\s*#(?<n>[0-9]+)").n | tonumber ][0];
 def decl_deps:
   (.number | tonumber? // .) as $self | parent_num as $parent
-  | [ (.body // "") | split("\n")[]
-      | select(test(decl_prefix + "(depends on|blocked by)\\b"))
-      | scan("#([0-9]+)") | .[0] | tonumber
-      | select(. != $self and . != $parent) ]
+  | [ ( (.body // "") | split("\n")[]
+        | select(test(decl_prefix + "(depends on|blocked by)\\b"))
+        | scan("#([0-9]+)") | .[0] | tonumber ),
+      ( (.blockedBy // [])[] | tonumber? ) ]
+  | map(select(. != $self and . != $parent))
   | unique;
 '
 

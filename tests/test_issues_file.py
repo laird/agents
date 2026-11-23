@@ -383,3 +383,45 @@ class TestFindMainWorktree:
         assert rc == 0
         assert out.startswith("/")
         assert Path(out).is_dir()
+
+
+class TestLink:
+    """#343: `link` records a native dependency edge as blocked_by front-matter."""
+
+    def test_link_records_blocked_by_and_get_reports_it(self, idir):
+        write_issue(idir, 1, "Dependent")
+        write_issue(idir, 2, "Blocker")
+        env = {"ISSUE_DIR_PATH": str(idir)}
+        _, _, rc = run(["link", "1", "--blocked-by", "2"], env)
+        assert rc == 0
+        assert "blocked_by: [2]" in (idir / "open" / "001.md").read_text()
+        out, _, _ = run(["get", "1"], env)
+        assert json.loads(out)["blockedBy"] == [2]
+        out, _, _ = run(["get", "2"], env)
+        assert json.loads(out)["blockedBy"] == []
+
+    def test_link_is_idempotent_and_accumulates(self, idir):
+        for n in (1, 2, 3):
+            write_issue(idir, n, f"Issue {n}")
+        env = {"ISSUE_DIR_PATH": str(idir)}
+        for blocker in ("2", "2", "3"):
+            assert run(["link", "1", "--blocked-by", blocker], env)[2] == 0
+        out, _, _ = run(["list"], env)
+        one = [i for i in json.loads(out) if i["number"] == 1][0]
+        assert one["blockedBy"] == [2, 3]
+
+    def test_link_keeps_the_rest_of_the_issue(self, idir):
+        write_issue(idir, 1, "Dependent", labels=["P1", "bug"], body="the body")
+        env = {"ISSUE_DIR_PATH": str(idir)}
+        run(["link", "1", "--blocked-by", "9"], env)
+        got = json.loads(run(["get", "1"], env)[0])
+        assert got["title"] == "Dependent"
+        assert got["body"] == "the body"
+        assert [l["name"] for l in got["labels"]] == ["P1", "bug"]
+
+    def test_link_on_a_missing_issue_exits_1(self, idir):
+        assert run(["link", "7", "--blocked-by", "1"], {"ISSUE_DIR_PATH": str(idir)})[2] == 1
+
+    def test_link_needs_blocked_by(self, idir):
+        write_issue(idir, 1, "Dependent")
+        assert run(["link", "1"], {"ISSUE_DIR_PATH": str(idir)})[2] == 2

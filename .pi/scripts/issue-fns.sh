@@ -115,6 +115,9 @@ issue_any_claimable() {
   [ "$(printf '%s' "$ready" | jq 'length' 2>/dev/null || echo 1)" -gt 0 ]
 }
 issue_handoff()       { "$_ifns_BACKEND_BIN" handoff       "$@"; }
+# issue_link <n> --blocked-by <m>: a native dependency edge on any backend (#343);
+# issue-deps.sh gates <n> on <m> through it exactly as on a "Blocked by #m" line.
+issue_link()          { "$_ifns_BACKEND_BIN" link          "$@"; }
 issue_park()          { "$_ifns_BACKEND_BIN" park          "$@"; }
 issue_escalate() {
   "$_ifns_BACKEND_BIN" escalate "$@" || return $?

@@ -17,6 +17,10 @@ Not a general Jira emulator — it covers:
   GET  /rest/api/2/issue/{key}/transitions
   POST /rest/api/2/issue/{key}/transitions   {transition:{id}}
   PUT  /rest/api/2/issue/{key}/assignee
+  POST /rest/api/2/issueLink             {type:{name},inwardIssue:{key},outwardIssue:{key}}
+                                         (outwardIssue <outward> inwardIssue, e.g.
+                                         "ENG-2 blocks ENG-1"; GET shows it on the
+                                         inwardIssue side as an inwardIssue link)
 
 Auth is accepted but ignored. State lives in memory for the process lifetime.
 """
@@ -30,6 +34,7 @@ PROJECT = "ENG"
 # statusCategory keys: "new" (To Do), "indeterminate" (In Progress), "done".
 ISSUES = {}   # number -> dict(summary, description, labels[list], cat, comments[list])
 NEXT = [1]
+LINKS = []    # (type name, inward number, outward number) as POSTed
 
 def seed(summary, labels, cat):
     n = NEXT[0]; NEXT[0] += 1
@@ -67,8 +72,24 @@ def to_view(n):
             "labels": it["labels"],
             "status": status_obj(it["cat"]),
             "comment": {"comments": [{"body": b} for b in it["comments"]]},
+            "issuelinks": links_of(n),
         },
     }
+
+def links_of(n):
+    """Issue links as GET shows them on issue n: each side sees the OTHER issue,
+    under the field named for n's own direction (n "is blocked by" X shows X as
+    inwardIssue)."""
+    out = []
+    for name, inward, outward in LINKS:
+        t = {"name": name, "inward": "is blocked by", "outward": "blocks"}
+        if n == inward and outward in ISSUES:
+            out.append({"type": t, "inwardIssue": {"key": f"{PROJECT}-{outward}",
+                        "fields": {"status": status_obj(ISSUES[outward]["cat"])}}})
+        elif n == outward and inward in ISSUES:
+            out.append({"type": t, "outwardIssue": {"key": f"{PROJECT}-{inward}",
+                        "fields": {"status": status_obj(ISSUES[inward]["cat"])}}})
+    return out
 
 def jql_matches(n, jql):
     it = ISSUES[n]
@@ -185,6 +206,15 @@ class H(BaseHTTPRequestHandler):
             if start + maxr < len(hits):
                 resp["nextPageToken"] = str(start + maxr)
             return self._send(200, resp)
+        if path == "/rest/api/2/issueLink":
+            name = (body.get("type") or {}).get("name", "")
+            inward = self._key_num((body.get("inwardIssue") or {}).get("key", ""))
+            outward = self._key_num((body.get("outwardIssue") or {}).get("key", ""))
+            if inward not in ISSUES or outward not in ISSUES:
+                return self._send(404, {"errorMessages": ["Issue does not exist"]})
+            if (name, inward, outward) not in LINKS:
+                LINKS.append((name, inward, outward))
+            return self._send(201)
         if path == "/rest/api/2/issue":
             f = body.get("fields", {})
             n = NEXT[0]; NEXT[0] += 1

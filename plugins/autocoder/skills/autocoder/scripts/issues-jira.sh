@@ -12,6 +12,7 @@
 #   <backend> claim <number>
 #   <backend> release <number>
 #   <backend> any-claimable
+#   <backend> link <number> --blocked-by <number>   (a "Blocks" issue link, #343)
 #
 # Exit codes:
 #   0 — success / work exists
@@ -20,7 +21,9 @@
 #   3 — backend error (curl failure, auth failure, parse error, config missing)
 #
 # Output schema for list/get matches issues-gh.sh / issues-file.py's to_gh_json
-# shape (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]).
+# shape (number, title, body, state OPEN|CLOSED, labels[{name}], comments[]),
+# plus blockedBy[]: the numbers of same-project issues linked to this one as
+# "is blocked by" (link type "Blocks"), which issue-deps.sh gates on (#343).
 #
 # Identifier mapping:
 #   Jira issues are keyed PROJ-123. The 9-verb contract, and the swarm manifest
@@ -245,7 +248,7 @@ remaining = int(os.environ["LIMIT"]) - int(os.environ["FETCHED"])
 req = {
     "jql": os.environ["JQL"],
     "maxResults": min(remaining, 100),
-    "fields": ["summary", "description", "labels", "status"],
+    "fields": ["summary", "description", "labels", "status", "issuelinks"],
 }
 if os.environ.get("TOKEN"):
     req["nextPageToken"] = os.environ["TOKEN"]
@@ -282,8 +285,22 @@ PY
   done
 
   # Reshape the accumulated pages into the gh-compatible array.
-  LIMIT="$limit" python3 - "$pages" <<'PY' || { rm -f "$pages"; exit 3; }
+  LIMIT="$limit" PROJ="$JIRA_PROJECT" python3 - "$pages" <<'PY' || { rm -f "$pages"; exit 3; }
 import json, os, sys
+
+def blocked_by(f, project):
+    # "N is blocked by M" shows on N as a "Blocks" link whose inwardIssue is M
+    # (#343). Only same-project keys map to a number; others are dropped.
+    out = []
+    for link in (f.get("issuelinks") or []):
+        t = link.get("type") or {}
+        if (t.get("name") or "").lower() != "blocks" and "blocked by" not in (t.get("inward") or "").lower():
+            continue
+        key = ((link.get("inwardIssue") or {}).get("key")) or ""
+        pre, _, num = key.rpartition("-")
+        if pre == project and num.isdigit() and int(num) not in out:
+            out.append(int(num))
+    return out
 
 def flatten_adf(desc):
     # v3 search returns `description` as an ADF document object; consumers of
@@ -326,6 +343,7 @@ with open(sys.argv[1]) as fh:
                 "body": flatten_adf(f.get("description")),
                 "labels": [{"name": l} for l in (f.get("labels") or [])],
                 "state": "CLOSED" if cat == "done" else "OPEN",
+                "blockedBy": blocked_by(f, os.environ.get("PROJ", "")),
             })
 print(json.dumps(out[:int(os.environ["LIMIT"])]))
 PY
@@ -337,7 +355,7 @@ cmd_get() {
   local key
   key=$(_jira_key "$1")
   # 404 on a get is "not found" → exit 1, distinct from a real backend error.
-  if ! _jira_request GET "/rest/api/2/issue/${key}?fields=summary,description,labels,status,comment"; then
+  if ! _jira_request GET "/rest/api/2/issue/${key}?fields=summary,description,labels,status,comment,issuelinks"; then
     echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2
     exit 3
   fi
@@ -349,8 +367,21 @@ cmd_get() {
     echo "issues-jira.sh: Jira returned HTTP $_JIRA_CODE for GET $key" >&2
     exit 3
   fi
-  RESP="$_JIRA_BODY" python3 - <<'PY' || exit 3
-import json, os
+  RESP="$_JIRA_BODY" PROJ="$JIRA_PROJECT" python3 - <<'PY' || exit 3
+import json, os, sys
+def blocked_by(f, project):
+    # "N is blocked by M" shows on N as a "Blocks" link whose inwardIssue is M
+    # (#343). Only same-project keys map to a number; others are dropped.
+    out = []
+    for link in (f.get("issuelinks") or []):
+        t = link.get("type") or {}
+        if (t.get("name") or "").lower() != "blocks" and "blocked by" not in (t.get("inward") or "").lower():
+            continue
+        key = ((link.get("inwardIssue") or {}).get("key")) or ""
+        pre, _, num = key.rpartition("-")
+        if pre == project and num.isdigit() and int(num) not in out:
+            out.append(int(num))
+    return out
 try:
     it = json.loads(os.environ["RESP"])
 except Exception:
@@ -372,8 +403,32 @@ print(json.dumps({
     "labels": [{"name": l} for l in (f.get("labels") or [])],
     "state": "CLOSED" if cat == "done" else "OPEN",
     "comments": [{"body": c.get("body") or ""} for c in comments],
+    "blockedBy": blocked_by(f, os.environ.get("PROJ", "")),
 }))
 PY
+}
+
+# ── link (#343) ──────────────────────────────────────────────────────────────
+# "N is blocked by M" is a "Blocks" link with M as the outward (blocking) issue.
+# POST names the sides the opposite way round from how GET shows them on N.
+cmd_link() {
+  local n="${1:-}" blocker=""; shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --blocked-by) blocker="$2"; shift 2 ;; *) echo "link: unknown option $1" >&2; exit 2 ;; esac
+  done
+  [ -n "$n" ] && [ -n "$blocker" ] || { echo "Usage: issues-jira.sh link <number> --blocked-by <number>" >&2; exit 2; }
+  local payload
+  payload=$(IN="$(_jira_key "$n")" OUT="$(_jira_key "$blocker")" python3 -c '
+import json, os
+print(json.dumps({"type": {"name": "Blocks"}, "inwardIssue": {"key": os.environ["IN"]}, "outwardIssue": {"key": os.environ["OUT"]}}))')
+  if ! _jira_request POST "/rest/api/2/issueLink" "$payload"; then
+    echo "issues-jira.sh: request to Jira failed (network/curl error)" >&2; exit 3
+  fi
+  case "$_JIRA_CODE" in
+    2??) return 0 ;;
+    404) echo "issues-jira.sh: issue $(_jira_key "$n") or $(_jira_key "$blocker") not found" >&2; exit 1 ;;
+    *)   echo "issues-jira.sh: Jira returned HTTP $_JIRA_CODE for POST issueLink" >&2; exit 3 ;;
+  esac
 }
 
 # ── label edits ──────────────────────────────────────────────────────────────
@@ -633,7 +688,7 @@ PY
 verb="${1:-}"
 case "$verb" in
   "")            echo "Usage: issues-jira.sh <verb> [args...]" >&2; exit 2 ;;
-  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|any-claimable) ;;
+  list|get|update|comment|close|create|claim|release|handoff|park|escalate|requeue|link|any-claimable) ;;
   *)             echo "Unknown verb: $verb" >&2; exit 2 ;;
 esac
 
@@ -652,5 +707,6 @@ case "$verb" in
   park)          shift; cmd_park "$@" ;;
   escalate)      shift; cmd_escalate "$@" ;;
   requeue)       shift; cmd_requeue "$@" ;;
+  link)          shift; cmd_link "$@" ;;
   any-claimable) cmd_any_claimable ;;
 esac

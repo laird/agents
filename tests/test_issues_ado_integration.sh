@@ -94,6 +94,26 @@ eq "update --add-label adds P3" "True" "$HASP"
 "$BACKEND" close "$NUM" --comment "closing" >/dev/null
 eq "close moves the item to a done state (CLOSED)" "CLOSED" "$("$BACKEND" get "$NUM" | field '["state"]')"
 
+# ── native dependency edges (#343) ──────────────────────────────────────────
+# link writes the tracker's own relation; get and list report it as blockedBy,
+# and issue-deps.sh holds the blocked issue back until the blocker closes.
+"$BACKEND" link 1 --blocked-by 2; eq "link exits 0" "0" "$?"
+eq "get reports the blocker in blockedBy" "[2]" "$("$BACKEND" get 1 | field '["blockedBy"]')"
+eq "the blocker itself has no blockedBy" "[]" "$("$BACKEND" get 2 | field '["blockedBy"]')"
+LISTED=$("$BACKEND" list --state open | python3 -c 'import json,sys; print([i["blockedBy"] for i in json.load(sys.stdin) if i["number"] == 1][0])')
+eq "list reports the blocker in blockedBy" "[2]" "$LISTED"
+"$BACKEND" link 1 --blocked-by 2; eq "linking the same pair again exits 0" "0" "$?"
+eq "a repeated link adds no second edge" "[2]" "$("$BACKEND" get 1 | field '["blockedBy"]')"
+"$BACKEND" link 1 --blocked-by 999 >/dev/null 2>&1; eq "link to a missing blocker exits 1" "1" "$?"
+"$BACKEND" link 1 >/dev/null 2>&1; eq "link without --blocked-by is a usage error" "2" "$?"
+READY=$(cd "$TMP" && _ifns_BACKEND_BIN="$BACKEND" bash -c 'source "$1"; "$_ifns_BACKEND_BIN" list --state open | _ideps_filter 2>/dev/null' _ "$REPO_ROOT/plugins/autocoder/scripts/issue-deps.sh" | nums)
+case ",$READY," in *,1,*) no "issue-deps holds back the blocked issue — ready: $READY" ;; *,2,*) ok "issue-deps holds back the blocked issue and keeps its blocker" ;; *) no "issue-deps dropped the blocker too — ready: $READY" ;; esac
+UNMET=$(cd "$TMP" && _ifns_BACKEND_BIN="$BACKEND" bash -c 'source "$1"; issue_unmet_dependencies 1' _ "$REPO_ROOT/plugins/autocoder/scripts/issue-deps.sh")
+eq "issue_unmet_dependencies names the native blocker" "#2" "$UNMET"
+"$BACKEND" close 2 >/dev/null
+UNMET=$(cd "$TMP" && _ifns_BACKEND_BIN="$BACKEND" bash -c 'source "$1"; issue_unmet_dependencies 1' _ "$REPO_ROOT/plugins/autocoder/scripts/issue-deps.sh"; echo "rc=$?")
+eq "closing the blocker frees the issue" "rc=0" "$UNMET"
+
 "$BACKEND" get 999 >/dev/null 2>&1; eq "get on a missing work item exits 1" "1" "$?"
 
 echo ""
