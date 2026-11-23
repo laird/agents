@@ -209,8 +209,11 @@ issue_body | grep -q "$BASE_TREE" && ok "(f) issue comment carries the base tree
 [ -d "$(base_worktree)" ] && bad "(f) base worktree left behind" || ok "(f) base worktree cleaned up"
 
 # ── (f') red base, then a disjoint re-sync: the published tree is neither gated tree ──
+# The sibling lands during the failing gate. By default that re-syncs and re-gates before
+# any verdict (#375, tests/test_merge_moved_base.sh); with it off, the base measured is
+# the tree's own and the sibling's landing reaches the push race this case is about.
 setup
-OUT=$(bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' 'echo "FAIL  tests/app.test.sh"; false')" 2>&1); RC=$?
+OUT=$(AUTOCODER_MOVED_BASE_REGATES=0 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' 'echo "FAIL  tests/app.test.sh"; false')" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "(f') exit 0 on a red base followed by a disjoint re-sync" || bad "(f') rc=$RC: $OUT"
 [ "$(gate_runs)" -eq 2 ] && ok "(f') gate ran on the integrated tree and the base only" || bad "(f') gate ran $(gate_runs) time(s); want 2"
 echo "$OUT" | grep -q "on a red base followed by a disjoint re-sync" && echo "$OUT" | grep -q "is neither gated tree" && ok "(f') success line says the published tree is neither gated tree" || bad "(f') success line wrong: $OUT"
