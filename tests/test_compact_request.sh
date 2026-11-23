@@ -35,6 +35,9 @@ status: open
 ---
 Body.
 EOF
+# Hermetic: no real session, no real transcripts.
+export CLAUDE_CODE_SESSION_ID=sess-a AUTOCODER_CLAUDE_PROJECTS_DIR="$TMP/projects"
+mkdir -p "$TMP/projects/-proj"
 WORK_JSON="$TMP/work.json"
 gate() { rm -f "$WORK_JSON"; AUTOCODER_WORK_JSON="$WORK_JSON" bash "$SCRIPT_DIR/fix-loop-gate.sh" 2>"$TMP/gate.err"; echo $?; }
 
@@ -75,6 +78,35 @@ OUT=$(AUTOCODER_COMPACT_REQUEST_TTL=0 bash "$CR" pending 2>&1); RC=$?
 assert_eq "an expired request is not pending" 1 "$RC"
 case "$OUT" in *expired*) assert_eq "expiry is said" yes yes ;; *) assert_eq "expiry is said" yes "$OUT" ;; esac
 bash "$CR" pending >/dev/null 2>&1; assert_eq "an expired request is removed" 1 $?
+
+# ── the request ends itself once it is answered: a compaction in the transcript ──
+transcript() { # transcript <iso timestamp of a compaction, or "">
+  : > "$TMP/projects/-proj/sess-a.jsonl"
+  printf '{"type":"user","timestamp":"2026-01-01T00:00:00Z","sessionId":"sess-a"}\n' >> "$TMP/projects/-proj/sess-a.jsonl"
+  [ -n "$1" ] && printf '{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","timestamp":"%s","sessionId":"sess-a"}\n' "$1" >> "$TMP/projects/-proj/sess-a.jsonl"
+}
+iso() { python3 -c 'import sys, datetime; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"; }
+transcript "$(iso $(( $(date +%s) - 600 )))"   # an older compaction does not answer it
+bash "$CR" request >/dev/null
+bash "$CR" pending >/dev/null 2>&1; assert_eq "a compaction before the request does not end it" 0 $?
+transcript "$(iso $(( $(date +%s) + 1 )))"
+OUT=$(bash "$CR" pending 2>&1); RC=$?
+assert_eq "a compaction after the request ends it" 1 "$RC"
+case "$OUT" in *compacted*) assert_eq "the compaction is said" yes yes ;; *) assert_eq "the compaction is said" yes "$OUT" ;; esac
+bash "$CR" pending >/dev/null 2>&1; assert_eq "an answered request is removed" 1 $?
+sed 's/number: 2/number: 3/; s/More work/Third/; s/, working\]/]/' .issues/working/002.md | sed 's/^status: .*/status: open/' > .issues/open/003.md
+rm -f "$(git rev-parse --absolute-git-dir)/autocoder-worker-state"
+assert_eq "the gate claims again after the compaction" 0 "$(AUTOCODER_RESUME_OWN_CLAIM=0 gate)"
+
+# ── or another session now runs here (/clear, a restart) ──────────────────
+transcript ""
+bash "$CR" request >/dev/null
+OUT=$(CLAUDE_CODE_SESSION_ID=sess-b bash "$CR" pending 2>&1); RC=$?
+assert_eq "a new session ends the request" 1 "$RC"
+case "$OUT" in *"new session"*) assert_eq "the new session is said" yes yes ;; *) assert_eq "the new session is said" yes "$OUT" ;; esac
+bash "$CR" request >/dev/null
+bash "$CR" pending >/dev/null 2>&1; assert_eq "the same session, not compacted, still waits" 0 $?
+bash "$CR" clear
 
 # ── usage ────────────────────────────────────────────────────────────────
 bash "$CR" bogus >/dev/null 2>&1; assert_eq "an unknown verb is a usage error" 2 $?

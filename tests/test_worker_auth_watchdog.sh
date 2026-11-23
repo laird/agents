@@ -141,6 +141,16 @@ cat > "$T/panes/wE_p1" <<EOF
 $CHROME
 EOF
 
+# Tool output that quotes the marker on its own line (a cat of this test) is not a request.
+cat > "$T/panes/wF_p1" <<EOF
+❯ show me the fixture
+● Bash(cat tests/test_worker_auth_watchdog.sh)
+  ⎿  ● COMPACT_REQUESTED
+     COMPACT_REQUESTED
+✻ Brewed for 3s · done 9:22 AM
+$CHROME
+EOF
+
 cp "$T/panes/wT_p1" "$T/panes/wZ_p1"    # same error, but still working
 cp "$T/panes/wT_p1" "$T/panes/wW_p1"    # the pane running the watchdog
 
@@ -219,13 +229,14 @@ assert_not_contains "no stall never notifies, even with bad creds" "notification
 
 # ── A worker that asked for /compact gets it, whatever the credentials say (#373) ──
 rm -rf "$T/state"
-agents_json wC:p1:idle wD:p1:done wE:p1:idle w13:p1:done > "$T/agents.json"
+agents_json wC:p1:idle wD:p1:done wE:p1:idle wF:p1:idle w13:p1:done > "$T/agents.json"
 OUT=$(run 1 --once)
 S=$(sends)
 assert_contains "a released claim with COMPACT_REQUESTED gets /compact" "pane send-text wC:p1 /compact" "$S"
 assert_contains "a bare COMPACT_REQUESTED tick gets /compact" "pane send-text wD:p1 /compact" "$S"
 assert_contains "the send is submitted" "pane send-keys wC:p1 enter" "$(cat "$T/argv")"
 assert_not_contains "prose naming the marker is not a request" "wE:p1" "$S"
+assert_not_contains "tool output quoting the marker is not a request" "wF:p1" "$S"
 assert_not_contains "a requested compact needs no credential alarm" "notification show" "$(cat "$T/argv")"
 assert_contains "the send is logged" "COMPACTED wC:p1" "$OUT"
 OUT=$(run 1 --once)

@@ -148,10 +148,12 @@ if block_start is None:
     print("none"); sys.exit()
 first = lines[block_start].strip()[1:].strip()
 block = "\n".join(lines[block_start:])
-# A worker asking to be compacted (#373) ends its turn with a line that opens with
-# COMPACT_REQUESTED, alone or after GATE_CLAIM_RELEASED #N. Prose naming it mid-line is not one.
+# A worker asking to be compacted (#373) ends its turn with an assistant message (●) that
+# opens with COMPACT_REQUESTED, alone or after GATE_CLAIM_RELEASED #N. Only that opening line
+# counts: tool output (⎿) or a later line that quotes the marker (a cat of a test, an issue
+# body) is not a request, nor is prose naming it mid-line.
 asked = re.compile(r"^(GATE_CLAIM_RELEASED #\d+\s+)?COMPACT_REQUESTED\b")
-if any(asked.match(l.strip().lstrip("●⎿").strip()) for l in lines[block_start:]):
+if lines[block_start].strip().startswith("●") and asked.match(first):
     print("requested")
 elif not (re.search(os.environ["ERROR_START_RE"], first) and re.search(os.environ["ERROR_RE"], block)):
     print("none")

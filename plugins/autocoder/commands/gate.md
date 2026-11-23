@@ -37,10 +37,9 @@ WORK_JSON="${AUTOCODER_WORK_JSON:-/tmp/autocoder-work.json}"
 bash "$SCRIPT_DIR/fix-loop-gate.sh"; GATE_RC=$?
 ```
 
-**A compaction you asked for (#373).** If an earlier tick recorded a compaction request
-(see "Declining the issue" below) and this session has been compacted or cleared since
-(your context opens with a compaction summary, or you have no record of that tick), run
-`bash "$SCRIPT_DIR/compact-request.sh" clear` **before** the gate, so it claims again.
+**A compaction you asked for (#373)** ends on its own: the gate stops waiting once this
+session's transcript shows a compaction after the request, or a new session runs here
+(see "Declining to compact" below). You need not clear it yourself.
 
 Branch on `$GATE_RC`:
 
@@ -170,5 +169,5 @@ and emit `GATE_CLAIM_RELEASED #<issue> COMPACT_REQUESTED` (on one line, first in
 reply) instead of the bare `GATE_CLAIM_RELEASED`. While the request is pending the gate
 claims nothing new, so no issue is claimed and released again every tick.
 `worker-auth-watchdog.sh` (cron, every 2 minutes; `--ensure` installs it) sends `/compact`
-to an idle pane whose turn ends that way. A request nobody answers expires after an hour
-(`AUTOCODER_COMPACT_REQUEST_TTL`), and the gate claims again.
+to an idle pane whose turn ends that way. After the compaction the gate claims again by
+itself; a request nobody answers expires after an hour (`AUTOCODER_COMPACT_REQUEST_TTL`).
