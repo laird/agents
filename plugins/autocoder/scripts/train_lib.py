@@ -277,8 +277,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
 
 
 # ── git and tracker plumbing ────────────────────────────────────────────────────────────
-def git(repo, *args, check=False, input=None):
-    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, input=input)
+def git(repo, *args, check=False, input=None, env=None):
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, input=input, env=env)
     if check and r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed in {repo}: {r.stderr.strip() or r.stdout.strip()}")
     return r
@@ -824,7 +824,9 @@ def merge_prefilter(cfg: Config, repo, ref, base):
     ('driver', owned)               every conflicting path is driver-owned: only the real merge decides
     ('unknown',)                    merge-tree could not say
     """
-    r = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, ref)
+    # merge-tree runs the merge drivers too (on the paths it finds conflicting), so it carries the train
+    # switch like the real chain merge it precedes (#364).
+    r = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, ref, env=train_merge_env("plan"))
     if r.returncode == 0:
         return ("clean",)
     if r.returncode != 1:
@@ -850,8 +852,27 @@ def _abort_merge(repo):
     git(repo, "clean", "-fdq")
 
 
-def merge_into(cfg: Config, scratch, ref, message=None):
-    """A real merge of <ref> into the scratch HEAD (drivers honoured, hooks off: HOOKS_OFF).
+TRAIN_MERGE_SWITCH = "AUTOCODER_TRAIN_MERGE"
+TRAIN_MERGE_PHASE = "AUTOCODER_TRAIN_PHASE"
+
+
+def train_merge_env(phase):
+    """The environment of a train CHAIN merge: `AUTOCODER_TRAIN_MERGE=1` and `AUTOCODER_TRAIN_PHASE=<phase>`
+    (`plan`, `assemble` or `attribute`) beside the process's own.
+
+    A chain merge's regenerated content is thrown away: the `regenerate` hook rewrites the assembled tree
+    once and the gate verifies it. So a repository's merge driver for a regenerated file may read the
+    switch, keep one side and exit 0, instead of running its generator per candidate (measured: about
+    3 min per candidate that touched a generated file, 1476 s to plan seven; #364). Any non-empty value
+    means on; the phase is for the driver's log line.
+    """
+    return {**os.environ, TRAIN_MERGE_SWITCH: "1", TRAIN_MERGE_PHASE: phase}
+
+
+def merge_into(cfg: Config, scratch, ref, message=None, phase="plan"):
+    """A real merge of <ref> into the scratch HEAD (drivers honoured, hooks off: HOOKS_OFF), with the
+    train switch in the drivers' environment (train_merge_env; `phase` names the caller: the planner's
+    `plan`, the run's `assemble`, a regeneration failure's `attribute`).
 
     Returns (verdict, detail): 'clean' (kept as a commit when `message` is given, else aborted),
     'conflict' (detail = unmerged paths, comma-joined), 'driver-fault' or 'generator-failed' (the
@@ -860,7 +881,8 @@ def merge_into(cfg: Config, scratch, ref, message=None):
     """
     ident = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
     keep = message is not None
-    r = git(scratch, *ident, *HOOKS_OFF, "merge", "--no-ff", *([] if keep else ["--no-commit"]), "-q", *(["-m", message] if keep else []), ref)
+    r = git(scratch, *ident, *HOOKS_OFF, "merge", "--no-ff", *([] if keep else ["--no-commit"]), "-q", *(["-m", message] if keep else []), ref,
+            env=train_merge_env(phase))
     if r.returncode == 0:
         if not keep:
             _abort_merge(scratch)

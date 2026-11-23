@@ -521,6 +521,77 @@ def test_a_failing_regeneration_blames_nobody_and_gates_nothing(fx):
     assert [fx.state_of(i) for i in issues] == ["OPEN", "OPEN"]
 
 
+def test_the_assembly_s_chain_merges_carry_the_train_switch_for_merge_drivers(fx):
+    """#364: the assembly's merges are chain merges too; a regenerate driver keeps ours under the switch and
+    the regenerate hook rewrites the assembled tree once."""
+    marker = fx.root / "driver-env"
+    probe = fx.root / "probe.sh"
+    probe.write_text(f"#!/bin/sh\necho \"${{AUTOCODER_TRAIN_MERGE:-unset}} ${{AUTOCODER_TRAIN_PHASE:-unset}}\" >> '{marker}'\nexit 0\n")
+    probe.chmod(0o755)
+    sh("git", "config", "merge.probe.driver", f"sh {probe} %O %A %B %P", cwd=fx.work)
+    sh("git", "checkout", "-q", "-B", "master", "origin/master", cwd=fx.work)
+    (fx.work / "gen.txt").write_text("base\n")
+    (fx.work / ".gitattributes").write_text("gen.txt merge=probe\n")
+    sh("git", "add", "-A", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", "a generated file under the probe driver", cwd=fx.work)
+    sh("git", "push", "-q", "origin", "master", cwd=fx.work)
+    sh("git", "fetch", "-q", "origin", cwd=fx.work)
+    issues = []
+    for n in range(2):
+        name = f"feature/m{n}"
+        sh("git", "checkout", "-q", "-B", name, "origin/master", cwd=fx.work)
+        (fx.work / "gen.txt").write_text(f"changed by m{n}\n")
+        (fx.work / "files").mkdir(exist_ok=True)
+        (fx.work / f"files/m{n}.txt").write_text(f"{n}\n")
+        sh("git", "add", "-A", cwd=fx.work)
+        sh("git", "commit", "-q", "-m", f"work {n}", cwd=fx.work)
+        sh("git", "push", "-q", "-f", "origin", name, cwd=fx.work)
+        sh("git", "checkout", "-q", "master", cwd=fx.work)
+        r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", f"m{n}", "--body", "", "--label", "ready-for-review", cwd=fx.work)
+        issues.append(json.loads(r.stdout)["number"])
+        sh(sys.executable, str(ISSUES_FILE), "comment", str(issues[-1]), "--body", f"READY on `{name}`", cwd=fx.work)
+    marker.unlink(missing_ok=True)
+    fx.train["hooks"] = {"regenerate": "printf 'regenerated on the assembled tree\\n' > gen.txt"}
+    fx.write_config()
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1
+    seen = set(filter(None, marker.read_text().split("\n")))
+    assert "1 assemble" in seen, seen                      # m1's merge after m0 conflicted in gen.txt at assembly
+    assert seen <= {"1 plan", "1 assemble"}, seen          # every train merge carried the switch; no developer merge ran the driver
+    assert sh("git", "show", "origin/master:gen.txt", cwd=fx.work).stdout == "regenerated on the assembled tree\n"
+    assert [fx.state_of(i) for i in issues] == ["CLOSED", "CLOSED"]
+
+
+def test_a_regeneration_that_fails_on_one_member_alone_returns_that_member_and_the_next_cycle_trains_the_rest(fx):
+    """#364: the per-candidate generation that used to find a `generator-failed` member on every plan is
+    gone, so a failed assembled regeneration that names no path is attributed once, by trying each member
+    alone; the member whose tree fails alone is returned, the rest train next cycle."""
+    issues = fx.members(3)
+    fx.train["hooks"] = {"regenerate": "if [ -f files/m1.txt ]; then echo 'generator exploded'; exit 3; fi; true"}
+    fx.write_config()
+    code, cyc = fx.run()
+    assert code == 0 and fx.gates() == []
+    assert [str(i) for i in cyc.returned_total] == [str(issues[1])]
+    assert [d[0] for d in fx.dropped()] == [str(issues[1])]
+    assert "fails on this member's tree alone" in fx.comments(issues[1])
+    assert [fx.state_of(i) for i in issues] == ["OPEN"] * 3
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1
+    assert fx.on_master(0) and fx.on_master(2) and not fx.on_master(1)
+    assert [fx.state_of(i) for i in issues] == ["CLOSED", "OPEN", "CLOSED"]
+
+
+def test_a_regeneration_every_member_fails_alone_blames_nobody(fx):
+    """Every member failing alone is the regeneration's own failure (as a path every member touches names
+    nobody): no member is returned."""
+    issues = fx.members(2)
+    fx.train["hooks"] = {"regenerate": "echo 'generator exploded'; exit 3"}
+    fx.write_config()
+    code, cyc = fx.run()
+    assert code == 0 and fx.gates() == [] and fx.dropped() == [] and cyc.returned_total == []
+    assert [fx.state_of(i) for i in issues] == ["OPEN", "OPEN"]
+
+
 def tips(fx, n):
     return [T.git(fx.work, "rev-parse", f"origin/feature/m{i}").stdout.strip() for i in range(n)]
 

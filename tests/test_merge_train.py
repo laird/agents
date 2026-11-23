@@ -687,6 +687,38 @@ def test_the_planner_merges_with_hooks_off_so_a_post_merge_hook_never_runs_per_c
     assert not marker.exists(), "the planner's candidate merges ran the repository's post-merge hook"
 
 
+def install_probe_driver(fx, marker):
+    """A merge driver for gen.txt that records the train switch it saw and keeps ours (what a project's
+    regenerate driver does on a chain merge, #364), in the repo's config, which every worktree shares."""
+    probe = fx.root / "probe.sh"
+    probe.write_text(f"#!/bin/sh\necho \"${{AUTOCODER_TRAIN_MERGE:-unset}} ${{AUTOCODER_TRAIN_PHASE:-unset}}\" >> '{marker}'\nexit 0\n")
+    probe.chmod(0o755)
+    sh("git", "config", "merge.probe.driver", f"sh {probe} %O %A %B %P", cwd=fx.work)
+    fx.commit_on("master", {"gen.txt": "base\n", ".gitattributes": "registry.txt merge=union\ndata.bin merge=binary\ngen.txt merge=probe\n"}, "a generated file under the probe driver")
+
+
+def test_the_planner_s_chain_merges_carry_the_train_switch_for_merge_drivers(fx):
+    """#364: a chain merge's regenerated content is thrown away (the regenerate hook rewrites the assembled
+    tree), so every merge the planner makes tells the drivers so; a developer's merge does not."""
+    marker = fx.root / "driver-env"
+    install_probe_driver(fx, marker)
+    fx.branch("feature/a", {"gen.txt": "a\n"})
+    fx.branch("feature/b", {"gen.txt": "b\n"})
+    for b in ("feature/a", "feature/b"):
+        fx.ready(b, b)
+    out, fault = fx.plan(size=2)
+    assert fault is None
+    assert [ln.split("\t")[2] for ln in out if ln.startswith("train\t")] == ["feature/a", "feature/b"]
+    seen = marker.read_text().split("\n")
+    assert "1 plan" in seen, seen                      # b's chain merge after a conflicted in gen.txt: the driver ran under the switch
+    assert set(filter(None, seen)) == {"1 plan"}, seen  # and no planner merge or merge-tree ran a driver without it
+    marker.unlink()
+    sh("git", "checkout", "-q", "-B", "probe", "origin/feature/a", cwd=fx.work)
+    sh("git", "merge", "--no-ff", "-q", "-m", "probe", "origin/feature/b", cwd=fx.work)
+    assert marker.read_text().split("\n")[0] == "unset unset"
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+
+
 def test_plan_train_reports_each_candidate_s_verdict_and_seconds(fx):
     fx.branch("feature/a", {"a.txt": "a\n"})
     fx.branch("feature/b", {"a.txt": "b\n"})   # clean onto master, conflicts with feature/a on the train so far

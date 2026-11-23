@@ -859,6 +859,16 @@ issue never reopens it (the FYI above left the landed issue closed once this hel
 a branch whose every changed path has one is `regenerate-only`. A branch that also edits a source, or
 `.gitattributes` itself, is not. `regeneratedAdvice` is the project's remedy, appended to the note and the comment.
 
+**Every train chain merge carries `AUTOCODER_TRAIN_MERGE=1` and `AUTOCODER_TRAIN_PHASE=plan|assemble|attribute`**
+in its environment (the planner's per-candidate verify, the run's assembly, a regeneration failure's per-member
+attribution), so a merge driver of a regenerated file can tell a chain merge from a developer's and keep one side
+with exit 0 instead of running its generator: a chain merge's regenerated content is thrown away, since the
+`regenerate` hook rewrites the ASSEMBLED tree once and the gate verifies it. Measured on one project: about 3 min
+per candidate that touched a generated file, 1476 s to plan a chain of seven, 3 s to assemble it from the driver's
+cache (#364). Any non-empty value means on. A driver that honours it loses its per-candidate `generator-failed`
+verdict; that failure now surfaces once, at the assembled regeneration, where the run tries each member alone
+(README-merge-train-run.md "Red-batch rules").
+
 `seedDirs` are hardlink-copied (never symlinked) from the repo into the scratch, and re-copied when the
 marker file's inode changed (a reinstall). `hooks.prepareScratch` runs in the scratch before any candidate is
 judged, because a merge driver whose generator cannot run falls back to a textual merge that reads as a
