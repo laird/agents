@@ -40,6 +40,11 @@ run link 7 --blocked-by 404
 eq "link to a missing blocker exits 1" "1" "$RC"
 eq "and writes nothing" "1" "$(wc -l < "$GH_LOG" | tr -d ' ')"
 
+run link 7 --blocked-by 7
+eq "a self-link exits 2" "2" "$RC"
+run link 7 --blocked-by '5/../x'
+eq "a non-numeric blocker exits 2 and calls nothing" "2|0" "$RC|$(wc -l < "$GH_LOG" | tr -d ' ')"
+
 run link 7
 eq "link without --blocked-by exits 2" "2" "$RC"
 

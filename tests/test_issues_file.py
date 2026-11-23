@@ -425,3 +425,7 @@ class TestLink:
     def test_link_needs_blocked_by(self, idir):
         write_issue(idir, 1, "Dependent")
         assert run(["link", "1"], {"ISSUE_DIR_PATH": str(idir)})[2] == 2
+
+    def test_link_rejects_a_self_link(self, idir):
+        write_issue(idir, 1, "Dependent")
+        assert run(["link", "1", "--blocked-by", "1"], {"ISSUE_DIR_PATH": str(idir)})[2] == 2

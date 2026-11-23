@@ -496,6 +496,8 @@ cmd_link() {
     case "$1" in --blocked-by) blocker="$2"; shift 2 ;; *) echo "link: unknown option $1" >&2; exit 2 ;; esac
   done
   [ -n "$n" ] && [ -n "$blocker" ] || { echo "Usage: issues-ado.sh link <number> --blocked-by <number>" >&2; exit 2; }
+  case "$n$blocker" in *[!0-9]*) echo "issues-ado.sh: link takes issue numbers, got '$n' and '$blocker'" >&2; exit 2 ;; esac
+  [ "$n" != "$blocker" ] || { echo "issues-ado.sh: an issue cannot be blocked by itself" >&2; exit 2; }
   local current
   current=$(cmd_get "$n") || exit $?
   printf '%s' "$current" | jq -e --argjson b "$blocker" '(.blockedBy // []) | index($b)' >/dev/null 2>&1 && return 0

@@ -131,6 +131,8 @@ eq "list reports the blocker in blockedBy" "[2]" "$LISTED"
 eq "a repeated link adds no second edge" "[2]" "$("$BACKEND" get 1 | field '["blockedBy"]')"
 "$BACKEND" link 1 --blocked-by 999 >/dev/null 2>&1; eq "link to a missing blocker exits 1" "1" "$?"
 "$BACKEND" link 1 >/dev/null 2>&1; eq "link without --blocked-by is a usage error" "2" "$?"
+"$BACKEND" link 1 --blocked-by 1 >/dev/null 2>&1; eq "a self-link is a usage error" "2" "$?"
+"$BACKEND" link 1 --blocked-by x2 >/dev/null 2>&1; eq "a non-numeric blocker is a usage error" "2" "$?"
 READY=$(cd "$TMP" && _ifns_BACKEND_BIN="$BACKEND" bash -c 'source "$1"; "$_ifns_BACKEND_BIN" list --state open | _ideps_filter 2>/dev/null' _ "$REPO_ROOT/plugins/autocoder/scripts/issue-deps.sh" | nums)
 case ",$READY," in *,1,*) no "issue-deps holds back the blocked issue — ready: $READY" ;; *,2,*) ok "issue-deps holds back the blocked issue and keeps its blocker" ;; *) no "issue-deps dropped the blocker too — ready: $READY" ;; esac
 UNMET=$(cd "$TMP" && _ifns_BACKEND_BIN="$BACKEND" bash -c 'source "$1"; issue_unmet_dependencies 1' _ "$REPO_ROOT/plugins/autocoder/scripts/issue-deps.sh")

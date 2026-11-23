@@ -417,6 +417,8 @@ cmd_link() {
     case "$1" in --blocked-by) blocker="$2"; shift 2 ;; *) echo "link: unknown option $1" >&2; exit 2 ;; esac
   done
   [ -n "$n" ] && [ -n "$blocker" ] || { echo "Usage: issues-jira.sh link <number> --blocked-by <number>" >&2; exit 2; }
+  case "$n$blocker" in *[!0-9]*) echo "issues-jira.sh: link takes issue numbers, got '$n' and '$blocker'" >&2; exit 2 ;; esac
+  [ "$n" != "$blocker" ] || { echo "issues-jira.sh: an issue cannot be blocked by itself" >&2; exit 2; }
   local payload
   payload=$(IN="$(_jira_key "$n")" OUT="$(_jira_key "$blocker")" python3 -c '
 import json, os

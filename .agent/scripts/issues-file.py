@@ -628,10 +628,14 @@ def cmd_requeue(args):
 
 def cmd_link(args):
     """Record that <number> is blocked by --blocked-by (#343). Idempotent."""
+    if args.number == args.blocked_by:
+        print("issues-file.py: an issue cannot be blocked by itself", file=sys.stderr)
+        sys.exit(2)
     issues_dir = get_issues_dir()
     try:
         _, p = resolve_path(issues_dir, args.number)
     except FileNotFoundError:
+        print(f"issues-file.py: issue {args.number} not found", file=sys.stderr)
         sys.exit(1)
     with open(p, "r+") as f:
         lock_ex(f.fileno())
