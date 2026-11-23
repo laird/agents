@@ -48,7 +48,9 @@ gate() {  # gate <worktree> → exit code; plan in $TMP/work-<wt>.json
   (cd "$R-wt-$wt" && AUTOCODER_WORK_JSON="$TMP/work-$wt.json" bash "$SCRIPT_DIR/fix-loop-gate.sh" 2>"$TMP/gate-$wt.err"); echo $?
 }
 plan() { jq -r "$2" "$TMP/work-$1.json" 2>/dev/null; }
-backend() { bash -c "source '$SCRIPT_DIR/issue-fns.sh' && $*" >/dev/null 2>&1; }
+# Inside the private repo: from this checkout, its .autocoder.json (issueSource: github)
+# wins over ISSUE_SOURCE=file, and the calls would act on the real tracker (#349).
+backend() { (cd "$R" && bash -c "source '$SCRIPT_DIR/issue-fns.sh' && $*") >/dev/null 2>&1; }
 
 # ── 1. The dispatch beats the priority pick on the target and keeps the sibling off ──
 reset
