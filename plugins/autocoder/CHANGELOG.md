@@ -8,6 +8,18 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- `reboot-recover.sh --boot` no longer gives up on a swarm whose manager pane
+  herdr has not finished restoring (#372). After a reboot, recovery found the
+  manager's pane, got `agent_not_found` from it on all three attempts, and
+  recorded the boot with the swarm still down and nobody told. Now it runs no
+  herdr command until herdr's socket accepts a connection, and logs the pid of
+  the server that answered. Where herdr is a user service, it also waits for
+  `herdr.service` to be active, not only for some server to answer. While the
+  restore is under way it reads herdr again, up to `AUTOCODER_REBOOT_PANE_TRIES`
+  (10) times, `AUTOCODER_REBOOT_PANE_WAIT` (15) seconds apart. A manager pane
+  that never takes the prompt gets a manager started through the sentinel
+  instead. A boot recorded with a swarm still unrecovered calls that swarm's
+  `sentinel_notify` hook.
 - `merge-to-integration.sh` no longer reports a rebase the host stopped as a
   conflict. Git replaying the feature commits onto the integration branch can die
   on the same conditions a gate stage does (`No space left on device` on a shared

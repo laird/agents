@@ -33,8 +33,12 @@ hasnt(){ if printf '%s' "$3" | grep -qF -- "$2"; then fail "$1: unexpected '$2' 
 eq()   { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1: wanted '$2', got '$3'"; fi; }
 
 T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+trap 'herdr_socket_stop; rm -rf "$T"' EXIT
 T=$(cd "$T" && pwd -P)
+# herdr's socket (#372): a private listener, never the real ~/.config one; waits off.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fake-herdr-socket.sh"
+herdr_socket_start
+export AUTOCODER_REBOOT_PANE_WAIT=0
 export AUTOCODER_REBOOT_STATE_DIR="$T/state" AUTOCODER_BOOT_ID_FILE="$T/boot_id"
 unset AUTOCODER_REBOOT_RECOVER AUTOCODER_AGENT HERDR_PANE_ID
 STAMP="$T/state/last-boot-id"
@@ -43,7 +47,7 @@ mkdir -p "$T/bin"
 # Fakes shared by every section. systemctl: user manager up unless
 # SYSTEMCTL_DOWN=1; is-enabled herdr.service only with HERDR_SERVICE=1, our
 # boot unit only with FAKE_UNIT_ENABLED=1; default.target is FAKE_DEFAULT_TARGET
-# (inactive); `show` reports FAKE_UNIT_STATE / _RESULT / _START for the unit.
+# (inactive), herdr.service active only with HERDR_ACTIVE=1; `show` reports FAKE_UNIT_STATE / _RESULT / _START for the unit.
 cat > "$T/bin/systemctl" <<'EOF'
 #!/bin/bash
 echo "$*" >> "$FAKE_DIR/systemctl.calls"
@@ -55,7 +59,10 @@ case "$2" in
                 herdr.service) [ "${HERDR_SERVICE:-0}" = 1 ] ;;
                 *) [ "${FAKE_UNIT_ENABLED:-0}" = 1 ] ;;
               esac ;;
-  is-active) echo "${FAKE_DEFAULT_TARGET:-inactive}"; [ "${FAKE_DEFAULT_TARGET:-inactive}" = active ] ;;
+  is-active) case "$3" in
+               herdr.service) [ "${HERDR_ACTIVE:-0}" = 1 ] && echo active || echo activating; [ "${HERDR_ACTIVE:-0}" = 1 ] ;;
+               *) echo "${FAKE_DEFAULT_TARGET:-inactive}"; [ "${FAKE_DEFAULT_TARGET:-inactive}" = active ] ;;
+             esac ;;
   show) printf 'ActiveState=%s\nResult=%s\nExecMainStartTimestampMonotonic=%s\n' \
           "${FAKE_UNIT_STATE:-inactive}" "${FAKE_UNIT_RESULT:-success}" "${FAKE_UNIT_START:-0}" ;;
   *) exit 0 ;;
@@ -289,6 +296,17 @@ OUT=$(cd "$T" && boot "$T/herdrbin")
 has "herdr host detected" " mux=herdr " "$OUT"
 eq "herdr roots: a manager started in both" "SENTINEL $T/alpha recover=1
 SENTINEL $T/beta recover=1" "$(sort "$T/sentinel.calls")"
+hasnt "herdr is no user service there: no service wait" "herdr.service" "$OUT"
+
+# herdr is a user service, but the server that answers is not the service's
+# (#372: the unit crash-loops behind a stray server): wait, say so, use it.
+echo "boot-s1" > "$T/boot_id"
+OUT=$(cd "$T" && HERDR_SERVICE=1 AUTOCODER_REBOOT_MUX_WAIT=0 boot "$T/herdrbin")
+has "service not active behind an answering server: said so" "a herdr server answers but herdr.service is not active after 0s" "$OUT"
+has "...and recovery uses the server that answers" " mux=herdr " "$OUT"
+echo "boot-s2" > "$T/boot_id"
+OUT=$(cd "$T" && HERDR_SERVICE=1 HERDR_ACTIVE=1 AUTOCODER_REBOOT_MUX_WAIT=0 boot "$T/herdrbin")
+hasnt "service active and answering: no complaint" "herdr.service" "$OUT"
 cat > "$T/rr-wrap" <<EOF
 #!/bin/bash
 echo "WRAP \$*" >> "$T/rr.calls"

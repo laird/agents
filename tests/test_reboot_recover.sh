@@ -17,11 +17,16 @@ SCRIPT="$ROOT/plugins/autocoder/scripts/reboot-recover.sh"
 pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 has()  { if printf '%s' "$3" | grep -qF -- "$2"; then pass "$1"; else fail "$1: '$2' not in: $3"; fi; }
+eq()   { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1: wanted '$2', got '$3'"; fi; }
 hasnt(){ if printf '%s' "$3" | grep -qF -- "$2"; then fail "$1: unexpected '$2' in: $3"; else pass "$1"; fi; }
 
 T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+trap 'herdr_socket_stop; rm -rf "$T"' EXIT
 T=$(cd "$T" && pwd -P)
+# herdr's socket (#372): a private listener, never the real ~/.config one; waits off.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/fake-herdr-socket.sh"
+herdr_socket_start
+export AUTOCODER_REBOOT_PANE_WAIT=0
 mkdir -p "$T/herdrbin" "$T/tmuxbin" "$T/nobin" "$T/state"
 
 cat > "$T/herdrbin/herdr" <<'STUB'
@@ -29,10 +34,13 @@ cat > "$T/herdrbin/herdr" <<'STUB'
 printf '%s\n' "$*" >> "$HERDR_DIR/argv"
 case "$1 $2" in
   "workspace list") cat "$HERDR_DIR/workspaces.json" 2>/dev/null || echo '{"result":{"workspaces":[]}}' ;;
-  "agent list")     cat "$HERDR_DIR/agents.json" ;;
+  "agent list")     # LATE_AGENTS=N: herdr's restore is still under way for the first N reads (#372).
+                    n=$(( $(cat "$HERDR_DIR/agent-reads" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$HERDR_DIR/agent-reads"
+                    if [ "$n" -le "${LATE_AGENTS:-0}" ]; then echo '{"result":{"agents":[]}}'; else cat "$HERDR_DIR/agents.json"; fi ;;
+  "agent prompt"|"pane send-text") [ "${PROMPT_FAIL:-0}" = 1 ] && { echo '{"error":{"code":"agent_not_found"}}'; exit 1; }
+                    [ "$2" = prompt ] && printf 'PROMPT %s %s\n' "$3" "$4" >> "$HERDR_DIR/prompts"; exit 0 ;;
   "pane get")       printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s","workspace_id":"%s"}}}\n' "$3" "$(cat "$HERDR_DIR/cwd-${3//:/_}")" "${3%%:*}" ;;
   "pane read")      echo "❯ " ;;
-  "agent prompt")   printf 'PROMPT %s %s\n' "$3" "$4" >> "$HERDR_DIR/prompts" ;;
   *) exit 0 ;;
 esac
 STUB
@@ -48,6 +56,8 @@ printf 'SENTINEL %s recover=%s wake=%s\n' "$*" "${AUTOCODER_REBOOT_RECOVER:-}" \
   "$([ -e "${3:-x}/.autocoder/wake" ] && echo present || echo absent)" >> "$HERDR_DIR/sentinel"
 exit "${SENTINEL_RC:-0}"
 STUB
+# No herdr user service on these hosts: never ask the real user manager.
+for d in herdrbin tmuxbin nobin; do printf '#!/bin/bash\nexit 1\n' > "$T/$d/systemctl"; done
 chmod +x "$T"/herdrbin/* "$T"/tmuxbin/* "$T"/nobin/* "$T/sentinel"
 
 # AUTOCODER_PROC_ROOT: a fake /proc, so live processes on this host never count
@@ -68,7 +78,7 @@ setup() {
   mkrepo alpha wt-1 wt-2   # swarm with a restored manager pane
   mkrepo beta  wt-1        # swarm without one
   mkrepo gamma scratch     # worktree not named <repo>-wt-*: not a swarm
-  : > "$HERDR_DIR/prompts"; : > "$HERDR_DIR/argv"; : > "$HERDR_DIR/sentinel"
+  : > "$HERDR_DIR/prompts"; : > "$HERDR_DIR/argv"; : > "$HERDR_DIR/sentinel"; rm -f "$HERDR_DIR/agent-reads"
 }
 agents() {  # agents <pane>=<dir>...
   local spec list=""
@@ -266,6 +276,67 @@ for f in "$ROOT/plugins/autocoder/commands/manager-resume.md" "$ROOT/.agent/work
   grep -q 'bash "$REGISTER_SH" --manager' "$f" && pass "$(basename "$(dirname "$f")")/manager-resume registers the manager" \
     || fail "$f does not run swarm-register.sh --manager"
 done
+
+# ── 10. At boot: herdr's restore, an unreachable manager, no server (#372) ───
+# bootrun <bin> [args]: --boot on a new boot, with its own state dir.
+bootrun() {
+  local bin="$1"; shift
+  rm -rf "$T/rstate"; mkdir -p "$T/rstate"; echo old-boot > "$T/rstate/last-boot-id"; echo new-boot > "$T/bootid"
+  (cd "$T" && PATH="$bin:$PATH" AUTOCODER_REBOOT_STATE_DIR="$T/rstate" AUTOCODER_BOOT_ID_FILE="$T/bootid" \
+    bash "$SCRIPT" --boot --project "$T/alpha" "$@" 2>&1 </dev/null)
+}
+# The manager's agent shows up only on the 4th read of herdr (the workspace is
+# already restored): it is prompted on the first boot attempt, nothing spawned.
+setup
+agents "w0:p1=$T/alpha"; workspaces "w0=manager-alpha"
+OUT=$(LATE_AGENTS=3 bootrun "$T/herdrbin")
+has "late agents: the manager is prompted" "PROMPT w0:p1 Run /autocoder:manager-resume" "$(cat "$HERDR_DIR/prompts")"
+[ ! -s "$HERDR_DIR/sentinel" ] && pass "late agents: no second manager spawned" || fail "spawned: $(cat "$HERDR_DIR/sentinel")"
+has "late agents: waited for the restore, said so" "no agent is live in its root yet (read 1 of 10)" "$OUT"
+has "late agents: recovered on the first attempt (boot recorded)" "boot new-boot recorded" "$OUT"
+has "the log names the herdr server that answered" "herdr server pid=$HERDR_SOCKET_PID answers at $HERDR_SOCKET_PATH" "$OUT"
+# Without --boot nobody waits: a person's run reads herdr once.
+setup
+agents "w0:p1=$T/alpha"; workspaces "w0=manager-alpha"
+OUT=$(LATE_AGENTS=3 run "$T/herdrbin" --project "$T/alpha")
+eq "no --boot: herdr's agents read once" "1" "$(cat "$HERDR_DIR/agent-reads")"
+
+# The chosen manager pane never takes the prompt: after the reads, a manager
+# is started through the sentinel instead of failing every attempt.
+setup
+agents "w0:p1=$T/alpha"
+OUT=$(PROMPT_FAIL=1 AUTOCODER_REBOOT_PANE_TRIES=3 bootrun "$T/herdrbin")
+has "unreachable manager: retried" "did not take the prompt (read 2 of 3)" "$OUT"
+has "unreachable manager: falls back to the sentinel" "SENTINEL --once --project $T/alpha recover=1" "$(cat "$HERDR_DIR/sentinel")"
+has "...and says why" "manager pane w0:p1 never took the prompt; starting a manager through the sentinel instead" "$OUT"
+has "...the boot is recovered" "managers prompted=0 started=1 skipped(paused)=0 problems=0" "$OUT"
+
+# A swarm left unrecovered when the boot is recorded: its notify hook is told.
+setup
+agents "w0:p1=$T/alpha"
+mkdir -p "$T/alpha/.autocoder"
+printf 'sentinel_notify() { printf "%%s\\n" "$1" >> %q; }\n' "$HERDR_DIR/notified" > "$T/alpha/.autocoder/sentinel-hooks.sh"
+rm -f "$HERDR_DIR/notified"
+OUT=$(PROMPT_FAIL=1 SENTINEL_RC=1 AUTOCODER_REBOOT_PANE_TRIES=1 AUTOCODER_REBOOT_MAX_ATTEMPTS=1 bootrun "$T/herdrbin")
+has "unrecovered at the last attempt: boot recorded" "still not recovered after 1 attempts" "$OUT"
+has "...and the swarm's notify hook is called" "swarm $T/alpha was not recovered after the reboot" "$(cat "$HERDR_DIR/notified" 2>/dev/null)"
+rm -f "$T/alpha/.autocoder/sentinel-hooks.sh"
+OUT=$(PROMPT_FAIL=1 SENTINEL_RC=1 AUTOCODER_REBOOT_PANE_TRIES=1 AUTOCODER_REBOOT_MAX_ATTEMPTS=1 bootrun "$T/herdrbin")
+has "no notify hook: the log says nobody was notified" "nobody was notified" "$OUT"
+OUT=$(PROMPT_FAIL=1 SENTINEL_RC=1 AUTOCODER_REBOOT_PANE_TRIES=1 AUTOCODER_REBOOT_MAX_ATTEMPTS=3 bootrun "$T/herdrbin")
+hasnt "an attempt that will be retried notifies nobody" "notified" "$OUT"
+
+# No socket: no herdr command runs, so none can start a server.
+setup
+agents "w0:p1=$T/alpha"
+herdr_socket_stop
+OUT=$(run "$T/herdrbin" --project "$T/alpha")
+eq "no socket: herdr is never run" "" "$(cat "$HERDR_DIR/argv")"
+hasnt "no socket: herdr not detected" " mux=herdr " "$OUT"
+printf 'x' > "$HERDR_SOCKET_PATH"   # a stale file is not a server either
+OUT=$(run "$T/herdrbin" --project "$T/alpha")
+eq "a socket file nobody listens on: herdr is never run" "" "$(cat "$HERDR_DIR/argv")"
+herdr_socket_start
 
 echo ""
 echo "$PASS passed / $FAIL failed / $((PASS + FAIL)) total"

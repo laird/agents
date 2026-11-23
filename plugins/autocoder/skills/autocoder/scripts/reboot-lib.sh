@@ -214,3 +214,66 @@ xml_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
+
+# ── herdr's socket (#372) ─────────────────────────────────────────────────────
+# Recovery runs at boot, while herdr may still be starting. It asks the socket
+# before running any herdr command, so no herdr command runs when no server
+# is listening (herdr 0.9's socket subcommands refuse to start one, but a bare
+# `herdr` does, and nothing pins that behaviour).
+
+# herdr_socket_candidates: herdr's socket paths, one per line: $HERDR_SOCKET_PATH
+# when set, else under $XDG_CONFIG_HOME and under ~/.config.
+herdr_socket_candidates() {
+  if [ -n "${HERDR_SOCKET_PATH:-}" ]; then printf '%s\n' "$HERDR_SOCKET_PATH"; return; fi
+  [ -n "${XDG_CONFIG_HOME:-}" ] && printf '%s\n' "$XDG_CONFIG_HOME/herdr/herdr.sock"
+  printf '%s\n' "$HOME/.config/herdr/herdr.sock"
+}
+
+# herdr_socket: the first candidate a server is listening on; 1 when none is.
+# A connect, not a file test: a server that died leaves its socket file behind.
+herdr_socket() {
+  local s
+  while IFS= read -r s; do
+    [ -S "$s" ] || continue
+    python3 -c '
+import socket, sys
+c = socket.socket(socket.AF_UNIX)
+c.settimeout(2)
+try:
+    c.connect(sys.argv[1])
+except OSError:
+    sys.exit(1)
+' "$s" 2>/dev/null && { printf '%s\n' "$s"; return 0; }
+  done <<< "$(herdr_socket_candidates)"
+  return 1
+}
+
+# herdr_server_pid <socket>: the pid of the process listening on it (Linux
+# /proc), or nothing. Only for the log: it shows whose server answered.
+herdr_server_pid() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import os, sys
+path = sys.argv[1]
+inodes = set()
+try:
+    for line in open("/proc/net/unix"):
+        f = line.split()
+        if len(f) >= 8 and f[7] == path:
+            inodes.add(f[6])
+except OSError:
+    sys.exit(0)
+want = {"socket:[%s]" % i for i in inodes}
+for pid in sorted((d for d in os.listdir("/proc") if d.isdigit()), key=int):
+    try:
+        fds = os.listdir("/proc/%s/fd" % pid)
+    except OSError:
+        continue
+    for fd in fds:
+        try:
+            if os.readlink("/proc/%s/fd/%s" % (pid, fd)) in want:
+                print(pid)
+                sys.exit(0)
+        except OSError:
+            pass
+PY
+}

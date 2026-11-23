@@ -1028,9 +1028,29 @@ per-user stamp makes sure recovery runs once per boot, from whichever fires firs
 `reboot-recover.sh --boot` (implies `--all`, which adds the registry's roots)
 does nothing when the stamp matches this boot. Otherwise, under a per-user lock,
 it waits for herdr when herdr is an enabled user service (`AUTOCODER_REBOOT_MUX_WAIT`,
-90s; it never starts herdr itself), recovers every swarm, and only then writes
-the stamp, so a crash mid-recovery is retried by the next trigger. No stamp yet
-means a first run: it records the boot and recovers nothing.
+90s), recovers every swarm, and only then writes the stamp, so a crash
+mid-recovery is retried by the next trigger. No stamp yet means a first run: it
+records the boot and recovers nothing.
+
+At boot herdr may still be starting, or a server started some other way may
+answer before the service's (#372), so `--boot`:
+
+- runs no herdr command until herdr's socket (`$HERDR_SOCKET_PATH`, else
+  `~/.config/herdr/herdr.sock`) accepts a connection, and logs the pid of the
+  server that answered. It never starts herdr itself;
+- waits for `herdr.service` to be active, not just for a socket, and says so
+  when a server answers while the service is not active;
+- reads herdr again while its restore is under way: a chosen manager pane that
+  does not take the prompt, or a root with a restored workspace (named
+  `manager-<project>`, holding the manifest's manager pane, or opened in the
+  root) but no live agent, is retried `AUTOCODER_REBOOT_PANE_TRIES` (10) times,
+  `AUTOCODER_REBOOT_PANE_WAIT` (15) seconds apart;
+- starts a manager through the sentinel when the chosen manager pane never
+  takes the prompt, instead of failing every attempt. A pane showing a consent
+  dialog is left for a person;
+- when it records a boot with a swarm still unrecovered, calls that swarm's
+  `sentinel_notify` hook (`.autocoder/sentinel-hooks.sh`), and logs that nobody
+  was told when there is none.
 
 The triggers:
 

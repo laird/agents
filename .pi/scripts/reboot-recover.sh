@@ -33,6 +33,17 @@
 #      is always the spawn path.
 #    The nested sentinel run gets AUTOCODER_REBOOT_RECOVER=1 so its own reboot
 #    wake (#275) does not call this script again.
+#    At boot herdr restores workspaces before their agents are live (#372).
+#    With --boot, a swarm whose chosen manager pane does not take the prompt,
+#    or whose root has a restored workspace but no agent pane yet, is retried
+#    (AUTOCODER_REBOOT_PANE_TRIES x AUTOCODER_REBOOT_PANE_WAIT s, re-reading
+#    herdr each time). A manager pane that never takes it gets a manager
+#    started through the sentinel instead; a pane showing a consent dialog
+#    does not (a person must answer it).
+#
+# herdr is asked nothing until its socket accepts a connection (#372), so
+# recovery never runs a herdr command with no server up; the log names the pid
+# of the server that answered.
 #
 # The script does not drive workers, release claims, prune worktrees or touch
 # merge jobs; the manager does those (manager-resume, "Reboot recovery").
@@ -70,9 +81,18 @@
 #                                non-claude agents use bare command names
 #   AUTOCODER_REBOOT_SENTINEL    sentinel to run for a spawn (default: the
 #                                idle-sentinel.sh beside this script)
-#   AUTOCODER_REBOOT_MUX_WAIT    seconds --boot waits for a herdr service (90)
+#   AUTOCODER_REBOOT_MUX_WAIT    seconds --boot waits for a herdr service to be
+#                                active and answering (90)
+#   AUTOCODER_REBOOT_PANE_TRIES  --boot reads of herdr per swarm while its
+#                                restore is not finished (10)
+#   AUTOCODER_REBOOT_PANE_WAIT   seconds between those reads (15)
+#   HERDR_SOCKET_PATH            herdr's socket (default
+#                                ${XDG_CONFIG_HOME:-~/.config}/herdr/herdr.sock)
 #   AUTOCODER_REBOOT_MAX_ATTEMPTS  --boot attempts per boot while a swarm fails (3);
-#                                each retry covers only the swarms not yet recovered
+#                                each retry covers only the swarms not yet recovered;
+#                                when the boot is recorded with a swarm still
+#                                unrecovered, each such swarm's sentinel_notify hook
+#                                (.autocoder/sentinel-hooks.sh) is called
 #   AUTOCODER_REBOOT_SHIM        installed entry point
 #                                (default ~/.local/bin/autocoder-reboot-recover)
 #   AUTOCODER_REBOOT_STATE_DIR, AUTOCODER_BOOT_ID_FILE: see reboot-lib.sh
@@ -113,6 +133,20 @@ LAUNCHD_LABEL=com.autocoder.reboot-recover
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
 CRON_MARK="# autocoder-reboot-recover"
 MAX_BOOT_ATTEMPTS="${AUTOCODER_REBOOT_MAX_ATTEMPTS:-3}"
+PANE_TRIES="${AUTOCODER_REBOOT_PANE_TRIES:-10}"
+PANE_WAIT="${AUTOCODER_REBOOT_PANE_WAIT:-15}"
+
+# herdr_up: a herdr server is listening and answers. The socket is checked
+# first, so no herdr command runs while no server is up (#372).
+herdr_up() {
+  command -v herdr >/dev/null 2>&1 && herdr_socket >/dev/null && herdr_is_running
+}
+
+# herdr_service_known / herdr_service_active: herdr runs as a user service here.
+herdr_service_known() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user is-enabled herdr.service >/dev/null 2>&1
+}
+herdr_service_active() { systemctl --user is-active herdr.service >/dev/null 2>&1; }
 
 # trigger_path: the PATH a boot trigger runs with: the one --install ran with,
 # minus relative entries (".", "node_modules/.bin"), which would resolve
@@ -368,14 +402,19 @@ if [ "$BOOT" = true ]; then
     # Re-read under the lock: the holder we waited out may have finished this boot.
     [ "$(boot_stamp_get)" = "$BOOT_ID" ] && { echo "reboot-recover: boot $BOOT_ID already recovered; nothing to do"; exit 0; }
   fi
-  # herdr restores the panes, so start nothing before it answers. Wait only
-  # where herdr is a user service; never start a server ourselves.
-  if command -v herdr >/dev/null 2>&1 && ! herdr_is_running; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl --user is-enabled herdr.service >/dev/null 2>&1; then
+  # herdr restores the panes, so start nothing before it answers. Where herdr
+  # is a user service, wait for that service, not just for a socket: a server
+  # started some other way can answer first (#372). Never start a server.
+  if command -v herdr >/dev/null 2>&1; then
+    if herdr_service_known; then
       waited=0; wait_s="${AUTOCODER_REBOOT_MUX_WAIT:-90}"
-      while [ "$waited" -lt "$wait_s" ] && ! herdr_is_running; do sleep 3; waited=$((waited + 3)); done
-      herdr_is_running || echo "reboot-recover: herdr.service did not answer within ${wait_s}s; continuing without it"
-    else
+      while [ "$waited" -lt "$wait_s" ] && ! { herdr_service_active && herdr_up; }; do sleep 3; waited=$((waited + 3)); done
+      if ! herdr_up; then
+        echo "reboot-recover: herdr.service did not answer within ${wait_s}s; continuing without it"
+      elif ! herdr_service_active; then
+        echo "reboot-recover: a herdr server answers but herdr.service is not active after ${wait_s}s (a server started outside the unit?); using the one that answers"
+      fi
+    elif ! herdr_up; then
       echo "reboot-recover: herdr is installed but not running and not a user service here; not starting it"
     fi
   fi
@@ -509,16 +548,24 @@ else:
 
 # ── Host detection: printed so a run on a new host shows its decisions ───────
 MUX=none
-if herdr_is_running; then MUX=herdr
+if herdr_up; then MUX=herdr
 elif command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then MUX=tmux
 elif cmux_is_running 2>/dev/null; then MUX=cmux
 fi
 print_detection "$MUX"
 echo "reboot-recover: sentinel=$SENTINEL"
+if [ "$MUX" = herdr ]; then
+  HERDR_SOCK=$(herdr_socket)
+  echo "reboot-recover: herdr server pid=$(herdr_server_pid "$HERDR_SOCK" || true) answers at $HERDR_SOCK"
+fi
 
 # ── herdr agent panes: "<pane>\t<physical cwd>" ──────────────────────────────
-PANES=""
-if [ "$MUX" = herdr ]; then
+# collect_herdr: (re)reads herdr into PANES ("<pane>\t<cwd>\t<workspace>"),
+# WS_CWDS, WS_LABELS and MARKED. Called again while herdr's restore settles.
+PANES=""; WS_CWDS=""; WS_LABELS=""; WS_IDS=""; MARKED=""
+collect_herdr() {
+  local agents_json pane_ids pane info cwd ws ws_json
+  PANES=""
   agents_json=$(run_with_timeout "$AUTOCODER_MUX_TIMEOUT_SECONDS" herdr agent list 2>/dev/null) || agents_json=""
   # Every agent pane, this one included: the manager choice below must see the
   # pane running this script too (#291), and says so instead of hiding it.
@@ -570,6 +617,15 @@ for w in wss:
     name = w.get("label") or w.get("custom_name") or ""
     if w.get("workspace_id") and name:
         print(w["workspace_id"] + "\t" + name)' 2>/dev/null)
+  WS_IDS=$(printf '%s' "$ws_json" | python3 -c '
+import json, sys
+try:
+    wss = json.load(sys.stdin)["result"]["workspaces"]
+except Exception:
+    sys.exit(0)
+for w in wss:
+    if w.get("workspace_id"):
+        print(w["workspace_id"])' 2>/dev/null)
   # Panes whose processes carry the manager marker: "<pane>\t<session>" (Linux
   # /proc only; elsewhere this signal is simply absent).
   # AUTOCODER_PROC_ROOT stands in for /proc in tests.
@@ -591,7 +647,8 @@ for d in os.listdir(proc) if os.path.isdir(proc) else []:
             mgr = kv[18:].decode("utf-8", "replace")
     if pane and mgr:
         print(pane + "\t" + mgr)' 2>/dev/null | sort -u)
-fi
+}
+[ "$MUX" = herdr ] && collect_herdr
 
 # ── 1. Find the swarms ───────────────────────────────────────────────────────
 CANDIDATES=()
@@ -622,7 +679,69 @@ $root
 "
 done
 
-STARTED=0; PROMPTED=0; SKIPPED=0; FAILED=0
+STARTED=0; PROMPTED=0; SKIPPED=0; FAILED=0; FAILED_ROOTS=""
+
+# pick_manager <root>: sets chosen, why, others and ambiguous from the current
+# PANES (choose_manager decides).
+pick_manager() {
+  local root="$1" root_panes="" pane cwd ws pick
+  while IFS='	' read -r pane cwd ws; do
+    [ -n "${pane:-}" ] || continue
+    [ "$(toplevel "$cwd")" = "$root" ] && root_panes="$root_panes$pane	${ws:-}
+"
+  done <<< "$PANES"
+  pick=$(choose_manager "$root" "$root_panes")
+  chosen=$(printf '%s\n' "$pick" | sed -n 's/^PICK	\([^	]*\)	.*/\1/p')
+  why=$(printf '%s\n' "$pick" | sed -n 's/^PICK	[^	]*	//p')
+  others=$(printf '%s\n' "$pick" | sed -n 's/^OTHER	//p' | tr '\n' ' ' | sed 's/ $//')
+  ambiguous=$(printf '%s\n' "$pick" | sed -n 's/^AMBIGUOUS	//p')
+}
+
+# restore_pending <root>: herdr has restored a workspace that belongs to this
+# root's manager (named manager-<project>, holding the manifest's manager pane,
+# or opened in the root itself) but no agent pane is in the root yet.
+restore_pending() {
+  local root="$1" id label c
+  while IFS='	' read -r id label; do
+    [ "${label:-}" = "manager-$(basename "$root")" ] && return 0
+  done <<< "$WS_LABELS"
+  while IFS= read -r c; do
+    [ -n "$c" ] && [ "$(toplevel "$c")" = "$root" ] && return 0
+  done <<< "$WS_CWDS"
+  for id in $(manifest_manager_workspaces "$root"); do
+    printf '%s\n' "$WS_IDS" | grep -qxF -- "$id" && return 0
+  done
+  return 1
+}
+
+# manifest_manager_workspaces <root>: the workspace ids of the manager panes the
+# manifests record (manager.herdrPane "w1:p1" → "w1").
+manifest_manager_workspaces() {
+  python3 -c '
+import glob, json, os, sys
+for f in sorted(glob.glob(os.path.join(sys.argv[1], ".autocoder", "swarm", "*.json"))):
+    try:
+        m = json.load(open(f, encoding="utf-8")).get("manager") or {}
+    except (OSError, ValueError, AttributeError):
+        continue
+    p = str(m.get("herdrPane") or "") if isinstance(m, dict) else ""
+    if ":" in p:
+        print(p.split(":", 1)[0])' "$1" 2>/dev/null
+}
+
+# notify_unrecovered <root> <message>: the swarm's sentinel_notify hook
+# (.autocoder/sentinel-hooks.sh), the one the idle sentinel calls. Says when
+# there is none, so the log shows that nobody was told.
+notify_unrecovered() {
+  local root="$1" msg="$2" hooks="$1/.autocoder/sentinel-hooks.sh"
+  if [ -f "$hooks" ] && (
+       # shellcheck source=/dev/null
+       source "$hooks" >/dev/null 2>&1; declare -F sentinel_notify >/dev/null 2>&1 && sentinel_notify "$msg"); then
+    echo "reboot-recover: notified through $hooks: $msg"
+  else
+    echo "reboot-recover: no sentinel_notify hook answered for $root ($hooks); nobody was notified: $msg"
+  fi
+}
 # --boot: roots already recovered in an earlier attempt for this boot.
 DONE_FILE="$STATE_DIR/reboot-done"
 root_done() { [ "$BOOT" = true ] && grep -qxF -- "$BOOT_ID $1" "$DONE_FILE" 2>/dev/null; }
@@ -658,37 +777,52 @@ while IFS= read -r root; do
   # of them: the manifest's manager pane, the workspace named manager-<project>,
   # the AUTOCODER_MANAGER=<session> marker, and only then "the only agent here".
   # The others are left alone.
-  root_panes=""
-  while IFS='	' read -r pane cwd ws; do
-    [ -n "${pane:-}" ] || continue
-    [ "$(toplevel "$cwd")" = "$root" ] && root_panes="$root_panes$pane	${ws:-}
-"
-  done <<< "$PANES"
-  pick=$(choose_manager "$root" "$root_panes")
-  chosen=$(printf '%s\n' "$pick" | sed -n 's/^PICK	\([^	]*\)	.*/\1/p')
-  why=$(printf '%s\n' "$pick" | sed -n 's/^PICK	[^	]*	//p')
-  others=$(printf '%s\n' "$pick" | sed -n 's/^OTHER	//p' | tr '\n' ' ' | sed 's/ $//')
-  ambiguous=$(printf '%s\n' "$pick" | sed -n 's/^AMBIGUOUS	//p')
-  if [ -n "$ambiguous" ]; then
-    n=$(printf '%s\n' $ambiguous | grep -c .)
-    echo "⚠️  $n agent panes in $root ($ambiguous) and nothing tells which is the manager (manifest manager pane, workspace manager-$(basename "$root"), AUTOCODER_MANAGER marker); prompting none. Close the extras, or rename the manager's workspace manager-$(basename "$root"), then re-run."
-    FAILED=$((FAILED + 1)); continue
-  fi
-  for o in $others; do echo "   $(pane_label "$o"): not the manager, left alone"; done
-  if [ -n "$chosen" ]; then
-    if [ "$chosen" = "${HERDR_PANE_ID:-}" ] && [ "$DRY_RUN" != true ]; then
+  # At boot herdr's restore may still be under way (#372): a pane that does not
+  # take the prompt yet, or a restored workspace with no agent in it yet, is
+  # read again, up to PANE_TRIES times.
+  tries=1
+  [ "$BOOT" = true ] && [ "$MUX" = herdr ] && [ "$DRY_RUN" != true ] && tries=$PANE_TRIES
+  attempt=1; outcome=spawn; unreachable=""
+  while :; do
+    pick_manager "$root"
+    if [ -n "$ambiguous" ]; then outcome=ambiguous; break; fi
+    if [ -n "$chosen" ]; then
+      if [ "$chosen" = "${HERDR_PANE_ID:-}" ] && [ "$DRY_RUN" != true ]; then outcome=self; break; fi
+      if [ "$DRY_RUN" = true ]; then outcome=dry; break; fi
+      send_agent_prompt herdr "$chosen" "$prompt"; rc=$?
+      case "$rc" in
+        0) outcome=prompted; break ;;
+        3) outcome=dialog; break ;;
+      esac
+      if [ "$attempt" -ge "$tries" ]; then unreachable=$chosen; outcome=spawn; break; fi
+      echo "   manager pane $chosen did not take the prompt (read $attempt of $tries); herdr may still be restoring it, reading again in ${PANE_WAIT}s"
+    else
+      if [ "$attempt" -ge "$tries" ] || ! restore_pending "$root"; then outcome=spawn; break; fi
+      echo "   a workspace for $root is restored but no agent is live in its root yet (read $attempt of $tries); reading again in ${PANE_WAIT}s"
+    fi
+    sleep "$PANE_WAIT"; collect_herdr; attempt=$((attempt + 1))
+  done
+  for o in $others; do [ "$o" = "$unreachable" ] || echo "   $(pane_label "$o"): not the manager, left alone"; done
+  case "$outcome" in
+    ambiguous)
+      n=$(printf '%s\n' $ambiguous | grep -c .)
+      echo "⚠️  $n agent panes in $root ($ambiguous) and nothing tells which is the manager (manifest manager pane, workspace manager-$(basename "$root"), AUTOCODER_MANAGER marker); prompting none. Close the extras, or rename the manager's workspace manager-$(basename "$root"), then re-run."
+      FAILED=$((FAILED + 1)); FAILED_ROOTS="$FAILED_ROOTS$root
+"; continue ;;
+    self)
       # Prompting the pane this runs in would type into its own input.
       echo "   manager is $chosen, the pane running this script ($why); not prompting it"
-      mark_done "$root"
-    elif [ "$DRY_RUN" = true ]; then
-      echo "   DRY-RUN would prompt restored manager pane $(pane_label "$chosen") ($why)"
-    elif send_agent_prompt herdr "$chosen" "$prompt"; then
-      echo "   prompted restored manager pane $chosen ($why)"; PROMPTED=$((PROMPTED + 1)); mark_done "$root"
-    else
-      echo "❌ could not prompt manager pane $chosen"; FAILED=$((FAILED + 1))
-    fi
-    continue
-  fi
+      mark_done "$root"; continue ;;
+    dry)
+      echo "   DRY-RUN would prompt restored manager pane $(pane_label "$chosen") ($why)"; continue ;;
+    prompted)
+      echo "   prompted restored manager pane $chosen ($why)"; PROMPTED=$((PROMPTED + 1)); mark_done "$root"; continue ;;
+    dialog)
+      echo "❌ manager pane $chosen is showing a consent dialog; a person must answer it (no second manager started)"
+      FAILED=$((FAILED + 1)); FAILED_ROOTS="$FAILED_ROOTS$root
+"; continue ;;
+  esac
+  [ -n "$unreachable" ] && echo "   manager pane $unreachable never took the prompt; starting a manager through the sentinel instead"
   if [ "$DRY_RUN" = true ]; then
     echo "   DRY-RUN would create $root/.autocoder/wake and run: $SENTINEL --once --project $root"
     continue
@@ -698,7 +832,8 @@ while IFS= read -r root; do
     echo "   started a manager via the idle sentinel"; STARTED=$((STARTED + 1)); mark_done "$root"
   else
     echo "❌ the idle sentinel did not start a manager in $root (see $root/.autocoder/sentinel.log)"
-    FAILED=$((FAILED + 1))
+    FAILED=$((FAILED + 1)); FAILED_ROOTS="$FAILED_ROOTS$root
+"
   fi
 done <<< "$ROOTS"
 
@@ -720,6 +855,9 @@ if [ "$BOOT" = true ] && [ "$DRY_RUN" != true ]; then
       exit 0
     fi
     echo "reboot-recover: $FAILED swarm(s) still not recovered after $attempts attempts; recording the boot, no more retries"
+    while IFS= read -r r; do
+      [ -n "$r" ] && notify_unrecovered "$r" "reboot-recover: swarm $r was not recovered after the reboot ($attempts attempts); start its manager by hand"
+    done <<< "$FAILED_ROOTS"
   fi
   boot_stamp_set "$BOOT_ID" && echo "reboot-recover: boot $BOOT_ID recorded"
   rm -f "$DONE_FILE" "$STATE_DIR/reboot-attempts"
