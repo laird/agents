@@ -165,7 +165,7 @@ is the rebased tip; the close comment names it alongside the reviewed pre-rebase
 
 | Setting | Default | Effect |
 |---|---|---|
-| `AUTOCODER_MERGE_QUEUE` | `1` | `0` lands at once, without waiting for other jobs on the host |
+| `AUTOCODER_MERGE_QUEUE` | `1` | `1` queues the whole job (jobs on the host gate one after the other); `push` queues the push window only (jobs gate side by side, the second re-syncs once under the lock: for a priority job, or a host whose push a lease already serializes); `0` lands at once |
 | `AUTOCODER_MERGE_QUEUE_WAIT` | `7200` | seconds to wait for the lock (`0` = forever); past it the job lands unqueued and says so |
 
 The lock is `${AUTOCODER_TMP:-/tmp}/autocoder-land-<key>.lock` (flock), with the current holder
