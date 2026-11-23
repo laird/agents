@@ -1271,7 +1271,7 @@ PUBLISH_BASIS=""
 # Re-syncs a failed gate made because origin/<integration> moved past the tree's base (#375).
 MOVED_BASE_REGATES=0
 MOVED_BASE_REGATE_MAX="${AUTOCODER_MOVED_BASE_REGATES:-2}"
-[[ "$MOVED_BASE_REGATE_MAX" =~ ^[0-9]+$ ]] || MOVED_BASE_REGATE_MAX=2
+[[ "$MOVED_BASE_REGATE_MAX" =~ ^[0-9]{1,3}$ ]] || MOVED_BASE_REGATE_MAX=2
 RED_INTEGRATED_TREE=""
 RED_BASE_TREE=""
 RED_BASE_FAILURES=""
@@ -1373,10 +1373,18 @@ _gate_integrated_tree() {
     MOVED_BASE_REGATES=$((MOVED_BASE_REGATES + 1))
     echo "❌ Tests fail on the integrated tree ${tree:0:8}, built on origin/${INTEGRATION_BRANCH} ${base_sha:0:8}; origin/${INTEGRATION_BRANCH} has since moved to ${tip_sha:0:8}."
     echo "ℹ️  Re-syncing onto ${tip_sha:0:8} and re-gating (${MOVED_BASE_REGATES}/${MOVED_BASE_REGATE_MAX}) instead of judging this change against a base it was not built on (#375)."
+    # The failed run may have left tracked edits (an untested state, never published);
+    # they would stop the rebase and read as a conflict. A conflict the first sync
+    # resolved is still in HEAD, so the flag stays set across this clean re-sync.
+    local was_resolved="$REBASE_RESOLVED"
+    git reset -q --hard HEAD
     _rebase_onto_integration
+    [ "$was_resolved" = 1 ] && REBASE_RESOLVED=1
     if [ "$(git rev-parse HEAD)" = "$tip_sha" ]; then
       _nothing_left_to_land "$tip_sha"
     fi
+    # The push loop sets INT_SEEN_SHA to its own (older) fetch after this returns; the
+    # next re-sync then measures a wider range, which can only re-gate more, not less.
     INT_SEEN_SHA="$tip_sha"
     _gate_integrated_tree
     return
