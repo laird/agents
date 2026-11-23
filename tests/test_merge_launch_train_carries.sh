@@ -28,6 +28,8 @@ export AUTOCODER_TRAIN_STATE="$TMP/train-state"; mkdir -p "$AUTOCODER_TRAIN_STAT
 # The holder blocks for the lock rather than failing fast (#356): the poll below takes LOCK_SH for an
 # instant to see whether the lease is held, and on a loaded machine that instant can overlap the
 # holder's first attempt. LOCK_NB turned that overlap into a BlockingIOError and a failed fixture.
+# The poll allows 10s (was 5s) because the holder is a fresh python3 that may start slowly under the
+# same load.
 hold_lease() {
   python3 - "$AUTOCODER_TRAIN_STATE/lease.lock" <<'HOLD' &
 import fcntl, os, sys, time
