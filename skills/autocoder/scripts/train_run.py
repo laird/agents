@@ -570,6 +570,11 @@ class Cycle:
                              f"it rejoins the next train there.")
                 self.state.tell("conflict", issue, tip)
                 self.log(f"#{issue} ({r['branch']} @ {tip}) is conflict: told once, never planned at this tip")
+            elif r["state"] == "held" and not self.state.told(f"held-{'-'.join(str(n) for n in r.get('red') or [])}", issue, tip):
+                # #7179: once per tip AND red set, so a later red tells the same tip again and a closed red costs no comment.
+                self.say.say(issue, f"held: red master {', '.join('#' + str(n) for n in r.get('red') or [])}: `{r['branch']}` @ `{tip}` {r['note']}.")
+                self.state.tell(f"held-{'-'.join(str(n) for n in r.get('red') or [])}", issue, tip)
+                self.log(f"#{issue} ({r['branch']} @ {tip}) is held: told once, not planned while the red is open")
             elif r.get("followed") and not self.state.told("followed-tip", issue, tip):
                 self.say.say(issue, f"`{r['branch']}`: {r['followed']}. No new READY is needed for a rebase or fast-forward of the same work.")
                 self.state.tell("followed-tip", issue, tip)
@@ -1090,9 +1095,16 @@ class Daemon:
             self._record("error", [], str(e)[:200])
             return "error"
         launchable = [r for r in rows if r["state"] == "queue"]
+        held = [r for r in rows if r["state"] == "held"]
         if not launchable:
-            self._record("idle", [])
+            # #7179: the status says what holds the queue, and the log says it once per change.
+            note = f"{len(held)} held: red master " + ",".join(f"#{n}" for n in (held[0].get("red") or [])) if held else ""
+            if note and note != getattr(self, "held_said", ""):
+                self.log(f"no launchable item: {note}; the red's fix, a lane-labelled branch or a documents-only diff still lands")
+            self.held_said = note
+            self._record("idle", [], note)
             return "idle"
+        self.held_said = ""
         ages = []
         now = datetime.now(timezone.utc)
         for r in launchable:

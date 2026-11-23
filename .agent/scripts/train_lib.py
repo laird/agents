@@ -31,6 +31,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 ISSUE_FNS = SCRIPTS / "issue-fns.sh"
+TEST_CMD_FNS = SCRIPTS / "test-cmd-fns.sh"   # is_docs_only_diff: the one documents rule (merge-to-integration.sh applies the same)
 
 DEFAULT_READY_RE = r"(^|[^A-Za-z])READY([^A-Za-z]|$)"
 # The block enqueue.sh prints: a READY carrying it was preflighted on a host that does not gate, never
@@ -93,6 +94,11 @@ class Config:
     ready_states: list = field(default_factory=lambda: ["open"])   # the tracker states a READY is listed under
     priority_labels: list = field(default_factory=lambda: ["P0", "P1", "P2", "P3"])
     lane_labels: list = field(default_factory=lambda: ["hotfix"])
+    # The red-integration guard (#7179 on one project): {"label": "P0", "titlePrefix": "Red master:"}; empty = off. While the
+    # tracker has an OPEN issue carrying the label whose title starts with the prefix, the queue admits only the red's own
+    # fix (the branch that issue's READY names), a lane-labelled branch, or a documents-only diff; every other READY is
+    # `held` (told once per tip and red set) and the status line names the red.
+    red_master: dict = field(default_factory=dict)
     ready_pattern: str = DEFAULT_READY_RE
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
     preflight_pattern: str = DEFAULT_PREFLIGHT_RE   # a READY matching this was preflighted, not pre-checked (enqueue.sh)
@@ -164,6 +170,15 @@ def _ready_tip(raw, path) -> str:
     return value
 
 
+def _red_master(raw, path) -> dict:
+    """`redMaster`: absent or null = off; else an object with non-empty string `label` and `titlePrefix`."""
+    if raw in (None, {}, False):
+        return {}
+    if not isinstance(raw, dict) or not all(isinstance(raw.get(k), str) and raw.get(k, "").strip() for k in ("label", "titlePrefix")):
+        raise SystemExit(f"merge-train: train.redMaster in {path} must be {{\"label\": \"<label>\", \"titlePrefix\": \"<prefix>\"}}, got {raw!r}")
+    return {"label": raw["label"].strip(), "titlePrefix": raw["titlePrefix"].strip()}
+
+
 def _branch_ownership(raw, path) -> str:
     """`branchOwnership`: `issue` (default) refuses a READY whose branch does not belong to the issue as
     `foreign-branch`; `any` takes any branch the READY names. Anything else refuses to load, naming the file."""
@@ -208,7 +223,7 @@ def _gate_dirs(env_value, raw, env) -> list:
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, redMaster{label, titlePrefix}, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{preflight, prepareScratch, mergeFault, regenerate, attribute, landed, redBase};
     `enqueue` is enqueue.sh's (see there).
@@ -235,6 +250,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         ready_states=_ready_states(raw.get("readyStates"), path),
         priority_labels=list(raw.get("priorityLabels") or ["P0", "P1", "P2", "P3"]),
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
+        red_master=_red_master(raw.get("redMaster"), path),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
         note_pattern=raw.get("notePattern") or "",
         preflight_pattern=raw.get("preflightPattern") or DEFAULT_PREFLIGHT_RE,
@@ -959,7 +975,52 @@ def list_items(cfg: Config):
     return items
 
 
-def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None, gates=()):
+def red_master_open(cfg: Config) -> list:
+    """The open tracker issues the `redMaster` guard matches: [{number, title, branches}], `branches` the fix branches
+    each one's READY names (pick_ready over its comments; an issue with no READY names none). Empty when the guard
+    is off. A tracker that cannot be read raises, as list_items does: the queue is then not planned at all."""
+    g = cfg.red_master
+    if not g:
+        return []
+    r = tracker(cfg, "issue_list", "--state", "open", "--label", g["label"], "--limit", "100")
+    out = []
+    for it in json.loads(r.stdout or "[]"):
+        if str(it.get("state", "OPEN")).upper() != "OPEN":
+            continue
+        number = int(it["number"])
+        issue = json.loads(tracker(cfg, "issue_get", str(number)).stdout) if it.get("title") is None else it
+        title = str(issue.get("title") or "")
+        if not title.startswith(g["titlePrefix"]):
+            continue
+        full = issue if "comments" in issue else json.loads(tracker(cfg, "issue_get", str(number)).stdout)
+        picked = pick_ready(cfg, ready_comments(full), number)
+        out.append({"number": number, "title": title, "branches": [picked["branch"]] if picked and picked.get("branch") else []})
+    return out
+
+
+def docs_only_diff(cfg: Config, ref) -> bool:
+    """Every file <ref> changes against the integration branch is a document, by the plugin's one rule
+    (test-cmd-fns.sh `is_docs_only_diff`: Markdown, reStructuredText, AsciiDoc, docs/, AUTOCODER_DOCS_PATHS, never
+    AUTOCODER_DOCS_CODE_PATHS), the rule merge-to-integration.sh lands such a change by without the test stages."""
+    r = subprocess.run(["bash", "-c", 'source "$1" || exit 99; shift; is_docs_only_diff "$@"', "_", str(TEST_CMD_FNS),
+                        str(cfg.repo), ref, cfg.integration], capture_output=True, text=True, cwd=str(cfg.repo))
+    return r.returncode == 0
+
+
+def red_master_hold(cfg: Config, reds: list, labels, branch, ref):
+    """The `held` note for an item while reds are open, or "" when the item is admitted: the red's own fix (its READY
+    branch), a lane-labelled item (`laneLabels`) or a documents-only diff lands; everything else waits."""
+    if not reds:
+        return ""
+    if any(lb in cfg.lane_labels for lb in labels) or any(branch in red["branches"] for red in reds) or docs_only_diff(cfg, ref):
+        return ""
+    names = ", ".join(f"#{red['number']}" for red in reds)
+    lane = "/".join(f"`{lb}`" for lb in cfg.lane_labels) or "a lane"
+    return (f"red {cfg.integration} {names} is open: only its fix (the branch its READY names), a {lane}-labelled branch "
+            f"or a documents-only diff lands until it closes; this READY waits, nothing to do on your side")
+
+
+def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None, gates=(), hold_note=""):
     """(state, tip, note, named) of one item; `named` is followed_tip()'s (kind, text) for a tip that is not
     the sha the READY named (("", "") when there is nothing to say); plan_queue appends the text to the note. States:
 
@@ -987,6 +1048,8 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     conflict    master does not merge cleanly into it (prefilter in an unowned path, else a real merge)
     driver-fault / generator-failed   the project's mergeFault hook classified the real merge
     launched    this queue already launched this tip and no `retry <issue>` row says again
+    held        a `redMaster` issue is open and this item is neither its fix, a lane-labelled item nor a documents-only
+                diff (`hold_note`, computed by plan_queue): waits, told once per tip and red set, never planned
     queue       launchable
     """
     branch = picked["branch"] if picked else None
@@ -1003,6 +1066,8 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     lane = gate_carrying(gates, issue, branch, cfg.remote)
     if lane:
         return ("in-lane", tip, lane, ("", ""))
+    if hold_note:
+        return ("held", tip, hold_note, ("", ""))
     ts = train_state(cfg, issue, tip)
     if ts == "in-train":
         return ("in-train", tip, "in the live train", ("", ""))
@@ -1099,6 +1164,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
     items = list_items(cfg)
     in_flight = {int(x) for x in in_flight}
     gates = live_gates(cfg)   # once per listing: the host's live gates, which no item is planned beside
+    reds = red_master_open(cfg)   # once per listing: the open red-integration issues (#7179), which hold every other item
 
     def key(it):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
@@ -1115,7 +1181,8 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
                              "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": ""})
             continue   # labelled ready-for-review but says READY nowhere: not an item
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
-        state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates)
+        hold_note = red_master_hold(cfg, reds, it["labels"], picked["branch"], cfg.remote_ref(picked["branch"])) if reds and picked.get("branch") else ""
+        state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates, hold_note=hold_note)
         if not skip and state in ("queue", "launched"):
             found += 1
         basis = picked.get("basis") or "ready"
@@ -1124,7 +1191,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
-                     "readyAt": ledger_ts(picked.get("createdAt")) or ""})
+                     "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in reds]})
     return rows
 
 
@@ -1177,17 +1244,20 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, named, preflight = {}, None, {"no-branch": [], "in-lane": []}, 0
+    counts, nxt, named, preflight, reds = {}, None, {"no-branch": [], "in-lane": [], "held": []}, 0, []
     for r in rows:
+        reds = r.get("red") or reds
         counts[r["state"]] = counts.get(r["state"], 0) + 1
         preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
             nxt = f"#{r['issue']} {r['branch']} @ {r['tip']}"
         if r["state"] in named:
             named[r["state"]].append(f"#{r['issue']}")
-    order = ["queue", "in-flight", "in-lane", "in-train", "launched", "hold", "conflict", "generator-failed", "driver-fault",
+    order = ["queue", "in-flight", "in-lane", "in-train", "launched", "hold", "held", "conflict", "generator-failed", "driver-fault",
              "stale", "train-dropped", "tip-moved", "on-master", "regenerate-only", "unchecked", "no-branch"]
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
+    if reds:
+        line += " | red master " + ",".join(f"#{n}" for n in reds)
     for s in order:
         if counts.get(s):
             line += f" | {counts[s]} {s}" + (f" ({','.join(named[s])})" if s in named else "")

@@ -147,8 +147,8 @@ class Fx:
     def rc(self):
         return R.load_run_config(self.work)
 
-    def member(self, n, bad=False):
-        """A READY issue whose branch adds files/m<n>.txt (and bad/m<n>.txt when bad)."""
+    def member(self, n, bad=False, labels=(), title=None):
+        """A READY issue whose branch adds files/m<n>.txt (and bad/m<n>.txt when bad); `labels` beside ready-for-review."""
         name = f"feature/m{n}"
         sh("git", "checkout", "-q", "-B", name, "origin/master", cwd=self.work)
         files = {f"files/m{n}.txt": f"{n}\n", **({f"bad/m{n}.txt": "x\n"} if bad else {})}
@@ -159,7 +159,7 @@ class Fx:
         sh("git", "commit", "-q", "-m", f"work {n}", cwd=self.work)
         sh("git", "push", "-q", "-f", "origin", name, cwd=self.work)
         sh("git", "checkout", "-q", "master", cwd=self.work)
-        r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", f"m{n}", "--body", "", "--label", "ready-for-review", cwd=self.work)
+        r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", title or f"m{n}", "--body", "", "--label", "ready-for-review", *[x for lb in labels for x in ("--label", lb)], cwd=self.work)
         issue = json.loads(r.stdout)["number"]
         sh(sys.executable, str(ISSUES_FILE), "comment", str(issue), "--body", f"READY on `{name}`", cwd=self.work)
         return issue
@@ -301,6 +301,29 @@ def test_a_red_base_refusal_ends_the_cycle_with_everyone_in_the_queue_unfaulted_
     assert "red `master`, not a member's" in note and "nobody dropped, held out or re-gated" in note
     assert "RED-BASE -- origin/master" in note and "Open or cite the issue for red `master`" in note
     assert all("returned:" not in fx.comments(i) for i in issues)
+
+
+def test_while_a_red_master_is_open_a_cycle_lands_only_the_hotfix_and_the_hold_lifts_when_the_red_closes(fx):
+    """#7179 (ask 4): a red tracker state, one ordinary READY and one hotfix: only the hotfix lands; the ordinary member
+    is told `held: red master #N` once and stays in the queue unfaulted; after the red closes, the next cycle lands it."""
+    fx.train["redMaster"] = {"label": "P0", "titlePrefix": "Red master:"}
+    fx.write_config()
+    r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", "Red master: tests/x.test.ts fails at abcdef12", "--body", "", "--label", "P0", "--label", "bug", cwd=fx.work)
+    red = json.loads(r.stdout)["number"]
+    ordinary = fx.member(0)
+    hot = fx.member(1, labels=("hotfix",))
+    code, _ = fx.run()
+    assert code == 0
+    assert fx.on_master(1) and not fx.on_master(0)
+    assert [fx.state_of(hot), fx.state_of(ordinary)] == ["CLOSED", "OPEN"]
+    assert fx.dropped() == []
+    note = fx.comments(ordinary)
+    assert f"held: red master #{red}" in note and "returned:" not in note
+    code, _ = fx.run()                                    # a second cycle while the red is open: told once, still held
+    assert not fx.on_master(0) and fx.comments(ordinary).count("held: red master") == 1
+    sh(sys.executable, str(ISSUES_FILE), "close", str(red), "--comment", "fixed", cwd=fx.work)
+    code, _ = fx.run()
+    assert code == 0 and fx.on_master(0) and fx.state_of(ordinary) == "CLOSED"
 
 
 def test_a_retest_that_proves_every_failing_file_red_on_the_base_is_a_red_base_whatever_the_gate_concluded(fx):
