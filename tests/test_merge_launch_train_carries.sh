@@ -25,16 +25,19 @@ export AUTOCODER_TRAIN_STATE="$TMP/train-state"; mkdir -p "$AUTOCODER_TRAIN_STAT
 
 # A live train is a runner holding the state dir's lease (train_run.Lease, an flock): hold it from a
 # sleeper for the carried cases, and release it for the "no live train" case.
+# The holder blocks for the lock rather than failing fast (#356): the poll below takes LOCK_SH for an
+# instant to see whether the lease is held, and on a loaded machine that instant can overlap the
+# holder's first attempt. LOCK_NB turned that overlap into a BlockingIOError and a failed fixture.
 hold_lease() {
   python3 - "$AUTOCODER_TRAIN_STATE/lease.lock" <<'HOLD' &
 import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)
-fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+fcntl.flock(fd, fcntl.LOCK_EX)
 print("held", flush=True)
 time.sleep(120)
 HOLD
   LEASE_PID=$!
-  for _ in $(seq 1 50); do python3 -c '
+  for _ in $(seq 1 100); do python3 -c '
 import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
 try:
