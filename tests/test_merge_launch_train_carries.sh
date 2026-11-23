@@ -25,16 +25,29 @@ export AUTOCODER_TRAIN_STATE="$TMP/train-state"; mkdir -p "$AUTOCODER_TRAIN_STAT
 
 # A live train is a runner holding the state dir's lease (train_run.Lease, an flock): hold it from a
 # sleeper for the carried cases, and release it for the "no live train" case.
+# The holder retries its exclusive lock for up to 10 s (#354). Anything else that briefly takes a
+# shared lock on the file (this function's own probe below, or the train check of a merge-launch.sh
+# from an earlier case that is still exiting) makes a single LOCK_NB attempt fail with EAGAIN on a
+# busy host, and the holder would exit without ever taking the lease.
 hold_lease() {
   python3 - "$AUTOCODER_TRAIN_STATE/lease.lock" <<'HOLD' &
 import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)
-fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+deadline = time.monotonic() + 10
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        if time.monotonic() > deadline:
+            raise
+        time.sleep(0.05)
 print("held", flush=True)
 time.sleep(120)
 HOLD
   LEASE_PID=$!
-  for _ in $(seq 1 50); do python3 -c '
+  # Poll for up to 15 s, longer than the holder's retry window; stop early if the holder died.
+  for _ in $(seq 1 150); do kill -0 "$LEASE_PID" 2>/dev/null || break; python3 -c '
 import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
 try:
