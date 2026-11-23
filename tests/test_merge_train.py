@@ -1392,6 +1392,23 @@ def test_red_master_guard_holds_every_ready_but_the_reds_fix_a_lane_branch_and_a
     assert "red master" not in T.status_line(list(q.values()), when="W")
 
 
+def test_red_master_guard_still_holds_while_the_red_is_claimed_or_lane_labelled(tmp_path):
+    """A backend's open list is its claimable list: a red a worker has claimed (`working`), or that a lane label keeps
+    out of the queue, vanished from it and the guard lifted mid-fix (2026-11-23: a train of eight planned onto an open
+    red). The guard lists every state and keeps the open ones itself."""
+    fx = Fixture(tmp_path, RED)
+    fx.branch("fix/red", {"src/a.txt": "fixed\n"})
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    red = fx.ready("Red master: tests/x.test.ts fails at abcdef12", "fix/red", labels=("ready-for-review", "P0", "bug", "hotfix"))
+    sh(sys.executable, str(ISSUES_FILE), "claim", str(red), cwd=fx.work)   # a worker took the red: working/, out of the open list
+    code = fx.ready("an ordinary change", "feature/code")
+    q = fx.queue()
+    assert q[code]["state"] == "held" and q[code]["red"] == [red]
+    assert f"red master #{red} is open" in q[code]["note"]
+    sh(sys.executable, str(ISSUES_FILE), "close", str(red), "--comment", "fixed", cwd=fx.work)
+    assert fx.queue()[code]["state"] == "queue"
+
+
 def test_red_master_guard_is_off_without_the_key_and_refuses_a_malformed_one(tmp_path):
     fx = Fixture(tmp_path)
     fx.branch("feature/code", {"src/b.txt": "code\n"})
