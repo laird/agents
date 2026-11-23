@@ -77,6 +77,30 @@ EMPTY_RE_DEFAULT = (r"^(❌|ℹ️) +Rebasing \S+ \(\w+\) .*(dropped every commi
                     r"|^ℹ️ +\S+ \(\w+\) is already on origin/\S+ as patch-equivalent commits .*nothing to land\.$")
 NOTHING_LANDED = "landed nothing (regenerate-only or already on the integration branch)"
 RED_BASE_RE = re.compile(r"^merge-to-integration: RED-BASE -- .*$", re.M)
+# The gate's per-file retest verdicts (#298): each file that failed on the integrated tree, re-run on the
+# integration branch alone. "fails ... too" is the base's red; the other two wordings are the change's.
+RETEST_RED_RE = re.compile(r"^\s+(\S+): fails on origin/\S+ too \(red base, not this change's\)\s*$", re.M)
+RETEST_OWN_RE = re.compile(r"^\s+(\S+): (?:passes on origin/\S+ \(this change's\)|not named on origin/\S+, whose run failed without naming a test file)\s*$", re.M)
+RED_BASE_IN_RE = re.compile(r"\bin ((?:\S+ )*\S+): red \S+, not this change's\.")
+
+
+def retest_red_base(text):
+    """The files the gate's retest proved red on the integration branch alone, when EVERY retested file is;
+    empty when any retested file is the change's, or no retest ran. #7130: train 253 returned its member for
+    a failure the retest had proved was master's, because the gate's own comparison of the two runs'
+    named failures differed only by a wall time; a failure the retest proves is the base's is nobody's."""
+    red = RETEST_RED_RE.findall(text)
+    return [] if not red or RETEST_OWN_RE.search(text) else list(dict.fromkeys(red))
+
+
+def red_base_files(text):
+    """Every file a gate log names as red on the base: the retest's lines and the RED-BASE line's `in ...` list."""
+    files = list(dict.fromkeys(RETEST_RED_RE.findall(text)))
+    m = RED_BASE_IN_RE.search(text)
+    for f in (m.group(1).split() if m else []):
+        if f not in files:
+            files.append(f)
+    return files
 PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+")
 IDENT = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
 
@@ -501,7 +525,8 @@ class Cycle:
         elif first == "empty":
             self.log("nothing to land: the gate's rebase dropped every commit as already upstream; every member is marked landed nothing, no bisection")
         verdict = {"green": "green", "red": "red"}.get(first, first)
-        cur, nxt = self.state.record_batch(len(members), "green" if first == "green" else "red" if first == "red" else "abort")
+        # #7130: the history keeps the verdict's own word (red-base, infra, regen, empty): only green and red move the limit.
+        cur, nxt = self.state.record_batch(len(members), verdict)
         self.log(f"batch limit {cur} -> {nxt} (first gate {verdict}); landed {len(self.landed_total)}, returned {len(self.returned_total)}")
         left = [m for m in self.record["members"] if m["status"] in ("planned", "assembled", "gating")]
         if left:
@@ -684,6 +709,9 @@ class Cycle:
         red_base = RED_BASE_RE.search(text)
         if red_base:
             return "red-base", red_base.group(0)[:300]
+        red_files = retest_red_base(text)
+        if red_files:
+            return "red-base", f"red base: {' '.join(red_files)} (the gate's retest: fails on origin/{self.cfg.integration} too)"[:300]
         first = next((ln for ln in text.splitlines() if ERROR_LINE_RE.match(ln)), "")
         if not first and (rc_code < 0 or rc_code > 128):
             # Ended by a signal (a memory-cap kill, a host shutdown) with no verdict line of its own: the
@@ -747,6 +775,7 @@ class Cycle:
                     continue
                 return "infra"
             if verdict == "red-base":
+                self.red_base_hook(train, line, kept, red_base_files(log_path.read_text(errors="replace")))
                 self.log(f"red {self.cfg.integration}, not a member's: the gate re-ran the failing file(s) on {self.cfg.ref} alone and they fail there too; nobody is dropped, held out, bisected or re-gated")
                 self.say.report(f"{train}: red `{self.cfg.integration}`, not a member's (`{line[:200]}`). The gate re-ran the file(s) that failed on the integrated tree on `{self.cfg.ref}` alone and they fail there too, so no member owns this red: nobody dropped, held out or re-gated (it would fail the same way on the same base); every member stays in the queue as it is. Open or cite the issue for red `{self.cfg.integration}` and fix it forward; the next train takes them.")
                 return "red-base"
@@ -867,6 +896,22 @@ class Cycle:
             self.say.report(f"{train}: landed `{landed[:10]}`: {' '.join('#' + m['issue'] for m in members)}")
         T.git(c.repo, "push", "-q", c.remote, "--delete", train)
         self.landed_hook(train, [m for m in members if m not in unlanded], unlanded, landed)
+
+    def red_base_hook(self, train, line, log_path, files):
+        """The project's red-base close-out (#7130): file or reuse its red-integration issue, name the files. Run in
+        the repo with the train, the base, the files and the kept log in its environment. It cannot change the
+        verdict: a failure is logged and reported, the members stay in the queue unfaulted."""
+        hook = self.rc.hooks.get("redBase")
+        if not hook:
+            return
+        env = {**os.environ, "AUTOCODER_TRAIN_BRANCH": train, "AUTOCODER_TRAIN_BASE": self.record.get("base", ""),
+               "AUTOCODER_TRAIN_INTEGRATION": self.cfg.integration, "AUTOCODER_RED_BASE_FILES": "\n".join(files),
+               "AUTOCODER_RED_BASE_LINE": line, "AUTOCODER_RED_BASE_LOG": str(log_path or "")}
+        r = subprocess.run(["bash", "-c", hook], capture_output=True, text=True, cwd=str(self.cfg.repo), env=env)
+        if r.returncode != 0:
+            tail = ((r.stdout + r.stderr).strip().splitlines() or ["(no output)"])[-1][:200]
+            self.log(f"redBase hook exited {r.returncode} for {train} (the members stay in the queue unfaulted): {tail}")
+            self.say.report(f"{train}: the `redBase` hook exited {r.returncode} (`{tail}`); file or cite the issue for red `{self.cfg.integration}` by hand.")
 
     def landed_hook(self, train, members, unlanded, landed):
         """The project's close-out after a landing (an upstream sync, a drift check, a deploy note), run in

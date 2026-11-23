@@ -52,6 +52,8 @@ for f in $sel; do
     rc=1
   fi
 done
+# #7130: a stage runner's summary line carrying this run's wall time (never equal between two runs)
+if [ "$rc" -ne 0 ] && [ -e "${AUTOCODER_TMP}/../wall" ]; then echo "::error::run-gate-stages: FAIL (stage runner rc 1; fail wall $(date +%s%N | cut -c8-13 | sed 's/^\(.*\)\(.\)$/\1.\2/') s; failed: db-tests)"; fi
 exit $rc
 G
 
@@ -109,6 +111,14 @@ grep -q "^merge-to-integration: RED-BASE -- origin/master" "$LOG" && ok "refused
 grep -q "Red master, not this change: hold the branch, open or cite the issue for red master" "$LOG" && ok "refused: the reader is told to hold the branch and cite red master" || bad "refused: $(grep -n 'NOT pushing' "$LOG")"
 grep -q "so this change broke it" "$LOG" && bad "refused: the change was blamed" || ok "refused: the change is not blamed"
 grep -q 'red master in `t_broken.test`, not this change'"'"'s' "$TMP"/issues/*/29804.md && ok "refused: the issue comment names red master in the file" || bad "refused: issue text: $(cat "$TMP"/issues/*/29804.md)"
+
+echo "=== a summary line whose wall time differs per run still compares equal (#7130, train 253) ==="
+touch "$TMP/wall"
+run_one 29806 src.txt change5 "bash $TMP/gate.sh"
+rm -f "$TMP/wall"
+[ "$(attempt 29806)" = "parked red_base=true" ] && ok "a red base beside a timed summary line is the base's" || bad "attempt: $(attempt 29806); log: $(grep -n 'broke it\|RED-BASE\|fail wall' "$LOG")"
+[ "$(grep -c 'fail wall' "$LOG")" -ge 2 ] && ok "the timed summary line was in both runs" || bad "summary lines: $(grep -c 'fail wall' "$LOG")"
+grep -q "so this change broke it" "$LOG" && bad "the wall time blamed the change" || ok "the wall time did not blame the change"
 
 echo "=== a mix: the change's own failure beside a red-base one ==="
 printf -- '---\nnumber: 29805\ntitle: T\npriority: P2\nlabels: [bug]\nstatus: open\n---\nBody.\n' > "$TMP/issues/open/29805.md"

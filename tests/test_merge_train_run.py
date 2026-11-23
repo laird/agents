@@ -57,6 +57,23 @@ if [ -s "$FX_STATE/infra.script" ]; then
     echo "❌ origin/master fails alone too (tree 8eda80f4, the same 1 named failure(s)), and AUTOCODER_MERGE_ON_RED_BASE=0 forbids landing on a red base. NOT pushing."
     exit 2
   fi
+  # retest-red-base (#7130): no RED-BASE line (the gate's own comparison of the two runs' named failures
+  # disagreed: its summary lines differ only by their wall time), yet every retested file fails on the base too
+  if [ "$first" = retest-red-base ]; then
+    echo "❌ The integrated tree 73ed0986 names failure(s) origin/master alone does not, so this change broke it (at least these). NOT pushing."
+    echo "   t_shared.test: fails on origin/master too (red base, not this change's)"
+    echo "   this change only: ::error::run-gate-stages: FAIL (stage runner rc 1; fail wall 1084.7 s; failed: db-tests)"
+    echo "   base only:        ::error::run-gate-stages: FAIL (stage runner rc 1; fail wall 78.8 s; failed: db-tests)"
+    echo "::error::tests fail on the integrated tree 73ed0986 with failure(s) origin/master alone (tree 8eda80f4) does not have, so this change broke it"
+    exit 2
+  fi
+  # retest-mixed (#7130): one retested file is the base's, another is the change's: the change's red, attributed as before
+  if [ "$first" = retest-mixed ]; then
+    echo "   t_shared.test: fails on origin/master too (red base, not this change's)"
+    echo "   t_mine.test: passes on origin/master (this change's)"
+    echo "::error::tests: 1 failed"
+    exit 2
+  fi
   # land-red-base: the plugin landed anyway on a red base (the default once a sentinel proved green)
   if [ "$first" = land-red-base ]; then
     echo "merge-to-integration: RED-BASE -- origin/master (c44669ae) fails alone too with the same 1 named failure(s) in t_shared.test: red master, not this change's."
@@ -284,6 +301,50 @@ def test_a_red_base_refusal_ends_the_cycle_with_everyone_in_the_queue_unfaulted_
     assert "red `master`, not a member's" in note and "nobody dropped, held out or re-gated" in note
     assert "RED-BASE -- origin/master" in note and "Open or cite the issue for red `master`" in note
     assert all("returned:" not in fx.comments(i) for i in issues)
+
+
+def test_a_retest_that_proves_every_failing_file_red_on_the_base_is_a_red_base_whatever_the_gate_concluded(fx):
+    """#7130 (train 253): the gate compared the two runs' named failures, found its own summary lines unequal (a wall
+    time), called the red the change's and did not print the RED-BASE line; the per-file retest had said the file
+    fails on master alone. The train reads the retest: nobody is returned, the limit stays, the report and the
+    project's redBase hook name the files, the ledger's batch row carries cause red-integration."""
+    issues = fx.members(3)
+    report = fx.member(9)
+    fx.train["reportIssue"] = str(report)
+    fx.train["hooks"] = {"redBase": 'printf "%s|%s|%s|%s\\n" "$AUTOCODER_TRAIN_BRANCH" "$AUTOCODER_RED_BASE_FILES" "$AUTOCODER_TRAIN_INTEGRATION" "$AUTOCODER_RED_BASE_LINE" >> "$FX_STATE/redbase.log"'}
+    fx.write_config()
+    (fx.state / "infra.script").write_text("retest-red-base\n")
+    code, _ = fx.run()
+    assert code == 0 and len(fx.gates()) == 1            # no bisection, no re-gate
+    assert fx.dropped() == [] and not any(fx.on_master(i) for i in range(3))
+    assert [fx.state_of(i) for i in issues] == ["OPEN"] * 3
+    assert all("returned:" not in fx.comments(i) for i in issues)
+    st = R.State(fx.rc())
+    assert st.limit() == 8 and st.batch()["history"][-1]["verdict"] == "red-base"
+    note = fx.comments(report)
+    assert "red `master`, not a member's" in note and "red base: t_shared.test" in note
+    hook = (fx.state / "redbase.log").read_text().splitlines()
+    assert len(hook) == 1 and hook[0].startswith("train/") and "|t_shared.test|master|red base: t_shared.test" in hook[0]
+    rows = (fx.state / "timings.log").read_text()
+    assert "--verdict red --cause red-integration" in rows
+
+
+def test_a_retest_with_one_file_still_the_changes_is_the_changes_red_and_is_attributed_as_before(fx):
+    issues = fx.members(1)
+    (fx.state / "infra.script").write_text("retest-mixed\n")
+    code, _ = fx.run()
+    assert code == 0
+    assert [d[0] for d in fx.dropped()] == [str(issues[0])] and "returned:" in fx.comments(issues[0])
+    assert R.State(fx.rc()).batch()["history"][-1]["verdict"] == "red"
+
+
+def test_retest_red_base_reads_only_a_unanimous_retest():
+    red = "   a.test: fails on origin/master too (red base, not this change's)\n"
+    own = "   b.test: passes on origin/master (this change's)\n"
+    unnamed = "   c.test: not named on origin/master, whose run failed without naming a test file\n"
+    assert R.retest_red_base(red + red) == ["a.test"]
+    assert R.retest_red_base(red + own) == [] and R.retest_red_base(red + unnamed) == [] and R.retest_red_base("::error::x\n") == []
+    assert R.red_base_files(red + "merge-to-integration: RED-BASE -- origin/master (c44669ae) fails alone too with the same 2 named failure(s) in a.test d.test: red master, not this change's.\n") == ["a.test", "d.test"]
 
 
 def test_a_landing_on_a_red_base_publishes_and_says_the_red_is_the_integration_branchs(fx):

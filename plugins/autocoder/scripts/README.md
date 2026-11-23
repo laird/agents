@@ -846,7 +846,7 @@ issue never reopens it (the FYI above left the landed issue closed once this hel
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
              "regeneratedMergeDrivers": ["regenerate", "keep-ours"], "regeneratedAdvice": "Change the source and regenerate.",
              "gateDirs": ["/tmp", "~/.local/state/autocoder/merge"],
-             "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh" } } }
+             "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh", "redBase": "./file-red-integration.sh" } } }
 ```
 
 `regeneratedMergeDrivers` names the merge drivers (the `merge=` attribute value in the integration branch's
@@ -860,6 +860,11 @@ judged, because a merge driver whose generator cannot run falls back to a textua
 conflict: a failing hook stops the plan with a named fault. `hooks.mergeFault` receives the unmerged paths
 on the first stdin line and the merge output after it, and may print `driver-fault<TAB>detail` (the
 scratch's fault: stop) or `generator-failed<TAB>detail` (this candidate's merge: drop it for this plan).
+`hooks.redBase` runs when a gate's failure is the integration branch's own (its RED-BASE line, or every
+retested file failing on the base alone; #7130), with the train, the base, the files (one per line in
+`AUTOCODER_RED_BASE_FILES`), the verdict line and the kept log in its environment, to file or reuse the
+project's red-integration issue; it cannot return a member. The other hooks (`preflight`, `regenerate`,
+`attribute`, `landed`) are in README-merge-train-run.md.
 
 Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend); `tests/test_merge_launch_train_carries.sh` (the launcher's refusal).
 
