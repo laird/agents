@@ -63,6 +63,19 @@ bash "$REL" 43 "x" >/dev/null 2>&1 && bad "released an issue with a feature bran
 [ -f "$STATE" ] && ok "record kept for a started issue" || bad "record dropped"
 git branch -D --quiet feature/issue-43
 
+# 3b. A branch that exists only on origin is another worker's (a banked READY, a
+#     claim the gate took over, athena2#7185): the gate's label is all this
+#     worktree put on the issue, so it is given back.
+reset 45
+ORIGIN="$TMP/origin.git"; git init --quiet --bare "$ORIGIN"
+git remote add origin "$ORIGIN" 2>/dev/null || git remote set-url origin "$ORIGIN"
+git push --quiet origin HEAD:refs/heads/feature/issue-45
+OUT=$(bash "$REL" 45 "banked by another worker" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "remote-only branch: release exits 0" || bad "remote-only branch: exit $rc: $OUT"
+[ "$(labels 45)" = "bug" ] && ok "remote-only branch: working label removed" || bad "remote-only branch: labels $(labels 45)"
+[ ! -f "$STATE" ] && ok "remote-only branch: record cleared" || bad "remote-only branch: record kept"
+git remote remove origin
+
 # 4. A claim that already ended only clears the record.
 reset 44
 python3 "$ISSUES_PY" release 44 >/dev/null

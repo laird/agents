@@ -53,7 +53,10 @@ def remote_repo(tmp_path):
     for branch in ("feature/issue-20", "fix/issue-18", "feature/issue-36",
                    "fix/issue-8-rename-autofix-to-autocoder",
                    "enhancement/issue-51-auto",
-                   "fix/issue-idle-alias", "merge/fix-line-to-master"):
+                   "fix/issue-idle-alias", "merge/fix-line-to-master",
+                   # athena2#7185: a hotfix lane's branch names its issue first
+                   "hotfix/7177-retry-args-engagement-id", "hotfix/7190",
+                   "hotfix/no-number-here", "release/2026-11-18"):
         sh(f"git branch {branch} master && git push -q origin {branch}", work)
     return work
 
@@ -67,7 +70,30 @@ def run(cwd, remote="origin"):
 def test_extracts_issue_numbers_from_branch_names(remote_repo):
     r = run(remote_repo)
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == [8, 18, 20, 36, 51]
+    assert json.loads(r.stdout) == [8, 18, 20, 36, 51, 7177, 7190]
+
+
+def test_hotfix_branches_count_and_a_release_tag_shaped_branch_does_not(remote_repo):
+    """hotfix/<N>-<slug> and hotfix/<N> name their issue first (athena2#7185);
+    hotfix/no-number-here and release/2026-11-18 encode no issue."""
+    nums = json.loads(run(remote_repo).stdout)
+    assert 7177 in nums and 7190 in nums
+    assert 2026 not in nums and 11 not in nums and 18 in nums  # 18 is fix/issue-18, not the date
+
+
+def test_no_matching_branch_is_an_empty_list_not_an_exit(tmp_path):
+    """Under pipefail a grep with no match used to end the pipeline non-zero."""
+    origin = tmp_path / "o.git"; work = tmp_path / "w"
+    sh(f"git init -q --bare {origin}", tmp_path)
+    sh(f"git init -q -b master {work}", tmp_path)
+    sh("git config user.email t@t; git config user.name t", work)
+    (work / "f").write_text("x\n")
+    sh("git add -A && git commit -qm base", work)
+    sh(f"git remote add origin {origin}", work)
+    sh("git push -q origin master", work)
+    r = run(work)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == []
 
 
 def test_ignores_branches_without_an_issue_number(remote_repo):
