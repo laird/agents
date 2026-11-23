@@ -776,7 +776,11 @@ generated export each took a tracking issue, a READY and a train slot),
 issue once per tip; a rebased or fast-forwarded tip with the same patches is not this, it is classified as any
 other and its note says which tip was taken),
 `conflict` (the merge-tree prefilter, or a real merge),
-`driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `unchecked`
+`driver-fault` / `generator-failed` (only when a `mergeFault` hook classifies the merge), `held` (`redMaster`: an open
+tracker issue carrying the configured label whose title starts with the configured prefix, a red integration branch,
+holds every READY that is not that issue's own fix (the branch its READY names), a lane-labelled item or a
+documents-only diff; the note and the status line name the red, a cycle tells the issue once per tip and red set,
+and the hold lifts the moment the red closes), `unchecked`
 (`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote),
 `foreign-branch` (the READY names a branch that EXISTS but does not belong to the issue, where `no-branch` names none that exists: no `issue-<n>` or `<n>-`
 in its name and no `stack:` line naming it with `#<n>`; never planned; a cycle tells the issue once per tip, naming
@@ -841,7 +845,8 @@ issue never reopens it (the FYI above left the landed issue closed once this hel
 { "train": { "readyLabels": ["ready-for-review"], "anyLabels": ["host:linux-a", "host:mac"],
              "readyStates": ["open", "working"], "readyTip": "named", "branchOwnership": "issue",
              "priorityLabels": ["P0","P1","P2","P3"],
-             "laneLabels": ["hotfix"], "size": 4, "staleDays": 0, "classifyLimit": 0,
+             "laneLabels": ["hotfix"], "redMaster": { "label": "P0", "titlePrefix": "Red master:" },
+             "size": 4, "staleDays": 0, "classifyLimit": 0,
              "notePattern": "^\\[coordinator\\]", "preflightPattern": "=== preflight \\(enqueue\\.sh\\): PASS ===",
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
              "regeneratedMergeDrivers": ["regenerate", "keep-ours"], "regeneratedAdvice": "Change the source and regenerate.",

@@ -1321,3 +1321,61 @@ def test_train_carries_reads_the_live_trains_members_and_the_cli_says_so(fx):
     os.close(lease)   # the runner died: the OS released the lease
     r = sh(sys.executable, str(CLI), "--repo", str(fx.work), "carried", "--branch", "feature/a", cwd=fx.work, check=False)
     assert (r.returncode, r.stdout.strip()) == (1, "not-carried")
+
+
+# ── the red-integration guard (`redMaster`, #7179) ──────────────────────────────────────
+RED = {"redMaster": {"label": "P0", "titlePrefix": "Red master:"}}
+
+
+def test_red_master_guard_holds_every_ready_but_the_reds_fix_a_lane_branch_and_a_documents_only_diff(tmp_path):
+    """While an open P0 issue titled `Red master:` exists, the queue admits only the red's own fix (the branch its READY
+    names), a lane-labelled item and a documents-only diff; every other READY is `held` with the red named, the status
+    line names the red, and the hold lifts the moment the red closes."""
+    fx = Fixture(tmp_path, RED)
+    fx.branch("fix/red", {"src/a.txt": "fixed\n"})
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    fx.branch("hotfix/urgent", {"src/c.txt": "urgent\n"})
+    fx.branch("docs/note", {"docs/note.md": "a note\n"})
+    fx.branch("mixed/note", {"docs/other.md": "a note\n", "src/d.txt": "code\n"})
+    red = fx.ready("Red master: tests/x.test.ts fails at abcdef12", "fix/red", labels=("ready-for-review", "P0", "bug"))
+    code = fx.ready("an ordinary change", "feature/code")
+    hot = fx.ready("a hotfix", "hotfix/urgent", labels=("ready-for-review", "hotfix"))
+    docs = fx.ready("a documents-only change", "docs/note")
+    mixed = fx.ready("docs beside code", "mixed/note")
+    q = fx.queue()
+    assert q[red]["state"] == "queue" and q[hot]["state"] == "queue" and q[docs]["state"] == "queue"
+    assert q[code]["state"] == "held" and q[mixed]["state"] == "held"
+    assert f"red master #{red} is open" in q[code]["note"] and "documents-only diff lands until it closes" in q[code]["note"]
+    assert q[code]["red"] == [red]
+    line = T.status_line(list(q.values()), when="W")
+    assert "2 held" in line and f"(#{code},#{mixed})" in line and f"red master #{red}" in line
+    rows, fault = fx.plan()
+    assert fault is None
+    assert sorted(r.split("\t")[1] for r in rows if r.startswith("train\t")) == sorted(str(n) for n in (red, hot, docs))
+    assert any(r.startswith(f"skip\t{code}\t") and "held:" in r for r in rows)
+    # the red closes: nothing is held any more
+    sh(sys.executable, str(ISSUES_FILE), "close", str(red), "--comment", "fixed", cwd=fx.work)
+    q = fx.queue()
+    assert q[code]["state"] == "queue" and q[mixed]["state"] == "queue" and q[code]["red"] == []
+    assert "red master" not in T.status_line(list(q.values()), when="W")
+
+
+def test_red_master_guard_is_off_without_the_key_and_refuses_a_malformed_one(tmp_path):
+    fx = Fixture(tmp_path)
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    fx.issue("Red master: something fails", labels=("P0",))
+    code = fx.ready("an ordinary change", "feature/code")
+    assert fx.queue()[code]["state"] == "queue"
+    (fx.work / ".autocoder.json").write_text(json.dumps({"issueSource": "file", "issueDir": str(fx.issues), "train": {"redMaster": {"label": "P0"}}}))
+    with pytest.raises(SystemExit, match="train.redMaster"):
+        T.load_config(fx.work)
+
+
+def test_red_master_guard_ignores_a_label_match_whose_title_is_not_the_prefix_and_a_closed_red(tmp_path):
+    fx = Fixture(tmp_path, RED)
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    fx.issue("P0 but not a red master", labels=("P0",))
+    closed = fx.issue("Red master: an old one", labels=("P0",))
+    sh(sys.executable, str(ISSUES_FILE), "close", str(closed), "--comment", "fixed", cwd=fx.work)
+    code = fx.ready("an ordinary change", "feature/code")
+    assert fx.queue()[code]["state"] == "queue"
