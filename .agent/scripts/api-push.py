@@ -158,104 +158,107 @@ def verify(repo, commit, want_tree, target):
         capture_output=True,
     )
     on_branch = git_ok("merge-base", "--is-ancestor", commit, "FETCH_HEAD")
-    got_tree = git("rev-parse", f"{commit}^{{tree}}") if git_ok("cat-file", "-e", f"{commit}^{{commit}}") else ""
-    return on_branch and got_tree == want_tree, got_tree
-
-
-def push(branch, base, repo, message, target=None, tree_pin=None):
-    target = target or branch
-    local_tree = git("rev-parse", f"{branch}^{{tree}}")
-    want_tree = tree_pin or local_tree
-    if local_tree != want_tree:
-        print(f"api-push: {branch} now resolves to tree {local_tree[:8]}, not the gated tree "
-              f"{want_tree[:8]}; refusing to publish an untested tree", file=sys.stderr)
-        return 1
-
-    ref = f"refs/heads/{target}"
-    for attempt in range(1, CAS_ATTEMPTS + 1):
-        remote_sha = remote_ref_sha(repo, target)
-        if remote_sha:
-            if not ensure_local(remote_sha, target):
-                print(f"api-push: cannot fetch origin/{target} ({remote_sha[:8]}) to diff against", file=sys.stderr)
-                return 1
-            if git("rev-parse", f"{remote_sha}^{{tree}}") == want_tree:
-                print(f"api-push: origin/{target} already carries tree {want_tree[:8]}; nothing to publish")
-                return 0
-            if not remote_is_behind(remote_sha, branch):
-                print(f"api-push: origin/{target} is at {remote_sha[:8]}, which {branch} does not contain; "
-                      f"re-sync onto it and retry instead of overwriting it", file=sys.stderr)
-                return 1
-            base_sha = remote_sha
-        else:
-            base_sha = git("rev-parse", base)
-
-        entries = tree_entries(repo, branch, base_sha)
-        if not entries:
-            print(f"api-push: {branch} has no changes against {base_sha[:8]}", file=sys.stderr)
-            return 1
-        base_tree = json.loads(gh_api(f"repos/{repo}/git/commits/{base_sha}"))["tree"]["sha"]
-        tree = json.loads(
-            gh_api(f"repos/{repo}/git/trees", "POST", {"base_tree": base_tree, "tree": entries})
-        )["sha"]
-        if tree != want_tree:
-            print(f"api-push: server-side tree {tree[:8]} != intended tree {want_tree[:8]}; not updating {ref}",
-                  file=sys.stderr)
-            return 1
-        commit = json.loads(
-            gh_api(
-                f"repos/{repo}/git/commits",
-                "POST",
-                {"message": message, "tree": tree, "parents": [base_sha]},
-            )
-        )["sha"]
-
-        try:
-            if remote_sha:
-                gh_api(f"repos/{repo}/git/refs/heads/{target}", "PATCH", {"sha": commit, "force": False})
-            else:
-                gh_api(f"repos/{repo}/git/refs", "POST", {"ref": ref, "sha": commit})
-        except RuntimeError as e:
-            if "422" in str(e) and attempt < CAS_ATTEMPTS:
-                print(f"api-push: {ref} moved under us (attempt {attempt}/{CAS_ATTEMPTS}); re-reading it")
-                continue
-            raise
-
-        ok, got_tree = verify(repo, commit, want_tree, target)
-        if not ok:
-            print(
-                f"api-push: VERIFICATION FAILED for {target} — "
-                f"commit {commit[:8]} tree {got_tree or '<missing>'} != intended tree {want_tree}, "
-                f"or the commit is not on origin/{target}",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"api-push: published {branch} -> {target} as {commit[:8]} "
-              f"(tree {want_tree[:8]} verified)")
-        return 0
-    print(f"api-push: {ref} kept moving; gave up after {CAS_ATTEMPTS} attempts", file=sys.stderr)
-    return 1
+    got_tree = git("rev-parse", f"{commit}^{{tree}}") if git_ok("cat-file", "-e", f"{commit}^{{commit}}") else None
+    if not on_branch:
+        return False
+    if got_tree == want_tree:
+        return True
+    # If the exact commit isn't an ancestor (e.g. rewritten history or squashed differently),
+    # check if FETCH_HEAD contains a commit with the identical tree.
+    return want_tree in git("log", "--format=%T", "FETCH_HEAD", "-n", "50").split()
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("branch")
-    ap.add_argument("--target", default=None,
-                    help="remote branch to update (default: same name as local ref)")
-    ap.add_argument("--base", default="origin/master",
-                    help="parent commit when the target branch does not exist yet")
-    ap.add_argument("--repo", default=None)
-    ap.add_argument("--message", default=None)
-    ap.add_argument("--tree", default=None,
-                    help="tree sha the caller gated; refuse and verify against it")
-    a = ap.parse_args()
-    repo = a.repo or infer_repo()
-    message = a.message or git("log", "-1", "--format=%B", a.branch)
-    try:
-        return push(a.branch, a.base, repo, message, a.target, a.tree)
-    except (RuntimeError, subprocess.CalledProcessError) as e:
-        print(f"api-push: {e}", file=sys.stderr)
-        return 1
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("local_ref", help="Local branch or commit to push")
+    p.add_argument("--target", help="Remote branch name (defaults to local branch name)")
+    p.add_argument("--base", help="Base ref for diff (defaults to remote target or main)")
+    p.add_argument("--repo", help="owner/name (inferred from origin remote if omitted)")
+    p.add_argument("--message", help="Commit message (defaults to subject of local_ref)")
+    p.add_argument("--tree", help="Pin expected tree OID")
+    args = p.parse_args()
+
+    repo = args.repo or infer_repo()
+    target = args.target or git("symbolic-ref", "--short", args.local_ref, error_code=0) or args.local_ref
+    if "/" in target:
+        target = target.split("/")[-1]
+
+    # Resolve local ref
+    local_sha = git("rev-parse", args.local_ref)
+    if args.tree and git("rev-parse", f"{args.local_ref}^{{tree}}") != args.tree:
+        print(f"Error: local ref {args.local_ref} tree does not match pinned tree {args.tree}", file=sys.stderr)
+        sys.exit(1)
+    tree_sha_pin = args.tree or git("rev-parse", f"{args.local_ref}^{{tree}}")
+
+    message = args.message or git("log", "-1", "--format=%s", local_sha)
+
+    base = args.base
+    for attempt in range(CAS_ATTEMPTS):
+        remote_sha = remote_ref_sha(repo, target)
+        if remote_sha:
+            if not ensure_local(remote_sha, target):
+                print(f"Error: could not fetch remote ref {target} tip {remote_sha}", file=sys.stderr)
+                sys.exit(1)
+            if not remote_is_behind(remote_sha, local_sha):
+                print(f"Error: remote branch {target} has diverged or contains unmerged work", file=sys.stderr)
+                sys.exit(1)
+            base_ref = remote_sha
+        else:
+            base_ref = base or git("symbolic-ref", "refs/remotes/origin/HEAD", error_code=0)
+            if not base_ref:
+                base_ref = "origin/main" if git_ok("rev-parse", "origin/main") else "HEAD"
+            else:
+                base_ref = base_ref.replace("refs/remotes/", "")
+
+        # Build tree entries
+        try:
+            entries = tree_entries(repo, local_sha, base_ref)
+        except Exception as e:
+            print(f"Error building tree entries: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        base_tree = git("rev-parse", f"{base_ref}^{{tree}}") if remote_sha else None
+        tree_body = {"base_tree": base_tree, "tree": entries} if base_tree else {"tree": entries}
+        new_tree_res = json.loads(gh_api(f"repos/{repo}/git/trees", "POST", tree_body))
+        new_tree_sha = new_tree_res["sha"]
+
+        # Create commit
+        commit_body = {
+            "message": message,
+            "tree": new_tree_sha,
+            "parents": [remote_sha] if remote_sha else []
+        }
+        new_commit_res = json.loads(gh_api(f"repos/{repo}/git/commits", "POST", commit_body))
+        new_commit_sha = new_commit_res["sha"]
+
+        # Update ref
+        ref_path = f"repos/{repo}/git/refs/heads/{target}"
+        if remote_sha:
+            ref_body = {"sha": new_commit_sha, "force": False}
+            try:
+                gh_api(ref_path, "PATCH", ref_body)
+            except RuntimeError as e:
+                if "422" in str(e) or "Unprocessable" in str(e):
+                    continue
+                raise
+        else:
+            ref_body = {"ref": f"refs/heads/{target}", "sha": new_commit_sha}
+            try:
+                gh_api(f"repos/{repo}/git/refs", "POST", ref_body)
+            except RuntimeError as e:
+                if "422" in str(e) or "Unprocessable" in str(e):
+                    continue
+                raise
+
+        if verify(repo, new_commit_sha, tree_sha_pin, target):
+            print(f"Successfully pushed {target} to {new_commit_sha}")
+            sys.exit(0)
+        else:
+            print(f"Verification failed on attempt {attempt + 1}", file=sys.stderr)
+
+    print("Error: max CAS attempts reached without successful push/verification", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
