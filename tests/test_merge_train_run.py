@@ -1032,6 +1032,29 @@ def test_the_daemon_tells_the_ready_age_of_what_it_launches(fx):
     assert any(re.search(r"1 launchable item\(s\): #\d+ \(READY \d+m ago\); launching a cycle", m) for m in said)
 
 
+def test_the_daemon_survives_a_tick_that_raises_and_ticks_again(fx):
+    """A tracker call that times out inside the cycle (a GitHub API i/o timeout in plan_queue) raised through
+    tick() and ended the daemon; nothing launched trains until a person noticed. The loop now logs the failure,
+    records it as `tick-failed`, sleeps the interval and ticks again."""
+    fx.members(1)
+    said, slept, runs = [], [], []
+
+    class Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, size=None):
+            runs.append(1)
+            raise RuntimeError("tracker call `issue_list --state working` exited 3: Post https://api/graphql: i/o timeout")
+
+    d = R.Daemon(fx.rc(), log=said.append, interval=5, max_ticks=2, sleep=slept.append, cycle=Boom)
+    assert d.loop() == 0                                             # two ticks, both raising, no traceback out of loop()
+    assert len(runs) == 2 and slept == [5]                           # it slept the interval between them, not after the last
+    assert sum("tick failed (RuntimeError" in m and "the daemon stays up" in m for m in said) == 2
+    rec = json.loads(d.record_path.read_text())
+    assert rec["verdict"] == "tick-failed" and rec["note"] == "RuntimeError"
+
+
 def test_the_cli_runs_a_daemon_tick_and_reports_pauses_stops_and_status(fx):
     fx.members(1)
     cwd = fx.work

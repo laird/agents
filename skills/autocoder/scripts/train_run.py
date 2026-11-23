@@ -1111,7 +1111,11 @@ class Daemon:
         return f"cycle:{code}" + (":planned" if planned else "")
 
     def loop(self):
-        """Exit 0 when stopped (the stop file, --once, --max-ticks), 1 when another daemon holds the lock."""
+        """Exit 0 when stopped (the stop file, --once, --max-ticks), 1 when another daemon holds the lock.
+        A tick that raises (a tracker call that timed out, a git fetch that failed inside the cycle) is logged and
+        recorded as `tick-failed`; the daemon sleeps the interval and ticks again. Only a stop ends it: on
+        2026-11-23 one GitHub API timeout inside plan_queue took the whole daemon down mid-cycle, and nothing
+        launched trains until a person noticed."""
         ok, holder = self.acquire()
         if not ok:
             self.log(f"a daemon already runs for this state dir ({holder}); one per state dir")
@@ -1121,7 +1125,18 @@ class Daemon:
         ticks = 0
         try:
             while True:
-                v = self.tick()
+                try:
+                    v = self.tick()
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as e:   # a tracker or git call that failed this tick (a GitHub API timeout) is not the daemon's end
+                    self.log(f"tick failed ({type(e).__name__}: {str(e)[:300]}); the daemon stays up, next tick in {self.interval}s")
+                    self._record("tick-failed", [], type(e).__name__)
+                    ticks += 1
+                    if self.once or (self.max_ticks and ticks >= self.max_ticks):
+                        return 0
+                    self.sleep(self.interval)
+                    continue
                 ticks += 1
                 if v == "stopped":
                     self.log("stop file seen; the daemon ends")
