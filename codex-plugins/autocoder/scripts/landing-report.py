@@ -347,6 +347,83 @@ def load_claims(path, repo_id=None):
     return sorted(out)
 
 
+def load_lifecycle_landings(path, repo_id=None):
+    """The lifecycle ledger's `landed` events (merge-to-integration.sh: one per landing, with the branch the gate
+    landed and the commit), as {issue: [(ts, branch, sha)]}. The branch names a hotfix lane landing (`hotfix/<n>`)
+    where the landing-timings rows carry no branch. Same repository rule as load_claims; a missing file is {}."""
+    out = defaultdict(list)
+    if not path or not Path(path).exists():
+        return out
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict) or e.get("event") != "landed" or not parse_ts(e.get("ts")):
+            continue
+        if repo_id and e.get("repo") and e.get("repo") != repo_id:
+            continue
+        try:
+            n = int(e.get("issue"))
+        except (TypeError, ValueError):
+            continue
+        d = e.get("detail") if isinstance(e.get("detail"), dict) else {}
+        out[n].append((parse_ts(e["ts"]), str(e.get("branch") or ""), str(d.get("sha") or "")))
+    for v in out.values():
+        v.sort()
+    return out
+
+
+HOTFIX_THRESHOLD_S = 15 * 60
+
+
+def hotfix_ready_to_landed(ev, lifecycle, since, until, label=None, labels_of=None, readies_of=None, threshold_s=HOTFIX_THRESHOLD_S):
+    """Per hotfix landing in the window: READY to landed, the lane's whole lead time (a hotfix is the change that
+    must not wait). A landing is a hotfix when a lifecycle event of the issue carries a `hotfix/` branch, or the
+    tracker says the issue carries `label` (labels_of(issue) -> set | None, None when the tracker was not asked).
+    The READY is the newest one before the landing: a READY comment naming the landed branch when readies_of(issue)
+    gives the tracker's READY comments as [(ts, text)], else the newest READY comment, else the newest `ready` row.
+    The landing is the lifecycle `landed` event's time (the push), else the landed row's. Over `threshold_s` is a
+    finding; the worst landing is named. Measures nothing for a hotfix with no READY before its landing."""
+    gaps, over, worst, hotfixes, unmeasured = [], [], None, 0, []
+    for issue, es in ev.items():
+        landed_rows = [t for t, e, r in es if e == "landed" and (since is None or t >= since) and (until is None or t < until)]
+        if not landed_rows:
+            continue
+        lt_row = max(landed_rows)
+        life = [(t, b, sha) for t, b, sha in lifecycle.get(issue, []) if until is None or t < until]
+        life_branches = {b for _, b, _ in life if b}
+        is_hotfix = any(b.startswith("hotfix/") for b in life_branches)
+        if not is_hotfix and labels_of is not None and label:
+            labels = labels_of(issue)
+            is_hotfix = bool(labels) and label in labels
+        if not is_hotfix:
+            continue
+        hotfixes += 1
+        near = [t for t, _, _ in life if abs((t - lt_row).total_seconds()) <= 3600]
+        lt = max(near) if near else lt_row
+        landed_branch = next((b for t, b, _ in reversed(life) if b and t == lt), "") or next((b for b in life_branches if b.startswith("hotfix/")), "")
+        ready_t = None
+        if readies_of is not None:
+            comments = [(t, text) for t, text in (readies_of(issue) or []) if t <= lt]
+            naming = [t for t, text in comments if landed_branch and landed_branch in text]
+            ready_t = max(naming) if naming else (max((t for t, _ in comments), default=None))
+        if ready_t is None:
+            rows = [t for t, e, r in es if e == "ready" and t <= lt]
+            ready_t = max(rows) if rows else None
+        if ready_t is None:
+            unmeasured.append(issue)
+            continue
+        gap = (lt - ready_t).total_seconds()
+        gaps.append(gap)
+        if gap > threshold_s:
+            over.append(issue)
+        if worst is None or gap > worst[0]:
+            worst = (gap, issue)
+    return {"ready_to_landed_s": dist(gaps), "hotfixes": hotfixes, "over_threshold": sorted(over), "threshold_s": threshold_s,
+            "worst": {"s": worst[0], "issue": worst[1]} if worst else None, "unmeasured": sorted(unmeasured)}
+
+
 def worker_idle_gaps(claims, ev, since, until):
     """Per worker, the gap from the READY of the issue it claimed last to its NEXT claim: the time a worker sat
     between banking one task and starting the next (a manager's dispatch it waited for, or nothing to pick).
@@ -428,7 +505,7 @@ def verdict_idle(verdicts, ev, since, until):
             "nudges": len(nudges), "nudged_idle_s_total": sum(idle_known) if idle_known else None}
 
 
-def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=None):
+def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=None, hotfix=None):
     def inwin(r):
         t = parse_ts(r["ts"])
         return (since is None or t >= since) and (until is None or t < until)
@@ -572,6 +649,9 @@ def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=No
         "ci": ci_res,
         "workers": worker_idle_gaps(claims or [], ev, since, until),
         "verdicts": verdict_idle(verdicts or {}, ev, since, until),
+        "hotfix": hotfix_ready_to_landed(ev, (hotfix or {}).get("lifecycle") or {}, since, until, label=(hotfix or {}).get("label"),
+                                         labels_of=(hotfix or {}).get("labels_of"), readies_of=(hotfix or {}).get("readies_of"),
+                                         threshold_s=(hotfix or {}).get("threshold_s") or HOTFIX_THRESHOLD_S),
     }
 
 
@@ -1140,6 +1220,22 @@ def verdict_idle_text(a):
     return f"p50 {human(d['p50'])}, p90 {human(d['p90'])}, max {human(d['max'])} (n={d['n']} over {v['workers']} workers){nudged}"
 
 
+def hotfix_text(a):
+    """A hotfix's READY to landed, median and worst, with the landings over the threshold (a finding), or why n/a."""
+    h = a.get("hotfix") or {"ready_to_landed_s": {"n": 0}, "hotfixes": 0, "over_threshold": [], "threshold_s": HOTFIX_THRESHOLD_S, "worst": None, "unmeasured": []}
+    d = h["ready_to_landed_s"]
+    limit = human(h["threshold_s"])
+    if not d["n"]:
+        why = ("no hotfix landed in the window" if not h["hotfixes"]
+               else f"{h['hotfixes']} hotfix landing(s) with no READY before the landing: " + ", ".join(f"#{i}" for i in h["unmeasured"]))
+        return f"n/a ({why}; a hotfix is a lifecycle `landed` event from a hotfix/ branch or an issue the tracker labels hotfix; over {limit} is a finding)"
+    worst = f"worst {human(h['worst']['s'])} (#{h['worst']['issue']})" if h.get("worst") else "worst n/a"
+    over = h["over_threshold"]
+    finding = (f"over {limit}: {len(over)} ({', '.join(f'#{i}' for i in over)}), a finding" if over else f"none over {limit}")
+    tail = f"; {len(h['unmeasured'])} with no READY before the landing: " + ", ".join(f"#{i}" for i in h["unmeasured"]) if h["unmeasured"] else ""
+    return f"median {human(d['p50'])}, {worst} (n={d['n']}; {finding}){tail}"
+
+
 def render_week(a):
     """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
     w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
@@ -1173,6 +1269,7 @@ def render_week(a):
     if "loop" in a:
         out += ["- Self-improvement loop:", "  - Findings: " + findings_text(a["loop"]["findings"]),
                 "  - Evals: " + evals_text(a["loop"]["evals"]), "  - Changes: " + changes_text(a["loop"]["changes"])]
+    out.append("- Hotfix READY to landed (the lane's lead time): " + hotfix_text(a))
     return out + [""]
 
 
@@ -1223,6 +1320,7 @@ def render(a, week=None, batches=False):
     out.append(f"- Landing to CI verdict: {ci_lag_text(a['ci'], with_max=True)}; {ci_red_text(a['ci'])}" + (f"; {ci_job_text(a['ci'])}" if ci_job_text(a['ci']) else ""))
     out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
     out.append("- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): " + verdict_idle_text(a))
+    out.append("- Hotfix READY to landed (the lane's lead time): " + hotfix_text(a))
     out += ["", "## Batches", "", f"- Batches: {b['count']}; landed changes: {a['landed']}",
             "- Size distribution (members: batches): " + (", ".join(f"{k}: {v}" for k, v in b["size_distribution"].items()) or "n/a"),
             f"- Assembly: " + ("n/a" if not b["assembly_s"]["n"] else f"p50 {human(b['assembly_s']['p50'])}, p90 {human(b['assembly_s']['p90'])}"),
@@ -1300,6 +1398,41 @@ def tracker_rows(repo, rules, ready_re, claim_re, limit, only=None):
 
     with ThreadPoolExecutor(8) as ex:
         return [r for part in ex.map(one, sorted(only)) for r in part]
+
+
+def tracker_issue_reader(repo, ready_re):
+    """One tracker read per issue asked, cached: its labels (a set, or None when the tracker could not answer) and its
+    READY comments as [(ts, head)] (the first 400 characters, where a READY names its branch). A tracker that is not
+    configured or fails is reported once and read as None, never as "no labels"."""
+    fns = HERE / "issue-fns.sh"
+    cache, said = {}, [False]
+
+    def fetch(n):
+        if n in cache:
+            return cache[n]
+        rc, out, err = sh(f'source "{fns}" && issue_get {int(n)}', repo)
+        if rc != 0:
+            if not said[0]:
+                print(f"landing-report: issue_get {n} failed (rc {rc}): {err.strip()[:200]}; hotfixes are read from the lifecycle ledger alone", file=sys.stderr)
+                said[0] = True
+            cache[n] = None
+            return None
+        try:
+            data = json.loads(out)
+        except json.JSONDecodeError:
+            cache[n] = None
+            return None
+        labels = {(l.get("name") if isinstance(l, dict) else str(l)) for l in (data.get("labels") or [])}
+        readies = []
+        for c in (data.get("comments") or []):
+            ts, body = parse_ts(c.get("createdAt") or c.get("created_at")), c.get("body") or ""
+            head = body.strip()[:400]
+            if ts and ready_re.search(head):
+                readies.append((ts, head))
+        cache[n] = {"labels": labels, "readies": readies}
+        return cache[n]
+
+    return {"labels_of": lambda n: (fetch(n) or {}).get("labels"), "readies_of": lambda n: (fetch(n) or {}).get("readies") or []}
 
 
 def git_rows(repo, integration, since, batch_re, skip_re):
@@ -1415,6 +1548,9 @@ def main(argv=None):
     p.add_argument("--eval-decisions", default=state_file("AUTOCODER_EVAL_DECISIONS", "eval-decisions.jsonl"), help="eval-decide.py's decision rows")
     p.add_argument("--issue-events", default=state_file("AUTOCODER_ISSUE_EVENTS", "issue-events.jsonl"),
                    help="the lifecycle ledger (issue-events-lib.sh): its `claimed` events name the worker, for the worker idle gap; its `verdict` and `verdict-nudged` events (worker-verdict-watchdog.sh, #7134) for the idle time after a verdict")
+    p.add_argument("--hotfix-label", default="hotfix", help="the tracker label that marks a hotfix landing (beside a lifecycle `landed` event from a hotfix/ branch); empty: the branch alone")
+    p.add_argument("--hotfix-threshold-s", type=int, default=HOTFIX_THRESHOLD_S, help="READY to landed above this is a finding on a hotfix (default 900: fifteen minutes)")
+    p.add_argument("--tracker", choices=("auto", "off"), default="auto", help="auto: ask the tracker once per hotfix candidate for its labels and READY comments; off: the ledgers alone")
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
     p.add_argument("--skip-subject-regex", default=r"(?i)\(mechanical\)|\(documents-only\)|^docs\(|^merge |^re-sync")
     p.add_argument("--ready-regex", default=r"^\W*(\[[^\]]*\]\s*)?(\w+:\s*)?READY\b")
@@ -1498,7 +1634,11 @@ def main(argv=None):
     # directory's id (a row naming another repository is dropped), everything under --all-repos.
     claims = load_claims(a.issue_events, None if a.all_repos else (a.repo_id or derived))
     watchdog = load_verdicts(a.issue_events, None if a.all_repos else (a.repo_id or derived))
-    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims, verdicts=watchdog)
+    lifecycle = load_lifecycle_landings(a.issue_events, None if a.all_repos else (a.repo_id or derived))
+    tracker = tracker_issue_reader(repo_dir, re.compile(a.ready_regex)) if a.tracker == "auto" and not a.all_repos else None
+    hotfix = {"lifecycle": lifecycle, "label": a.hotfix_label or None, "threshold_s": a.hotfix_threshold_s,
+              "labels_of": tracker["labels_of"] if tracker else None, "readies_of": tracker["readies_of"] if tracker else None}
+    res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims, verdicts=watchdog, hotfix=hotfix)
     if week:
         res["week"] = week
         if a.loop == "on":

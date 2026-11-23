@@ -1126,3 +1126,75 @@ def test_week_and_full_reports_show_the_idle_time_after_a_verdict_and_the_watchd
 def test_the_idle_time_after_a_verdict_is_na_and_says_why_without_verdict_events(log, tmp_path):
     out = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(tmp_path / "none.jsonl")).stdout
     assert "- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): n/a (no PASS verdict lifecycle event followed by a READY in the window; the verdict watchdog records them: pass --issue-events)" in out
+
+
+# ── hotfix READY to landed ───────────────────────────────────────────────────
+def lifecycle_event(issue, ts, event, branch, sha=None):
+    return {"v": 1, "ts": ts, "repo": None, "issue": issue, "worker": f"mgr-gate-{issue}", "branch": branch, "event": event,
+            "detail": ({"sha": sha, "integration": "master"} if sha else {})}
+
+
+def test_week_report_hotfix_ready_to_landed_from_the_lifecycle_branch(tmp_path):
+    """A hotfix is a lifecycle `landed` event from a hotfix/ branch; READY to landed is the lane's lead time, the
+    median and the worst are printed, a landing over the threshold is named as a finding, and a hotfix with no READY
+    before its landing is counted and named, never measured as zero. The tracker is off: the ledgers alone."""
+    rows = [
+        ch(10, "2026-11-02T10:00:00Z", "ready"), ch(10, "2026-11-02T10:08:00Z", "batched", batch="solo-10"), ch(10, "2026-11-02T10:08:00Z", "landed", batch="solo-10"),
+        ch(11, "2026-11-02T11:00:00Z", "ready"), ch(11, "2026-11-02T11:40:00Z", "landed", batch="solo-11"),
+        ch(12, "2026-11-02T12:00:00Z", "ready"), ch(12, "2026-11-02T12:05:00Z", "landed", batch="t1"),   # a train member, not a hotfix
+        ch(13, "2026-11-02T13:00:00Z", "landed", batch="solo-13"),                                         # a hotfix with no READY row
+        ba("solo-10", "2026-11-02T10:08:00Z", [10], 400, "green"), ba("solo-11", "2026-11-02T11:40:00Z", [11], 2300, "green"),
+        ba("t1", "2026-11-02T12:05:00Z", [12], 1800, "green"), ba("solo-13", "2026-11-02T13:00:00Z", [13], 500, "green"),
+    ]
+    log = tmp_path / "l.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(e) + "\n" for e in [
+        lifecycle_event(10, "2026-11-02T10:08:30Z", "landed", "hotfix/10", "a" * 40),
+        lifecycle_event(11, "2026-11-02T11:40:30Z", "landed", "hotfix/11", "b" * 40),
+        lifecycle_event(12, "2026-11-02T12:05:30Z", "landed", "train/x", "c" * 40),
+        lifecycle_event(13, "2026-11-02T13:00:30Z", "landed", "hotfix/13", "d" * 40),
+    ]))
+    r = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(events), "--tracker", "off", "--json")
+    assert r.returncode == 0, r.stderr
+    h = json.loads(r.stdout)["hotfix"]
+    assert h["hotfixes"] == 3 and h["ready_to_landed_s"]["n"] == 2
+    assert h["ready_to_landed_s"]["p50"] == pytest.approx((510 + 2430) / 2)   # 8m30s and 40m30s, to the lifecycle event's time
+    assert h["worst"] == {"s": 2430.0, "issue": 11} and h["over_threshold"] == [11] and h["unmeasured"] == [13]
+    assert h["threshold_s"] == 900
+    text = report("--log", str(log), "--week", "2026-11-02", "--issue-events", str(events), "--tracker", "off").stdout
+    line = next(l for l in text.splitlines() if l.startswith("- Hotfix READY to landed"))
+    assert "median 24.5m, worst 40.5m (#11) (n=2; over 15.0m: 1 (#11), a finding); 1 with no READY before the landing: #13" in line
+
+
+def test_week_report_hotfix_row_says_na_when_none_landed_and_is_absent_from_nothing(log):
+    text = report("--log", str(log), "--week", "2026-11-02").stdout
+    line = next(l for l in text.splitlines() if l.startswith("- Hotfix READY to landed"))
+    assert line.startswith("- Hotfix READY to landed (the lane's lead time): n/a (no hotfix landed in the window;")
+    assert "over 15.0m is a finding" in line
+
+
+def test_hotfix_measure_uses_the_tracker_label_and_the_ready_naming_the_landed_branch():
+    import importlib.util
+    from datetime import datetime, timezone
+    spec = importlib.util.spec_from_file_location("landing_report", REPORT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ts = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+    ev = {
+        # labelled hotfix on a feature branch: two READYs, the newest naming the landed branch is the one that counts
+        20: [(ts("2026-11-02T09:00:00Z"), "ready", {}), (ts("2026-11-02T09:50:00Z"), "landed", {})],
+        # a train member with no label: not a hotfix
+        21: [(ts("2026-11-02T09:00:00Z"), "ready", {}), (ts("2026-11-02T09:30:00Z"), "landed", {})],
+    }
+    lifecycle = {20: [(ts("2026-11-02T09:50:10Z"), "feature/issue-20-fix", "e" * 40)], 21: [(ts("2026-11-02T09:30:10Z"), "train/y", "f" * 40)]}
+    labels = {20: {"hotfix", "P0"}, 21: {"P2"}}
+    readies = {20: [(ts("2026-11-02T09:00:00Z"), "READY `feature/issue-20-old` @ 111"), (ts("2026-11-02T09:41:10Z"), "READY `feature/issue-20-fix` @ 222"), (ts("2026-11-02T09:45:00Z"), "READY `feature/issue-20-other` @ 333")]}
+    asked = []
+    h = mod.hotfix_ready_to_landed(ev, lifecycle, None, None, label="hotfix", labels_of=lambda n: (asked.append(n), labels.get(n))[1], readies_of=lambda n: readies.get(n, []))
+    assert sorted(asked) == [20, 21]
+    assert h["hotfixes"] == 1 and h["ready_to_landed_s"]["n"] == 1 and h["ready_to_landed_s"]["p50"] == 540.0   # 09:41:10 to 09:50:10
+    assert h["over_threshold"] == [] and h["worst"] == {"s": 540.0, "issue": 20}
+    # the tracker unreachable (labels None) and no hotfix/ branch: nothing is a hotfix, nothing is measured as one
+    h2 = mod.hotfix_ready_to_landed(ev, lifecycle, None, None, label="hotfix", labels_of=lambda n: None, readies_of=None)
+    assert h2["hotfixes"] == 0 and h2["ready_to_landed_s"]["n"] == 0
