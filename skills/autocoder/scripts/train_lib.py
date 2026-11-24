@@ -338,6 +338,12 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
                 repository's merge drivers honoured). A squash landing (one commit for a train of members,
                 or for a branch with merge commits) is proven only this way, and it survives later landings
                 that touch other hunks of the same files.
+    `drivers (ignored driver-owned: <paths>)`
+                merging tip into ref differs from ref (or conflicts) ONLY in paths a custom merge driver owns
+                (a regenerated file the landing rewrote, a stamp line a driver re-stamps), and tip changes at
+                least one path no driver owns. Every hunk of tip's own sources is in ref, and a driver-owned
+                file's re-merge is the driver's artefact, not evidence that the member is missing (#377). The
+                ignored paths are named so the close-out can be audited.
     `rows`      merging tip into ref changes nothing but the ORDER of lines inside files a merge driver
                 owns. A keyed-row driver writes the merged rows in an order it derives from the three
                 sides (the ancestor's rows first, then each side's additions), so a landing that went
@@ -360,14 +366,21 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
         return "patch"
     keep_ours = [x for d in cfg.regenerated_drivers for x in ("-c", f"merge.{d}.driver=true")]
     merged = git(cfg.repo, *keep_ours, "merge-tree", "--write-tree", "--no-messages", ref, tip)
-    if merged.returncode != 0:
+    if merged.returncode not in (0, 1):   # 1: the merge conflicts (the tree and the conflicted paths still print)
         return ""
-    merged_tree = merged.stdout.split("\n", 1)[0].strip()
+    lines = merged.stdout.split("\n")
+    merged_tree = lines[0].strip()
     ref_tree = git(cfg.repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip()
-    if merged_tree == ref_tree:
-        return "content"
-    if same_rows_in_driver_owned_paths(cfg, ref, ref_tree, merged_tree):
-        return "rows"
+    if merged.returncode == 0:
+        if merged_tree == ref_tree:
+            return "content"
+        if same_rows_in_driver_owned_paths(cfg, ref, ref_tree, merged_tree):
+            return "rows"
+    conflicted = {ln.split("\t", 1)[1] for ln in lines[1:] if "\t" in ln}
+    ignored = differs_only_in_driver_owned_paths(cfg, ref, tip, ref_tree, merged_tree, conflicted)
+    if ignored:
+        shown = ", ".join(ignored[:5]) + (f" and {len(ignored) - 5} more" if len(ignored) > 5 else "")
+        return f"drivers (ignored driver-owned: {shown})"
     return ""
 
 
@@ -408,6 +421,29 @@ def same_rows_in_driver_owned_paths(cfg: Config, ref, ref_tree, merged_tree) -> 
         if _line_counts(cfg, f"{ref_tree}:{p}") != _line_counts(cfg, f"{merged_tree}:{p}"):
             return False
     return True
+
+
+def differs_only_in_driver_owned_paths(cfg: Config, ref, tip, ref_tree, merged_tree, conflicted=()):
+    """The sorted paths in which re-merging <tip> into <ref> differs from <ref> (<merged_tree> against
+    <ref_tree>, plus the merge's <conflicted> paths) when every one of them is owned by a custom merge driver
+    (its `merge` attribute in <ref>'s tree is not one of git's own) and <tip> changes at least one path no
+    such driver owns; [] otherwise. The second condition is what makes this a proof: a member whose only
+    changes are driver-owned has nothing outside them that could show it landed."""
+    diff = git(cfg.repo, "diff", "--name-only", "--no-renames", "-z", ref_tree, merged_tree)
+    if diff.returncode != 0:
+        return []
+    paths = sorted({p for p in diff.stdout.split("\0") if p} | set(conflicted))
+    if not paths:
+        return []
+    base = git(cfg.repo, "merge-base", ref, tip).stdout.strip()
+    if not base:
+        return []
+    own = [p for p in git(cfg.repo, "diff", "--name-only", "--no-renames", "-z", base, tip).stdout.split("\0") if p]
+    drivers = merge_driver_attrs(cfg, ref, sorted(set(paths) | set(own)))
+    owned = lambda p: drivers.get(p, "") not in BUILTIN_MERGE_DRIVERS
+    if not all(owned(p) for p in paths) or all(owned(p) for p in own):
+        return []
+    return paths
 
 
 def _line_counts(cfg: Config, spec):

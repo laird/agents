@@ -465,9 +465,64 @@ def test_landing_proof_keeps_the_landed_copy_of_a_regenerated_path(tmp_path):
     assert cfg.regenerated_drivers == ["regen"]
     assert T.landing_proof(cfg, "origin/feature/member") == "content"
     import dataclasses
-    assert T.landing_proof(dataclasses.replace(cfg, regenerated_drivers=[]), "origin/feature/member") == ""
+    # without the setting the probe runs the generator and its copy differs, but only in gen.txt, a path the
+    # driver owns, and the member's source is there: proven by its sources, the ignored path named (#377)
+    unset = dataclasses.replace(cfg, regenerated_drivers=[])
+    assert T.landing_proof(unset, "origin/feature/member") == "drivers (ignored driver-owned: gen.txt)"
     fx.commit_on("master", {"src.txt": "1\n"}, "the source change is reverted")
     assert T.landing_proof(cfg, "origin/feature/member") == ""   # the source is what proves it
+    assert T.landing_proof(unset, "origin/feature/member") == ""
+
+
+STAMP_CONFLICT_DRIVER = "#!/bin/sh\nexit 1\n"   # a re-stamp driver that gives up when both sides changed the stamp
+
+
+def stamped_member(tmp_path, keep_source=True):
+    """#377's train: a member changes a source file and a documentation page whose stamp line a custom driver
+    owns; the landing carries the source change and a DIFFERENT stamp (re-stamped on the assembled tree), so
+    re-merging the member conflicts in the page and nowhere else. `keep_source=False` lands the page only."""
+    fx = Fixture(tmp_path)
+    drv = tmp_path / "stamp.sh"
+    drv.write_text(STAMP_CONFLICT_DRIVER)
+    drv.chmod(0o755)
+    sh("git", "config", "merge.stamp.driver", f"{drv} %O %A %B", cwd=fx.work)
+    attrs = (fx.work / ".gitattributes").read_text()
+    fx.commit_on("master", {".gitattributes": attrs + "docs/page.md merge=stamp\n", "src.ts": "export const a = 1;\n",
+                            "docs/page.md": "Verified against sources: v1\n"}, "a stamped page")
+    fx.branch("feature/member", {"src.ts": "export const a = 1;\nexport const b = 2;\n"})
+    fx.commit_on("feature/member", {"docs/page.md": "Verified against sources: v2 (the branch's stamp)\n"}, "re-stamp on the branch")
+    landed_src = "export const a = 1;\nexport const b = 2;\n" if keep_source else "export const a = 1;\n"
+    fx.commit_on("master", {"src.ts": landed_src, "docs/page.md": "Verified against sources: v2 (re-stamped at the landing)\n"},
+                 "train (squashed), re-stamped on the assembled tree")
+    return fx
+
+
+def test_landing_proof_ignores_a_conflict_confined_to_a_driver_owned_path(tmp_path):
+    """#377: every line the member added to its sources is in the landed tree; the re-merge conflicts only in
+    the page a custom driver re-stamps. The member landed, and the proof names the path it ignored."""
+    fx = stamped_member(tmp_path)
+    r = sh("git", "merge-tree", "--write-tree", "--no-messages", "origin/master", "origin/feature/member", cwd=fx.work, check=False)
+    assert r.returncode == 1 and "docs/page.md" in r.stdout   # the case the issue saw: a conflict in the stamped page
+    proof = T.landing_proof(fx.cfg(), "origin/feature/member")
+    assert proof == "drivers (ignored driver-owned: docs/page.md)"
+    n = fx.ready("member", "feature/member")
+    q = fx.queue()
+    assert q[n]["state"] == "on-master" and "docs/page.md" in q[n]["note"]
+
+
+def test_landing_proof_refuses_a_member_whose_source_is_missing_beside_a_driver_owned_conflict(tmp_path):
+    fx = stamped_member(tmp_path, keep_source=False)
+    assert T.landing_proof(fx.cfg(), "origin/feature/member") == ""
+    n = fx.ready("member", "feature/member")
+    assert fx.queue()[n]["state"] != "on-master"   # its source is not there (it conflicts in the page, so `conflict`)
+
+
+def test_landing_proof_never_proves_a_member_that_changes_only_driver_owned_paths(tmp_path):
+    """Nothing outside the driver-owned page could show such a member landed, so a stamp-only member whose
+    re-merge conflicts in the page is not proven."""
+    fx = stamped_member(tmp_path)
+    fx.branch("feature/stamp-only", {"docs/page.md": "Verified against sources: v3\n"})
+    assert T.landing_proof(fx.cfg(), "origin/feature/stamp-only") == ""
 
 
 def test_queue_reads_a_squash_landed_branch_as_on_master_and_a_planner_never_retakes_it(fx):

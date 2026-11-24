@@ -8,6 +8,15 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- The merge train's landing proof no longer reports a member as not landed when
+  re-merging it onto the landed commit differs only in files a custom merge driver
+  owns, such as a regenerated file or a page whose stamp line a driver re-stamps
+  (#377). Before, such a member was left in the queue and its owner was asked to
+  rebase work that had already landed. The proof now closes the member when every
+  difference or conflict is in a driver-owned path and the member also changes at
+  least one path no driver owns. The close-out line names the ignored paths:
+  `landing proof: drivers (ignored driver-owned: <paths>)`.
+
 - The merge job no longer blames a change for a red the integration branch fixed
   while the change's gate was running (#375). When the integrated tree failed, the
   job gated `origin/<integration>` alone to decide whose failure it was, but it used
