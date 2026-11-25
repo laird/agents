@@ -24,6 +24,12 @@ once (Version Management in `docs/maintaining.md`).
   the cases before they are committed. `eval-run.py` runs each case against a worker in a fresh
   sandbox repository with a file-backend issue, grades the attempt's trace, and records pass or
   fail per harness commit.
+- The weekly landing report shows the self-improvement loop (#395, slice 5).
+  `landing-report.py --week` ends "Week in numbers" with the week's trace findings (classes,
+  traces covered, top three), its eval runs per split and its harness-change decisions. A missing
+  script or file reads n/a. `--loop off` drops the block. `eval-decide.py` (slice 4) accepts,
+  rejects or calls inconclusive one harness change from its dev and held-out eval results, and
+  records each decision for the week page.
 
 ### Fixed
 

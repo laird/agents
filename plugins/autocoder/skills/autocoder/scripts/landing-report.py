@@ -9,7 +9,8 @@ merge-events.jsonl, so a project can reproduce its baseline.
   landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
                     [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos] [--train-gate-issue N]
                     [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
-                    [--issue-events PATH] [--history [--integration BRANCH] [--merge-events PATH]
+                    [--issue-events PATH] [--merge-events PATH] [--loop on|off] [--eval-results PATH] [--eval-decisions PATH]
+                    [--history [--integration BRANCH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
                                [--rules JSON] [--export-rows PATH] [--limit N]]
 
@@ -45,6 +46,15 @@ A RE-GATE is a batch that gates again a change an earlier, non-green batch of th
 gated (the same members after an infrastructure red, the halves of a bisection after a red): its
 reason is that earlier batch's verdict and cause, so the gate-minutes a red costs beyond its own
 run are visible.
+
+THE SELF-IMPROVEMENT LOOP on the week page (#395): a harness change is kept only when its evaluations
+improve, and the week page is where a reader sees whether the loop ran and what it kept. "Week in
+numbers" ends with three figures. Findings: trace-build.py over the same ledgers this report reads
+(`--log`, `--issue-events`, `--merge-events`), for attempts started in the week, then analyze-traces.py
+--json: the finding classes, the traces they cover and the top three. Evals: the rows of `--eval-results`
+(the eval runner's) dated in the week, per split, passes of runs over distinct cases. Changes: the rows of
+`--eval-decisions` (eval-decide.py's) dated in the week, accepted, rejected and inconclusive, each with
+the findings it names. A missing script or file reads n/a, never 0; `--loop off` drops the block.
 
 LANDING TO CI VERDICT. The gate is not the last word on a landing: the integration branch's own CI
 runs on the landed commit, and when its runners queue, a red surfaces hours after the landing while
@@ -82,6 +92,7 @@ import re
 import statistics
 import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -279,17 +290,16 @@ def one_repo(rows, repo_id, derived, log=lambda m: print(m, file=sys.stderr)):
     return kept
 
 
+def state_file(env_var, name):
+    """The writer's path for a ledger: its environment override, else the file under ${XDG_STATE_HOME:-~/.local/state}/autocoder."""
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "autocoder", name)
+
+
 def default_log():
-    env = os.environ.get("AUTOCODER_LANDING_TIMINGS")
-    if env:
-        return env
-    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return os.path.join(state, "autocoder", "landing-timings.jsonl")
-
-
-def default_issue_events():
-    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return os.path.join(state, "autocoder", "issue-events.jsonl")
+    return state_file("AUTOCODER_LANDING_TIMINGS", "landing-timings.jsonl")
 
 
 # ── analysis ───────────────────────────────────────────────────────────────
@@ -1004,6 +1014,101 @@ def batch_outcomes(ev, batches):
     return rows, {"count": sum(d["n"] for d in by.values()), "gate_s": sum(d["s"] for d in by.values()), "by": by}
 
 
+# ── the self-improvement loop (week page) ─────────────────────────────────
+SPLIT_LABELS = (("dev", "dev"), ("heldout", "held-out"))
+DECISIONS = ("accept", "reject", "inconclusive")
+
+
+def loop_findings(ledgers, since, until, repo_id):
+    """The analyst's findings over the week's attempts: {classes, traces (covered), corpus, top: [{id, key, count}]},
+    or {na: reason} when the trace tooling is missing or fails."""
+    build, analyst = HERE / "trace-build.py", HERE / "analyze-traces.py"
+    if not build.is_file() or not analyst.is_file():
+        return {"na": "trace tooling not installed"}
+    with tempfile.TemporaryDirectory() as tmp:
+        traces = Path(tmp) / "traces.jsonl"
+        steps = (("trace-build", [build, *(x for name, path in ledgers.items() for x in (f"--{name}", path)),
+                                  "--out", traces, "--since", iso(since), "--until", iso(until), *(["--repo-id", repo_id] if repo_id else [])]),
+                 ("analyze-traces", [analyst, "--traces", traces, "--json"]))
+        for name, argv in steps:
+            r = subprocess.run([sys.executable, *map(str, argv)], capture_output=True, text=True)
+            if r.returncode != 0:
+                return {"na": f"{name} failed: " + (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1][:200]}
+    try:
+        report = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {"na": "analyze-traces printed no JSON"}
+    findings = report.get("findings") or []
+    return {"classes": len(findings), "traces": len({t for f in findings for t in f.get("traces") or []}),
+            "corpus": report.get("corpus"), "top": [{"id": f["id"], "key": f.get("key"), "count": f["count"]} for f in findings[:3]]}
+
+
+def week_rows(path, since, until):
+    """The JSON rows of `path` whose `ts` is in [since, until), or None when the file is missing."""
+    if not Path(path).is_file():
+        return None
+    rows = []
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = parse_ts(r.get("ts")) if isinstance(r, dict) else None
+        if t and since <= t < until:
+            rows.append(r)
+    return rows
+
+
+def loop_evals(path, since, until):
+    """Per split, the week's eval runs: {dev: {passes, runs, cases} | None, heldout: ...}, or {na: reason}."""
+    rows = week_rows(path, since, until)
+    if rows is None:
+        return {"na": "no eval results file"}
+    if not rows:
+        return {"na": "no eval run in the week"}
+    out = {}
+    for split, _ in SPLIT_LABELS:
+        mine = [r for r in rows if r.get("split") == split]
+        out[split] = {"passes": sum(r.get("pass") is True for r in mine), "runs": len(mine),
+                      "cases": len({r.get("case") for r in mine})} if mine else None
+    return out
+
+
+def loop_changes(path, since, until):
+    """The week's harness-change decisions: {accept|reject|inconclusive: {n, findings}}, or {na: reason}."""
+    rows = week_rows(path, since, until)
+    if rows is None:
+        return {"na": "no eval decisions file"}
+    out = {d: {"n": 0, "findings": []} for d in DECISIONS}
+    for r in rows:
+        d = r.get("decision") if r.get("decision") in DECISIONS else ("accept" if r.get("accepted") is True else "reject")
+        out[d]["n"] += 1
+        if r.get("finding") and r["finding"] not in out[d]["findings"]:
+            out[d]["findings"].append(r["finding"])
+    return out
+
+
+def findings_text(f):
+    if "na" in f:
+        return f"n/a ({f['na']})"
+    top = "; ".join(f"{x['id']}: {x['key']}, {x['count']}" if x["key"] is not None else f"{x['id']}, {x['count']}" for x in f["top"])
+    return f"{f['classes']} class{'es' if f['classes'] != 1 else ''} covering {f['traces']} of {f['corpus']} traces" + (f"; top {top}" if top else "")
+
+
+def evals_text(e):
+    if "na" in e:
+        return f"n/a ({e['na']})"
+    return "; ".join(f"{label} n/a" if e[split] is None else f"{label} {e[split]['passes']}/{e[split]['runs']} passing over {e[split]['cases']} case{'s' if e[split]['cases'] != 1 else ''}"
+                     for split, label in SPLIT_LABELS)
+
+
+def changes_text(c):
+    if "na" in c:
+        return f"n/a ({c['na']})"
+    return "; ".join(f"{label} {c[d]['n']}" + (f" ({', '.join(c[d]['findings'])})" if c[d]["findings"] else "")
+                     for d, label in zip(DECISIONS, ("accepted", "rejected", "inconclusive")))
+
+
 # ── markdown ───────────────────────────────────────────────────────────────
 def ready_to_launch_text(t):
     """The READY-to-launch gap, or why it is n/a: a ledger written before the `launched` event existed carries none."""
@@ -1065,6 +1170,9 @@ def render_week(a):
         out.append("- Re-gates: 0")
     out.append("- Worker idle gap (READY of the previous issue to the next claim): " + idle_gap_text(a))
     out.append("- Worker idle after a verdict (a PASS pre-check verdict to the issue's READY): " + verdict_idle_text(a))
+    if "loop" in a:
+        out += ["- Self-improvement loop:", "  - Findings: " + findings_text(a["loop"]["findings"]),
+                "  - Evals: " + evals_text(a["loop"]["evals"]), "  - Changes: " + changes_text(a["loop"]["changes"])]
     return out + [""]
 
 
@@ -1300,8 +1408,12 @@ def main(argv=None):
     p.add_argument("--ci-jobs-cmd", default=os.environ.get("AUTOCODER_CI_JOBS_CMD") or None,
                    help="a command given RUN_ID that prints the run's jobs as a JSON array, for the job that bounds the verdict (default: gh api in --repo)")
     p.add_argument("--ci-workflow", action="append", default=[], help="judge only this workflow name (repeatable; default: `ciWorkflows` of the repository's .autocoder.json, else every run on the branch)")
-    p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"))
-    p.add_argument("--issue-events", default=os.environ.get("AUTOCODER_ISSUE_EVENTS") or default_issue_events(),
+    p.add_argument("--merge-events", default=os.environ.get("AUTOCODER_MERGE_EVENTS"),
+                   help="the merge-attempt ledger: --history reads it when given; the week's traces read it (default: the writer's path)")
+    p.add_argument("--loop", choices=("on", "off"), default="on", help="--week: the self-improvement loop's figures (findings, evals, changes)")
+    p.add_argument("--eval-results", default=state_file("AUTOCODER_EVAL_RESULTS", "eval-results.jsonl"), help="the eval runner's result rows")
+    p.add_argument("--eval-decisions", default=state_file("AUTOCODER_EVAL_DECISIONS", "eval-decisions.jsonl"), help="eval-decide.py's decision rows")
+    p.add_argument("--issue-events", default=state_file("AUTOCODER_ISSUE_EVENTS", "issue-events.jsonl"),
                    help="the lifecycle ledger (issue-events-lib.sh): its `claimed` events name the worker, for the worker idle gap; its `verdict` and `verdict-nudged` events (worker-verdict-watchdog.sh, #7134) for the idle time after a verdict")
     p.add_argument("--batch-subject-regex", default=r"(?i)\b(?:train|batch)/([A-Za-z0-9._-]+):\s*#(\d+)")
     p.add_argument("--skip-subject-regex", default=r"(?i)\(mechanical\)|\(documents-only\)|^docs\(|^merge |^re-sync")
@@ -1389,6 +1501,12 @@ def main(argv=None):
     res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims, verdicts=watchdog)
     if week:
         res["week"] = week
+        if a.loop == "on":
+            ledgers = {"landing-timings": a.log or default_log(), "issue-events": a.issue_events,
+                       "merge-events": a.merge_events or state_file("AUTOCODER_MERGE_EVENTS", "merge-events.jsonl")}
+            res["loop"] = {"findings": loop_findings(ledgers, since, until, None if a.all_repos else (a.repo_id or row_repo)),
+                           "evals": loop_evals(a.eval_results, since, until),
+                           "changes": loop_changes(a.eval_decisions, since, until)}
     sys.stdout.write(json.dumps(res, indent=1) + "\n" if a.json else render(res, week=week, batches=a.batches))
     return 0
 

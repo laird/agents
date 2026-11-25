@@ -25,14 +25,15 @@ _pel_mk() { mktemp "${TMPDIR:-/tmp}/$1.XXXXXX" 2>/dev/null || mktemp "/tmp/$1.XX
 [ -n "${AUTOCODER_EVAL_RESULTS:-}" ] || AUTOCODER_EVAL_RESULTS=$(_pel_mk test-eval-results)
 # Evaluation cases are a directory, written under the repository root by default (#395).
 [ -n "${AUTOCODER_EVAL_CASES:-}" ] || AUTOCODER_EVAL_CASES=$(mktemp -d "${TMPDIR:-/tmp}/test-eval-cases.XXXXXX" 2>/dev/null || mktemp -d "/tmp/test-eval-cases.XXXXXX")
+[ -n "${AUTOCODER_EVAL_DECISIONS:-}" ] || AUTOCODER_EVAL_DECISIONS=$(_pel_mk test-eval-decisions)
 unset -f _pel_mk
 if [ -z "${AUTOCODER_ISSUE_EVENTS:-}" ] || [ -z "${AUTOCODER_MERGE_EVENTS:-}" ] || [ -z "${AUTOCODER_LANDING_TIMINGS:-}" ] || [ -z "${AUTOCODER_TRACES:-}" ] \
-   || [ -z "${AUTOCODER_EVAL_RESULTS:-}" ] || [ -z "${AUTOCODER_EVAL_CASES:-}" ]; then
+   || [ -z "${AUTOCODER_EVAL_RESULTS:-}" ] || [ -z "${AUTOCODER_EVAL_CASES:-}" ] || [ -z "${AUTOCODER_EVAL_DECISIONS:-}" ]; then
   echo "private-event-logs.sh: cannot create a private event log; refusing to run against the real one" >&2
   exit 1
 fi
 export AUTOCODER_ISSUE_EVENTS AUTOCODER_MERGE_EVENTS AUTOCODER_LANDING_TIMINGS AUTOCODER_TRACES \
-       AUTOCODER_EVAL_RESULTS AUTOCODER_EVAL_CASES
+       AUTOCODER_EVAL_RESULTS AUTOCODER_EVAL_CASES AUTOCODER_EVAL_DECISIONS
 
 # The merge job's context variables (#327), for a test run on its own from inside a
 # merge job's environment; run-shell-suite.sh drops them for the whole suite too.
