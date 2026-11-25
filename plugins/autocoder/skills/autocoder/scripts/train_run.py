@@ -1157,7 +1157,9 @@ class Daemon:
             last = 0.0
         if time.time() - last < self.rc.tick_cmd_every:
             return
-        stamp.write_text(f"{time.time():.0f}")
+        # The stamp keeps the full clock: rounded to a second it could read up to half a second in the
+        # future, and an interval of 0 then skipped a run on a fast host (CI, 2026-11-25).
+        stamp.write_text(f"{time.time():.3f}")
         t0 = time.time()
         try:
             r = subprocess.run(["bash", "-c", cmd], cwd=str(self.cfg.repo), capture_output=True, text=True, timeout=self.rc.tick_cmd_timeout)
