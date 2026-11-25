@@ -317,14 +317,47 @@ author never to open `heldout/` again. Slice 4's fix-proposing step runs in a wo
 Commands: `/author-evals [findings.json]` (run the analyst, scaffold a dev and a held-out case per
 top finding, write each task and seed, `check`, commit) and `/run-evals [dev|heldout|all]`.
 
-## Slices 4 and 5, in outline
+## Slice 4: one harness change at a time
 
-Slice 4, `/propose-fix <case-or-finding>`: in a worktree of the plugin with `heldout/` removed, the
-agent proposes ONE harness change for the finding (a protocol step, a script, a prompt), runs the
-dev cases before and after, and only then the runner runs the held-out cases; the change is kept
-when both improve and the result is recorded on the finding (`eval-results.jsonl` rows carry the
-two `harness.sha`s). Slice 5 adds to `landing-report.py --week`: findings open (the analyst's
-count for the week), evals passing by split, changes accepted.
+`/propose-fix <finding-id[:key] | case-id>` is a command protocol with one small script.
+
+1. The agent works in a worktree of the plugin checkout with `heldout/` removed from the cases
+   directory, so the proposal never sees the held-out cases.
+2. It reads the finding (from the analyst's JSON), the rules it cites in `BEHAVIOR.md`, the dev
+   cases for it, and the harness surface the finding names, and makes ONE change: a protocol step,
+   a script, a prompt. One change, so the evaluation attributes the effect.
+3. `eval-run.py --split dev` runs before the change (baseline, `harness.sha` = the worktree's base)
+   and after it (`harness.sha` = the proposal commit), the same `--repeat`.
+4. Only then the runner, not the agent, runs `--split heldout` on both shas.
+5. `eval-decide.py --finding F --before SHA --after SHA [--results PATH] [--decisions PATH]` reads
+   the result rows of the two shas, compares pass rates per split, and prints `accept` when the dev
+   pass rate rose and the held-out pass rate did not fall (and rose when it was below 1), else
+   `reject` with the reason; it appends one row to
+   `${AUTOCODER_EVAL_DECISIONS:-$XDG_STATE_HOME/autocoder/eval-decisions.jsonl}`:
+   `{ts, finding, before, after, dev: {before: [pass, runs], after: [pass, runs]}, heldout: {...},
+   accepted: bool, reason}`. Equal pass rates with fewer tool calls is `accept` too (the post's second
+   signal); fewer runs than `--min-runs` (default 2 per case) is `inconclusive`, never `accept`.
+6. On `accept` the agent opens the plugin PR with the decision row in its body; on `reject` it
+   re-runs the analyst on the after-traces (`eval-run.py --keep` roots hold them) and may refine
+   once; a second reject stops and records it.
+
+## Slice 5: the loop's numbers on the week page
+
+`landing-report.py --week` gains a block "Self-improvement loop" in "Week in numbers" (and
+`loop` in the JSON):
+
+- **Findings**: the report runs `trace-build.py --out <tmp> --since <week start> --until <week end>`
+  over the same ledgers it reads and `analyze-traces.py --traces <tmp> --json`, and prints the
+  number of finding classes, the traces they cover and the top three (`id: key, count`). `--loop off`
+  skips the block; a missing script prints `n/a (trace tooling not installed)`, never 0.
+- **Evals**: rows of `eval-results.jsonl` whose `ts` is in the week, per split: passes of runs and
+  distinct cases (`dev 12/16 passing over 4 cases; held-out 5/8 over 2`), `n/a` when no row.
+- **Changes**: rows of `eval-decisions.jsonl` in the week: accepted, rejected, inconclusive, each
+  with the findings they name.
+
+The paths follow the writers' defaults and environment overrides (`AUTOCODER_TRACES`,
+`AUTOCODER_EVAL_RESULTS`, `AUTOCODER_EVAL_DECISIONS`), with `--eval-results` and `--eval-decisions`
+flags for a copy read elsewhere. The test prelude already privatises them.
 
 ## Changes accepted during implementation
 
