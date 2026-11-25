@@ -18,6 +18,12 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- `fix-loop-gate.sh` no longer claims an issue that waits for the merge train (#405). With a
+  `train` section in `.autocoder.json`, an issue carrying one of `train.readyLabels` (default
+  `ready-for-review`) is skipped, and the gate logs `ready (train): N` when it skips any. Before,
+  the gate claimed such an issue every tick and the claim was released seconds later. Repositories
+  without a `train` section see no change.
+
 - `claim-issue.sh` releases visibly when it refuses an issue over a stale start comment (#402).
   A work-started comment with no release after it counts in every later claim window, so the
   refusal, which dropped the `working` label and posted nothing, left the window open: every
