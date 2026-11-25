@@ -6,6 +6,14 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Added
+
+- `/analyze-traces` (#395, slices 1 and 2): `trace-build.py` compiles one trace per issue
+  attempt from the issue, merge, landing and gate ledgers, the worker transcripts and the review
+  records; `BEHAVIOR.md` states the fix protocol's rules with stable ids; `analyze-traces.py`
+  runs a registry of classifiers citing those rules and writes the failures that repeat, with an
+  optional judge (off by default) for rules only a reader can check.
+
 ### Fixed
 
 - The merge train's landing proof no longer reports a member as not landed when
