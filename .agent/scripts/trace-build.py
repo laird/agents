@@ -9,19 +9,32 @@ WHY THIS EXISTS:
   attempts could not be named. This joins them, read-only, into the trace schema of
   docs/specs/2026-11-25-failure-traces-design.md; analyze-traces.py reads the result.
 
-ATTEMPTS: one `claimed` of one (repo, issue), up to the next `claimed` of the same (repo,
-  issue). Events before any claim (a rotated ledger, an older writer) open an implicit attempt
-  with worker and branch null. A trace never mixes repositories. gate.jsonl names no
-  repository, so a tick joins by issue number and time alone.
+ATTEMPTS: one worker's claim of one (repo, issue), up to the next attempt's claim. issue_claim
+  writes `claimed` and the worker's readback writes it again seconds later, so a `claimed` opens
+  an attempt only when none is open, the open one has ended (a landed, escalated or released
+  row since it started) or another worker wrote it and read it back within two minutes;
+  otherwise it is a step of the open attempt. Another worker's claim with no readback lost the
+  claim race: fix-loop-gate.sh moves on after a lost race and writes nothing more.
+  Events before any claim (a rotated ledger, an older writer) open an implicit attempt with
+  worker and branch null. A trace never mixes repositories. gate.jsonl names no repository, so
+  a tick joins by issue number and time alone.
+
+TERMINALS: the merge train lands most work, recording it only as a landing-timings `landed`
+  change row, so that row is a terminal `landed` step like the lifecycle one; `ready`,
+  `launched`, `batched` and `returned` rows are steps too. A `released` after a landing is the
+  label cleanup and leaves the outcome `landed`. The train's gate issue (`train.gateIssue` in the
+  main worktree's .autocoder.json, or --train-gate-issue) carries claims and no work, so its
+  traces are dropped.
 
 JOINS: a gate starts from each gate-end step and takes the detail of the merge-events attempt
   row with the same attempt number in the window; a merge row with no gate-end is a gate of its
-  own. landing-timings rows join by (repo, issue) and window. A transcript joins by the issue in
-  its name and a time: its first `timestamp`/`ts` field (stream-json from `claude -p` has none),
-  else the name's HHMMSS, local time as claude-worker-loop.sh's `date +%H%M%S` writes it, on
-  the day nearest the attempt's start, else its mtime (checkout time in a git tree, so last). A
-  transcript belongs to the one attempt whose start is nearest. Review records come from
-  --comments-dir through issue-metrics.py's parser.
+  own. landing-timings rows join by (repo, issue) and window; a row from a writer that recorded
+  no repository takes the one repository whose other rows name its issue. A transcript joins by
+  the issue in its name and a time: its first `timestamp`/`ts` field (stream-json from
+  `claude -p` has none), else the name's HHMMSS, local time as claude-worker-loop.sh's `date +%H%M%S`
+  writes it, on the day nearest the attempt's start, else its mtime (checkout time in a git
+  tree, so last). A transcript belongs to the one attempt whose start is nearest. Review records
+  come from --comments-dir through issue-metrics.py's parser.
 
 OUTPUT: JSON lines to --out (default ${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/
   autocoder/traces.jsonl}; `-` is stdout), a whole-file rewrite so a rerun converges. Missing or
@@ -37,6 +50,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from collections import defaultdict
@@ -52,7 +66,9 @@ _spec.loader.exec_module(METRICS)
 UTC = timezone.utc
 TICK_LEAD = timedelta(minutes=10)
 GATE_OUTCOMES_NOT_RETURNED = ("landed", "parked")
-LANDING_STEPS = ("rebase", "precheck")
+LANDING_STEPS = ("ready", "launched", "batched", "landed", "returned", "rebase", "precheck")
+ATTEMPT_ENDS = ("landed", "escalated", "released")
+READBACK = timedelta(minutes=2)
 LANDING_ROW_KEYS = ("v", "ts", "kind", "repo", "issue", "event")
 LEDGERS = {  # name: (environment override, file name beside the other ledgers)
     "issue-events": ("AUTOCODER_ISSUE_EVENTS", "issue-events.jsonl"),
@@ -133,6 +149,17 @@ def index(rows: list[dict], keep, repo_id: str | None) -> dict[Key, list[Timed]]
     return out
 
 
+def with_repo(landing_rows: list[dict], other_rows: list[dict]) -> list[dict]:
+    """Landing rows from writers that recorded no repository take the one repository whose other rows
+    name the same issue; with none or several, the row stays without one."""
+    repos: dict[int, set] = defaultdict(set)
+    for row in other_rows:
+        if row.get("repo"):
+            repos[row.get("issue")].add(row["repo"])
+    return [row if row.get("repo") or len(repos.get(row.get("issue"), ())) != 1
+            else {**row, "repo": next(iter(repos[row["issue"]]))} for row in landing_rows]
+
+
 def index_ticks(rows: list[dict]) -> dict[int, list[Timed]]:
     """Ticks by the issue their `claimed` names ("12", "#12" or "issue#12")."""
     out: dict[int, list[Timed]] = defaultdict(list)
@@ -171,8 +198,24 @@ class Attempt:
 
 
 def attempts_of(key: Key, events: list[Timed], merges: list[Timed], landings: list[Timed]) -> list[Attempt]:
-    """Split one (repo, issue)'s rows into attempts: [claim, next claim)."""
-    starts = [(ts, row["ts"], row) for ts, row in events if row.get("event") == "claimed"]
+    """Split one (repo, issue)'s rows into attempts: [claim that opens one, the next such claim)."""
+    ends = [ts for ts, row in events if row.get("event") in ATTEMPT_ENDS]
+    ends += [ts for ts, row in landings if row.get("event") == "landed"]
+    claims = [(ts, row) for ts, row in events if row.get("event") == "claimed"]
+
+    def read_back(ts: datetime, worker) -> bool:
+        return any(ts < t <= ts + READBACK and row.get("worker") == worker for t, row in claims)
+
+    starts = []
+    for ts, row in claims:
+        if starts:
+            start, _, claim = starts[-1]
+            ended = any(start <= t <= ts for t in ends)
+            same = claim is not None and claim.get("worker") == row.get("worker")
+            lost_race = claim is not None and not same and not read_back(ts, row.get("worker"))
+            if not ended and (same or lost_race):
+                continue
+        starts.append((ts, row["ts"], row))
     first = events[0] if events else min(merges + landings, key=lambda p: p[0])
     if not starts or first[0] < starts[0][0]:
         starts.insert(0, (first[0], first[1]["ts"], None))
@@ -310,11 +353,17 @@ def gates_of(events: list[Timed], merges: list[Timed]) -> list[dict]:
     return sorted(gates, key=lambda g: (g["attempt"] is None, g["attempt"] or 0))
 
 
+def landing_detail(row: dict) -> dict:
+    if row["event"] == "landed":
+        return {"batch": row.get("batch"), "sha": row.get("sha")}
+    return {k: v for k, v in row.items() if k not in LANDING_ROW_KEYS}
+
+
 def steps_of(a: Attempt) -> list[dict]:
     timed = [(ts, {"ts": row["ts"], "kind": row["event"], "source": "issue-events",
                    "detail": row.get("detail") or {}}) for ts, row in a.events]
     timed += [(ts, {"ts": row["ts"], "kind": row["event"], "source": "landing-timings",
-                    "detail": {k: v for k, v in row.items() if k not in LANDING_ROW_KEYS}})
+                    "detail": landing_detail(row)})
               for ts, row in a.landings if row.get("event") in LANDING_STEPS]
     timed.sort(key=lambda p: p[0])
     return [step for _, step in timed]
@@ -382,7 +431,8 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
                  since: datetime | None = None, until: datetime | None = None) -> list[dict]:
     events = index(ledgers["issue-events"], lambda r: r.get("v") == 1 and bool(r.get("event")), repo_id)
     merges = index(ledgers["merge-events"], lambda r: r.get("event") == "attempt", repo_id)
-    landings = index(ledgers["landing-timings"], lambda r: r.get("kind") == "change", repo_id)
+    landings = index(with_repo(ledgers["landing-timings"], ledgers["issue-events"] + ledgers["merge-events"]),
+                     lambda r: r.get("kind") == "change", repo_id)
     ticks = index_ticks(ledgers["gate-log"])
 
     attempts: list[Attempt] = []
@@ -394,6 +444,27 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
 
     return [trace_of(a, ticks.get(a.issue, []), comments_dir) for a in attempts
             if (since is None or a.start >= since) and (until is None or a.start < until)]
+
+
+def autocoder_config(directory) -> dict:
+    """The repository's main-worktree .autocoder.json as a dict ({} when there is none or it cannot be read).
+    Copied from landing-report.py, which is too large to import for ten lines."""
+    try:
+        r = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+        main = (Path(directory) / r.stdout.strip()).resolve().parent if r.returncode == 0 and r.stdout.strip() else Path(directory)
+        raw = json.loads((main / ".autocoder.json").read_text())
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def train_gate_issue(directory) -> int | None:
+    """`train.gateIssue` of the repository's main-worktree .autocoder.json, or None when there is none."""
+    try:
+        n = int((autocoder_config(directory).get("train") or {}).get("gateIssue") or 0)
+        return n or None
+    except (ValueError, TypeError):
+        return None
 
 
 def write_traces(traces: list[dict], out: str) -> None:
@@ -421,6 +492,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--until", type=parse_bound, help="keep attempts started before (YYYY-MM-DD or ISO)")
     p.add_argument("--repo-id", help="only this repository (default: every repository)")
     p.add_argument("--slack", type=float, default=60.0, help="transcript join slack in minutes")
+    p.add_argument("--repo", default=os.getcwd(),
+                   help="the repository whose .autocoder.json names the train's gate issue (default: the current directory)")
+    p.add_argument("--train-gate-issue", type=int,
+                   help="drop this issue's traces (default: train.gateIssue from --repo's config; 0 keeps them)")
     args = p.parse_args(argv)
 
     ledgers, malformed = {}, {}
@@ -433,6 +508,12 @@ def main(argv: list[str] | None = None) -> int:
     traces = build_traces(ledgers, log_dir=args.log_dir, comments_dir=args.comments_dir,
                           repo_id=args.repo_id, slack=timedelta(minutes=args.slack),
                           since=args.since, until=args.until)
+    gate = args.train_gate_issue if args.train_gate_issue is not None else train_gate_issue(args.repo)
+    if gate:
+        kept = [t for t in traces if t["issue"] != gate]
+        if len(kept) < len(traces):
+            print(f"trace-build: dropped {len(traces) - len(kept)} traces of train gate issue {gate}", file=sys.stderr)
+        traces = kept
     write_traces(traces, args.out)
     return 0
 
