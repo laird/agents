@@ -43,6 +43,7 @@ OUTCOMES = ("landed", "returned", "escalated", "released", "abandoned", "open")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 RULE_ROW_RE = re.compile(r"^\|\s*(B\d+)\s*\|\s*([^|]*?)\s*\|")
 DEFAULT_LABELS = ["P2", "bug"]
+BACKENDS = ("file", "fake-github")
 
 _spec = importlib.util.spec_from_file_location("analyze_traces", SCRIPTS / "analyze-traces.py")
 ANALYST = importlib.util.module_from_spec(_spec)
@@ -141,6 +142,29 @@ def verify_problems(verify, known: set[str]) -> list[str]:
     return out
 
 
+def backend_problems(data: dict) -> list[str]:
+    """`backend`, and the issue keys only fake-github seeds: `comments` ({body, age_s}) and `state`."""
+    backend = data.get("backend", "file")
+    if backend not in BACKENDS:
+        return [f"backend {backend!r} is not one of {', '.join(BACKENDS)}"]
+    issue = data.get("issue") if isinstance(data.get("issue"), dict) else {}
+    staged = sorted(k for k in ("comments", "state") if k in issue)
+    if backend != "fake-github":
+        return [f"issue.{k} needs backend fake-github" for k in staged]
+    out = []
+    if issue.get("state", "open") not in ("open", "closed"):
+        out.append(f"issue.state {issue['state']!r} is not open or closed")
+    comments = issue.get("comments", [])
+    if not isinstance(comments, list):
+        return out + ["issue.comments is not a list"]
+    for i, c in enumerate(comments):
+        age = c.get("age_s") if isinstance(c, dict) else None
+        if not isinstance(c, dict) or set(c) != {"body", "age_s"} or not isinstance(c["body"], str) \
+                or isinstance(age, bool) or not isinstance(age, (int, float)) or age < 0:
+            out.append(f"issue.comments[{i}] needs exactly a string body and a non-negative number age_s")
+    return out
+
+
 def case_problems(case_dir: Path, split: str, rules: set[str], known: set[str]) -> list[str]:
     """Every defect of one case; an empty list is a case the runner can run."""
     try:
@@ -169,6 +193,7 @@ def case_problems(case_dir: Path, split: str, rules: set[str], known: set[str]) 
         out.append("issue needs a title and a list of labels")
     elif "TODO" in issue["title"]:
         out.append("issue.title still has a TODO")
+    out += backend_problems(data)
     out += verify_problems(data.get("verify"), known)
     try:
         task = (case_dir / "task.md").read_text()

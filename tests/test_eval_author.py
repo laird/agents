@@ -144,7 +144,27 @@ DEFECTS = {
     "bad json": (lambda d: (d / "case.json").write_text("{not json"), "case.json is not valid JSON"),
     "unknown verify key": (lambda d: edit_case(d, verify__max_gate=1), "verify has an unknown key 'max_gate'"),
     "bad outcome": (lambda d: edit_case(d, verify__outcome="merged"), "verify.outcome 'merged'"),
+    "unknown backend": (lambda d: edit_case(d, backend="jira"), "backend 'jira' is not one of file, fake-github"),
+    "comments on the file backend": (lambda d: edit_case(d, issue__comments=[{"body": "hi", "age_s": 1}]),
+                                     "issue.comments needs backend fake-github"),
+    "negative age": (lambda d: edit_case(d, backend="fake-github", issue__comments=[{"body": "hi", "age_s": -5}]),
+                     "issue.comments[0] needs exactly a string body and a non-negative number age_s"),
+    "comment without a body": (lambda d: edit_case(d, backend="fake-github", issue__comments=[{"age_s": 5}]),
+                               "issue.comments[0] needs exactly a string body"),
+    "comments not a list": (lambda d: edit_case(d, backend="fake-github", issue__comments="hi"),
+                            "issue.comments is not a list"),
+    "bad state": (lambda d: edit_case(d, backend="fake-github", issue__state="merged"),
+                  "issue.state 'merged' is not open or closed"),
 }
+
+
+def test_check_passes_a_fake_github_case_with_staged_comments(tmp_path):
+    case_dir = new(tmp_path)
+    complete(case_dir)
+    edit_case(case_dir, backend="fake-github", issue__state="open",
+              issue__comments=[{"body": "Automated Fix Started", "age_s": 600}, {"body": "later", "age_s": 0}])
+    r = run(tmp_path, "check")
+    assert r.returncode == 0, r.stdout
 
 
 @pytest.mark.parametrize("defect", sorted(DEFECTS))

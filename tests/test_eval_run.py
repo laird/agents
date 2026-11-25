@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "plugins" / "autocoder" / "scripts"
 SCRIPT = SCRIPTS / "eval-run.py"
 SHA = "0123456789abcdef0123456789abcdef01234567"
-ROW_KEYS = {"ts", "case", "split", "repeat", "pass", "failed", "outcome", "gates", "tool_calls", "duration_s",
+ROW_KEYS = {"ts", "case", "split", "backend", "repeat", "pass", "failed", "outcome", "gates", "tool_calls", "duration_s",
             "worker", "harness", "root"}
 VERIFY = {"outcome": "landed", "classifiers_silent": ["conflict-escalated-early", "tool-errors"], "max_gates": 1,
           "max_tool_calls": 5, "steps_present": ["claimed", "landed"], "steps_absent": ["verdict-nudged"]}
@@ -44,7 +44,8 @@ ESCALATES = 'issue_event escalated "$issue" label=needs-clarification reason=con
 HANGS = "sleep 30\n"
 
 
-def write_case(cases: Path, split: str, case_id: str, *, setup: bool = False, verify=None, title="Add a greeting"):
+def write_case(cases: Path, split: str, case_id: str, *, setup: bool = False, verify=None, title="Add a greeting",
+               backend=None, comments=None):
     d = cases / split / case_id
     (d / "seed").mkdir(parents=True)
     (d / "seed" / "README.md").write_text("A tiny project.\n")
@@ -52,7 +53,8 @@ def write_case(cases: Path, split: str, case_id: str, *, setup: bool = False, ve
     (d / "case.json").write_text(json.dumps({
         "v": 1, "id": case_id, "authored": "2026-11-25", "split": split,
         "finding": {"id": "conflict-escalated-early", "key": None, "rules": ["B02"], "traces": ["repo-a-1234abcd:12:1"]},
-        "issue": {"title": title, "labels": ["P2", "bug"]}, "verify": verify or VERIFY}))
+        "issue": {"title": title, "labels": ["P2", "bug"], **({"comments": comments} if comments is not None else {})},
+        "verify": verify or VERIFY, **({"backend": backend} if backend else {})}))
     if setup:
         (d / "setup.sh").write_text('echo second > second.txt\ngit add second.txt\n'
                                     'git commit -q -m "Second actor commit"\ngit push -q "$ORIGIN" master\n')
@@ -98,7 +100,7 @@ def test_passing_worker_passes_and_writes_result_rows(tmp_path, env):
     row = rows[0]
     assert set(row) == ROW_KEYS
     assert (row["pass"], row["failed"], row["outcome"], row["gates"], row["tool_calls"]) == (True, [], "landed", 1, 3)
-    assert row["worker"] == worker and row["harness"] == {"sha": SHA}
+    assert row["worker"] == worker and row["harness"] == {"sha": SHA} and row["backend"] == "file"
     assert row["root"] is None  # a passing run's sandbox is deleted
     assert isinstance(row["duration_s"], float)
     assert [json.loads(x) for x in Path(env["AUTOCODER_EVAL_RESULTS"]).read_text().splitlines()] == rows
@@ -169,6 +171,63 @@ def test_harness_sha_falls_back_to_the_script_checkout(tmp_path, env):
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SCRIPTS, capture_output=True, text=True).stdout.strip()
     rows = run_json(env, "--worker", fake(tmp_path, "lands", LANDS), "--case", "case-b")["rows"]
     assert rows[0]["harness"] == {"sha": head}
+
+
+# ── backend: fake-github ─────────────────────────────────────────────────────
+# The worker runs the real claim-issue.sh against the sandbox's fake GitHub, then lands only if it claimed.
+CLAIMS = """#!/usr/bin/env bash
+set -u
+issue=$1 root=$3
+source "{lib}/issue-fns.sh"
+command -v gh > "$root/seen-gh.txt"
+if INTEGRATION_BRANCH=master bash "{lib}/claim-issue.sh" --out "$root/claim.env" "$issue" > "$root/claim.out" 2>&1; then
+""" + LANDS + """else
+  echo '{"type":"system","subtype":"init","model":"model-a"}'
+  echo '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.01}'
+fi
+"""
+STALE_START = "🤖 **Automated Fix Started**\n\nStarting automated fix for this issue.\n\n**Branch**: `feature/issue-1`"
+CLAIM_VERIFY = {"outcome": "landed", "steps_present": ["claimed", "landed"]}
+# Today a 600 s old start comment with no release after it refuses the claim (the claim-bounce
+# finding). When the claim-bounce fix lands, this case passes: flip to (True, [], "landed").
+STALE_START_TODAY = (False, ["outcome", "steps_present:landed"], "released")
+
+
+def run_github_case(tmp_path, env, comments):
+    write_case(Path(env["AUTOCODER_EVAL_CASES"]), "dev", "case-gh", backend="fake-github", comments=comments,
+               verify=CLAIM_VERIFY)
+    path = tmp_path / "claims.sh"
+    path.write_text(CLAIMS.replace("{lib}", str(SCRIPTS)))
+    row = run_json(env, "--worker", f"bash {path} {{issue}} {{repo}} {{root}}", "--case", "case-gh", "--keep")["rows"][0]
+    root = Path(row["root"])
+    calls = [json.loads(x)["argv"] for x in (root / "gh.log").read_text().splitlines()]
+    return row, root, calls
+
+
+def test_fake_github_claim_proceeds_and_the_case_passes(tmp_path, env):
+    row, root, calls = run_github_case(tmp_path, env, [])
+    assert (row["backend"], row["pass"], row["failed"], row["outcome"]) == ("fake-github", True, [], "landed"), \
+        (root / "claim.out").read_text()
+    assert (root / "seen-gh.txt").read_text().strip() == str(root / "bin" / "gh")
+    assert json.loads((root / "repo" / ".autocoder.json").read_text())["issueSource"] == "github"
+    assert ["issue", "edit", "1", "--add-label", "working"] in calls
+    posted = [c[c.index("--body") + 1] for c in calls if c[:2] == ["issue", "comment"]]
+    assert "[autocoder-claim]" in posted[0] and "Automated Fix Started" in posted[1]
+    issue = json.loads((root / "gh-store" / "1.json").read_text())
+    assert [x["name"] for x in issue["labels"]] == ["P2", "bug", "working"]
+
+
+def test_fake_github_stale_start_comment_bounces_the_claim(tmp_path, env):
+    row, root, calls = run_github_case(tmp_path, env, [{"body": STALE_START, "age_s": 600}])
+    assert (row["pass"], row["failed"], row["outcome"]) == STALE_START_TODAY, (root / "claim.out").read_text()
+    assert row["duration_s"] < 60
+    assert "Race: another agent claimed issue #1" in (root / "claim.out").read_text()
+    assert ["issue", "edit", "1", "--add-label", "working"] in calls
+    assert ["issue", "edit", "1", "--remove-label", "working"] in calls
+    issue = json.loads((root / "gh-store" / "1.json").read_text())
+    assert [c["body"] for c in issue["comments"]][0] == STALE_START
+    assert "[autocoder-claim]" in issue["comments"][1]["body"]
+    assert [x["name"] for x in issue["labels"]] == ["P2", "bug"]
 
 
 # ── verify() on hand-built traces ────────────────────────────────────────────

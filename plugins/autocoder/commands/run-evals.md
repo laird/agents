@@ -59,6 +59,10 @@ each one costs what a fix session costs. `--repeat N` runs each case N times, `-
 and `{root}` are substituted). A malformed case stops the run with exit 2 before any worker
 starts: run `eval-author.py check` and fix what it names.
 
+A case with `"backend": "fake-github"` (a claim-protocol or review-record finding) runs on a
+fake `gh` that keeps the sandbox issue, its labels and its comments. It never reaches a real
+tracker, and it needs no `gh` login.
+
 ### 3. Report
 
 Print the summary the runner wrote: one line per case with its passes out of its repeats and the
@@ -69,7 +73,10 @@ checks that failed, then one line per split. A failed check is `outcome`, `max_g
 The runner keeps the sandbox of each failing run and prints `kept for <case>: <root>`. Point the
 operator at it: `<root>/traces.jsonl` is the graded trace, `<root>/logs/` holds the worker's
 transcript, `<root>/worker.stderr` its errors, and `<root>/repo` is the sandbox repository as the
-worker left it. For a held-out run, report the counts and the kept roots only. Do not open the
+worker left it. A fake-github case also keeps `<root>/gh-store/` (the issue as `gh issue view`
+prints it) and `<root>/gh.log` (every `gh` call, with its exit code). A call with exit 1 and a
+`fake gh: unsupported form` line in `worker.stderr` means the fake lacks a form the worker used.
+Report that as a gap in `fake-gh.py`, not as a failure of the harness. For a held-out run, report the counts and the kept roots only. Do not open the
 case files under `.autocoder/evals/heldout/`.
 
 ## Settings

@@ -77,6 +77,15 @@ Each `new` prints the case directory it made. A case is:
 | `seed/` | The sandbox project: the files committed to the sandbox repository before the worker starts. Include a `CLAUDE.md` with the test command when the task needs one; the runner adds `.autocoder.json` and the merge settings when the seed has none. |
 | `setup.sh` | Only when the failure needs a second actor. It runs in the sandbox clone after the seed commit, with `ORIGIN` naming the bare remote: for example, it commits a conflicting change and pushes it to `$ORIGIN master`. |
 
+The sandbox issue lives in the file backend unless `case.json` says `"backend": "fake-github"`.
+Set that for a failure in the claim protocol (the `working` label, claim markers, start and
+release comments) or in the review record (B05, B06). The file backend never runs either of
+those: its claim is an atomic rename, and it folds comments into the issue body. Under
+fake-github, `issue.comments` stages the comments the issue already has, each
+`{"body": "...", "age_s": N}`, posted `age_s` seconds before the worker starts. For example, a
+stale start comment is `{"body": "🤖 **Automated Fix Started** ...", "age_s": 600}`.
+`issue.state` (`open` or `closed`) is the third option.
+
 ### 3. Write each case
 
 For every case directory printed in step 2:
