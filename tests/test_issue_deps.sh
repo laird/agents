@@ -193,7 +193,7 @@ case "\$1 \$2" in
   "repo view") echo 'acme/shop' ;;
   "issue view") python3 "$SCRIPT_DIR/issues-file.py" get "\$3" ;;
   "api graphql")
-    query=\$(printf '%s\n' "\$@" | sed -n 's/^query=//p')
+    query=\$(printf '%s\n' "\$@" | sed -n '/^query=/,\$p' | sed '1s/^query=//')
     [ -f "$TMP/gh-outage" ] && { echo '{"errors":[{"message":"API rate limit exceeded"}]}'; exit 1; }
     # gh-outage-second-chunk: the request carrying alias i300 (the second chunk of a 101-number batch) fails alone.
     [ -f "$TMP/gh-outage-second-chunk" ] && case "\$query" in *"i300:"*) echo '{"errors":[{"message":"API rate limit exceeded"}]}'; exit 1 ;; esac
@@ -228,6 +228,9 @@ MANY=$(run_gh "_ideps_gh_lookup_many 70 71 999 | sort")
 check "the batched read answers every number: a closed one, an open one with its parent, a typo'd one as not found" "$MANY" "70 CLOSED -
 71 OPEN 9
 999 - -"
+HUGE=$(run_gh "_ideps_gh_lookup_many 70 4294967296 | sort")
+check "a number past GraphQL's Int is a clean not-found and does not fail its chunk" "$HUGE" "4294967296 - -
+70 CLOSED -"
 FILE_READY=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
 rm -f "$TMP/gh-batch-calls"
 GH_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | sort'")

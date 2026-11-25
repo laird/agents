@@ -106,6 +106,11 @@ _ideps_state_is_met() {
   esac
 }
 
+# _ideps_say_unreadable <n> — the one wording for a dependency the tracker could not read (#380).
+_ideps_say_unreadable() {
+  echo "⏳ #$1 could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
+}
+
 # _ideps_lookup <n> [<back>] — one backend read of issue <n>: prints
 # "<state> <parent> <waits-back>" ("-" for an unknown state or parent;
 # <waits-back> is 1 when <n> declares a dependency on <back>, else 0). An
@@ -165,6 +170,8 @@ _ideps_gh_lookup_many() {
     aliases=""
     for n in "${chunk[@]}"; do
       case "$n" in ''|*[!0-9]*) echo "$n unreadable -"; continue ;; esac
+      # Past GraphQL's Int a number fails the whole request's validation; it is a pasted id, not an issue: a clean not-found.
+      [ "${#n}" -le 10 ] && [ "$n" -le 2147483647 ] 2>/dev/null || { echo "$n - -"; continue; }
       aliases="$aliases i$n: issueOrPullRequest(number: $n) { ... on Issue { number state body } ... on PullRequest { number state body } }"
     done
     [ -n "$aliases" ] || continue
@@ -230,42 +237,51 @@ _ideps_filter() {
   # batched request (`_ideps_gh_lookup_many`); any other backend reads each.
   # One jq pass splits the two sets, and one more adds the unmet ones, so a
   # backlog of a hundred dependencies costs a handful of processes, not hundreds.
-  local split outside=() lines unmet_add=() seen
+  local split outside=() lines unmet_add=() seen split_failed="" prev
   split=$(printf '%s' "$issues" | jq -c --argjson deps "$body_deps" '
     [ .[].number | tonumber? // . ] as $open
     | ([ $deps[][] ] | unique) as $all
-    | { inside: [ $all[] | select(IN($open[])) ], outside: [ $all[] | select(IN($open[]) | not) ] }' 2>/dev/null) || split='{"inside":[],"outside":[]}'
-  unmet=$(jq -n -c --argjson u "$unmet" --argjson s "$split" '$u + $s.inside | unique')
-  mapfile -t outside < <(printf '%s' "$split" | jq -r '.outside[]')
+    | { inside: [ $all[] | select(IN($open[])) ], outside: [ $all[] | select(IN($open[]) | not) ] }' 2>/dev/null) || split=""
+  if [ -z "$split" ]; then
+    # The split could not be made: every dependency is unreadable, never silently met (#380).
+    split_failed=1
+    split=$(printf '%s' "$body_deps" | jq -c '{ inside: [], outside: ([ .[][] ] | unique) }' 2>/dev/null) || split='{"inside":[],"outside":[]}'
+  fi
+  prev="$unmet"
+  unmet=$(jq -n -c --argjson u "$unmet" --argjson s "$split" '$u + $s.inside | unique' 2>/dev/null) || unmet="$prev"
+  mapfile -t outside < <(printf '%s' "$split" | jq -r '.outside[] | select(type == "number") | tostring' 2>/dev/null)
   if [ ${#outside[@]} -gt 0 ]; then
-    case "$_ifns_BACKEND_BIN" in
-      *issues-gh.sh) lines=$(_ideps_gh_lookup_many "${outside[@]}") ;;
-      *) lines=$(for n in "${outside[@]}"; do read -r state parent _ <<<"$(_ideps_lookup "$n")"; echo "$n $state $parent"; done) ;;
-    esac
+    if [ -n "$split_failed" ]; then
+      lines=$(for n in "${outside[@]}"; do echo "$n unreadable -"; done)
+    else
+      case "$_ifns_BACKEND_BIN" in
+        *issues-gh.sh) lines=$(_ideps_gh_lookup_many "${outside[@]}") ;;
+        *) lines=$(for n in "${outside[@]}"; do read -r state parent _ <<<"$(_ideps_lookup "$n")"; echo "$n $state $parent"; done) ;;
+      esac
+    fi
     seen=" "
     while read -r n state parent _; do
-      [ -n "$n" ] || continue
+      case "$n" in ''|*[!0-9]*) continue ;; esac   # not a number: no line of ours; the number stays unanswered below
       seen="$seen$n "
       [ "$state" = "-" ] && state=""
       if [ "$state" = "unreadable" ]; then
-        echo "⏳ #$n could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
-        unmet_add+=("$n")
-        continue
-      fi
-      if [ "$parent" != "-" ] && [ -n "$parent" ]; then
-        parents=$(printf '%s' "$parents" | jq -c --arg k "$n" --argjson p "$parent" '. + {($k): $p}' 2>/dev/null || printf '%s' "$parents")
+        _ideps_say_unreadable "$n"; unmet_add+=("$n"); continue
       fi
       _ideps_state_is_met "$state" || unmet_add+=("$n")
     done <<<"$lines"
     # A number no line answered (a read that produced nothing) is unreadable, never silently met.
     for n in "${outside[@]}"; do
-      case "$seen" in *" $n "*) ;; *)
-        echo "⏳ #$n could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
-        unmet_add+=("$n") ;;
-      esac
+      case "$seen" in *" $n "*) ;; *) _ideps_say_unreadable "$n"; unmet_add+=("$n") ;; esac
     done
+    # The parents the answered dependencies named, in one pass over the same lines.
+    prev="$parents"
+    parents=$(printf '%s\n' "$lines" | jq -R -s -c --argjson p "$parents" '
+      $p + ( [ split("\n")[] | select(length > 0) | split(" ")
+               | select(length >= 3 and (.[0] | test("^[0-9]+$")) and (.[2] | test("^[0-9]+$")))
+               | { key: .[0], value: (.[2] | tonumber) } ] | from_entries )' 2>/dev/null) || parents="$prev"
     if [ ${#unmet_add[@]} -gt 0 ]; then
-      unmet=$(printf '%s\n' "${unmet_add[@]}" | jq -R -s -c --argjson u "$unmet" '$u + (split("\n") | map(select(. != "") | tonumber)) | unique')
+      prev="$unmet"
+      unmet=$(printf '%s\n' "${unmet_add[@]}" | jq -R -s -c --argjson u "$unmet" '$u + (split("\n") | map(select(test("^[0-9]+$")) | tonumber)) | unique' 2>/dev/null) || unmet="$prev"
     fi
   fi
   result=$(printf '%s' "$issues" | jq -c --argjson deps "$body_deps" --argjson native "$native" \
@@ -302,8 +318,7 @@ issue_unmet_dependencies() {
     read -r state dparent back <<<"$(_ideps_lookup "$d" "$n")"
     [ "$state" = "-" ] && state=""
     if [ "$state" = "unreadable" ]; then
-      echo "⏳ #$d could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
-      waiting+=("#$d"); continue
+      _ideps_say_unreadable "$d"; waiting+=("#$d"); continue
     fi
     [ "$dparent" = "$n" ] && continue        # its own sub-task
     _ideps_state_is_met "$state" && continue
