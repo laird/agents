@@ -240,6 +240,16 @@ the fixtures had not:
   `--train-gate-issue N` (default from that config, `0` keeps it) drops its traces, as
   `landing-report.py` drops its batches.
 
+Two more, found while calibrating against the same ledgers:
+
+- **A lost claim race writes one claim.** `fix-loop-gate.sh` claims, then checks the claim
+  comments; the loser moves on without a release or a readback. Of 187 claims with no readback,
+  156 had no later row from that worker on the issue. Another worker's claim opens an attempt only
+  when its own readback follows within two minutes; without one it is a step of the open attempt.
+  Otherwise the loser's attempt takes the winner's train landing and the winner reads as reclaimed.
+- **Older landing rows name no repository.** A landing-timings row without `repo` takes the one
+  repository whose other rows name its issue, so a train landing joins the attempt it belongs to.
+
 Also seen: workers on a tmux swarm are interactive sessions, so no `worker-*-fix-*` transcript
 exists and `session` is null for every trace; the tool-error and session classifiers are silent
 there until a headless worker runs. `gate.jsonl` was absent, so `tick` is null.

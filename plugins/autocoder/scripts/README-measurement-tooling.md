@@ -248,18 +248,31 @@ names the failures that repeat. `/analyze-traces` runs both.
 trace-build.py [--issue-events PATH] [--merge-events PATH] [--landing-timings PATH]
                [--gate-log PATH] [--log-dir DIR] [--comments-dir DIR]
                [--out PATH|-] [--since DATE] [--until DATE] [--repo-id ID] [--slack MINUTES]
+               [--repo DIR] [--train-gate-issue N]
 ```
 
-An attempt is one `claimed` of one (repo, issue), up to the next `claimed` of the same (repo,
-issue); events before any claim open an implicit attempt with worker and branch null. A trace
-never mixes repositories. Each trace carries `started`, `ended` (the terminal step's time, null
-while open), `next_attempt` (the re-claim's time, or null), `outcome`
+An attempt is one worker's claim of one (repo, issue), up to the claim that opens the next
+attempt. `claimed` is written twice per claim (`issue_claim`, then the worker's readback a few
+seconds later), and a worker that loses the claim race writes it once and nothing more. So a
+`claimed` opens an attempt only when none is open, the open one has ended (a landed, escalated or
+released row since it started), or another worker wrote it and read it back within two minutes.
+Any other `claimed` is a step of the open attempt and leaves its `started`, `worker` and
+`branch` alone. Events before any claim open an implicit attempt with worker and branch null. A
+trace never mixes repositories. Each trace carries `started`, `ended` (the terminal step's time,
+null while open), `next_attempt` (the next attempt's claim, or null), `outcome`
 (`landed|escalated|returned|released|abandoned|open`), `steps`, `gates`, `returned`, `session`,
 `review` and `tick`.
 
+- **Steps** are the lifecycle events plus the landing-timings change rows `ready` (the worker's
+  hand-off), `launched`, `batched`, `landed`, `returned`, `rebase` and `precheck`. The merge
+  train lands most work and records it only as a landing-timings `landed` row, so that row is a
+  terminal `landed` step (detail: `batch`, `sha`) like the lifecycle one. A `released` after a
+  landing is the label cleanup and leaves the outcome `landed`. A landing row from a writer that
+  recorded no repository takes the one repository whose other rows name its issue.
 - **Gates** start from each `gate-end` step and take `tests_failed`, `conflict_files`,
   `red_base` and `escalated` from the merge-events `attempt` row with the same attempt number.
-  A merge row with no `gate-end` is a gate of its own. A field no row recorded is null.
+  A merge row with no `gate-end` is a gate of its own. A field no row recorded is null. A train's
+  gate records `attempt: null` on both rows; such gates pair in time order.
 - **Session**: the transcript named `worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` whose time (a
   `timestamp`/`ts` field, else the name's HHMMSS in local time, else mtime) falls in the
   attempt's window widened by `--slack` (default 60 minutes). It belongs to the attempt whose
@@ -273,7 +286,11 @@ while open), `next_attempt` (the re-claim's time, or null), `outcome`
 - **Tick**: the gate.jsonl row whose `claimed` names the issue, written in the ten minutes
   before the attempt started.
 
-`--since`/`--until` keep attempts whose start is in `[since, until)`. Output goes to
+`--since`/`--until` keep attempts whose start is in `[since, until)`. The train's gate issue
+carries claims and no work, so its traces are dropped: `--train-gate-issue N` names it, and by
+default it is `train.gateIssue` in the main-worktree `.autocoder.json` of `--repo DIR` (default:
+the current directory), as `landing-report.py` reads it. `0` keeps it. One stderr line says how
+many traces were dropped. Output goes to
 `${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/traces.jsonl}` (`--out -`
 for stdout) as a whole-file rewrite, so a rerun converges. Missing ledgers give an empty file and
 exit 0. Malformed lines are skipped and counted per ledger on one stderr line.
