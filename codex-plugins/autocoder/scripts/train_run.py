@@ -77,6 +77,8 @@ EMPTY_RE_DEFAULT = (r"^(❌|ℹ️) +Rebasing \S+ \(\w+\) .*(dropped every commi
                     r"|^ℹ️ +\S+ \(\w+\) is already on origin/\S+ as patch-equivalent commits .*nothing to land\.$")
 NOTHING_LANDED = "landed nothing (regenerate-only or already on the integration branch)"
 RED_BASE_RE = re.compile(r"^merge-to-integration: RED-BASE -- .*$", re.M)
+# The gate re-ran the failing files on the same tree and they passed: the red did not reproduce (nobody's).
+FLAKY_RE = re.compile(r"^merge-to-integration: FLAKY -- .*$", re.M)
 # The gate's per-file retest verdicts (#298): each file that failed on the integrated tree, re-run on the
 # integration branch alone. "fails ... too" is the base's red; the other two wordings are the change's.
 RETEST_RED_RE = re.compile(r"^\s+(\S+): fails on origin/\S+ too \(red base, not this change's\)\s*$", re.M)
@@ -121,6 +123,7 @@ class RunConfig:
     batch_max: int = 16
     max_gates: int = 16            # gates one cycle may spend after its first (a safety bound, never an SLA)
     infra_regates: int = 1
+    flaky_regates: int = 1         # a FLAKY verdict (the failure did not reproduce on the same tree) re-gates the same set this many times
     infra_pattern: str = INFRA_RE_DEFAULT
     empty_pattern: str = EMPTY_RE_DEFAULT   # the gate's "nothing to land" line: terminal, never bisected
     report_issue: str = ""         # where batch-level notes go; empty = member issues only
@@ -132,7 +135,7 @@ class RunConfig:
 
 def load_run_config(repo, config_file=None, env=None) -> RunConfig:
     """Slice 1's Config plus the keys this slice reads from the same `train` object:
-    gate, gateIssue, testCmd, batchStart, batchMin, batchMax, maxGates, infraRegates, infraPattern,
+    gate, gateIssue, testCmd, batchStart, batchMin, batchMax, maxGates, infraRegates, flakyRegates, infraPattern,
     emptyPattern, reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute, landed}."""
     env = os.environ if env is None else env
     cfg = T.load_config(repo, config_file, env)
@@ -150,6 +153,7 @@ def load_run_config(repo, config_file=None, env=None) -> RunConfig:
         batch_max=int(raw.get("batchMax") or 16),
         max_gates=int(raw.get("maxGates") or 16),
         infra_regates=int(raw.get("infraRegates") if raw.get("infraRegates") is not None else 1),
+        flaky_regates=int(raw.get("flakyRegates") if raw.get("flakyRegates") is not None else 1),
         infra_pattern=raw.get("infraPattern") or INFRA_RE_DEFAULT,
         empty_pattern=raw.get("emptyPattern") or EMPTY_RE_DEFAULT,
         report_issue=str(raw.get("reportIssue") or ""),
@@ -518,6 +522,8 @@ class Cycle:
             self.bisect_or_attribute(members)
         elif first == "infra":
             self.log("infrastructure red twice: the cycle ends, every member stays in the queue unfaulted")
+        elif first == "flaky":
+            self.log("flaky red twice: the cycle ends, every member stays in the queue unfaulted; the flaky files are on the report issue")
         elif first == "red-base":
             self.log(f"red {self.cfg.integration}: the cycle ends, every member stays in the queue unfaulted")
         elif first == "regen":
@@ -749,6 +755,9 @@ class Cycle:
         infra = re.compile(self.rc.infra_pattern, re.M).search(text)
         if infra:
             return "infra", infra.group(0)[:300]
+        flaky = FLAKY_RE.search(text)
+        if flaky:
+            return "flaky", flaky.group(0)[:300]
         red_base = RED_BASE_RE.search(text)
         if red_base:
             return "red-base", red_base.group(0)[:300]
@@ -763,9 +772,10 @@ class Cycle:
         return "red", first[:300] or f"gate exited {rc_code} with no ::error:: line"
 
     def gate_set(self, members, first=False):
-        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra', 'red-base', 'regen' or 'empty'
+        """Assemble and gate one set. Lands it on green. Returns 'green', 'red', 'infra', 'flaky', 'red-base', 'regen' or 'empty'
         (nothing to land: the members are marked landed nothing and dropped at their tips)."""
         infra_left = self.rc.infra_regates
+        flaky_left = self.rc.flaky_regates
         while True:
             t_asm = time.time()
             try:
@@ -793,9 +803,9 @@ class Cycle:
             # id with the seconds it measured and its stages; the report merges the two. A green batch gets a second
             # row with the publish seconds once the close-out is done.
             self.timing("batch", "--batch", batch_id, "--members", member_ids, "--assembly-s", assembly_s, "--gate-s", gate_s,
-                        "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted", "red-base": "red"}[verdict],
+                        "--verdict", {"green": "green", "red": "red", "infra": "infra", "empty": "aborted", "red-base": "red", "flaky": "aborted"}[verdict],
                         *(["--cause", "infra"] if verdict == "infra" else ["--cause", "other"] if verdict == "empty"
-                          else ["--cause", "red-integration"] if verdict == "red-base" else []))
+                          else ["--cause", "red-integration"] if verdict == "red-base" else ["--cause", "flaky"] if verdict == "flaky" else []))
             if verdict == "infra":
                 self.gate_end_event(gate_since, train, gate_s, line)
             if verdict == "green":
@@ -809,7 +819,11 @@ class Cycle:
                 self.land_nothing(train, members, line, log_path)
                 return "empty"
             kept = self.keep_log(log_path, train)
-            self.record["lastRed"] = {"train": train, "line": line, "log": str(kept)}
+            # Only a red that can be attributed is the red a bisection cites: an infrastructure refusal or a
+            # flake says nothing about the members and must not overwrite the line a later return names
+            # (a member was once returned "by elimination" citing an INFRASTRUCTURE line, laird/agents#382).
+            if verdict not in ("infra", "flaky"):
+                self.record["lastRed"] = {"train": train, "line": line, "log": str(kept)}
             if verdict == "infra":
                 if infra_left > 0:
                     infra_left -= 1
@@ -817,6 +831,18 @@ class Cycle:
                     self.say.report(f"{train}: infrastructure red (`{line[:200]}`); re-gating the same members once.")
                     continue
                 return "infra"
+            if verdict == "flaky":
+                # The gate re-ran the failing files on the same tree and they passed: the failure did not
+                # reproduce, so it is nobody's. The same set is re-gated once (never bisected, nobody returned);
+                # a second flaky verdict ends the cycle with everyone in the queue, and the report names the
+                # flaky files so the flake is filed rather than landed over (laird/agents#378).
+                if flaky_left > 0:
+                    flaky_left -= 1
+                    self.log(f"flaky red: the failing files passed on a second run of the same tree; re-gating the same {len(members)} member(s) once; nobody is dropped, held out or bisected")
+                    self.say.report(f"{train}: flaky red (`{line[:200]}`): the failing files passed on a second run of the same tree; re-gating the same members once. File the flake; it is never landed over.")
+                    continue
+                self.say.report(f"{train}: flaky red twice (`{line[:200]}`): the cycle ends with every member in the queue, unfaulted; file the flake.")
+                return "flaky"
             if verdict == "red-base":
                 self.red_base_hook(train, line, kept, red_base_files(log_path.read_text(errors="replace")))
                 self.log(f"red {self.cfg.integration}, not a member's: the gate re-ran the failing file(s) on {self.cfg.ref} alone and they fail there too; nobody is dropped, held out, bisected or re-gated")
@@ -913,7 +939,7 @@ class Cycle:
                 vb = self.gate_set(b)
                 if vb == "red":
                     self.bisect(b)
-        # infra / regen: the cycle ends with everything undecided left in the queue
+        # infra / flaky / regen: the cycle ends with everything undecided left in the queue
 
     # ----- publish and close-out -----
     def publish(self, train, members, landed, log_path):

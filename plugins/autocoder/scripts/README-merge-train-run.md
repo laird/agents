@@ -42,6 +42,17 @@ One bad member of eight: a bad member in the last half-chain costs three further
 
 **Adaptive size**: `batch.json` holds the limit (start `batchStart` 8, +1 after a green first gate up to `batchMax`, halved after a red one down to `batchMin`; an infrastructure red, a red base, an empty landing or an abort leaves it, recorded under its own word) and the last 50 batches.
 
+## A flaky red is nobody's
+
+A gate that fails on the integrated tree first re-runs the files that failed on the SAME tree (the gate
+command honours `AUTOCODER_GATE_RETEST_FILES` as a list, so this is one targeted run). When they pass, the
+failure did not reproduce: merge-to-integration.sh refuses with `merge-to-integration: FLAKY -- <files> ...`
+(nothing lands, nobody is blamed, the gate cache forgets the tree), and the train re-gates the same set once
+(`flakyRegates`, default 1) instead of bisecting it; a second flaky verdict ends the cycle with every member in
+the queue and the report issue naming the files. A flake is filed and fixed, never landed over.
+`AUTOCODER_GATE_FLAKY_RETEST=0` turns the retest off. Why: a one-test timeout under host load once bisected a
+seven-member train for an hour and returned a member that had nothing to do with it.
+
 ## `train` keys read here (the rest are in README.md "Merge trains")
 
 `gate` (command template; `{train} {sha} {issue} {integration} {test_cmd}` are shell-quoted; default `merge-to-integration.sh --feature ... --issue {gateIssue} ...`), `gateIssue`, `testCmd`, `batchStart`, `batchMin`, `batchMax`, `maxGates`, `infraRegates` (1), `infraPattern`, `emptyPattern` (the gate's nothing-to-land lines, anchored to its own markers), `reportIssue` (batch-level notes; empty = member issues only), `swarm` (prefix of every tracker write), `timingsCmd` (default: `landing-timings.py` beside these scripts when present), `gateLogDir`, `hooks.preflight`, `hooks.regenerate` (run in the scratch; `AUTOCODER_TRAIN_BASE` is the base sha), `hooks.attribute` (stdin: the failure text; `AUTOCODER_TRAIN_MEMBERS`: `issue<TAB>tip` rows; prints the named issues), `hooks.landed` (run in the repo after a landing; see step 5).
