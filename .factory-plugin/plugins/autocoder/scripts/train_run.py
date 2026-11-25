@@ -131,12 +131,16 @@ class RunConfig:
     timings_cmd: str = ""          # default: landing-timings.py beside this file, when present
     hooks: dict = field(default_factory=dict)   # preflight, regenerate, attribute, landed (plus slice 1's)
     gate_log_dir: Path = None
+    tick_cmd: str = ""             # a project command the daemon runs on a tick (a queue pass: bot PRs, a lane), never fatal
+    tick_cmd_every: int = 900      # seconds between two runs of tick_cmd (a tick is 60 s; a queue pass is minutes)
+    tick_cmd_timeout: int = 3600   # a generous bound, never an SLA: a pass that hangs is killed and logged
 
 
 def load_run_config(repo, config_file=None, env=None) -> RunConfig:
     """Slice 1's Config plus the keys this slice reads from the same `train` object:
     gate, gateIssue, testCmd, batchStart, batchMin, batchMax, maxGates, infraRegates, flakyRegates, infraPattern,
-    emptyPattern, reportIssue, swarm, timingsCmd, gateLogDir, hooks.{preflight, regenerate, attribute, landed}."""
+    emptyPattern, reportIssue, swarm, timingsCmd, gateLogDir, tickCmd, tickCmdEverySeconds, tickCmdTimeoutSeconds,
+    hooks.{preflight, regenerate, attribute, landed}."""
     env = os.environ if env is None else env
     cfg = T.load_config(repo, config_file, env)
     path = Path(config_file) if config_file else T._main_worktree(cfg.repo) / ".autocoder.json"
@@ -161,6 +165,9 @@ def load_run_config(repo, config_file=None, env=None) -> RunConfig:
         timings_cmd=env.get("AUTOCODER_TRAIN_TIMINGS_CMD") or raw.get("timingsCmd") or "",
         hooks=dict(raw.get("hooks") or {}),
         gate_log_dir=Path(env.get("AUTOCODER_TRAIN_LOG_DIR") or raw.get("gateLogDir") or cfg.state_dir / "logs"),
+        tick_cmd=env.get("AUTOCODER_TRAIN_TICK_CMD") or raw.get("tickCmd") or "",
+        tick_cmd_every=int(raw.get("tickCmdEverySeconds") if raw.get("tickCmdEverySeconds") is not None else 900),
+        tick_cmd_timeout=int(raw.get("tickCmdTimeoutSeconds") if raw.get("tickCmdTimeoutSeconds") is not None else 3600),
     )
     rc.batch_min = max(1, rc.batch_min)
     rc.batch_max = max(rc.batch_min, rc.batch_max)
@@ -423,6 +430,12 @@ class Cycle:
             pass
 
     # ----- the publisher's batch marker: while a cycle is live the fast lane rides in its next publish -----
+    def drain_lane(self):
+        """Land the documents fast lane now, under the publisher's leases. Called between gate passes and at
+        the cycle's end: an empty lane costs nothing (drain takes no lease then), and a documents-only landing
+        moves the integration tip without re-gating anyone (the gate's documents-only re-sync rule)."""
+        self.publisher("drain", "--branch", self.cfg.integration)
+
     def publisher(self, *args):
         pub = os.environ.get("AUTOCODER_TRAIN_PUBLISHER") or str(SCRIPTS / "publisher.sh")
         if not Path(pub).is_file():
@@ -461,7 +474,7 @@ class Cycle:
             # The fast lane rides behind the batch: an entry enqueued while this cycle was live waited for
             # it, and no other writer is due, so this cycle lands the lane now, under the publisher's
             # leases, whatever its own verdict. An empty lane costs nothing (drain takes no lease then).
-            self.publisher("drain", "--branch", self.cfg.integration)
+            self.drain_lane()
             lease.release()
 
     def _run_locked(self, size):
@@ -819,6 +832,10 @@ class Cycle:
                 self.land_nothing(train, members, line, log_path)
                 return "empty"
             kept = self.keep_log(log_path, train)
+            # A pass that did not land ends with the fast lane drained: a documents-only commit never re-gates
+            # anyone, so it lands between two gate passes instead of waiting for the whole cycle (a bisecting
+            # cycle runs for hours; the lane starved behind it, laird/agents#379).
+            self.drain_lane()
             # Only a red that can be attributed is the red a bisection cites: an infrastructure refusal or a
             # flake says nothing about the members and must not overwrite the line a later return names
             # (a member was once returned "by elimination" citing an INFRASTRUCTURE line, laird/agents#382).
@@ -870,6 +887,7 @@ class Cycle:
         self.say.report(f"{train}: nothing to land ({' '.join('#' + m['issue'] for m in members)}; `{line[:160]}`): "
                         f"every member marked landed nothing and dropped at its tip; no bisection.")
         self.log(f"{train}: nothing to land; {len(members)} member(s) marked landed nothing, no bisection")
+        self.drain_lane()
 
     def keep_log(self, log_path, train):
         dest = self.rc.cfg.state_dir / "logs" / f"{train.replace('/', '-')}.red.log"
@@ -1125,6 +1143,31 @@ class Daemon:
         finally:
             os.close(fd)
 
+    def run_tick_cmd(self):
+        """The project's own queue pass (filing a bot PR's tracking issue, starting a lane, telling a stale
+        tip), run from the daemon so nothing depends on a hand run: at most once per `tickCmdEverySeconds`,
+        under a generous timeout, one log line per run, never fatal to the tick."""
+        cmd = self.rc.tick_cmd
+        if not cmd:
+            return
+        stamp = self.state.dir / "tick-cmd.last"
+        try:
+            last = float(stamp.read_text().strip() or 0)
+        except (OSError, ValueError):
+            last = 0.0
+        if time.time() - last < self.rc.tick_cmd_every:
+            return
+        stamp.write_text(f"{time.time():.0f}")
+        t0 = time.time()
+        try:
+            r = subprocess.run(["bash", "-c", cmd], cwd=str(self.cfg.repo), capture_output=True, text=True, timeout=self.rc.tick_cmd_timeout)
+            last_line = (r.stdout.strip().splitlines() or r.stderr.strip().splitlines() or [""])[-1]
+            self.log(f"tick command exited {r.returncode} in {int(time.time() - t0)}s: {last_line[:200]}")
+        except subprocess.TimeoutExpired:
+            self.log(f"tick command killed after {self.rc.tick_cmd_timeout}s (tickCmdTimeoutSeconds): {cmd[:120]}")
+        except OSError as e:
+            self.log(f"tick command could not run: {e}")
+
     def _record(self, verdict, launchable, note=""):
         _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
 
@@ -1143,6 +1186,7 @@ class Daemon:
             self._record("paused", [], reason)
             return "paused"
         self.paused_said = ""
+        self.run_tick_cmd()
         if not lease_free(self.state):
             self._record("train-live", [])
             return "train-live"

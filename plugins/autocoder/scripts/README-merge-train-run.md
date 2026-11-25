@@ -53,6 +53,20 @@ the queue and the report issue naming the files. A flake is filed and fixed, nev
 `AUTOCODER_GATE_FLAKY_RETEST=0` turns the retest off. Why: a one-test timeout under host load once bisected a
 seven-member train for an hour and returned a member that had nothing to do with it.
 
+## The documents fast lane lands between gate passes
+
+The publisher's fast lane used to ride behind the whole cycle: a cycle that bisects for hours held its batch
+marker and documents-only commits starved behind it (#379). The train now drains the lane after every gate
+pass that did not land (a red, an infrastructure or flaky refusal, a nothing-to-land) and at the cycle's end: a
+documents-only landing never re-gates anyone, so it costs the cycle nothing.
+
+## A project command once per tick (`tickCmd`)
+
+`tickCmd` is a project command the daemon runs from its tick, at most once per `tickCmdEverySeconds`
+(default 900) under `tickCmdTimeoutSeconds` (default 3600), logged in one line and never fatal to the tick: the
+place for the project's own queue pass (filing a bot PR's tracking issue, starting a hotfix lane, telling a
+stale tip), so nothing depends on a person running it. `AUTOCODER_TRAIN_TICK_CMD` overrides the key.
+
 ## `train` keys read here (the rest are in README.md "Merge trains")
 
 `gate` (command template; `{train} {sha} {issue} {integration} {test_cmd}` are shell-quoted; default `merge-to-integration.sh --feature ... --issue {gateIssue} ...`), `gateIssue`, `testCmd`, `batchStart`, `batchMin`, `batchMax`, `maxGates`, `infraRegates` (1), `infraPattern`, `emptyPattern` (the gate's nothing-to-land lines, anchored to its own markers), `reportIssue` (batch-level notes; empty = member issues only), `swarm` (prefix of every tracker write), `timingsCmd` (default: `landing-timings.py` beside these scripts when present), `gateLogDir`, `hooks.preflight`, `hooks.regenerate` (run in the scratch; `AUTOCODER_TRAIN_BASE` is the base sha), `hooks.attribute` (stdin: the failure text; `AUTOCODER_TRAIN_MEMBERS`: `issue<TAB>tip` rows; prints the named issues), `hooks.landed` (run in the repo after a landing; see step 5).
