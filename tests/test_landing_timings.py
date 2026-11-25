@@ -282,6 +282,114 @@ def test_week_refuses_a_bad_spec_or_a_second_window(log, args, needle):
     assert r.returncode == 2 and needle in r.stderr
 
 
+# ── the self-improvement loop on the week page (#395) ────────────────────────
+TRACE_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "traces"   # events dated 2026-11-20: the week of Mon 2026-11-16
+LOOP_LEDGERS = ["--log", str(TRACE_FIXTURES / "landing-timings.jsonl"), "--issue-events", str(TRACE_FIXTURES / "issue-events.jsonl"),
+                "--merge-events", str(TRACE_FIXTURES / "merge-events.jsonl"), "--week", "2026-11-20", "--ci", "off"]
+
+
+def loop_env(tmp_path, **extra):
+    return {"XDG_STATE_HOME": str(tmp_path), "AUTOCODER_LOG_DIR": str(TRACE_FIXTURES), **extra}
+
+
+def jsonl(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return path
+
+
+def result(ts, split, case, passed):
+    return {"ts": ts, "case": case, "split": split, "repeat": 1, "pass": passed, "failed": [], "outcome": "landed", "gates": 1,
+            "tool_calls": 10, "duration_s": 60, "worker": "fake", "harness": {"sha": "aaaa1111"}, "root": None}
+
+
+def decision(ts, finding, verdict):
+    return {"ts": ts, "finding": finding, "before": "aaaa1111", "after": "bbbb2222", "dev": {"before": [1, 2], "after": [2, 2]},
+            "heldout": {"before": [1, 2], "after": [2, 2]}, "decision": verdict, "accepted": verdict == "accept", "reason": "r"}
+
+
+def loop_line(out, name):
+    return next(x for x in out.splitlines() if x.startswith(f"  - {name}: "))
+
+
+def test_week_page_findings_are_the_analysts_over_the_weeks_traces(tmp_path):
+    r = report(*LOOP_LEDGERS, "--eval-results", str(tmp_path / "none.jsonl"), env=loop_env(tmp_path))
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert out.index("## Week in numbers") < out.index("- Self-improvement loop:") < out.index("## Batches")
+    # the analyst run by hand over the same ledgers and week
+    traces = tmp_path / "traces.jsonl"
+    subprocess.run([sys.executable, str(SCRIPTS / "trace-build.py"), "--landing-timings", str(TRACE_FIXTURES / "landing-timings.jsonl"),
+                    "--issue-events", str(TRACE_FIXTURES / "issue-events.jsonl"), "--merge-events", str(TRACE_FIXTURES / "merge-events.jsonl"),
+                    "--out", str(traces), "--since", "2026-11-16", "--until", "2026-11-23"],
+                   check=True, capture_output=True, env={**os.environ, **loop_env(tmp_path)})
+    analyst = json.loads(subprocess.run([sys.executable, str(SCRIPTS / "analyze-traces.py"), "--traces", str(traces), "--json"],
+                                        check=True, capture_output=True, text=True).stdout)
+    findings = analyst["findings"]
+    assert len(findings) >= 3
+    covered = len({t for f in findings for t in f["traces"]})
+    top = "; ".join(f"{f['id']}: {f['key']}, {f['count']}" if f["key"] is not None else f"{f['id']}, {f['count']}" for f in findings[:3])
+    assert loop_line(out, "Findings") == f"  - Findings: {len(findings)} classes covering {covered} of {analyst['corpus']} traces; top {top}"
+    loop = json.loads(report(*LOOP_LEDGERS, "--json", "--eval-results", str(tmp_path / "none.jsonl"), env=loop_env(tmp_path)).stdout)["loop"]
+    assert loop["findings"] == {"classes": len(findings), "traces": covered, "corpus": analyst["corpus"],
+                                "top": [{"id": f["id"], "key": f["key"], "count": f["count"]} for f in findings[:3]]}
+
+
+def test_week_page_counts_the_weeks_eval_runs_and_decisions_and_nothing_outside_it(tmp_path):
+    results = jsonl(tmp_path / "results.jsonl", [
+        result("2026-11-17T10:00:00Z", "dev", "c1", True), result("2026-11-17T11:00:00Z", "dev", "c1", False),
+        result("2026-11-18T10:00:00Z", "dev", "c2", True),
+        result("2026-11-19T10:00:00Z", "heldout", "h1", True), result("2026-11-19T11:00:00Z", "heldout", "h1", False),
+        result("2026-11-15T23:59:59Z", "dev", "c3", True), result("2026-11-23T00:00:00Z", "heldout", "h2", True)])   # the weeks either side
+    decisions = jsonl(tmp_path / "decisions.jsonl", [
+        decision("2026-11-18T12:00:00Z", "gate-red-suite:tests/test_x.sh", "accept"),
+        decision("2026-11-19T12:00:00Z", "gate-red-suite:tests/test_x.sh", "accept"),
+        decision("2026-11-19T13:00:00Z", "reclaimed", "reject"),
+        decision("2026-11-20T13:00:00Z", "verdict-nudged", "inconclusive"),
+        decision("2026-11-24T13:00:00Z", "red-base", "reject")])                                                       # the next week
+    args = [*LOOP_LEDGERS, "--eval-results", str(results), "--eval-decisions", str(decisions)]
+    out = report(*args, env=loop_env(tmp_path)).stdout
+    assert loop_line(out, "Evals") == "  - Evals: dev 2/3 passing over 2 cases; held-out 1/2 passing over 1 case"
+    assert loop_line(out, "Changes") == "  - Changes: accepted 2 (gate-red-suite:tests/test_x.sh); rejected 1 (reclaimed); inconclusive 1 (verdict-nudged)"
+    loop = json.loads(report(*args, "--json", env=loop_env(tmp_path)).stdout)["loop"]
+    assert loop["evals"] == {"dev": {"passes": 2, "runs": 3, "cases": 2}, "heldout": {"passes": 1, "runs": 2, "cases": 1}}
+    assert loop["changes"] == {"accept": {"n": 2, "findings": ["gate-red-suite:tests/test_x.sh"]},
+                               "reject": {"n": 1, "findings": ["reclaimed"]}, "inconclusive": {"n": 1, "findings": ["verdict-nudged"]}}
+
+
+def test_week_page_reads_the_eval_files_from_the_writers_environment(tmp_path):
+    results = jsonl(tmp_path / "r.jsonl", [result("2026-11-17T10:00:00Z", "heldout", "h1", True)])
+    decisions = jsonl(tmp_path / "d.jsonl", [{"ts": "2026-11-17T12:00:00Z", "finding": "reclaimed", "accepted": False}])   # the spec's row, no `decision`
+    out = report(*LOOP_LEDGERS, env=loop_env(tmp_path, AUTOCODER_EVAL_RESULTS=str(results), AUTOCODER_EVAL_DECISIONS=str(decisions))).stdout
+    assert loop_line(out, "Evals") == "  - Evals: dev n/a; held-out 1/1 passing over 1 case"
+    assert loop_line(out, "Changes") == "  - Changes: accepted 0; rejected 1 (reclaimed); inconclusive 0"
+
+
+def test_week_page_says_na_never_zero_for_a_missing_file_or_an_empty_week(tmp_path):
+    out = report(*LOOP_LEDGERS, "--eval-results", str(tmp_path / "none.jsonl"), "--eval-decisions", str(tmp_path / "none2.jsonl"),
+                 env=loop_env(tmp_path)).stdout
+    assert loop_line(out, "Evals") == "  - Evals: n/a (no eval results file)"
+    assert loop_line(out, "Changes") == "  - Changes: n/a (no eval decisions file)"
+    old = jsonl(tmp_path / "old.jsonl", [result("2026-11-01T10:00:00Z", "dev", "c1", True)])
+    out = report(*LOOP_LEDGERS, "--eval-results", str(old), env=loop_env(tmp_path)).stdout
+    assert loop_line(out, "Evals") == "  - Evals: n/a (no eval run in the week)"
+
+
+def test_week_page_loop_off_drops_the_block(tmp_path):
+    r = report(*LOOP_LEDGERS, "--loop", "off", env=loop_env(tmp_path))
+    assert r.returncode == 0 and "Self-improvement loop" not in r.stdout
+    assert "loop" not in json.loads(report(*LOOP_LEDGERS, "--loop", "off", "--json", env=loop_env(tmp_path)).stdout)
+
+
+def test_week_page_without_the_trace_tooling_says_so(tmp_path):
+    alone = tmp_path / "scripts" / "landing-report.py"         # the report installed without its sibling scripts
+    alone.parent.mkdir()
+    alone.write_bytes(REPORT.read_bytes())
+    r = subprocess.run([sys.executable, str(alone), *LOOP_LEDGERS], capture_output=True, text=True,
+                       env={**os.environ, **loop_env(tmp_path)}, cwd=tempfile.gettempdir())
+    assert r.returncode == 0, r.stderr
+    assert loop_line(r.stdout, "Findings") == "  - Findings: n/a (trace tooling not installed)"
+
+
 # ── history mode ────────────────────────────────────────────────────────────
 def git(cwd, *a, env=None):
     e = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.x", **(env or {})}
