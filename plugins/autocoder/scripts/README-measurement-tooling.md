@@ -373,7 +373,7 @@ the repository root.
 
 | File | What it holds |
 |---|---|
-| `case.json` | `{"v": 1, "id", "authored", "split", "finding": {"id", "key", "rules", "traces"}, "issue": {"title", "labels"}, "verify": {...}}` |
+| `case.json` | `{"v": 1, "id", "authored", "split", "backend"?, "finding": {"id", "key", "rules", "traces"}, "issue": {"title", "labels", "comments"?, "state"?}, "verify": {...}}` |
 | `task.md` | The issue body the worker gets |
 | `seed/` | Optional: files copied into the sandbox repository before its first commit |
 | `setup.sh` | Optional: runs in the sandbox clone after the seed commit, with `ORIGIN` naming the bare remote, for a case that needs a second actor |
@@ -384,6 +384,32 @@ gate count and the session's tool calls (null: no bound; a tool-call bound with 
 fails), `steps_present` and `steps_absent` name step kinds. The default verifier for a finding
 comes from `VERIFY_DEFAULTS` in `eval-author.py`, one row per classifier in `classifiers()`;
 `tests/test_eval_author.py` fails when a classifier has no row.
+
+`backend` picks the sandbox's issue backend: `file` (the default) or `fake-github`. Use the
+file backend for any finding about the work itself (a red suite, a conflict, a return). Use
+`fake-github` for a finding about the claim protocol or the review record. The file backend never
+runs either: its claim is an atomic rename, so the GitHub claim race (the `working` label, the
+claim marker comment and the read-back by `createdAt`) is skipped, and it folds comments into
+the body, so `review` is null. Under `fake-github`:
+
+- `fake-gh.py` keeps the issue in `<root>/gh-store/<n>.json`. Each file is the document
+  `gh issue view --json number,title,body,state,labels,comments,...` prints. A `gh` shim in
+  `<root>/bin`, first on the worker's PATH, execs `fake-gh.py`. The shim logs every call to
+  `<root>/gh.log` as `{"argv", "exit"}`. The fake answers the `issue list`, `view`, `edit`,
+  `comment`, `close`, `reopen` and `create` forms that `issues-gh.sh` issues, plus `repo view`
+  and the `blockedBy` GraphQL probe from `issue-deps.sh`. Any other form exits 1 with
+  `fake gh: unsupported form: gh ...` on stderr.
+- `issue.comments`, a list of `{"body": "...", "age_s": N}`, is posted in order before the worker
+  starts, with `createdAt` set `age_s` seconds in the past. Use it to stage a stale start comment
+  or an old claim marker. New comments get the wall time, because the claim race window is
+  measured in server seconds. `issue.state` (`open` or `closed`) sets the issue's state.
+- The worker gets `ISSUE_SOURCE=github`, and `.autocoder.json` says `issueSource: github`
+  (the runner overwrites that one key in the seed's own file, under either backend).
+- `trace-build.py` gets `--comments-dir <root>/gh-store`, so the review classifiers grade the
+  comments the worker posted. A landed attempt with no review record is `no record`, not null.
+
+`check` refuses an unknown `backend`, `issue.comments` or `issue.state` without `fake-github`,
+and a comment that is not exactly a string `body` and a non-negative `age_s`.
 
 ### `eval-author.py`
 
@@ -414,23 +440,24 @@ checked first; a malformed or unknown case exits 2 before any worker runs. Then 
 repeat:
 
 1. A fresh root under the temp dir: a bare `origin.git` and a clone `repo/` with `seed/` copied
-   in. The runner adds `.autocoder.json` (`issueSource: file`) and a `CLAUDE.md` with the Merge
+   in. The runner adds `.autocoder.json` (`issueSource` naming the backend) and a `CLAUDE.md` with the Merge
    Mode (`merge`) and Integration Branch (`master`) sections when the seed has none. It makes one
    commit, pushes it, and runs `setup.sh`. `.issues/` is excluded from git in the clone.
-2. The issue is created through the file backend from `issue.title`, `task.md` and
-   `issue.labels`.
+2. The issue is created through the case's backend from `issue.title`, `task.md` and
+   `issue.labels`. Under `fake-github` the issue's comments come from `issue.comments`.
 3. The worker is `CMD` with `{issue}`, `{repo}` and `{root}` substituted (default
    `claude -p --output-format stream-json --verbose "/autocoder:fix {issue}"`). It runs in `repo/`
-   with `XDG_STATE_HOME=<root>/state`, `AUTOCODER_LOG_DIR=<root>/logs`, `ISSUE_SOURCE=file` and no
-   other inherited `AUTOCODER_*` variable. Its stdout goes to
+   with `XDG_STATE_HOME=<root>/state`, `AUTOCODER_LOG_DIR=<root>/logs`, `ISSUE_SOURCE` set to the
+   backend (`file` or `github`) and no other inherited `AUTOCODER_*` or `FAKE_GH_*` variable. Its stdout goes to
    `logs/worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` and its stderr to `worker.stderr`. At
    `--timeout` (default 3600 seconds) its process group gets SIGTERM, then SIGKILL.
 4. `trace-build.py` compiles the root's ledgers and logs, and the issue's last attempt is graded.
-   No `--comments-dir` is passed, because the file backend folds comments into the body: `review`
-   is null and the two review classifiers stay silent in a sandbox.
+   Under the file backend no `--comments-dir` is passed, because that backend folds comments into
+   the body: `review` is null and the two review classifiers stay silent. Under `fake-github` the
+   store is the comments dir.
 5. One row is appended to `--results` (default
    `${AUTOCODER_EVAL_RESULTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}`):
-   `{ts, case, split, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
+   `{ts, case, split, backend, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
    harness: {sha}, root}`. `failed` lists `outcome`, `max_gates`, `max_tool_calls`,
    `classifiers_silent:<id>`, `steps_present:<kind>`, `steps_absent:<kind>`, `timeout`, `setup`
    (the sandbox or `setup.sh` failed) or `trace` (no attempt was recorded). `worker` is the

@@ -6,6 +6,16 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Evaluation cases can run on a fake GitHub backend (#403). With `"backend": "fake-github"` in
+  `case.json`, `eval-run.py` keeps the sandbox issue in a `fake-gh.py` store behind a `gh` shim.
+  Comments staged in `issue.comments` get a `createdAt` `age_s` seconds in the past. The worker
+  runs with `ISSUE_SOURCE=github`, so claim-protocol findings (a stale start comment, an old claim
+  marker) and review-record findings can be replayed. `fake-gh.py` fails loudly on any `gh` form
+  it does not answer. Result rows carry `backend`, and `eval-author.py check` validates the new
+  keys.
+
 ## [4.67.0] - 2026-11-25
 
 ### Added

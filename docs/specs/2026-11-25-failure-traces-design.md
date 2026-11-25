@@ -327,6 +327,18 @@ author never to open `heldout/` again. Slice 4's fix-proposing step runs in a wo
 Commands: `/author-evals [findings.json]` (run the analyst, scaffold a dev and a held-out case per
 top finding, write each task and seed, `check`, commit) and `/run-evals [dev|heldout|all]`.
 
+**The fake-github backend (#403).** The file backend's claim is an atomic rename, and it folds
+comments into the body. So the first real finding, a claim bounced by a stale start comment, could
+not be replayed in the sandbox, and B05/B06 cases were graded on outcome only. `case.json` now
+takes `"backend": "file" | "fake-github"` (default `file`). Under `fake-github` the issue lives in
+a per-sandbox store served by `fake-gh.py` through a `gh` shim on the worker's PATH, and
+`issue.comments` (`[{"body", "age_s"}]`) stages comments backdated by `age_s` seconds. The worker
+runs with `ISSUE_SOURCE=github`, so the real `issues-gh.sh` and the claim scripts run the race
+check against server `createdAt`. `trace-build.py` reads the store as its `--comments-dir`. The
+result row gains `backend`. Once the claim-bounce classifier exists, a claim-protocol case is a
+stale start comment (`age_s: 600`) with
+`verify: {"outcome": "landed", "classifiers_silent": ["claim-bounced"]}`.
+
 ## Slice 4: one harness change at a time
 
 `/propose-fix <finding-id[:key] | case-id>` is a command protocol with one small script.
