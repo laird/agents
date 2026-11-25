@@ -62,6 +62,7 @@ VERIFY_DEFAULTS = {
     "conflict-retried-late": {"outcome": "escalated", "classifiers_silent": ["conflict-retried-late"],
                               "max_gates": 2},
     "reclaimed": {"outcome": "landed", "classifiers_silent": ["reclaimed"], "steps_absent": ["released"]},
+    "claim-bounced": {"outcome": "landed", "classifiers_silent": ["claim-bounced"], "max_gates": None},
     "landed-unreviewed": {"outcome": "landed", "classifiers_silent": ["landed-unreviewed"]},
     "review-left-important": {"outcome": "landed", "classifiers_silent": ["review-left-important"]},
     "verdict-nudged": {"outcome": "landed", "classifiers_silent": ["verdict-nudged"]},

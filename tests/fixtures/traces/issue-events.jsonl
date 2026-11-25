@@ -63,6 +63,12 @@
 {"v":1,"ts":"2026-11-20T19:12:30Z","repo":"repo-b-5678efgh","issue":100,"worker":"w3","branch":"feature/issue-100","event":"landed","detail":{"sha":"def1001","integration":"main"}}
 {"v":1,"ts":"2026-11-20T20:00:00Z","repo":"repo-a-1234abcd","issue":19,"worker":"w1","branch":"feature/issue-19","event":"claimed","detail":{}}
 {"v":1,"ts":"2026-11-20T20:05:00Z","repo":"repo-a-1234abcd","issue":19,"worker":"w1","branch":"feature/issue-19","event":"first-commit","detail":{"sha":"abc1900"}}
+{"v":1,"ts":"2026-11-20T20:30:00Z","repo":"repo-a-1234abcd","issue":25,"worker":"w1","branch":"feature/issue-25","event":"claimed","detail":{}}
+{"v":1,"ts":"2026-11-20T20:30:04Z","repo":"repo-a-1234abcd","issue":25,"worker":"w1","branch":"feature/issue-25","event":"claimed","detail":{}}
+{"v":1,"ts":"2026-11-20T20:30:25Z","repo":"repo-a-1234abcd","issue":25,"worker":"w1","branch":"feature/issue-25","event":"released","detail":{}}
+{"v":1,"ts":"2026-11-20T20:31:00Z","repo":"repo-a-1234abcd","issue":25,"worker":"w2","branch":"feature/issue-25","event":"claimed","detail":{}}
+{"v":1,"ts":"2026-11-20T20:31:04Z","repo":"repo-a-1234abcd","issue":25,"worker":"w2","branch":"feature/issue-25","event":"claimed","detail":{}}
+{"v":1,"ts":"2026-11-20T20:31:25Z","repo":"repo-a-1234abcd","issue":25,"worker":"w2","branch":"feature/issue-25","event":"released","detail":{}}
 this-is-malformed-json
 {"v":1,"ts":"2026-11-20T21:00:00Z","repo":"repo-a-1234abcd","issue":20,"worker":"w1","branch":"feature/issue-20","event":"claimed","detail":{}}
 {"v":1,"ts":"2026-11-20T21:00:04Z","repo":"repo-a-1234abcd","issue":20,"worker":"w1","branch":"feature/issue-20","event":"claimed","detail":{}}

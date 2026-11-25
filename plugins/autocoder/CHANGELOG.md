@@ -6,6 +6,27 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Added
+
+- `claim-bounced`, a trace classifier for claims dropped before any work began (#402, #395):
+  it fires on an attempt released within two minutes of its claim, with no READY and no gate.
+  `BEHAVIOR.md` gains B13, the rule it detects: a refused or abandoned claim is released
+  visibly, the release comment posted in the same step as the label removal. In one swarm's
+  ledgers 329 of 1,031 attempts were reclaimed, 80% of them released within a minute of the
+  claim. The week page's findings now count this class, so the `claim-issue.sh` fix above shows
+  as a falling number.
+
+### Fixed
+
+- `claim-issue.sh` releases visibly when it refuses an issue over a stale start comment (#402).
+  A work-started comment with no release after it counts in every later claim window, so the
+  refusal, which dropped the `working` label and posted nothing, left the window open: every
+  later claimant refused for the same reason and the issue bounced between the fix-loop gate and
+  the worker (one swarm's ledgers: one issue claimed and dropped 99 times in two days). With no
+  live rival marker, the refusal now posts the `🔓 Releasing claim` comment right after the label
+  removal, as the gate's own release does, and the next claim starts from a clean window. A
+  genuine race (a second live claim marker) still refuses without a comment.
+
 ## [4.67.0] - 2026-11-25
 
 ### Added

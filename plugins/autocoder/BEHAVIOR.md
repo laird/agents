@@ -39,3 +39,4 @@ qualifier such as `(MANDATORY)` or `(#7134)` is dropped from it.
 | B10 | Tool calls succeed; a tool that keeps failing is a harness fault, not something to retry blindly | `fix.md` Context Management | tool error share above a threshold |
 | B11 | An attempt that opens a session ends in a gate, an escalation or an explicit release | `fix.md` CRITICAL: Release the 'working' Label Only on a Terminal Outcome | session ended, no gate, no escalation, no release |
 | B12 | Work is decomposed rather than attempted when it is too large for one attempt | `fix.md` Ultra-Complex Issues - Decompose into Sub-Tasks | judge |
+| B13 | A claim that is refused or abandoned is released visibly: the release comment that ends the claim window is posted in the same step as the label removal | `fix.md` Explicit release | released within two minutes of the claim, with no READY and no gate |

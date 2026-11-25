@@ -79,6 +79,8 @@ SCENARIOS = {
             [(None, "aborted", [], [], None, False), (None, "landed", [], [], False, False)], ["infra"], None),
     a(22, 1): ("released", "2026-11-20T22:45:00Z", "2026-11-20T22:50:00Z", [], [], None),
     a(22, 2): ("open", None, None, [], [], None),
+    a(25, 1): ("released", "2026-11-20T20:30:25Z", "2026-11-20T20:31:00Z", [], [], None),
+    a(25, 2): ("released", "2026-11-20T20:31:25Z", None, [], [], None),
     a(24, 1): ("landed", "2026-11-20T23:50:00Z", "2026-11-20T23:55:00Z", [], [], None),
     a(24, 2): ("open", None, None, [], [], None),
     f"{REPO_B}:100:1": ("landed", "2026-11-20T19:12:30Z", None, [(1, "landed", [], [], False, False)], [], None),

@@ -348,7 +348,9 @@ analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE]
 points at (`commands/fix.md § <heading>`, `scripts/<name>`, `gate`, `integration branch` or
 `tool`), a `match` that returns evidence or None, and a `group` that splits hits into findings
 by key (the failing suite, the return cause, the most-failing tool). `tool-errors` fires at an
-error share above `--tool-error-share` (default 0.25) with at least ten calls. A finding carries
+error share above `--tool-error-share` (default 0.25) with at least ten calls. `claim-bounced`
+fires on an attempt released within two minutes of its claim with no READY and no gate (B13,
+surface `scripts/claim-issue.sh`): a claim refused or dropped before any work began (#402). A finding carries
 id, key, rules, surface, count, traces, share of the corpus, three examples with evidence, and
 severity (count times the classifier's weight). Findings sort by severity, then count, then
 deterministic before judged. The report ends with the corpus size, the window and the traces no

@@ -70,7 +70,8 @@ EXPECTED = {
     "returned-by-cause": [11, 12, 13, 17, 21],
     "conflict-escalated-early": [12],
     "conflict-retried-late": [13],
-    "reclaimed": [14, 22],
+    "reclaimed": [14, 22, 25],   # 25:1 bounced and was claimed again; 25:2 was not
+    "claim-bounced": [25, 25],
     "landed-unreviewed": [15, f"{B}:100:1"],
     "review-left-important": [11],
     "verdict-nudged": [16],
@@ -80,9 +81,9 @@ EXPECTED = {
 }
 
 
-# The live-shape scenarios (20, 21, 22 and 24 twice each) grew the corpus from 12; 20, 22:2, 24:1 and 24:2
+# The live-shape scenarios (20, 21, 22, 24 and 25 twice each) grew the corpus from 12; 20, 22:2, 24:1 and 24:2
 # match nothing.
-CORPUS, UNMATCHED = 18, 7
+CORPUS, UNMATCHED = 20, 7
 
 
 def load_analyst():
@@ -102,7 +103,15 @@ def test_classifier_fires_on_exactly_its_scenarios(full, classifier_id):
 
 
 def test_reclaimed_names_only_the_attempt_that_was_reclaimed(full):
-    assert [f["traces"] for f in full["findings"] if f["id"] == "reclaimed"] == [[f"{A}:14:1", f"{A}:22:1"]]
+    assert [f["traces"] for f in full["findings"] if f["id"] == "reclaimed"] == [[f"{A}:14:1", f"{A}:22:1", f"{A}:25:1"]]
+
+
+def test_claim_bounced_names_each_bounce_with_its_seconds_and_worker(full):
+    # 22:1 was released five minutes after its claim, past the two-minute bound; 20 posted READY first.
+    f = next(f for f in full["findings"] if f["id"] == "claim-bounced")
+    assert (f["traces"], f["rules"], f["surface"]) == ([f"{A}:25:1", f"{A}:25:2"], ["B13"], "scripts/claim-issue.sh")
+    assert f["evidence"] == [{"trace_id": f"{A}:25:1", "seconds": 25, "worker": "w1"},
+                             {"trace_id": f"{A}:25:2", "seconds": 25, "worker": "w2"}]
 
 
 def test_reclaimed_silent_on_a_claim_and_its_readback(full):
@@ -138,7 +147,7 @@ def test_tool_error_share_threshold(tmp_path, corpus):
 def test_findings_sorted_by_severity_then_count(full):
     keys = [(-f["severity"], -f["count"], f["judged"], f["id"], f["key"] or "") for f in full["findings"]]
     assert keys == sorted(keys)
-    assert full["findings"][0]["severity"] == 2
+    assert full["findings"][0]["severity"] == 3   # reclaimed: 14, 22 and 25:1
 
 
 def test_corpus_and_unmatched(full):
