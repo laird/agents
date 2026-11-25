@@ -138,6 +138,10 @@ for the sentinel's green tip or a human merge). `list --state blocked`
 never shows them. The file backend keeps all three in `working/`; `close`
 strips all three.
 
+`fix-loop-gate.sh` also skips an issue carrying one of `train.readyLabels`
+(default `ready-for-review`) when `.autocoder.json` has a `train` section: the
+merge train lands it, so no worker claims it (#405).
+
 ### Dependencies: work issues in the order they allow
 
 The claimable queue (`issue_list --state open`, and `list` with no `--state`)

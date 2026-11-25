@@ -184,6 +184,17 @@ issue_list --state open --limit 500 > "$ALL_JSON"
 CLAIMED_BY_BRANCH="$(bash "${SCRIPT_DIR}/claimed-issue-numbers.sh" origin 2>/dev/null || true)"
 [ -n "$CLAIMED_BY_BRANCH" ] || CLAIMED_BY_BRANCH="[]"
 
+# ── 1c. An issue carrying a train ready label is the train's (#405) ───────
+# A worker posted READY and the merge train will land it; the issue stays open
+# meanwhile. Without this the gate claimed it every tick and the claim was
+# released seconds later. Only with a `train` section in the main worktree's
+# `.autocoder.json`; its `readyLabels` default as in train_lib.py.
+MAIN_WT="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN_WT=""
+TRAIN_READY_LABELS="$(jq -c 'if (.train | type) == "object"
+  then [.train.readyLabels[]? | strings] | if length > 0 then . else ["ready-for-review"] end
+  else [] end' "${MAIN_WT:-.}/.autocoder.json" 2>/dev/null)" || TRAIN_READY_LABELS="[]"
+[ -n "$TRAIN_READY_LABELS" ] || TRAIN_READY_LABELS="[]"
+
 # ── 2. Classify in pure python (no LLM) ──────────────────────────────────
 # Outputs one of:
 #   TRIAGE <n> <n> <n>...       (single line)
@@ -194,7 +205,7 @@ CLAIMED_BY_BRANCH="$(bash "${SCRIPT_DIR}/claimed-issue-numbers.sh" origin 2>/dev
 classify() {
   # Note: heredoc IS python stdin; the issues JSON must come via env var
   # (heredoc overrides any `< file` redirect, so we use ALL_JSON_PATH).
-  ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" DISPATCHED_ELSEWHERE="$DISPATCHED_ELSEWHERE" python3 - <<'PY'
+  ALL_JSON_PATH="$ALL_JSON" CLAIMED_BY_BRANCH="$CLAIMED_BY_BRANCH" TRAIN_READY_LABELS="$TRAIN_READY_LABELS" DISPATCHED_ELSEWHERE="$DISPATCHED_ELSEWHERE" python3 - <<'PY'
 import json, os, random, sys
 
 with open(os.environ["ALL_JSON_PATH"]) as f:
@@ -209,6 +220,7 @@ try:
     dispatched_elsewhere = set(json.loads(os.environ.get("DISPATCHED_ELSEWHERE") or "[]"))
 except ValueError:
     dispatched_elsewhere = set()
+train_ready = set(json.loads(os.environ["TRAIN_READY_LABELS"]))
 
 PRIORITY_LABELS = ("P0", "P1", "P2", "P3")
 BLOCKING = {
@@ -226,6 +238,7 @@ def labels(issue):
 unprioritized = []
 priority = []     # (priority_index, rank, tiebreak, kind, number); rank 0 = fresh
 enhancements = []
+ready_for_train = 0
 
 for issue in issues:
     ls = labels(issue)
@@ -244,6 +257,11 @@ for issue in issues:
             # check cap cannot starve the same abandoned issue forever.
             (enhancements if kind == "enhance" else priority).append(
                 (p_idx, 1, random.random(), "TAKEOVER", issue["number"]))
+        continue
+
+    # After the takeover branch, so a `working` issue keeps today's takeover rule.
+    if ls & train_ready:
+        ready_for_train += 1
         continue
 
     has_priority = bool(ls & set(PRIORITY_LABELS))
@@ -270,6 +288,9 @@ for issue in issues:
         enhancements.append((p_idx, 0, 0.0, "ENHANCE", issue["number"]))
     else:
         priority.append((p_idx, 0, float(issue["number"]), "FIX", issue["number"]))
+
+if ready_for_train:
+    print(f"fix-loop-gate: ready (train): {ready_for_train}", file=sys.stderr)
 
 # Triage takes precedence over fix work
 if unprioritized:
@@ -334,7 +355,6 @@ esac
 if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
   # shellcheck source=touches-fns.sh
   source "${SCRIPT_DIR}/touches-fns.sh"
-  MAIN_WT="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN_WT=""
   OVERLAP_MODE="$(touches_mode "${MAIN_WT:-.}/.autocoder.json")"
   if [ "$OVERLAP_MODE" != off ] && [ -n "$CLASSIFICATION" ]; then
     WORKING_JSON="$(mktemp)"
