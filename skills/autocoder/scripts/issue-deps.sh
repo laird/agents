@@ -25,8 +25,12 @@
 # work that can only start after it.
 #
 # A dependency is met when its state is closed (closed, done, resolved,
-# completed, removed). One that can't be read counts as met: a typo must never
-# wedge the queue. AUTOCODER_IGNORE_DEPENDENCIES=1 turns the filter off.
+# completed, removed). One the tracker could not READ (a rate limit, an outage,
+# a 5xx) is UNMET and said so (#380): under a rate limit every lookup fails, and
+# "unreadable counts as met" let gated issues read as claimable and woke managers
+# for work that could not start. A clean "no such issue" (a typo'd number) still
+# counts as met: a typo must never wedge the queue. AUTOCODER_IGNORE_DEPENDENCIES=1
+# turns the filter off.
 #
 # Issues that wait on each other can never start. They stay gated (which one
 # goes first is a human call), but the cycle is reported on stderr every time
@@ -107,11 +111,24 @@ _ideps_state_is_met() {
 # <waits-back> is 1 when <n> declares a dependency on <back>, else 0). An
 # unreadable issue prints "- - 0".
 _ideps_lookup() {
-  local out
-  out=$("$_ifns_BACKEND_BIN" get "$1" 2>/dev/null \
+  local raw out err
+  # A read the backend could not make is "unreadable", never silently "no state" (#380), EXCEPT
+  # a clean "no such issue" (the backend's not-found text, or a silent negative exit as the file
+  # backend gives), which is a typo'd number and must never wedge the queue: that reads as before.
+  err=$(mktemp "${TMPDIR:-/tmp}/ideps-err.XXXXXX") || err=""
+  if ! raw=$("$_ifns_BACKEND_BIN" get "$1" 2>"${err:-/dev/null}"); then
+    local text=""
+    [ -n "$err" ] && { text=$(cat "$err" 2>/dev/null); rm -f "$err"; }
+    if [ -z "$text" ] || printf '%s' "$text" | grep -qiE 'could not resolve|not found|no such issue|does not exist'; then
+      echo "- - 0"; return 0
+    fi
+    echo "unreadable - 0"; return 0
+  fi
+  [ -n "$err" ] && rm -f "$err"
+  out=$(printf '%s' "$raw" \
     | jq -r --argjson back "${2:-0}" "$_IDEPS_JQ_DEFS"'
         "\(.state // "-" | if . == "" then "-" else . end) \(parent_num // "-") \(if (decl_deps | index($back)) then 1 else 0 end)"' 2>/dev/null)
-  echo "${out:-- - 0}"
+  echo "${out:-unreadable - 0}"
 }
 
 # Cycles in a wait graph: {"<n>": [m, ...]} on stdin → one line per cycle,
@@ -159,6 +176,11 @@ _ideps_filter() {
     fi
     read -r state parent _ <<<"$(_ideps_lookup "$n")"
     [ "$state" = "-" ] && state=""
+    if [ "$state" = "unreadable" ]; then
+      echo "⏳ #$n could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
+      unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
+      continue
+    fi
     if [ "$parent" != "-" ] && [ -n "$parent" ]; then
       parents=$(printf '%s' "$parents" | jq -c --arg k "$n" --argjson p "$parent" '. + {($k): $p}' 2>/dev/null || printf '%s' "$parents")
     fi
@@ -197,6 +219,10 @@ issue_unmet_dependencies() {
   for d in $deps; do
     read -r state dparent back <<<"$(_ideps_lookup "$d" "$n")"
     [ "$state" = "-" ] && state=""
+    if [ "$state" = "unreadable" ]; then
+      echo "⏳ #$d could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
+      waiting+=("#$d"); continue
+    fi
     [ "$dparent" = "$n" ] && continue        # its own sub-task
     _ideps_state_is_met "$state" && continue
     waiting+=("#$d")
