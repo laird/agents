@@ -1,8 +1,9 @@
 # Fix-loop measurement tooling
 
-Two scripts that capture and analyze per-tick cost telemetry for the
-`/loop /autocoder:gate` flow. Design: see
-`docs/specs/2026-05-21-fix-loop-token-efficiency-design.md` §13.
+Scripts that capture and analyze per-tick cost telemetry, landing efficiency,
+and agent behavior traces for the fix loop. Gate log design:
+`docs/specs/2026-05-21-fix-loop-token-efficiency-design.md` §13. Trace analysis
+design: `docs/specs/2026-11-25-failure-traces-design.md`.
 
 ## `gate-log.py`
 
@@ -232,3 +233,79 @@ issue; the train writes the verdict it judged under the same id and the members'
 The report merges rows that share an id (later non-null fields win, members and stages are
 unioned), so a gate is counted once. Before this, every train counted twice: a solo batch of the
 gate issue from the gate beside the train's own row.
+
+## Trace analysis and the behaviour spec
+
+Three pieces turn agent failures into tests and harness fixes (#395; design:
+`docs/specs/2026-11-25-failure-traces-design.md`). `trace-build.py` compiles one trace per issue
+attempt from the ledgers above and the worker transcripts. `BEHAVIOR.md` (plugin root) states the
+fix protocol's rules with stable ids. `analyze-traces.py` reads the traces against the spec and
+names the failures that repeat. `/analyze-traces` runs both.
+
+### `trace-build.py`
+
+```
+trace-build.py [--issue-events PATH] [--merge-events PATH] [--landing-timings PATH]
+               [--gate-log PATH] [--log-dir DIR] [--comments-dir DIR]
+               [--out PATH|-] [--since DATE] [--until DATE] [--repo-id ID] [--slack MINUTES]
+```
+
+An attempt is one `claimed` of one (repo, issue), up to the next `claimed` of the same (repo,
+issue); events before any claim open an implicit attempt with worker and branch null. A trace
+never mixes repositories. Each trace carries `started`, `ended` (the terminal step's time, null
+while open), `next_attempt` (the re-claim's time, or null), `outcome`
+(`landed|escalated|returned|released|abandoned|open`), `steps`, `gates`, `returned`, `session`,
+`review` and `tick`.
+
+- **Gates** start from each `gate-end` step and take `tests_failed`, `conflict_files`,
+  `red_base` and `escalated` from the merge-events `attempt` row with the same attempt number.
+  A merge row with no `gate-end` is a gate of its own. A field no row recorded is null.
+- **Session**: the transcript named `worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` whose time (a
+  `timestamp`/`ts` field, else the name's HHMMSS in local time, else mtime) falls in the
+  attempt's window widened by `--slack` (default 60 minutes). It belongs to the attempt whose
+  start is nearest. `tools` is `{"calls", "errors", "by_name": {"<tool>": {"calls", "errors"}}}`,
+  each error charged to the tool its `tool_use_id` names. A session with no `result` event yet
+  reports its tools, and `num_turns`, `duration_ms`, `cost_usd` and `is_error` are null.
+- **Review**, only with `--comments-dir` (`<issue>.json` documents as `issue_get` prints them):
+  `{"status": "reviewed", "rounds", "verdict", "findings", "resolutions"}`, `{"status":
+  "skipped"}`, `{"status": "no record"}`, or `{"status": "unavailable"}` for a document that
+  could not be read. Without the directory, `review` is null.
+- **Tick**: the gate.jsonl row whose `claimed` names the issue, written in the ten minutes
+  before the attempt started.
+
+`--since`/`--until` keep attempts whose start is in `[since, until)`. Output goes to
+`${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/traces.jsonl}` (`--out -`
+for stdout) as a whole-file rewrite, so a rerun converges. Missing ledgers give an empty file and
+exit 0. Malformed lines are skipped and counted per ledger on one stderr line.
+
+### `BEHAVIOR.md`
+
+One row per rule: id (`B01`, ...), one sentence of behaviour, its source, and its signal (how a
+trace shows it broken, or `judge`). Its Citations section defines the source grammar. A rule is
+retired by starting its text with `Retired:`, never renumbered. `tests/test_behavior_spec.py`
+checks that every citation resolves, that every rule a classifier cites exists, and that every
+rule with a trace signal has a classifier.
+
+### `analyze-traces.py`
+
+```
+analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE]
+                  [--tool-error-share F] [--judge CMD [--judge-all] [--spec PATH] [--judge-prompt PATH]]
+```
+
+`classifiers()` returns the registry: each row has an id, the rules it cites, the surface it
+points at (`commands/fix.md § <heading>`, `scripts/<name>`, `gate`, `integration branch` or
+`tool`), a `match` that returns evidence or None, and a `group` that splits hits into findings
+by key (the failing suite, the return cause, the most-failing tool). `tool-errors` fires at an
+error share above `--tool-error-share` (default 0.25) with at least ten calls. A finding carries
+id, key, rules, surface, count, traces, share of the corpus, three examples with evidence, and
+severity (count times the classifier's weight). Findings sort by severity, then count, then
+deterministic before judged. The report ends with the corpus size, the window and the traces no
+classifier matched.
+
+The judge is off by default. `--judge CMD` runs `CMD` once per trace no classifier matched (every
+trace with `--judge-all`) with `prompts/trace-judge.v1.md`, then `BEHAVIOR.md`, then the trace's
+JSON on stdin. `CMD` prints a JSON array of `{"rule", "evidence", "confidence"}`; a non-zero
+exit, non-JSON, a non-array or an element without a string `rule` is a judge error, counted and
+never a finding. Judged findings have id `judged`, key the rule, and `judge_prompt` naming the
+prompt file. A new prompt is a new file.

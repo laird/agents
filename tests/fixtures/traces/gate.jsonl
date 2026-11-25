@@ -1,0 +1,6 @@
+{"ts":"2026-11-20T09:55:00Z","tick_id":"session1-1732095300000","outcome":"fix","model":"model-a","issues_scanned":5,"stale_swept":0,"claimed":"10","gate_duration_ms":60000,"session_jsonl_path":"/tmp/worker-1001-fix-10-095500.jsonl"}
+{"ts":"2026-11-20T10:55:00Z","tick_id":"session2-1732098900000","outcome":"fix","model":"model-a","issues_scanned":4,"stale_swept":0,"claimed":"#11","gate_duration_ms":50000,"session_jsonl_path":"/tmp/worker-1001-fix-11-105500.jsonl"}
+{"ts":"2026-11-20T11:55:00Z","tick_id":"session3-1732102500000","outcome":"fix","model":"model-b","issues_scanned":3,"stale_swept":0,"claimed":"issue#12","gate_duration_ms":30000,"session_jsonl_path":"/tmp/worker-1002-fix-12-115500.jsonl"}
+{"ts":"2026-11-20T16:52:00Z","tick_id":"session4-1732120320000","outcome":"fix","model":"model-a","issues_scanned":2,"stale_swept":0,"claimed":"17","gate_duration_ms":40000,"session_jsonl_path":"/tmp/worker-1001-fix-17-175500.jsonl"}
+{"ts":"2026-11-20T12:30:00Z","tick_id":"session5-1732105800000","outcome":"fix","model":"model-a","issues_scanned":3,"stale_swept":0,"claimed":"12","gate_duration_ms":20000,"session_jsonl_path":"/tmp/worker-1004-fix-12-123000.jsonl"}
+malformed
