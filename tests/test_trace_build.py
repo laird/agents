@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -14,23 +15,27 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "plugins" / "autocoder" / "scripts" / "trace-build.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "traces"
 REPO_A, REPO_B = "repo-a-1234abcd", "repo-b-5678efgh"
+GATE_ISSUE = 23
 LEDGER_ARGS = ["--issue-events", str(FIXTURES / "issue-events.jsonl"),
                "--merge-events", str(FIXTURES / "merge-events.jsonl"),
                "--landing-timings", str(FIXTURES / "landing-timings.jsonl"),
                "--gate-log", str(FIXTURES / "gate.jsonl")]
+FIXTURE_ARGS = LEDGER_ARGS + ["--train-gate-issue", str(GATE_ISSUE)]
 
 
-def run(tmp_path, *args, ledgers=LEDGER_ARGS, env=None):
+def run(tmp_path, *args, ledgers=FIXTURE_ARGS, env=None):
     # TZ=UTC: a transcript name's HHMMSS is local time, and the fixtures are written in UTC.
+    # cwd: the default --repo, kept off this checkout so its .autocoder.json never names a gate issue.
     e = {k: v for k, v in os.environ.items() if k != "AUTOCODER_TRACES"}
     e.update({"XDG_STATE_HOME": str(tmp_path / "state"), "TZ": "UTC", **(env or {})})
-    return subprocess.run([sys.executable, str(SCRIPT), *ledgers, *args], capture_output=True, text=True, env=e)
+    return subprocess.run([sys.executable, str(SCRIPT), *ledgers, *args], capture_output=True, text=True, env=e,
+                          cwd=tmp_path)
 
 
-def build(tmp_path, *args):
+def build(tmp_path, *args, ledgers=FIXTURE_ARGS):
     out = tmp_path / "traces.jsonl"
     r = run(tmp_path, "--log-dir", str(FIXTURES), "--comments-dir", str(FIXTURES / "comments"),
-            "--out", str(out), *args)
+            "--out", str(out), *args, ledgers=ledgers)
     assert r.returncode == 0, r.stderr
     return {t["trace_id"]: t for t in map(json.loads, out.read_text().splitlines())}
 
@@ -69,6 +74,13 @@ SCENARIOS = {
     a(18): ("landed", "2026-11-20T18:07:30Z", None,
             [(1, "conflict", [], ["src/b.sh"], False, False), (2, "landed", [], [], False, False)], [], None),
     a(19): ("abandoned", "2026-11-20T20:05:00Z", None, [], [], None),
+    a(20): ("landed", "2026-11-20T21:40:00Z", None, [], [], None),
+    a(21): ("landed", "2026-11-20T22:30:01Z", None,
+            [(None, "aborted", [], [], None, False), (None, "landed", [], [], False, False)], ["infra"], None),
+    a(22, 1): ("released", "2026-11-20T22:45:00Z", "2026-11-20T22:50:00Z", [], [], None),
+    a(22, 2): ("open", None, None, [], [], None),
+    a(24, 1): ("landed", "2026-11-20T23:50:00Z", "2026-11-20T23:55:00Z", [], [], None),
+    a(24, 2): ("open", None, None, [], [], None),
     f"{REPO_B}:100:1": ("landed", "2026-11-20T19:12:30Z", None, [(1, "landed", [], [], False, False)], [], None),
 }
 
@@ -93,7 +105,11 @@ def test_implicit_attempt_starts_at_first_event(traces):
     t = traces[a(18)]
     assert t["worker"] is None and t["branch"] is None
     assert t["started"] == "2026-11-20T18:00:00Z"
-    assert [s["kind"] for s in t["steps"]] == ["first-commit", "precheck", "gate-queued", "gate-start", "gate-end", "landed"]
+    # Two landed steps: the lifecycle one, then the landing-timings change row of the same landing.
+    assert [(s["kind"], s["source"]) for s in t["steps"]] == [
+        ("first-commit", "issue-events"), ("precheck", "landing-timings"), ("gate-queued", "issue-events"),
+        ("gate-start", "issue-events"), ("gate-end", "issue-events"), ("landed", "issue-events"),
+        ("landed", "landing-timings")]
 
 
 def test_gate_takes_reason_from_gate_end_and_detail_from_merge_row(traces):
@@ -110,6 +126,79 @@ def test_reclaim_keeps_worker_and_steps_per_attempt(traces):
     first, second = traces[a(14, 1)], traces[a(14, 2)]
     assert (first["worker"], [s["kind"] for s in first["steps"]]) == ("w1", ["claimed", "released"])
     assert (second["worker"], [s["kind"] for s in second["steps"]]) == ("w2", ["claimed"])
+
+
+def test_claim_and_its_readback_are_one_attempt(traces):
+    t = traces[a(20)]
+    assert (t["worker"], t["started"]) == ("w1", "2026-11-20T21:00:00Z")
+    assert [(s["kind"], s["source"]) for s in t["steps"]] == [
+        ("claimed", "issue-events"), ("claimed", "issue-events"), ("ready", "landing-timings"),
+        ("batched", "landing-timings"), ("landed", "landing-timings"), ("released", "issue-events")]
+
+
+def test_train_landing_is_terminal_and_the_label_cleanup_keeps_it_landed(traces):
+    t = traces[a(20)]
+    assert (t["outcome"], t["ended"]) == ("landed", "2026-11-20T21:40:00Z")
+    landed = next(s for s in t["steps"] if s["kind"] == "landed")
+    assert landed["detail"] == {"batch": "train-20261120T212500Z-1", "sha": "abc2001"}
+    assert next(s for s in t["steps"] if s["kind"] == "batched")["detail"] == {
+        "batch": "train-20261120T212500Z-1", "cause": None}
+
+
+def test_null_attempt_gates_pair_with_merge_rows_in_time_order(traces):
+    gates = traces[a(21)]["gates"]
+    assert [(g["outcome"], g["duration_s"], g["reason"], g["red_base"]) for g in gates] == [
+        ("aborted", 540, "runner lost", None), ("landed", 480, None, False)]
+    assert [s["kind"] for s in traces[a(21)]["steps"]].count("returned") == 1
+
+
+def test_lost_claim_race_is_a_step_of_the_winners_attempt(traces):
+    t = traces[a(24)]
+    assert (t["worker"], [s["kind"] for s in t["steps"]]) == ("w1", ["claimed", "claimed", "claimed", "ready", "landed"])
+
+
+def test_train_landing_ends_the_attempt_for_the_same_workers_next_claim(traces):
+    assert (traces[a(24, 2)]["worker"], traces[a(24, 2)]["started"]) == ("w1", "2026-11-20T23:55:00Z")
+
+
+def test_landing_rows_without_a_repository_join_the_issues_repository(traces):
+    assert not [tid for tid, t in traces.items() if t["repo"] is None]
+
+
+def test_reclaim_by_another_worker_after_release_is_a_new_attempt(traces):
+    first, second = traces[a(22, 1)], traces[a(22, 2)]
+    assert (first["worker"], [s["kind"] for s in first["steps"]]) == ("w1", ["claimed", "claimed", "released"])
+    assert (second["worker"], [s["kind"] for s in second["steps"]]) == ("w2", ["claimed", "claimed"])
+
+
+def gate_traces(tmp_path, *args, repo=None):
+    out = tmp_path / "gate.jsonl"
+    r = run(tmp_path, "--log-dir", str(tmp_path), "--out", str(out), *args,
+            *(["--repo", str(repo)] if repo else []), ledgers=LEDGER_ARGS)
+    assert r.returncode == 0, r.stderr
+    return [t["trace_id"] for t in map(json.loads, out.read_text().splitlines()) if t["issue"] == GATE_ISSUE], r.stderr
+
+
+def test_train_gate_issue_dropped_by_flag(tmp_path):
+    got, stderr = gate_traces(tmp_path, "--train-gate-issue", str(GATE_ISSUE))
+    assert got == []
+    assert f"dropped 3 traces of train gate issue {GATE_ISSUE}" in stderr
+
+
+def test_train_gate_issue_dropped_by_the_repositorys_config(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy(FIXTURES / "autocoder-train.json", repo / ".autocoder.json")
+    assert gate_traces(tmp_path, repo=repo)[0] == []
+
+
+def test_train_gate_issue_zero_or_unconfigured_keeps_it(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy(FIXTURES / "autocoder-train.json", repo / ".autocoder.json")
+    kept, stderr = gate_traces(tmp_path, "--train-gate-issue", "0", repo=repo)
+    assert kept == [a(GATE_ISSUE, n) for n in (1, 2, 3)] and "dropped" not in stderr
+    assert gate_traces(tmp_path)[0] == kept
 
 
 def test_session_counts_errors_per_tool(traces):

@@ -13,6 +13,17 @@ once (Version Management in `docs/maintaining.md`).
   records; `BEHAVIOR.md` states the fix protocol's rules with stable ids; `analyze-traces.py`
   runs a registry of classifiers citing those rules and writes the failures that repeat, with an
   optional judge (off by default) for rules only a reader can check.
+- `trace-build.py` reads ledgers the way live runs write them (#395): a claim and its readback,
+  or a lost claim race, are steps of one attempt; landing-timings `landed` rows are train
+  landings; `ready`, `launched`, `batched` and `returned` rows are steps; and
+  `--train-gate-issue` (default `train.gateIssue` from `.autocoder.json`) drops the train gate
+  issue's traces.
+
+- `/author-evals` and `/run-evals` (#395, slice 3): `eval-author.py` scaffolds a dev and a
+  held-out evaluation case per trace finding, with a default verifier per classifier, and checks
+  the cases before they are committed. `eval-run.py` runs each case against a worker in a fresh
+  sandbox repository with a file-backend issue, grades the attempt's trace, and records pass or
+  fail per harness commit.
 - The weekly landing report shows the self-improvement loop (#395, slice 5).
   `landing-report.py --week` ends "Week in numbers" with the week's trace findings (classes,
   traces covered, top three), its eval runs per split and its harness-change decisions. A missing

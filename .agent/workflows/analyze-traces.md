@@ -54,6 +54,14 @@ WINDOW=()
 python3 "$SCRIPT_DIR/trace-build.py" --repo-id "$REPO_ID" "${WINDOW[@]}"
 ```
 
+Run it from this repository: the train's gate issue (`train.gateIssue` in the main worktree's
+`.autocoder.json`) carries claims and no work, so the builder drops its traces and says how many
+on stderr. Pass `--train-gate-issue N` to name a different issue, or `0` to keep it.
+
+Each trace's steps include the landing-timings rows: `ready` (the worker's hand-off),
+`launched`, `batched`, `returned` and `landed`. A train landing appears only there, and it counts
+as the attempt's landing.
+
 The traces go to the default path beside the ledgers,
 `${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/traces.jsonl}`, never into
 the working tree. A rerun rewrites the whole file. A line on stderr counts any malformed ledger

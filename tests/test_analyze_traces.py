@@ -32,9 +32,9 @@ def corpus(tmp_path_factory):
                         "--issue-events", str(FIXTURES / "issue-events.jsonl"),
                         "--merge-events", str(FIXTURES / "merge-events.jsonl"),
                         "--landing-timings", str(FIXTURES / "landing-timings.jsonl"),
-                        "--gate-log", str(FIXTURES / "gate.jsonl"),
+                        "--gate-log", str(FIXTURES / "gate.jsonl"), "--train-gate-issue", "23",
                         "--log-dir", str(FIXTURES), "--comments-dir", str(FIXTURES / "comments"),
-                        "--out", str(out)], capture_output=True, text=True, env=env_for(tmp))
+                        "--out", str(out)], capture_output=True, text=True, env=env_for(tmp), cwd=tmp)
     assert r.returncode == 0, r.stderr
     return out
 
@@ -67,10 +67,10 @@ def fired(rep, classifier_id):
 # second classifier changes a row here.
 EXPECTED = {
     "gate-red-suite": [11, 17],
-    "returned-by-cause": [11, 12, 13, 17],
+    "returned-by-cause": [11, 12, 13, 17, 21],
     "conflict-escalated-early": [12],
     "conflict-retried-late": [13],
-    "reclaimed": [14],
+    "reclaimed": [14, 22],
     "landed-unreviewed": [15, f"{B}:100:1"],
     "review-left-important": [11],
     "verdict-nudged": [16],
@@ -78,6 +78,11 @@ EXPECTED = {
     "tool-errors": [12],
     "session-without-gate": [19],
 }
+
+
+# The live-shape scenarios (20, 21, 22 and 24 twice each) grew the corpus from 12; 20, 22:2, 24:1 and 24:2
+# match nothing.
+CORPUS, UNMATCHED = 18, 7
 
 
 def load_analyst():
@@ -97,7 +102,12 @@ def test_classifier_fires_on_exactly_its_scenarios(full, classifier_id):
 
 
 def test_reclaimed_names_only_the_attempt_that_was_reclaimed(full):
-    assert [f["traces"] for f in full["findings"] if f["id"] == "reclaimed"] == [[f"{A}:14:1"]]
+    assert [f["traces"] for f in full["findings"] if f["id"] == "reclaimed"] == [[f"{A}:14:1", f"{A}:22:1"]]
+
+
+def test_reclaimed_silent_on_a_claim_and_its_readback(full):
+    # 20 and 21 each wrote `claimed` twice and landed on the train; 24 also saw a lost claim race.
+    assert not {20, 21, 24} & set(fired(full, "reclaimed"))
 
 
 def test_groups_split_findings_by_key(full):
@@ -108,6 +118,7 @@ def test_groups_split_findings_by_key(full):
         ("gate-red-suite", "tests/test_y.sh"): ([17], ["B01"]),
         ("returned-by-cause", "conflict"): ([12, 13], ["B02"]),
         ("returned-by-cause", "defect"): ([11], ["B01"]),
+        ("returned-by-cause", "infra"): ([21], []),
         ("returned-by-cause", "red-integration"): ([17], ["B09"]),
         ("tool-errors", "Bash"): ([12], ["B10"]),
     }
@@ -131,10 +142,10 @@ def test_findings_sorted_by_severity_then_count(full):
 
 
 def test_corpus_and_unmatched(full):
-    assert (full["corpus"], full["unmatched"], full["judge"]) == (12, 3, None)
+    assert (full["corpus"], full["unmatched"], full["judge"]) == (CORPUS, UNMATCHED, None)
     assert full["window"] == {"since": None, "until": None}
     f = next(f for f in full["findings"] if f["id"] == "red-base")
-    assert (f["count"], f["share"], f["surface"]) == (1, round(1 / 12, 3), "integration branch")
+    assert (f["count"], f["share"], f["surface"]) == (1, round(1 / CORPUS, 3), "integration branch")
 
 
 def test_since_until_filter_by_start(tmp_path, corpus):
@@ -174,11 +185,11 @@ def test_markdown_report(tmp_path, corpus):
     assert lines[0] == "# Trace findings"
     section = lines.index("## gate-red-suite: tests/test_x.sh")
     assert lines[section + 2:section + 6] == [
-        "- Rules: B01", "- Surface: gate", "- Count: 1 (8% of the corpus)",
+        "- Rules: B01", "- Surface: gate", f"- Count: 1 ({1 / CORPUS:.0%} of the corpus)",
         f'- `{A}:11:1`: {{"tests_failed": ["tests/test_x.sh"]}}']
     assert "## red-base" in lines
     tail = lines[lines.index("## Corpus"):]
-    assert tail == ["## Corpus", "", "- Traces: 12", "- Window: all", "- Matched by no classifier: 3"]
+    assert tail == ["## Corpus", "", f"- Traces: {CORPUS}", "- Window: all", f"- Matched by no classifier: {UNMATCHED}"]
 
 
 def test_empty_corpus(tmp_path):
@@ -213,8 +224,8 @@ def judged_report(tmp_path, corpus, body, *args):
 
 def test_judge_finding(tmp_path, corpus):
     rep, calls, _ = judged_report(tmp_path, corpus, B12_FOR_ISSUE_10)
-    assert calls == 3
-    assert rep["judge"] == {"prompt": "trace-judge.v1.md", "traces": 3, "errors": 0}
+    assert calls == UNMATCHED
+    assert rep["judge"] == {"prompt": "trace-judge.v1.md", "traces": UNMATCHED, "errors": 0}
     judged = [f for f in rep["findings"] if f["judged"]]
     assert len(judged) == 1
     f = judged[0]
@@ -223,7 +234,7 @@ def test_judge_finding(tmp_path, corpus):
     assert f["evidence"] == [{"trace_id": f"{A}:10:1", "rule": "B12", "evidence": "too large", "confidence": 0.9}]
     same = [g for g in rep["findings"] if g["severity"] == f["severity"]]
     assert same[-1]["judged"] and not any(g["judged"] for g in same[:-1])
-    assert rep["unmatched"] == 3
+    assert rep["unmatched"] == UNMATCHED
 
 
 def test_judge_input_is_prompt_then_spec_then_trace(tmp_path, corpus):
@@ -245,8 +256,8 @@ def test_judge_input_is_prompt_then_spec_then_trace(tmp_path, corpus):
 ])
 def test_judge_errors_are_counted_never_findings(tmp_path, corpus, body):
     rep, calls, _ = judged_report(tmp_path, corpus, body)
-    assert calls == 3
-    assert rep["judge"]["errors"] == 3
+    assert calls == UNMATCHED
+    assert rep["judge"]["errors"] == UNMATCHED
     assert not [f for f in rep["findings"] if f["judged"]]
 
 
@@ -254,11 +265,11 @@ def test_judge_errors_in_markdown(tmp_path, corpus):
     r = analyze(tmp_path, corpus, "--judge", fake_judge(tmp_path, "echo 'not json'\n"),
                 JUDGE_CALLS=str(tmp_path / "calls"), JUDGE_LAST=str(tmp_path / "last"))
     assert r.returncode == 0
-    assert r.stdout.splitlines()[-1] == "- Judge errors: 3 of 3 traces judged (trace-judge.v1.md)"
+    assert r.stdout.splitlines()[-1] == f"- Judge errors: {UNMATCHED} of {UNMATCHED} traces judged (trace-judge.v1.md)"
 
 
 def test_judge_all_judges_every_trace(tmp_path, corpus):
     rep, calls, _ = judged_report(tmp_path, corpus, B12_FOR_ISSUE_10, "--judge-all")
-    assert calls == 12
-    assert rep["judge"]["traces"] == 12
+    assert calls == CORPUS
+    assert rep["judge"]["traces"] == CORPUS
 

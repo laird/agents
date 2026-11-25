@@ -282,18 +282,31 @@ names the failures that repeat. `/analyze-traces` runs both.
 trace-build.py [--issue-events PATH] [--merge-events PATH] [--landing-timings PATH]
                [--gate-log PATH] [--log-dir DIR] [--comments-dir DIR]
                [--out PATH|-] [--since DATE] [--until DATE] [--repo-id ID] [--slack MINUTES]
+               [--repo DIR] [--train-gate-issue N]
 ```
 
-An attempt is one `claimed` of one (repo, issue), up to the next `claimed` of the same (repo,
-issue); events before any claim open an implicit attempt with worker and branch null. A trace
-never mixes repositories. Each trace carries `started`, `ended` (the terminal step's time, null
-while open), `next_attempt` (the re-claim's time, or null), `outcome`
+An attempt is one worker's claim of one (repo, issue), up to the claim that opens the next
+attempt. `claimed` is written twice per claim (`issue_claim`, then the worker's readback a few
+seconds later), and a worker that loses the claim race writes it once and nothing more. So a
+`claimed` opens an attempt only when none is open, the open one has ended (a landed, escalated or
+released row since it started), or another worker wrote it and read it back within two minutes.
+Any other `claimed` is a step of the open attempt and leaves its `started`, `worker` and
+`branch` alone. Events before any claim open an implicit attempt with worker and branch null. A
+trace never mixes repositories. Each trace carries `started`, `ended` (the terminal step's time,
+null while open), `next_attempt` (the next attempt's claim, or null), `outcome`
 (`landed|escalated|returned|released|abandoned|open`), `steps`, `gates`, `returned`, `session`,
 `review` and `tick`.
 
+- **Steps** are the lifecycle events plus the landing-timings change rows `ready` (the worker's
+  hand-off), `launched`, `batched`, `landed`, `returned`, `rebase` and `precheck`. The merge
+  train lands most work and records it only as a landing-timings `landed` row, so that row is a
+  terminal `landed` step (detail: `batch`, `sha`) like the lifecycle one. A `released` after a
+  landing is the label cleanup and leaves the outcome `landed`. A landing row from a writer that
+  recorded no repository takes the one repository whose other rows name its issue.
 - **Gates** start from each `gate-end` step and take `tests_failed`, `conflict_files`,
   `red_base` and `escalated` from the merge-events `attempt` row with the same attempt number.
-  A merge row with no `gate-end` is a gate of its own. A field no row recorded is null.
+  A merge row with no `gate-end` is a gate of its own. A field no row recorded is null. A train's
+  gate records `attempt: null` on both rows; such gates pair in time order.
 - **Session**: the transcript named `worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` whose time (a
   `timestamp`/`ts` field, else the name's HHMMSS in local time, else mtime) falls in the
   attempt's window widened by `--slack` (default 60 minutes). It belongs to the attempt whose
@@ -307,7 +320,11 @@ while open), `next_attempt` (the re-claim's time, or null), `outcome`
 - **Tick**: the gate.jsonl row whose `claimed` names the issue, written in the ten minutes
   before the attempt started.
 
-`--since`/`--until` keep attempts whose start is in `[since, until)`. Output goes to
+`--since`/`--until` keep attempts whose start is in `[since, until)`. The train's gate issue
+carries claims and no work, so its traces are dropped: `--train-gate-issue N` names it, and by
+default it is `train.gateIssue` in the main-worktree `.autocoder.json` of `--repo DIR` (default:
+the current directory), as `landing-report.py` reads it. `0` keeps it. One stderr line says how
+many traces were dropped. Output goes to
 `${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/traces.jsonl}` (`--out -`
 for stdout) as a whole-file rewrite, so a rerun converges. Missing ledgers give an empty file and
 exit 0. Malformed lines are skipped and counted per ledger on one stderr line.
@@ -344,6 +361,85 @@ exit, non-JSON, a non-array or an element without a string `rule` is a judge err
 never a finding. Judged findings have id `judged`, key the rule, and `judge_prompt` naming the
 prompt file. A new prompt is a new file.
 
+## Evaluation cases
+
+A finding becomes evaluation cases that a machine runs and grades (#395, slice 3).
+`eval-author.py` writes the cases, `eval-run.py` runs them, `/author-evals` and `/run-evals`
+drive the two.
+
+A case is a directory, `<cases>/dev/<id>/` or `<cases>/heldout/<id>/`. The split is the
+directory. `<cases>` is `--cases DIR`, else `AUTOCODER_EVAL_CASES`, else `.autocoder/evals` under
+the repository root.
+
+| File | What it holds |
+|---|---|
+| `case.json` | `{"v": 1, "id", "authored", "split", "finding": {"id", "key", "rules", "traces"}, "issue": {"title", "labels"}, "verify": {...}}` |
+| `task.md` | The issue body the worker gets |
+| `seed/` | Optional: files copied into the sandbox repository before its first commit |
+| `setup.sh` | Optional: runs in the sandbox clone after the seed commit, with `ORIGIN` naming the bare remote, for a case that needs a second actor |
+
+`verify` is declarative and reads only the attempt's trace. `outcome` (null: any), each
+classifier in `classifiers_silent` must not match, `max_gates` and `max_tool_calls` bound the
+gate count and the session's tool calls (null: no bound; a tool-call bound with no transcript
+fails), `steps_present` and `steps_absent` name step kinds. The default verifier for a finding
+comes from `VERIFY_DEFAULTS` in `eval-author.py`, one row per classifier in `classifiers()`;
+`tests/test_eval_author.py` fails when a classifier has no row.
+
+### `eval-author.py`
+
+```
+eval-author.py new (--finding JSON | --findings-file PATH --index N) [--split dev|heldout]
+                   [--cases DIR] [--id ID] [--spec PATH]
+eval-author.py list [--cases DIR] [--split dev|heldout]
+eval-author.py check [--cases DIR] [--spec PATH]
+```
+
+`new` scaffolds `case.json` with the default verifier and `task.md` with the rule text from
+`BEHAVIOR.md`, the finding's evidence and `TODO` markers. `--index` is 0-based in an
+`analyze-traces.py --json` report. The id defaults to `<finding id>[-<key>]-NNN`. Without
+`--split`, a finding's cases alternate dev, heldout, dev. `check` exits 1 with one
+`<split>/<id>: <problem>` line per defect: invalid or non-object `case.json`, an id or split that
+does not match its directory, an unknown rule or classifier, an unknown `verify` key or a bad
+bound, and a `TODO` left in `task.md` or `issue.title`.
+
+### `eval-run.py`
+
+```
+eval-run.py [--cases DIR] [--split dev|heldout|all] [--case ID ...] [--worker CMD] [--repeat N]
+            [--timeout S] [--results PATH] [--keep] [--json] [--spec PATH]
+```
+
+`--split` defaults to `dev`, or to `all` when `--case` names the cases. Every selected case is
+checked first; a malformed or unknown case exits 2 before any worker runs. Then for each case and
+repeat:
+
+1. A fresh root under the temp dir: a bare `origin.git` and a clone `repo/` with `seed/` copied
+   in. The runner adds `.autocoder.json` (`issueSource: file`) and a `CLAUDE.md` with the Merge
+   Mode (`merge`) and Integration Branch (`master`) sections when the seed has none. It makes one
+   commit, pushes it, and runs `setup.sh`. `.issues/` is excluded from git in the clone.
+2. The issue is created through the file backend from `issue.title`, `task.md` and
+   `issue.labels`.
+3. The worker is `CMD` with `{issue}`, `{repo}` and `{root}` substituted (default
+   `claude -p --output-format stream-json --verbose "/autocoder:fix {issue}"`). It runs in `repo/`
+   with `XDG_STATE_HOME=<root>/state`, `AUTOCODER_LOG_DIR=<root>/logs`, `ISSUE_SOURCE=file` and no
+   other inherited `AUTOCODER_*` variable. Its stdout goes to
+   `logs/worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` and its stderr to `worker.stderr`. At
+   `--timeout` (default 3600 seconds) its process group gets SIGTERM, then SIGKILL.
+4. `trace-build.py` compiles the root's ledgers and logs, and the issue's last attempt is graded.
+   No `--comments-dir` is passed, because the file backend folds comments into the body: `review`
+   is null and the two review classifiers stay silent in a sandbox.
+5. One row is appended to `--results` (default
+   `${AUTOCODER_EVAL_RESULTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}`):
+   `{ts, case, split, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
+   harness: {sha}, root}`. `failed` lists `outcome`, `max_gates`, `max_tool_calls`,
+   `classifiers_silent:<id>`, `steps_present:<kind>`, `steps_absent:<kind>`, `timeout`, `setup`
+   (the sandbox or `setup.sh` failed) or `trace` (no attempt was recorded). `worker` is the
+   command template. `harness.sha` is `AUTOCODER_HARNESS_SHA`, else the script directory's git
+   HEAD, else null. A passing run's root is deleted unless `--keep`, and its `root` is then null.
+
+The run prints one line per case (passes out of repeats, failed checks with counts), one line per
+split, and the root kept for each failing run. `--json` prints `{"rows", "cases", "splits"}`. The
+exit code is 0 whatever the verdicts.
 ### `eval-decide.py`
 
 ```
