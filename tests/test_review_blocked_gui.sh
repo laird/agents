@@ -30,8 +30,8 @@ for f in plugins/autocoder/commands/autocoder-help.md .agent/workflows/autocoder
          plugins/autocoder/README.md docs/maintaining.md; do
   grep -q '/review-blocked-gui' "$ROOT/$f" && ok "$f lists /review-blocked-gui" || bad "$f does not list /review-blocked-gui"
 done
-UNRELEASED=$(sed -n '/^## \[Unreleased\]/,/^## \[[0-9]/p' "$ROOT/plugins/autocoder/CHANGELOG.md" 2>/dev/null)
-has "the CHANGELOG notes the command under [Unreleased]" "$UNRELEASED" '/review-blocked-gui'
+# Under [Unreleased] until a release moves the entry under its version heading; either is a note.
+has "the CHANGELOG notes the command" "$(cat "$ROOT/plugins/autocoder/CHANGELOG.md" 2>/dev/null)" '/review-blocked-gui'
 
 # ── Packaging: the page ships wherever the server does ──────────────────────
 for d in plugins/autocoder/scripts .agent/scripts .pi/scripts codex-plugins/autocoder/scripts \
