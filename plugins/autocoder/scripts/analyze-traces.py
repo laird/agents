@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""analyze-traces.py: recurring failure classes in a corpus of traces, against BEHAVIOR.md (#395).
+
+WHY THIS EXISTS:
+  trace-build.py writes one trace per issue attempt. One trace is an anecdote; a failure that
+  repeats across many is a harness fault worth an evaluation. This runs a registry of
+  classifiers over the corpus, each citing the BEHAVIOR.md rules it detects and the harness
+  surface it points at, and prints the findings in priority order: severity (count times the
+  classifier's weight), then count. tests/test_behavior_spec.py imports `classifiers()` to keep
+  the registry and the spec in step, so this module must import without side effects.
+
+JUDGE (off by default): --judge CMD runs CMD once per trace no classifier matched (every trace
+  with --judge-all), with the judge prompt, then BEHAVIOR.md, then the trace's JSON on stdin. CMD
+  prints a JSON array of {"rule", "evidence", "confidence"}. A non-zero exit, non-JSON, a
+  non-array or an element without a string `rule` is a judge error: counted, never a finding.
+  Judged findings sort after deterministic ones of equal severity and name the prompt file.
+
+USAGE
+  analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE] [--tool-error-share F]
+                    [--judge CMD [--judge-all] [--spec PATH] [--judge-prompt PATH]]
+  --since/--until keep traces whose attempt started in [since, until).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from types import MappingProxyType
+from typing import Callable, Mapping, NamedTuple
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_TOOL_ERROR_SHARE = 0.25
+MIN_TOOL_CALLS = 10
+EXAMPLES = 3
+JUDGE_TIMEOUT_S = 600
+
+FIX_MD = "commands/fix.md § "
+LANDING = FIX_MD + "Landing the Work"
+RELEASE = FIX_MD + "CRITICAL: Release the 'working' Label Only on a Terminal Outcome"
+REVIEW = FIX_MD + "Pre-Landing Review Gate"
+LOOP = FIX_MD + "MANDATORY: Continuous Loop"
+
+
+def ungrouped(evidence: dict) -> tuple:
+    return (None,)
+
+
+class Classifier(NamedTuple):
+    id: str
+    rules: tuple[str, ...]
+    surface: str
+    match: Callable[[dict], dict | None]
+    group: Callable[[dict], tuple] = ungrouped
+    weight: float = 1.0
+    key_rules: Mapping[str, tuple[str, ...]] = MappingProxyType({})  # group key -> the rules its finding cites
+
+
+def steps_of_kind(trace: dict, kind: str) -> list[dict]:
+    return [s for s in trace.get("steps") or [] if s.get("kind") == kind]
+
+
+def conflict_gates(trace: dict) -> list[dict]:
+    return [g for g in trace.get("gates") or [] if g.get("outcome") == "conflict"]
+
+
+def gate_red_suite(trace: dict) -> dict | None:
+    failed = sorted({t for g in trace.get("gates") or [] for t in g.get("tests_failed") or []})
+    return {"tests_failed": failed} if failed else None
+
+
+def returned_by_cause(trace: dict) -> dict | None:
+    causes = sorted({r.get("cause") or "other" for r in trace.get("returned") or []})
+    return {"causes": causes, "returns": len(trace["returned"])} if causes else None
+
+
+def conflict_escalated_early(trace: dict) -> dict | None:
+    conflicts = conflict_gates(trace)
+    if len(conflicts) != 1:
+        return None
+    gate = conflicts[0]
+    if gate.get("escalated") is True or steps_of_kind(trace, "escalated"):
+        return {"conflict_files": gate.get("conflict_files"), "reason": gate.get("reason")}
+    return None
+
+
+def conflict_retried_late(trace: dict) -> dict | None:
+    n = len(conflict_gates(trace))
+    return {"conflict_gates": n} if n >= 3 else None
+
+
+def reclaimed(trace: dict) -> dict | None:
+    if trace.get("next_attempt") and trace.get("outcome") not in ("landed", "escalated"):
+        return {"outcome": trace["outcome"], "next_attempt": trace["next_attempt"]}
+    return None
+
+
+def landed_unreviewed(trace: dict) -> dict | None:
+    """Silent when the review was not read (review null) or turned off (status skipped)."""
+    review = trace.get("review")
+    if trace.get("outcome") != "landed" or not review:
+        return None
+    if review["status"] == "no record" or (review["status"] == "reviewed" and review.get("verdict") != "pass"):
+        return {"review": review["status"], "verdict": review.get("verdict")}
+    return None
+
+
+def review_left_important(trace: dict) -> dict | None:
+    review = trace.get("review") or {}
+    left = (review.get("resolutions") or {}).get("left", 0)
+    important = (review.get("findings") or {}).get("important", 0)
+    return {"left": left, "important": important} if left and important else None
+
+
+def verdict_nudged(trace: dict) -> dict | None:
+    n = len(steps_of_kind(trace, "verdict-nudged"))
+    return {"nudges": n} if n else None
+
+
+def red_base(trace: dict) -> dict | None:
+    gates = [g.get("attempt") for g in trace.get("gates") or [] if g.get("red_base") is True]
+    return {"gates": gates} if gates else None
+
+
+def session_without_gate(trace: dict) -> dict | None:
+    session = trace.get("session")
+    if not session or session.get("is_error") is None or trace.get("gates"):
+        return None
+    if steps_of_kind(trace, "escalated") or steps_of_kind(trace, "released"):
+        return None
+    return {"is_error": session["is_error"], "num_turns": session.get("num_turns")}
+
+
+def tool_errors(share: float) -> Callable[[dict], dict | None]:
+    def match(trace: dict) -> dict | None:
+        tools = (trace.get("session") or {}).get("tools") or {}
+        calls, errors = tools.get("calls", 0), tools.get("errors", 0)
+        if calls < MIN_TOOL_CALLS or errors / calls <= share:
+            return None
+        tool, counts = min(tools["by_name"].items(), key=lambda kv: (-kv[1]["errors"], kv[0]))
+        return {"tool": tool, "error_share": round(errors / calls, 3), "calls": calls, "errors": errors,
+                "tool_errors": counts["errors"]}
+    return match
+
+
+def classifiers(tool_error_share: float = DEFAULT_TOOL_ERROR_SHARE) -> tuple[Classifier, ...]:
+    return (
+        Classifier("gate-red-suite", ("B01",), "gate", gate_red_suite, lambda ev: tuple(ev["tests_failed"])),
+        Classifier("returned-by-cause", ("B01", "B02", "B08", "B09"), LANDING, returned_by_cause,
+                   lambda ev: tuple(ev["causes"]),
+                   key_rules={"defect": ("B01",), "conflict": ("B02",), "stale-base": ("B08",),
+                              "red-integration": ("B09",)}),
+        Classifier("conflict-escalated-early", ("B02",), LANDING, conflict_escalated_early),
+        Classifier("conflict-retried-late", ("B03",), LANDING, conflict_retried_late),
+        Classifier("reclaimed", ("B04",), RELEASE, reclaimed),
+        Classifier("landed-unreviewed", ("B05",), REVIEW, landed_unreviewed),
+        Classifier("review-left-important", ("B06",), REVIEW, review_left_important),
+        Classifier("verdict-nudged", ("B07",), LOOP, verdict_nudged),
+        Classifier("red-base", ("B09",), "integration branch", red_base),
+        Classifier("tool-errors", ("B10",), "tool", tool_errors(tool_error_share), lambda ev: (ev["tool"],)),
+        Classifier("session-without-gate", ("B11",), RELEASE, session_without_gate),
+    )
+
+
+def classify(traces: list[dict], registry: tuple[Classifier, ...]) -> tuple[dict, set]:
+    """(hits by (classifier id, key), ids of the traces some classifier matched)."""
+    hits: dict[tuple, dict] = {}
+    matched: set[str] = set()
+    for trace in traces:
+        for c in registry:
+            evidence = c.match(trace)
+            if evidence is None:
+                continue
+            matched.add(trace["trace_id"])
+            for key in c.group(evidence):
+                hit = hits.setdefault((c.id, key), {"classifier": c, "traces": [], "evidence": []})
+                hit["traces"].append(trace["trace_id"])
+                if len(hit["evidence"]) < EXAMPLES:
+                    hit["evidence"].append({"trace_id": trace["trace_id"], **evidence})
+    return hits, matched
+
+
+def parse_judgement(stdout: str) -> list[dict] | None:
+    """The judge's findings, or None when its output breaks the contract."""
+    try:
+        items = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(items, list) or not all(isinstance(i, dict) and isinstance(i.get("rule"), str) for i in items):
+        return None
+    return items
+
+
+def run_judge(traces: list[dict], cmd: str, preamble: str) -> tuple[list[dict], int]:
+    judged, errors = [], 0
+    for trace in traces:
+        try:
+            r = subprocess.run(cmd, shell=True, input=preamble + json.dumps(trace, indent=2) + "\n",
+                               capture_output=True, text=True, timeout=JUDGE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            errors += 1
+            continue
+        items = parse_judgement(r.stdout) if r.returncode == 0 else None
+        if items is None:
+            errors += 1
+            continue
+        judged += [{"trace_id": trace["trace_id"], "rule": i["rule"], "evidence": i.get("evidence"),
+                    "confidence": i.get("confidence")} for i in items]
+    return judged, errors
+
+
+def group_findings(hits: dict, judged: list[dict], corpus: int, judge_prompt: str | None) -> list[dict]:
+    """Findings in priority order: severity, count, deterministic before judged, then id and key."""
+    findings = []
+    for (cid, key), hit in hits.items():
+        c, count = hit["classifier"], len(hit["traces"])
+        findings.append({"id": cid, "key": key,
+                         "rules": list(c.key_rules.get(key, ()) if c.key_rules else c.rules),
+                         "surface": c.surface, "count": count, "traces": hit["traces"],
+                         "share": round(count / corpus, 3), "evidence": hit["evidence"],
+                         "severity": count * c.weight, "judged": False})
+    by_rule: dict[str, list[dict]] = defaultdict(list)
+    for item in judged:
+        by_rule[item["rule"]].append(item)
+    for rule, items in by_rule.items():
+        ids = list(dict.fromkeys(i["trace_id"] for i in items))
+        findings.append({"id": "judged", "key": rule, "rules": [rule], "surface": None,
+                         "count": len(ids), "traces": ids, "share": round(len(ids) / corpus, 3),
+                         "evidence": items[:EXAMPLES], "severity": float(len(ids)), "judged": True,
+                         "judge_prompt": judge_prompt})
+    findings.sort(key=lambda f: (-f["severity"], -f["count"], f["judged"], f["id"], f["key"] or ""))
+    return findings
+
+
+def window_text(window: dict) -> str:
+    if not window["since"] and not window["until"]:
+        return "all"
+    return f"{window['since'] or 'the start'} to {window['until'] or 'now'}"
+
+
+def markdown(report: dict) -> str:
+    lines = ["# Trace findings", ""]
+    for f in report["findings"]:
+        lines += [f"## {f['id']}" + (f": {f['key']}" if f["key"] is not None else ""), "",
+                  f"- Rules: {', '.join(f['rules']) or 'none'}",
+                  f"- Surface: {f['surface'] or 'none (judged)'}",
+                  f"- Count: {f['count']} ({f['share']:.0%} of the corpus)"]
+        if f["judged"]:
+            lines.append(f"- Judge prompt: {f['judge_prompt']}")
+        lines += [f"- `{e['trace_id']}`: {json.dumps({k: v for k, v in e.items() if k != 'trace_id'})}"
+                  for e in f["evidence"]]
+        lines.append("")
+    if not report["findings"]:
+        lines += ["No findings." if report["corpus"] else "No traces in the corpus.", ""]
+    lines += ["## Corpus", "",
+              f"- Traces: {report['corpus']}",
+              f"- Window: {window_text(report['window'])}",
+              f"- Matched by no classifier: {report['unmatched']}"]
+    if report["judge"] is not None:
+        j = report["judge"]
+        lines.append(f"- Judge errors: {j['errors']} of {j['traces']} traces judged ({j['prompt']})")
+    return "\n".join(lines)
+
+
+def parse_bound(value: str) -> datetime:
+    t = parse_ts(value)
+    if t is None:
+        raise argparse.ArgumentTypeError(f"not a date (YYYY-MM-DD or ISO-8601): {value}")
+    return t
+
+
+def parse_ts(value) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def read_traces(path: Path) -> list[dict]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    traces = []
+    for line in lines:
+        try:
+            traces.append(json.loads(line))
+        except ValueError:
+            continue
+    return traces
+
+
+def default_traces_path() -> Path:
+    if os.environ.get("AUTOCODER_TRACES"):
+        return Path(os.environ["AUTOCODER_TRACES"])
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return Path(state) / "autocoder" / "traces.jsonl"
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Name the failures that repeat across a corpus of traces.")
+    p.add_argument("--traces", type=Path, default=default_traces_path())
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--since", type=parse_bound, help="keep traces started at or after (YYYY-MM-DD or ISO)")
+    p.add_argument("--until", type=parse_bound, help="keep traces started before (YYYY-MM-DD or ISO)")
+    p.add_argument("--tool-error-share", type=float, default=DEFAULT_TOOL_ERROR_SHARE)
+    p.add_argument("--judge", metavar="CMD", help="judge command; reads the prompt on stdin, prints a JSON array")
+    p.add_argument("--judge-all", action="store_true", help="judge every trace, not only unmatched ones")
+    p.add_argument("--spec", type=Path, default=PLUGIN_ROOT / "BEHAVIOR.md")
+    p.add_argument("--judge-prompt", type=Path, default=PLUGIN_ROOT / "prompts" / "trace-judge.v1.md")
+    args = p.parse_args(argv)
+
+    def in_window(trace: dict) -> bool:
+        started = parse_ts(trace.get("started"))
+        if started is None:
+            return not (args.since or args.until)
+        return (args.since is None or started >= args.since) and (args.until is None or started < args.until)
+
+    traces = [t for t in read_traces(args.traces) if in_window(t)]
+    hits, matched = classify(traces, classifiers(args.tool_error_share))
+
+    judged, judge = [], None
+    if args.judge:
+        try:
+            preamble = args.judge_prompt.read_text() + "\n\n" + args.spec.read_text() + "\n\n"
+        except OSError as e:
+            p.error(f"--judge needs the judge prompt and the spec (--judge-prompt, --spec): {e}")
+        to_judge = traces if args.judge_all else [t for t in traces if t["trace_id"] not in matched]
+        judged, errors = run_judge(to_judge, args.judge, preamble)
+        judge = {"prompt": args.judge_prompt.name, "traces": len(to_judge), "errors": errors}
+
+    report = {
+        "corpus": len(traces),
+        "window": {"since": args.since.isoformat() if args.since else None,
+                   "until": args.until.isoformat() if args.until else None},
+        "unmatched": len(traces) - len(matched),
+        "judge": judge,
+        "findings": group_findings(hits, judged, len(traces), judge and judge["prompt"]),
+    }
+    print(json.dumps(report, indent=2) if args.json else markdown(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
