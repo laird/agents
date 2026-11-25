@@ -1,0 +1,12 @@
+{
+  "number": 18,
+  "title": "Test issue 18",
+  "body": "Issue body",
+  "state": "CLOSED",
+  "labels": [],
+  "comments": [
+    {
+      "body": "## Review\n\nSkipped: review is turned off in .autocoder.json\n\nReviewed-HEAD: abc1801\n"
+    }
+  ]
+}

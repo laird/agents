@@ -1,0 +1,12 @@
+{
+  "number": 100,
+  "title": "Test issue 100",
+  "body": "Issue body",
+  "state": "CLOSED",
+  "labels": [],
+  "comments": [
+    {
+      "body": "## Review\n\nRounds: 1\n\n| # | Tag | Finding | Resolution |\n|---|---|---|---|\n| 1 | Important | Breaks the parser | fixed |\n\nReviewed-HEAD: def1001\n\nVerdict: fail\n"
+    }
+  ]
+}

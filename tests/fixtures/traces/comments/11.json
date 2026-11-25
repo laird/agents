@@ -1,0 +1,12 @@
+{
+  "number": 11,
+  "title": "Test issue 11",
+  "body": "Issue body",
+  "state": "CLOSED",
+  "labels": [],
+  "comments": [
+    {
+      "body": "## Review\n\nRounds: 2\n\n| # | Tag | Finding | Resolution |\n|---|---|---|---|\n| 1 | Important | Bug | fixed |\n| 2 | Important | Unhandled empty input | left |\n\nReviewed-HEAD: abc1102\n\nVerdict: pass\n"
+    }
+  ]
+}

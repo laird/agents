@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "model": "model-a"}
+{"type": "assistant", "message": {"model": "model-a", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"arg": 1}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "duration_ms": 90000, "num_turns": 3, "total_cost_usd": 0.45, "usage": {"input_tokens": 1000, "output_tokens": 500, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 100}}
