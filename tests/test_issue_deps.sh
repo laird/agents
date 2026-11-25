@@ -182,6 +182,8 @@ rc=1"
 mkdir -p "$TMP/ghbin"
 cat > "$TMP/ghbin/issues-gh.sh" <<BACKEND
 #!/bin/bash
+# get reads through gh like the real backend, so a per-number fallback shows in the gh call log.
+if [ "\$1" = get ]; then exec gh issue view "\$2" --json number,title,body,labels,state; fi
 exec python3 "$SCRIPT_DIR/issues-file.py" "\$@"
 BACKEND
 cat > "$TMP/ghbin/gh" <<GH
@@ -189,18 +191,24 @@ cat > "$TMP/ghbin/gh" <<GH
 echo "\$*" >> "$TMP/gh-batch-calls"
 case "\$1 \$2" in
   "repo view") echo 'acme/shop' ;;
+  "issue view") python3 "$SCRIPT_DIR/issues-file.py" get "\$3" ;;
   "api graphql")
     query=\$(printf '%s\n' "\$@" | sed -n 's/^query=//p')
     [ -f "$TMP/gh-outage" ] && { echo '{"errors":[{"message":"API rate limit exceeded"}]}'; exit 1; }
+    # gh-outage-second-chunk: the request carrying alias i300 (the second chunk of a 101-number batch) fails alone.
+    [ -f "$TMP/gh-outage-second-chunk" ] && case "\$query" in *"i300:"*) echo '{"errors":[{"message":"API rate limit exceeded"}]}'; exit 1 ;; esac
     case "\$query" in
       *blockedBy*) echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
       *)
         fields=""; errors=""
-        for n in \$(printf '%s' "\$query" | grep -o 'issue(number: [0-9]*)' | grep -o '[0-9]*'); do
-          if f=\$(python3 "$SCRIPT_DIR/issues-file.py" get "\$n" 2>/dev/null | jq -c '{number, state: (.state | ascii_upcase), body}') && [ -n "\$f" ]; then
+        for n in \$(printf '%s' "\$query" | grep -o 'number: [0-9]*)' | grep -o '[0-9]*'); do
+          # gh-flaky-70: alias i70 is null with an INTERNAL error (a timeout on one field), not a not-found.
+          if [ -f "$TMP/gh-flaky-70" ] && [ "\$n" = 70 ]; then
+            fields="\$fields\"i70\":null,"; errors="\$errors{\"type\":\"INTERNAL\",\"message\":\"Something went wrong while executing your query.\",\"path\":[\"repository\",\"i70\"]},"
+          elif f=\$(python3 "$SCRIPT_DIR/issues-file.py" get "\$n" 2>/dev/null | jq -c '{number, state: (.state | ascii_upcase), body}') && [ -n "\$f" ]; then
             fields="\$fields\"i\$n\":\$f,"
           else
-            fields="\$fields\"i\$n\":null,"; errors="\$errors{\"message\":\"Could not resolve to an Issue with the number of \$n.\",\"path\":[\"repository\",\"i\$n\"]},"
+            fields="\$fields\"i\$n\":null,"; errors="\$errors{\"type\":\"NOT_FOUND\",\"message\":\"Could not resolve to an issue or pull request with the number of \$n.\",\"path\":[\"repository\",\"i\$n\"]},"
           fi
         done
         echo "{\"data\":{\"repository\":{\${fields%,}}}\${errors:+,\"errors\":[\${errors%,}]}}"
@@ -210,18 +218,21 @@ case "\$1 \$2" in
 esac
 GH
 chmod +x "$TMP/ghbin/gh" "$TMP/ghbin/issues-gh.sh"
+# The GitHub readers short-circuit without an origin (a scratch repo); this throwaway repo gets a fake one.
+git -C "$TMP" remote add origin https://example.invalid/acme/shop.git
 run_gh() { (cd "$TMP" && PATH="$TMP/ghbin:$PATH" bash -c "source '$SCRIPT_DIR/issue-fns.sh'; _ifns_BACKEND_BIN='$TMP/ghbin/issues-gh.sh'; $1") 2>"$TMP/gh-batch-err"; }
 issue closed 70 "Batch: closed dep"  "Done."
 issue open   71 "Batch: open dep"    "Sub-task of #9"
 issue open   72 "Batch: waits on 70" "Depends on #70"
-MANY=$(run_gh "_ideps_gh_lookup_many 70 71 999 | jq -S -c .")
-check "the batched read answers every number: a closed one, an open one with its parent, a typo'd one as not found" "$MANY" \
-  '{"70":{"parent":null,"state":"CLOSED"},"71":{"parent":9,"state":"OPEN"},"999":{"parent":null,"state":"-"}}'
+MANY=$(run_gh "_ideps_gh_lookup_many 70 71 999 | sort")
+check "the batched read answers every number: a closed one, an open one with its parent, a typo'd one as not found" "$MANY" "70 CLOSED -
+71 OPEN 9
+999 - -"
 FILE_READY=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
 rm -f "$TMP/gh-batch-calls"
 GH_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | sort'")
 check "the GitHub backend's ready set equals the file backend's" "$GH_READY" "$FILE_READY"
-BATCH_CALLS=$(grep -c 'issue(number:' "$TMP/gh-batch-calls" 2>/dev/null); BATCH_CALLS=${BATCH_CALLS:-0}
+BATCH_CALLS=$(grep -c 'issueOrPullRequest(number:' "$TMP/gh-batch-calls" 2>/dev/null); BATCH_CALLS=${BATCH_CALLS:-0}
 check "the outside dependencies were read in one batched request" "$BATCH_CALLS" "1"
 VIEW_CALLS=$(grep -c '^issue view' "$TMP/gh-batch-calls" 2>/dev/null); VIEW_CALLS=${VIEW_CALLS:-0}
 check "no per-issue gh issue view behind the batch" "$VIEW_CALLS" "0"
@@ -230,6 +241,26 @@ OUTAGE_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(selec
 check "a failed batch request leaves every outside dependency unmet (#380), the typo'd ones included" "$OUTAGE_READY" "[]"
 grep -q "#70 could not be read" "$TMP/gh-batch-err" && ok "the outage names the dependency that could not be read" || bad "outage stderr: $(cat "$TMP/gh-batch-err")"
 rm -f "$TMP/gh-outage"
+# A null alias with an error that is NOT a not-found (a timeout on one field) is unreadable, never met (#380).
+touch "$TMP/gh-flaky-70"
+FLAKY=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 72))'")
+check "a per-field error that is not a not-found leaves the dependent gated" "$FLAKY" "[]"
+grep -q "#70 could not be read" "$TMP/gh-batch-err" && ok "the per-field error names its dependency" || bad "flaky stderr: $(cat "$TMP/gh-batch-err")"
+rm -f "$TMP/gh-flaky-70"
+# 101 outside dependencies are two requests; a failure of the second marks only its own numbers unreadable.
+for n in $(seq 200 300); do issue closed "$n" "Batch dep $n" "Done."; done
+issue open 301 "Batch: waits on 101 closed deps" "Depends on $(seq -s ', ' -f '#%g' 200 300)"
+rm -f "$TMP/gh-batch-calls"
+BIG=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 301))'")
+check "a hundred and one closed dependencies read in two requests leave their issue free" "$BIG" "[301]"
+BIG_CALLS=$(grep -c 'issueOrPullRequest(number:' "$TMP/gh-batch-calls" 2>/dev/null); BIG_CALLS=${BIG_CALLS:-0}
+check "the batch is chunked at a hundred numbers per request" "$BIG_CALLS" "2"
+touch "$TMP/gh-outage-second-chunk"
+BIG2=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 301))'")
+check "a failed second chunk gates the issue" "$BIG2" "[]"
+grep -q "#300 could not be read" "$TMP/gh-batch-err" && ok "the failed chunk's numbers are named" || bad "chunk stderr: $(cat "$TMP/gh-batch-err")"
+grep -q "#200 could not be read" "$TMP/gh-batch-err" && bad "the answered chunk was marked unreadable too" || ok "the answered chunk keeps its answers"
+rm -f "$TMP/gh-outage-second-chunk"
 
 [ -f "$TMP/gh-was-called" ] && bad "gh was invoked: $(cat "$TMP/gh-was-called")"
 

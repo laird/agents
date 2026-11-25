@@ -14,8 +14,11 @@ once (Version Management in `docs/maintaining.md`).
   that was 0.7 to 0.9 s each and the claim tick ran past its ceiling four times in a row
   while the API answered in a second. The outside dependencies are now read in one GraphQL
   request per 100 numbers (`_ideps_gh_lookup_many`); the #380 rules hold (a clean not-found
-  is met, a failed request leaves every number in it unmet and says so); the other backends
-  and `issue_unmet_dependencies` keep the per-number read.
+  is met, a failed request leaves every number in it unmet and says so, a null answer with
+  any other error is unmet too, and a failed later chunk marks only its own numbers); the
+  read is `issueOrPullRequest`, so a dependency on a pull request keeps its state as
+  `gh issue view` gave it, and a merged one is met; the other backends and
+  `issue_unmet_dependencies` keep the per-number read.
 - The merge train's landing proof no longer reports a member as not landed when
   re-merging it onto the landed commit differs only in files a custom merge driver
   owns, such as a regenerated file or a page whose stamp line a driver re-stamps
