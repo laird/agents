@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.68.0] - 2026-11-25
+
 ### Added
 
 - `claim-bounced`, a trace classifier for claims dropped before any work began (#402, #395):
