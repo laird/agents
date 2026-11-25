@@ -131,6 +131,46 @@ _ideps_lookup() {
   echo "${out:-unreadable - 0}"
 }
 
+# _ideps_gh_lookup_many <n>... — the GitHub backend's batched read of the
+# dependencies outside the open list: ONE GraphQL request per 100 numbers
+# (aliased `issue(number:)` fields), where `_ideps_lookup` costs one `gh issue
+# view` per number. Measured on a 500-issue backlog, the per-number reads took
+# 0.7 to 0.9 s each and put the claim tick past its ceiling; the batch is one
+# round trip. Prints a JSON object: {"<n>": {"state": "<state>", "parent": <num|null>}}
+# for every number GitHub answered, {"state": "-"} for a clean not-found (a
+# typo'd number: met, as before), and the bare word `unreadable` when a request
+# itself failed (no gh, no repo, a rate limit, an outage): every number in it is
+# then unmet (#380).
+_ideps_gh_lookup_many() {
+  local repo owner name n query aliases out result='{}' chunk
+  [ $# -gt 0 ] || { echo '{}'; return 0; }
+  repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || { echo unreadable; return 0; }
+  [ -n "$repo" ] || { echo unreadable; return 0; }
+  owner="${repo%%/*}"; name="${repo#*/}"
+  while [ $# -gt 0 ]; do
+    chunk=("${@:1:100}"); shift "${#chunk[@]}"
+    aliases=""
+    for n in "${chunk[@]}"; do
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      aliases="$aliases i$n: issue(number: $n) { number state body }"
+    done
+    [ -n "$aliases" ] || continue
+    query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) {$aliases } }"
+    # gh exits 1 when any alias is a not-found error, with the data of the others beside the
+    # errors: read the data whatever the exit; only a missing repository object is a failed request.
+    out=$(gh api graphql -f owner="$owner" -f name="$name" -f query="$query" 2>/dev/null) || true
+    printf '%s' "$out" | jq -e '.data.repository | type == "object"' >/dev/null 2>&1 || { echo unreadable; return 0; }
+    result=$(printf '%s' "$out" | jq -c --argjson acc "$result" "$_IDEPS_JQ_DEFS"'
+      $acc + ( [ .data.repository | to_entries[]
+                 | select(.key | test("^i[0-9]+$"))
+                 | { key: (.key | ltrimstr("i")),
+                     value: ( if .value == null then { state: "-", parent: null }
+                              else { state: (.value.state // "-"), parent: (.value | parent_num) } end ) } ]
+               | from_entries )' 2>/dev/null) || { echo unreadable; return 0; }
+  done
+  printf '%s\n' "$result"
+}
+
 # Cycles in a wait graph: {"<n>": [m, ...]} on stdin → one line per cycle,
 # each found once, starting from its lowest number: "⚠ cycle: #3 ↔ #7" or
 # "⚠ cycle: #3 → #5 → #7 → #3".
@@ -168,13 +208,27 @@ _ideps_filter() {
   # Resolve each distinct body dependency once. One that is itself in this
   # (open) list is unmet without asking the backend; one outside it is read
   # once, for its state and for its parent (a sub-task being worked must not
-  # gate its parent).
+  # gate its parent). On the GitHub backend the outside ones are read in ONE
+  # batched request (`_ideps_gh_lookup_many`); any other backend reads each.
+  local outside=() batch=""
   for n in $(printf '%s' "$body_deps" | jq -r '[ .[][] ] | unique | .[]'); do
     if printf '%s' "$issues" | jq -e --argjson n "$n" 'any(.[]; .number == $n or .number == ($n | tostring))' >/dev/null 2>&1; then
       unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
-      continue
+    else
+      outside+=("$n")
     fi
-    read -r state parent _ <<<"$(_ideps_lookup "$n")"
+  done
+  case "$_ifns_BACKEND_BIN" in *issues-gh.sh) [ ${#outside[@]} -gt 0 ] && batch=$(_ideps_gh_lookup_many "${outside[@]}") ;; esac
+  for n in "${outside[@]+"${outside[@]}"}"; do
+    if [ -n "$batch" ]; then
+      if [ "$batch" = unreadable ]; then
+        state=unreadable; parent="-"
+      else
+        read -r state parent _ <<<"$(printf '%s' "$batch" | jq -r --arg k "$n" '.[$k] // {state: "unreadable", parent: null} | "\(.state) \(.parent // "-")"')"
+      fi
+    else
+      read -r state parent _ <<<"$(_ideps_lookup "$n")"
+    fi
     [ "$state" = "-" ] && state=""
     if [ "$state" = "unreadable" ]; then
       echo "⏳ #$n could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2

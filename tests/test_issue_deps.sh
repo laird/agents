@@ -175,6 +175,62 @@ UNMET=$(run "_ifns_BACKEND_BIN='$TMP/bin/backend-rl'; issue_unmet_dependencies 6
 check "issue_unmet_dependencies names the unreadable dependency" "$UNMET" "#998
 rc=1"
 
+# The GitHub backend reads the dependencies outside the open list in ONE batched GraphQL
+# request (`_ideps_gh_lookup_many`), not one `gh issue view` each: a stub backend named
+# issues-gh.sh proxies the file backend, and a gh shim answers `repo view` and `api graphql`
+# from the same files, counting its calls. The ready set must equal the file backend's.
+mkdir -p "$TMP/ghbin"
+cat > "$TMP/ghbin/issues-gh.sh" <<BACKEND
+#!/bin/bash
+exec python3 "$SCRIPT_DIR/issues-file.py" "\$@"
+BACKEND
+cat > "$TMP/ghbin/gh" <<GH
+#!/bin/bash
+echo "\$*" >> "$TMP/gh-batch-calls"
+case "\$1 \$2" in
+  "repo view") echo 'acme/shop' ;;
+  "api graphql")
+    query=\$(printf '%s\n' "\$@" | sed -n 's/^query=//p')
+    [ -f "$TMP/gh-outage" ] && { echo '{"errors":[{"message":"API rate limit exceeded"}]}'; exit 1; }
+    case "\$query" in
+      *blockedBy*) echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
+      *)
+        fields=""; errors=""
+        for n in \$(printf '%s' "\$query" | grep -o 'issue(number: [0-9]*)' | grep -o '[0-9]*'); do
+          if f=\$(python3 "$SCRIPT_DIR/issues-file.py" get "\$n" 2>/dev/null | jq -c '{number, state: (.state | ascii_upcase), body}') && [ -n "\$f" ]; then
+            fields="\$fields\"i\$n\":\$f,"
+          else
+            fields="\$fields\"i\$n\":null,"; errors="\$errors{\"message\":\"Could not resolve to an Issue with the number of \$n.\",\"path\":[\"repository\",\"i\$n\"]},"
+          fi
+        done
+        echo "{\"data\":{\"repository\":{\${fields%,}}}\${errors:+,\"errors\":[\${errors%,}]}}"
+        [ -z "\$errors" ] ;;
+    esac ;;
+  *) exit 97 ;;
+esac
+GH
+chmod +x "$TMP/ghbin/gh" "$TMP/ghbin/issues-gh.sh"
+run_gh() { (cd "$TMP" && PATH="$TMP/ghbin:$PATH" bash -c "source '$SCRIPT_DIR/issue-fns.sh'; _ifns_BACKEND_BIN='$TMP/ghbin/issues-gh.sh'; $1") 2>"$TMP/gh-batch-err"; }
+issue closed 70 "Batch: closed dep"  "Done."
+issue open   71 "Batch: open dep"    "Sub-task of #9"
+issue open   72 "Batch: waits on 70" "Depends on #70"
+MANY=$(run_gh "_ideps_gh_lookup_many 70 71 999 | jq -S -c .")
+check "the batched read answers every number: a closed one, an open one with its parent, a typo'd one as not found" "$MANY" \
+  '{"70":{"parent":null,"state":"CLOSED"},"71":{"parent":9,"state":"OPEN"},"999":{"parent":null,"state":"-"}}'
+FILE_READY=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
+rm -f "$TMP/gh-batch-calls"
+GH_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | sort'")
+check "the GitHub backend's ready set equals the file backend's" "$GH_READY" "$FILE_READY"
+BATCH_CALLS=$(grep -c 'issue(number:' "$TMP/gh-batch-calls" 2>/dev/null); BATCH_CALLS=${BATCH_CALLS:-0}
+check "the outside dependencies were read in one batched request" "$BATCH_CALLS" "1"
+VIEW_CALLS=$(grep -c '^issue view' "$TMP/gh-batch-calls" 2>/dev/null); VIEW_CALLS=${VIEW_CALLS:-0}
+check "no per-issue gh issue view behind the batch" "$VIEW_CALLS" "0"
+touch "$TMP/gh-outage"
+OUTAGE_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 72 or . == 16 or . == 60))'")
+check "a failed batch request leaves every outside dependency unmet (#380), the typo'd ones included" "$OUTAGE_READY" "[]"
+grep -q "#70 could not be read" "$TMP/gh-batch-err" && ok "the outage names the dependency that could not be read" || bad "outage stderr: $(cat "$TMP/gh-batch-err")"
+rm -f "$TMP/gh-outage"
+
 [ -f "$TMP/gh-was-called" ] && bad "gh was invoked: $(cat "$TMP/gh-was-called")"
 
 echo ""

@@ -8,6 +8,14 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- The dependency filter no longer reads one issue per dependency on the GitHub backend
+  (#392). `_ideps_filter` resolved every distinct dependency outside the open list with its
+  own `gh issue view`, serialized; on a 500-issue backlog with about 110 such dependencies
+  that was 0.7 to 0.9 s each and the claim tick ran past its ceiling four times in a row
+  while the API answered in a second. The outside dependencies are now read in one GraphQL
+  request per 100 numbers (`_ideps_gh_lookup_many`); the #380 rules hold (a clean not-found
+  is met, a failed request leaves every number in it unmet and says so); the other backends
+  and `issue_unmet_dependencies` keep the per-number read.
 - The merge train's landing proof no longer reports a member as not landed when
   re-merging it onto the landed commit differs only in files a custom merge driver
   owns, such as a regenerated file or a page whose stamp line a driver re-stamps
