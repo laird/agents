@@ -134,7 +134,9 @@ Who writes what:
 landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
                   [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos]
                   [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
-                  [--history [--merge-events PATH] ...]
+                  [--issue-events PATH] [--merge-events PATH]
+                  [--loop on|off] [--eval-results PATH] [--eval-decisions PATH]
+                  [--history ...]
 ```
 
 One repository per report. The rows kept are the `--repo-id` given (strict), else those of the id
@@ -183,6 +185,38 @@ its reason is that earlier batch's `verdict:cause`, so the gate-minutes a red co
 run are visible. It is a ceiling: the culprit's own next gate after a `defect` return (fixed,
 re-READY'd) counts too, because the ledger carries no tip to tell a fixed change from the same one.
 The JSON carries the same as `batch_rows`, `regates` and `week`.
+
+**The self-improvement loop.** "Week in numbers" ends with a "Self-improvement loop" block (#395),
+which shows whether the loop ran this week and what it kept:
+
+```
+- Self-improvement loop:
+  - Findings: 12 classes covering 7 of 12 traces; top returned-by-cause: conflict, 2; conflict-escalated-early, 1; conflict-retried-late, 1
+  - Evals: dev 2/3 passing over 2 cases; held-out 1/2 passing over 1 case
+  - Changes: accepted 2 (gate-red-suite:tests/test_x.sh); rejected 1 (reclaimed); inconclusive 1 (verdict-nudged)
+```
+
+- **Findings**: the report runs `trace-build.py` over the ledgers it reads itself (`--log`,
+  `--issue-events` and `--merge-events`, which falls back to the writer's path,
+  `${AUTOCODER_MERGE_EVENTS:-$XDG_STATE_HOME/autocoder/merge-events.jsonl}`) for the attempts that
+  started in the week. It then runs `analyze-traces.py --json` on the result. The line gives the
+  number of finding classes, the traces they cover out of the week's corpus, and the top three as
+  `id: key, count`. The gate log and the transcripts follow `trace-build.py`'s own defaults. The
+  repository is the one the report keeps (`--repo-id`, or the directory's id when the ledger holds
+  rows of it; every repository under `--all-repos`).
+- **Evals**: the rows of `--eval-results` (default
+  `${AUTOCODER_EVAL_RESULTS:-$XDG_STATE_HOME/autocoder/eval-results.jsonl}`) whose `ts` is in the
+  week, per split: passing runs out of all runs, and distinct cases.
+- **Changes**: the rows of `--eval-decisions` (default
+  `${AUTOCODER_EVAL_DECISIONS:-$XDG_STATE_HOME/autocoder/eval-decisions.jsonl}`, which
+  `eval-decide.py` writes) whose `ts` is in the week, counted as accepted, rejected or inconclusive,
+  each with the findings it names.
+
+A figure the report cannot read prints n/a with the reason, never 0: `n/a (trace tooling not
+installed)` when a trace script is not beside the report, `n/a (no eval results file)`, `n/a (no
+eval run in the week)` or `n/a (no eval decisions file)`. `--loop off` drops the block. The JSON
+carries it as `loop`, with `findings`, `evals` and `changes`; a figure that is n/a is
+`{"na": "<reason>"}`.
 
 **Landing to CI verdict.** The gate is not the last word on a landing: the integration branch's own
 CI runs on the landed commit, and when its runners queue, a red surfaces hours after the landing
@@ -309,3 +343,27 @@ JSON on stdin. `CMD` prints a JSON array of `{"rule", "evidence", "confidence"}`
 exit, non-JSON, a non-array or an element without a string `rule` is a judge error, counted and
 never a finding. Judged findings have id `judged`, key the rule, and `judge_prompt` naming the
 prompt file. A new prompt is a new file.
+
+### `eval-decide.py`
+
+```
+eval-decide.py --finding F --before SHA --after SHA [--results PATH] [--decisions PATH]
+               [--min-runs N] [--json]
+```
+
+Decides whether to keep one harness change. It reads the eval result rows of the two harness shas
+(`harness.sha`; a sha given matches a row whose sha starts with it) from `--results` (default
+`${AUTOCODER_EVAL_RESULTS:-$XDG_STATE_HOME/autocoder/eval-results.jsonl}`) and compares the pass
+rates per split:
+
+| Decision | When | Exit |
+|---|---|---|
+| `inconclusive <reason>` | a split has no case on either sha, or a case has fewer than `--min-runs` (default 2) runs on either sha | 3 |
+| `accept` | the dev pass rate rose and the held-out pass rate did not fall (and rose, when it was below 1); or both pass rates are unchanged and the mean `tool_calls` fell | 0 |
+| `reject <reason>` | anything else | 1 |
+
+Each call appends one row to `--decisions` (default
+`${AUTOCODER_EVAL_DECISIONS:-$XDG_STATE_HOME/autocoder/eval-decisions.jsonl}`) in a single append:
+`{ts, finding, before, after, dev: {before: [passes, runs], after: [...]}, heldout: {...},
+tool_calls: {before, after}, decision, accepted, reason}`. `--json` prints that row in place of the
+verdict line. The week page counts these rows.
