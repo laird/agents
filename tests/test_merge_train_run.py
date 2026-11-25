@@ -42,6 +42,16 @@ printf '%s|%s\n' "${AUTOCODER_LANDING_BATCH:-}" "${AUTOCODER_LANDING_MEMBERS:-}"
 printf '%s\n' "${AUTOCODER_LANDING_REPO:-}" >> "$FX_STATE/gate-repo.log"
 if [ -s "$FX_STATE/infra.script" ]; then
   first=$(head -1 "$FX_STATE/infra.script"); sed -i 1d "$FX_STATE/infra.script"
+  # pass: no scripted outcome for this gate (the line is consumed; the gate judges the tree as usual)
+  if [ "$first" = pass ]; then :; fi
+  # flaky: the failing files passed on a second run of the same tree (merge-to-integration.sh's FLAKY refusal)
+  if [ "$first" = flaky ]; then
+    echo "❌ Tests fail on the integrated tree 73ed0986 (1 named failure(s))."
+    echo "   Re-running the files that failed on the same tree first: AUTOCODER_GATE_RETEST_FILES=\"t_flaky.test\" (a pass means the failure did not reproduce: flaky, nobody's)"
+    echo "merge-to-integration: FLAKY -- t_flaky.test failed on the integrated tree 73ed0986 and passed on a second run of the same tree: the failure did not reproduce, so it is nobody's. NOT pushing."
+    echo "::error::FLAKY: \`t_flaky.test\` failed on the integrated tree 73ed0986 and passed on a second run of the same tree"
+    exit 3
+  fi
   if [ "$first" = infra ]; then
     # a stage's refusal: the real gate's EXIT trap records its own gate-end, so this stub does too
     printf '{"v":1,"ts":"%s","issue":0,"event":"gate-end","detail":{"outcome":"escalated"}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$AUTOCODER_ISSUE_EVENTS"
@@ -284,6 +294,52 @@ def test_two_infrastructure_rereds_end_the_cycle_with_everyone_back_in_the_queue
     assert fx.dropped() == [] and not any(fx.on_master(i) for i in range(4))
     assert [fx.state_of(i) for i in issues] == ["OPEN"] * 4
     assert R.State(fx.rc()).limit() == 8                 # an infrastructure red says nothing about the batch size
+
+
+def test_a_flaky_red_is_regated_once_and_everyone_lands_with_the_limit_untouched(fx):
+    # the gate re-ran the failing files on the same tree and they passed: nobody's red, the same set once more
+    issues = fx.members(4)
+    (fx.state / "infra.script").write_text("flaky\n")
+    code, cyc = fx.run()
+    assert code == 0
+    assert len(fx.gates()) == 2 and fx.gates()[0] == fx.gates()[1]     # the SAME set, once more; never a bisection
+    assert fx.dropped() == [] and cyc.returned_total == []
+    assert all(fx.on_master(i) for i in range(4)) and [fx.state_of(i) for i in issues] == ["CLOSED"] * 4
+    assert R.State(fx.rc()).limit() == 9                                 # the landing was green: the limit grew as after any green
+    rows = [ln.split() for ln in (fx.state / "timings.log").read_text().splitlines()]
+    assert any(r[:1] == ["batch"] and "aborted" in r and "flaky" in r for r in rows)   # the wasted pass is a flaky row, not a red
+
+
+def test_two_flaky_reds_end_the_cycle_with_everyone_in_the_queue_unfaulted(fx):
+    issues = fx.members(4)
+    report = fx.member(9)
+    fx.train["reportIssue"] = str(report)
+    fx.write_config()
+    (fx.state / "infra.script").write_text("flaky\nflaky\n")
+    code, cyc = fx.run()
+    assert code == 0 and len(fx.gates()) == 2            # never a third, never a bisect
+    assert fx.dropped() == [] and not any(fx.on_master(i) for i in range(4))
+    assert [fx.state_of(i) for i in issues] == ["OPEN"] * 4
+    assert cyc.returned_total == []
+    assert R.State(fx.rc()).limit() == 8                 # a flaky red says nothing about the batch size
+    note = fx.comments(report)
+    assert "flaky red twice" in note and "t_flaky.test" in note and "file the flake" in note
+
+
+def test_an_infrastructure_red_inside_a_bisection_is_not_the_red_a_later_return_cites(fx):
+    # the set is red for a bad member; the first half's gate is refused as INFRASTRUCTURE, re-gated green; the bad
+    # member is then red by inference and its return must cite the set's red, never the INFRASTRUCTURE line (#382)
+    issues = fx.members(3, bad={2})
+    (fx.state / "infra.script").write_text("pass\ninfra\n")
+    code, _ = fx.run()
+    assert code == 0
+    gated = [ln.split("|")[1] for ln in (fx.state / "gate-env.log").read_text().splitlines()]
+    assert len(gated) == 3 and gated[1] == gated[2] == ",".join(str(i) for i in issues[:2])   # the half: infra, then green
+    assert [fx.on_master(i) for i in range(3)] == [True, True, False]
+    assert fx.state_of(issues[2]) == "OPEN"
+    returned = fx.comments(issues[2])
+    assert "returned" in returned and "tests: 1 failed" in returned and "INFRASTRUCTURE" not in returned
+    assert [d[0] for d in fx.dropped()] == [str(issues[2])]
 
 
 def test_a_red_base_refusal_ends_the_cycle_with_everyone_in_the_queue_unfaulted_and_names_the_integration_branch(fx):

@@ -135,6 +135,26 @@ printf '%s' "$MIXED" | grep -q "red master, not this change's: t_broken.test" &&
 printf '%s' "$MIXED" | grep -q "RED-BASE" && bad "mixed: a RED-BASE line although the change broke something" || ok "mixed: no RED-BASE line"
 grep -q 'red master in `t_broken.test` besides' "$TMP"/issues/*/29805.md && ok "mixed: the reason names red master besides" || bad "mixed: issue text: $(cat "$TMP"/issues/*/29805.md)"
 
+echo "=== a failure that does not reproduce on the same tree is FLAKY: nobody's, nothing lands ==="
+# The gate fails t_flaky.test on a tree's first run and passes it when told the file list (the
+# same-tree retest): the real shape of a timeout under load.
+cat > "$TMP/gate-flaky.sh" <<'G'
+if [ -n "${AUTOCODER_GATE_RETEST_FILES:-}" ]; then echo "selected: $AUTOCODER_GATE_RETEST_FILES"; echo "PASS t_flaky.test"; exit 0; fi
+echo "selected: t_flaky.test"; echo "FAIL t_flaky.test"; exit 1
+G
+BEFORE_FLAKY=$(git rev-parse origin/master)
+run_one 29807 t_flaky.test flake "bash $TMP/gate-flaky.sh"
+grep -q "^merge-to-integration: FLAKY -- t_flaky.test failed on the integrated tree .* and passed on a second run of the same tree" "$LOG" && ok "flaky: the FLAKY line names the file" || bad "flaky: no FLAKY line: $(cat "$LOG")"
+[ "$(git rev-parse origin/master)" = "$BEFORE_FLAKY" ] && ok "flaky: nothing landed" || bad "flaky: master moved"
+grep -q "Gating origin/master" "$LOG" && bad "flaky: the base was gated although the failure did not reproduce" || ok "flaky: the base run was skipped"
+[ "$(grep -c '^selected:' "$LOG")" -eq 2 ] && ok "flaky: exactly two runs, both on the integrated tree" || bad "flaky: runs: $(grep -c '^selected:' "$LOG")"
+grep -q "so this change broke it" "$LOG" && bad "flaky: the change was blamed" || ok "flaky: the change is not blamed"
+case "$(attempt 29807)" in escalated*|gate-failed*) ok "flaky: the attempt did not land ($(attempt 29807))" ;; *) bad "flaky: attempt: $(attempt 29807)" ;; esac
+echo "=== AUTOCODER_GATE_FLAKY_RETEST=0 keeps the old order: straight to the base run ==="
+AUTOCODER_GATE_FLAKY_RETEST=0 run_one 29808 t_flaky2.test flake "bash $TMP/gate-flaky.sh"
+grep -q "FLAKY" "$LOG" && bad "switch off: a FLAKY line" || ok "switch off: no flaky retest"
+grep -q "Gating origin/master" "$LOG" && ok "switch off: the base was gated" || bad "switch off: no base run: $(cat "$LOG")"
+
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

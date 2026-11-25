@@ -1389,6 +1389,38 @@ _gate_integrated_tree() {
     _gate_integrated_tree
     return
   fi
+  # Before judging the change against its base, ask whether the failure reproduces at all: the files
+  # that failed are re-run once on the SAME tree (the gate command honours AUTOCODER_GATE_RETEST_FILES as a
+  # list, so this is one targeted run, seconds to minutes). A pass means the red did not reproduce on an
+  # identical tree: a flake, nobody's. It is refused as FLAKY (never landed over, never charged to the
+  # change, never bisected by a train), so the flaky file is filed instead of a member being returned for it.
+  # AUTOCODER_GATE_FLAKY_RETEST=0 turns the retest off (the old behaviour: straight to the base run).
+  if [ -n "$retest_files" ] && [ "${AUTOCODER_GATE_FLAKY_RETEST:-1}" != 0 ]; then
+    local flaky_at
+    echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."
+    echo "   Re-running the files that failed on the same tree first: AUTOCODER_GATE_RETEST_FILES=\"${retest_files}\" (a pass means the failure did not reproduce: flaky, nobody's)"
+    export AUTOCODER_GATE_RETEST_FILES="$retest_files"
+    flaky_at=$(_gate_log_size)
+    _g0=$SECONDS GATE_INFLIGHT_T0=$SECONDS
+    _stage_timings_begin
+    if _gate_in_slot "$WORKTREE_DIR" "$TEST_CMD" 2>&1 | tee -a "$GATE_LOG"; then
+      _landing_gate_done $((SECONDS - _g0))
+      _stage_timings_end
+      unset AUTOCODER_GATE_RETEST_FILES
+      echo "merge-to-integration: FLAKY -- $(printf '%s\n' $retest_files | _join_lines) failed on the integrated tree ${tree:0:8} and passed on a second run of the same tree: the failure did not reproduce, so it is nobody's. NOT pushing."
+      echo "   A flake is filed and fixed, never landed over: relaunch the merge; a train re-gates the same members once."
+      gate_cache_forget "$tree" "$TEST_CMD"
+      LANDING_CAUSE=flaky
+      _fail 3 "FLAKY: \`$(printf '%s\n' $retest_files | _join_lines)\` failed on the integrated tree ${tree:0:8} and passed on a second run of the same tree. The failure did not reproduce, so nothing about this change is in doubt and nothing landed; file the flake, then relaunch the merge; branch \`${FEATURE}\` is intact"
+    fi
+    _landing_gate_done $((SECONDS - _g0))
+    _stage_timings_end
+    unset AUTOCODER_GATE_RETEST_FILES
+    if infra=$(_gate_infra_line "$flaky_at"); then
+      _refuse_infrastructure "the second run of the integrated tree ${tree:0:8}" "$tree" "$tree" "$infra"
+    fi
+    echo "   The failure reproduced on the same tree; judging it against origin/${INTEGRATION_BRANCH} alone."
+  fi
   base_tree=$(git rev-parse "${base_sha}^{tree}")
   echo "❌ Tests fail on the integrated tree ${tree:0:8} (${#integrated_failures[@]} named failure(s))."
   echo "   Gating origin/${INTEGRATION_BRANCH} (${base_sha:0:8}, tree ${base_tree:0:8}) alone to see whether this change broke it."

@@ -72,12 +72,14 @@ run()           { bash "$MTI" --feature feature/code --issue $ISSUE --integratio
 
 # A stand-in for a repo's first gate stage, scripts/check-disk-space.sh, printing what the
 # real one prints at its threshold. Mode `always` fails every run; mode `second` passes the
-# first run and fails from the second on (the base run is the one the host refuses).
+# first run and fails from the second on; mode `third` fails from the third on (the base run
+# is the one the host refuses: a red integrated tree is re-run once on the same tree first,
+# the flaky retest, so the base run is the third run).
 cat > "$TMP/check-disk-space.sh" <<'STUB'
 #!/bin/bash
 mode="$1"; counter="$2"
 n=$(cat "$counter" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$counter"
-if [ "$mode" = always ] || { [ "$mode" = second ] && [ "$n" -ge 2 ]; }; then
+if [ "$mode" = always ] || { [ "$mode" = second ] && [ "$n" -ge 2 ]; } || { [ "$mode" = third ] && [ "$n" -ge 3 ]; }; then
   echo "::error::check-disk-space: / is 85% full (>= 85% threshold), only 78G available. A full disk produces failures indistinguishable from real defects -- do not trust any result from this run." >&2
   exit 1
 fi
@@ -87,6 +89,7 @@ chmod +x "$TMP/check-disk-space.sh"
 RECORD='echo "$(git rev-parse HEAD^{tree})" >> '"$TMP"'/gate-runs'
 DISK_ALWAYS="bash $TMP/check-disk-space.sh always $TMP/disk-runs"
 DISK_SECOND="bash $TMP/check-disk-space.sh second $TMP/disk-runs"
+DISK_THIRD="bash $TMP/check-disk-space.sh third $TMP/disk-runs"
 RED='echo "FAIL  tests/app.test.sh > the app"; false'
 
 # ── (a) the disk stage refuses on the integrated tree: abort, no base run, nothing pushed ──
@@ -107,14 +110,23 @@ git -C "$TMP/worker" rev-parse --verify -q feature/code >/dev/null && ok "(a) th
 # ── (b) the integrated tree fails as a test, then the host refuses the base run ─────────
 setup
 BEFORE=$(origin_master)
-OUT=$(run "$RECORD; $DISK_SECOND && $RED"); RC=$?
+OUT=$(run "$RECORD; $DISK_THIRD && $RED"); RC=$?
 [ "$RC" -eq 3 ] && ok "(b) exit 3 when the base run is the refused one" || bad "(b) rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "(b) nothing pushed" || bad "(b) master moved: $OUT"
-[ "$(gate_runs)" -eq 2 ] && ok "(b) both runs happened" || bad "(b) gate ran $(gate_runs) time(s); want 2: $OUT"
+[ "$(gate_runs)" -eq 3 ] && ok "(b) all three runs happened (integrated, the same-tree retest, the base)" || bad "(b) gate ran $(gate_runs) time(s); want 3: $OUT"
 echo "$OUT" | grep -q "^::error::merge-to-integration: INFRASTRUCTURE -- the gate did not reach a verdict on origin/master alone" && ok "(b) the abort names the base run" || bad "(b) base run not named: $OUT"
 BASE_TREE=$(tail -1 "$TMP/gate-runs")
-gate_cache_get "$BASE_TREE" "$RECORD; $DISK_SECOND && $RED" >/dev/null 2>&1 && bad "(b) a fail stayed in the gate cache for the refused base tree" || ok "(b) no gate-cache record for the refused base tree"
-[ "$(gate_cache_get "$(head -1 "$TMP/gate-runs")" "$RECORD; $DISK_SECOND && $RED")" = fail ] && ok "(b) the integrated tree's real fail stays recorded" || bad "(b) integrated fail record missing"
+gate_cache_get "$BASE_TREE" "$RECORD; $DISK_THIRD && $RED" >/dev/null 2>&1 && bad "(b) a fail stayed in the gate cache for the refused base tree" || ok "(b) no gate-cache record for the refused base tree"
+[ "$(gate_cache_get "$(head -1 "$TMP/gate-runs")" "$RECORD; $DISK_THIRD && $RED")" = fail ] && ok "(b) the integrated tree's real fail stays recorded" || bad "(b) integrated fail record missing"
+
+# ── (b2) the integrated tree fails as a test, then the host refuses the same-tree retest ─
+setup
+BEFORE=$(origin_master)
+OUT=$(run "$RECORD; $DISK_SECOND && $RED"); RC=$?
+[ "$RC" -eq 3 ] && ok "(b2) exit 3 when the same-tree retest is the refused one" || bad "(b2) rc=$RC: $OUT"
+[ "$(origin_master)" = "$BEFORE" ] && ok "(b2) nothing pushed" || bad "(b2) master moved: $OUT"
+[ "$(gate_runs)" -eq 2 ] && ok "(b2) the base was never gated" || bad "(b2) gate ran $(gate_runs) time(s); want 2: $OUT"
+echo "$OUT" | grep -q "^::error::merge-to-integration: INFRASTRUCTURE -- the gate did not reach a verdict on the second run of the integrated tree" && ok "(b2) the abort names the retest" || bad "(b2) retest not named: $OUT"
 
 # ── (c) both trees fail naming the same test: a red base, which lands and says what matched ──
 setup
@@ -130,7 +142,7 @@ BEFORE=$(origin_master)
 OUT=$(run "$RECORD; [ ! -f src/app.sh ] || echo \"FAIL  tests/extra.test.sh > only with the change\"; $RED"); RC=$?
 [ "$RC" -eq 2 ] && ok "(d) exit 2 when the failure sets differ" || bad "(d) rc=$RC: $OUT"
 [ "$(origin_master)" = "$BEFORE" ] && ok "(d) nothing pushed" || bad "(d) master moved: $OUT"
-[ "$(gate_runs)" -eq 2 ] && ok "(d) the base was gated for the comparison" || bad "(d) gate ran $(gate_runs) time(s); want 2"
+[ "$(gate_runs)" -eq 3 ] && ok "(d) the failure reproduced on the same tree and the base was gated for the comparison" || bad "(d) gate ran $(gate_runs) time(s); want 3"
 echo "$OUT" | grep -q "this change only: FAIL  tests/extra.test.sh > only with the change" && ok "(d) the extra failure is attributed to this change" || bad "(d) attribution missing: $OUT"
 echo "$OUT" | grep -q "fails alone too\|merged into" && bad "(d) read as a red base: $OUT" || ok "(d) not a red base"
 
