@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.67.0] - 2026-11-25
+
 ### Added
 
 - `/propose-fix` (#395, slice 4): the agent's step of the loop. In a worktree of the plugin
