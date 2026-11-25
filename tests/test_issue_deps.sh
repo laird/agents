@@ -156,6 +156,25 @@ check "GitHub blocked-by keeps only open blockers" "$NATIVE" '{"5":[3],"6":[]}'
 NATIVE=$(bash -c "gh() { return 1; }; source '$SCRIPT_DIR/issue-deps.sh'; _ideps_gh_blockers")
 check "GitHub blocked-by fails open" "$NATIVE" "{}"
 
+# #380: a dependency the tracker could not READ (a rate limit, an outage) is unmet and said so; a clean
+# "no such issue" (#16's typo above) still counts as met. The stub backend proxies every call to the real
+# file backend except `get 998`, which fails the way a rate-limited tracker does.
+cat > "$TMP/bin/backend-rl" <<BACKEND
+#!/bin/bash
+if [ "\$1" = get ] && [ "\$2" = 998 ]; then echo "GraphQL: API rate limit already exceeded for user ID 1" >&2; exit 1; fi
+exec python3 "$SCRIPT_DIR/issues-file.py" "\$@"
+BACKEND
+chmod +x "$TMP/bin/backend-rl"
+issue open 60 "Typo dep (clean not-found)" "Depends on #999"
+issue open 61 "Rate-limited dep" "Depends on #998"
+RL=$(run "_ifns_BACKEND_BIN='$TMP/bin/backend-rl'; issue_list --state open | jq -c '[.[].number] | map(select(. == 60 or . == 61))'")
+check "an unreadable dependency gates its issue; a typo'd one does not (#380)" "$RL" "[60]"
+RL_ERR=$( (cd "$TMP" && PATH="$TMP/bin:$PATH" bash -c "source '$SCRIPT_DIR/issue-fns.sh'; _ifns_BACKEND_BIN='$TMP/bin/backend-rl'; issue_list --state open >/dev/null") 2>&1 )
+printf '%s' "$RL_ERR" | grep -q "#998 could not be read" && ok "the queue says which dependency could not be read" || bad "stderr: $RL_ERR"
+UNMET=$(run "_ifns_BACKEND_BIN='$TMP/bin/backend-rl'; issue_unmet_dependencies 61; echo rc=\$?")
+check "issue_unmet_dependencies names the unreadable dependency" "$UNMET" "#998
+rc=1"
+
 [ -f "$TMP/gh-was-called" ] && bad "gh was invoked: $(cat "$TMP/gh-was-called")"
 
 echo ""
