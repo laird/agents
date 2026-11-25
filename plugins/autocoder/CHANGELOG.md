@@ -19,6 +19,12 @@ once (Version Management in `docs/maintaining.md`).
   `--train-gate-issue` (default `train.gateIssue` from `.autocoder.json`) drops the train gate
   issue's traces.
 
+- `/author-evals` and `/run-evals` (#395, slice 3): `eval-author.py` scaffolds a dev and a
+  held-out evaluation case per trace finding, with a default verifier per classifier, and checks
+  the cases before they are committed. `eval-run.py` runs each case against a worker in a fresh
+  sandbox repository with a file-backend issue, grades the attempt's trace, and records pass or
+  fail per harness commit.
+
 ### Fixed
 
 - The merge train's landing proof no longer reports a member as not landed when
