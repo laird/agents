@@ -39,6 +39,7 @@ DEFAULT_TOOL_ERROR_SHARE = 0.25
 MIN_TOOL_CALLS = 10
 EXAMPLES = 3
 JUDGE_TIMEOUT_S = 600
+BOUNCE_S = 120
 
 FIX_MD = "commands/fix.md § "
 LANDING = FIX_MD + "Landing the Work"
@@ -100,6 +101,18 @@ def reclaimed(trace: dict) -> dict | None:
     return None
 
 
+def claim_bounced(trace: dict) -> dict | None:
+    """A claim dropped within BOUNCE_S of being taken, before any READY or gate (#402)."""
+    released = steps_of_kind(trace, "released")
+    if not released or trace.get("gates") or steps_of_kind(trace, "ready"):
+        return None
+    started, end = parse_ts(trace.get("started")), parse_ts(released[0].get("ts"))
+    if started is None or end is None:
+        return None
+    seconds = (end - started).total_seconds()
+    return {"seconds": int(seconds), "worker": trace.get("worker")} if 0 <= seconds <= BOUNCE_S else None
+
+
 def landed_unreviewed(trace: dict) -> dict | None:
     """Silent when the review was not read (review null) or turned off (status skipped)."""
     review = trace.get("review")
@@ -158,6 +171,7 @@ def classifiers(tool_error_share: float = DEFAULT_TOOL_ERROR_SHARE) -> tuple[Cla
         Classifier("conflict-escalated-early", ("B02",), LANDING, conflict_escalated_early),
         Classifier("conflict-retried-late", ("B03",), LANDING, conflict_retried_late),
         Classifier("reclaimed", ("B04",), RELEASE, reclaimed),
+        Classifier("claim-bounced", ("B13",), "scripts/claim-issue.sh", claim_bounced),
         Classifier("landed-unreviewed", ("B05",), REVIEW, landed_unreviewed),
         Classifier("review-left-important", ("B06",), REVIEW, review_left_important),
         Classifier("verdict-nudged", ("B07",), LOOP, verdict_nudged),

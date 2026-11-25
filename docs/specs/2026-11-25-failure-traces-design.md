@@ -188,6 +188,7 @@ The first classifiers, each citing the spec:
 | `conflict-escalated-early` | escalated with a conflict in `reason` after one conflict gate | - | B02 | `fix.md` Landing the Work |
 | `conflict-retried-late` | three or more conflict gates | - | B03 | same |
 | `reclaimed` | the issue has a later attempt and this one did not land or escalate | - | B04 | `fix.md` Release the 'working' Label |
+| `claim-bounced` | a `released` step within 120 seconds of the start, no `ready` step and no gate (#402) | - | B13 | `claim-issue.sh` |
 | `landed-unreviewed` | outcome landed and review is a record with verdict other than pass, or no record when a comments dir was read | - | B05 | `fix.md` Pre-Landing Review Gate |
 | `review-left-important` | review `resolutions.left` > 0 with Important findings | - | B06 | same |
 | `verdict-nudged` | a `verdict-nudged` step | - | B07 | `fix.md` Continuous Loop |
