@@ -215,7 +215,7 @@ issue_body | grep -q "$BASE_TREE" && ok "(f) issue comment carries the base tree
 setup
 OUT=$(AUTOCODER_MOVED_BASE_REGATES=0 bash "$MTI" --feature feature/code --issue $ISSUE --integration master --test-cmd "$(racing_gate 'echo s > sibling.txt' 'echo "FAIL  tests/app.test.sh"; false')" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok "(f') exit 0 on a red base followed by a disjoint re-sync" || bad "(f') rc=$RC: $OUT"
-[ "$(gate_runs)" -eq 2 ] && ok "(f') gate ran on the integrated tree and the base only" || bad "(f') gate ran $(gate_runs) time(s); want 2"
+[ "$(gate_runs)" -eq 3 ] && ok "(f') gate ran on the integrated tree, its same-tree retest (the failure reproduced) and the base only" || bad "(f') gate ran $(gate_runs) time(s); want 3"
 echo "$OUT" | grep -q "on a red base followed by a disjoint re-sync" && echo "$OUT" | grep -q "is neither gated tree" && ok "(f') success line says the published tree is neither gated tree" || bad "(f') success line wrong: $OUT"
 issue_body | grep -q "then re-synced" && issue_body | grep -q "neither tree the gate ran on" && ok "(f') issue comment says so too" || bad "(f') issue comment: $(issue_body)"
 git --git-dir="$TMP/origin.git" cat-file -e master:sibling.txt 2>/dev/null && git --git-dir="$TMP/origin.git" cat-file -e master:src/app.sh 2>/dev/null && ok "(f') master has both the fix and the sibling's work" || bad "(f') master is missing work"
