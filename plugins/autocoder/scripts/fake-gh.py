@@ -6,14 +6,14 @@ WHY THIS EXISTS:
   claim marker comment, the read-back by createdAt), and the file backend folds comments into
   the issue body. So a finding about the claim race or the review record cannot be replayed
   there. Under a case's `backend: fake-github` a `gh` shim execs this script against a
-  per-sandbox store, and the real issues-gh.sh, claim-issue.sh and fix-loop-gate.sh run
+  per-sandbox store, and the real issues-gh.sh, fix-loop-gate.sh and /fix claim script run
   unchanged. A form it does not know exits 1 with a `fake gh: unsupported` line on stderr, so a
   gap shows up as a failed run, never as a silent success.
 
 STATE: FAKE_GH_STORE is a directory of <number>.json files. Each holds the document
   `gh issue view N --json number,title,body,state,labels,comments,...` prints, so
   trace-build.py --comments-dir reads the store as it is. Comments are kept in server order,
-  and createdAt is the wall time of the post, because claim-window.sh measures its race window
+  and createdAt is the wall time of the post, because the claim race window is measured
   in server seconds. Every call is appended to FAKE_GH_LOG as {"argv": [...], "exit": N}.
   FAKE_GH_REPO (default example/project) names the repository. FAKE_GH_USER (default eval)
   authors issues and comments. Labels need no `gh label create` first.

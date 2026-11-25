@@ -19,6 +19,14 @@ SANDBOX (one per case and repeat, under the temp dir): origin.git (bare), repo/ 
   to logs/worker-<pid>-fix-<issue>-<HHMMSS>.jsonl as claude-worker-loop.sh names transcripts.
   The root is deleted after a passing run unless --keep.
 
+BACKENDS: case.json's `backend` is `file` (the default) or `fake-github`. The file backend's
+  claim is an atomic rename and it folds comments into the body, so the GitHub claim race and the
+  review record never run there. Under fake-github the issue lives in <root>/gh-store, served by
+  fake-gh.py through a `gh` shim in <root>/bin put first on the worker's PATH (calls logged to
+  <root>/gh.log). The case's `issue.comments` are seeded with createdAt `age_s` seconds in the
+  past, and trace-build.py reads the review record from the store. Either way .autocoder.json's
+  issueSource names the backend, the seed's own file included.
+
 RESULTS: one JSON line per run appended to --results (default ${AUTOCODER_EVAL_RESULTS:-
   ${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}). harness.sha is
   AUTOCODER_HARNESS_SHA, else this script directory's git HEAD, else null. Exit 0 whatever the
@@ -51,6 +59,9 @@ SCRIPTS = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("eval_author", SCRIPTS / "eval-author.py")
 AUTHOR = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(AUTHOR)
+_spec = importlib.util.spec_from_file_location("fake_gh", SCRIPTS / "fake-gh.py")
+FAKE_GH = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(FAKE_GH)
 
 DEFAULT_WORKER = 'claude -p --output-format stream-json --verbose "/autocoder:fix {issue}"'
 DEFAULT_TIMEOUT_S = 3600
@@ -59,6 +70,7 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "eval", "GIT_AUTHOR_EMAIL": "eval@example.invalid"
            "GIT_COMMITTER_NAME": "eval", "GIT_COMMITTER_EMAIL": "eval@example.invalid",
            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false"}
 SANDBOX_CONFIG = {"issueSource": "file", "mergeMode": "merge", "integrationBranch": "master"}
+ISSUE_SOURCE = {"file": "file", "fake-github": "github"}
 SANDBOX_CLAUDE_MD = """# Sandbox project
 
 ### Merge Mode
@@ -105,20 +117,29 @@ def git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, env={**os.environ, **GIT_ENV}, check=True, capture_output=True, text=True)
 
 
-def build_sandbox(case_dir: Path, root: Path) -> Path:
+def build_sandbox(case_dir: Path, root: Path, backend: str) -> Path:
     origin, repo = root / "origin.git", root / "repo"
     git(root, "init", "-q", "--bare", "-b", "master", str(origin))
     git(root, "clone", "-q", str(origin), str(repo))
     git(repo, "symbolic-ref", "HEAD", "refs/heads/master")
     if (case_dir / "seed").is_dir():
         shutil.copytree(case_dir / "seed", repo, dirs_exist_ok=True)
-    if not (repo / ".autocoder.json").exists():
-        (repo / ".autocoder.json").write_text(json.dumps(SANDBOX_CONFIG, indent=2) + "\n")
+    config_path = repo / ".autocoder.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else dict(SANDBOX_CONFIG)
+    config["issueSource"] = ISSUE_SOURCE[backend]
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
     if not (repo / "CLAUDE.md").exists():
         (repo / "CLAUDE.md").write_text(SANDBOX_CLAUDE_MD)
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "Seed the sandbox")
     git(repo, "push", "-q", "-u", "origin", "master")
+    if backend == "fake-github":
+        (root / "bin").mkdir()
+        shim = root / "bin" / "gh"
+        shim.write_text(f"#!/bin/sh\nFAKE_GH_STORE={shlex.quote(str(root / 'gh-store'))} "
+                        f"FAKE_GH_LOG={shlex.quote(str(root / 'gh.log'))} "
+                        f"exec {shlex.quote(sys.executable)} {shlex.quote(str(SCRIPTS / 'fake-gh.py'))} \"$@\"\n")
+        shim.chmod(0o755)
     with open(repo / ".git" / "info" / "exclude", "a") as fh:
         fh.write(".issues/\n")
     if (case_dir / "setup.sh").is_file():
@@ -127,20 +148,32 @@ def build_sandbox(case_dir: Path, root: Path) -> Path:
     return repo
 
 
-def create_issue(case: dict, task: str, repo: Path) -> int:
-    labels = [a for label in case["issue"].get("labels", []) for a in ("--label", label)]
-    r = subprocess.run([sys.executable, str(SCRIPTS / "issues-file.py"), "create", "--title", case["issue"]["title"],
+def create_issue(case: dict, task: str, root: Path, repo: Path) -> int:
+    issue = case["issue"]
+    if case.get("backend") == "fake-github":
+        store = str(root / "gh-store")
+        n = FAKE_GH.create_issue(store, issue["title"], task, issue.get("labels", []),
+                                 state=issue.get("state", "open").upper())["number"]
+        for c in issue.get("comments", []):
+            FAKE_GH.add_comment(store, n, c["body"], age_s=c["age_s"])
+        return n
+    labels = [a for label in issue.get("labels", []) for a in ("--label", label)]
+    r = subprocess.run([sys.executable, str(SCRIPTS / "issues-file.py"), "create", "--title", issue["title"],
                         "--body", task, *labels], cwd=repo, check=True, capture_output=True, text=True,
                        env={**os.environ, "ISSUE_DIR_PATH": str(repo / ".issues")})
     return json.loads(r.stdout)["number"]
 
 
-def worker_env(root: Path, repo: Path) -> dict:
+def worker_env(root: Path, repo: Path, backend: str) -> dict:
     """The caller's environment without its autocoder state, pointed at the sandbox's."""
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith("AUTOCODER_") and k not in ("ISSUE_SOURCE", "ISSUE_DIR_PATH", "ISSUE_BACKEND")}
+           if not k.startswith(("AUTOCODER_", "FAKE_GH_")) and k not in ("ISSUE_SOURCE", "ISSUE_DIR_PATH", "ISSUE_BACKEND")}
     env.update({"XDG_STATE_HOME": str(root / "state"), "AUTOCODER_LOG_DIR": str(root / "logs"),
-                "ISSUE_SOURCE": "file", "ISSUE_DIR_PATH": str(repo / ".issues")})
+                "ISSUE_SOURCE": ISSUE_SOURCE[backend]})
+    if backend == "fake-github":
+        env["PATH"] = f"{root / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+    else:
+        env["ISSUE_DIR_PATH"] = str(repo / ".issues")
     return env
 
 
@@ -173,10 +206,12 @@ def run_worker(template: str, issue: int, root: Path, repo: Path, env: dict, tim
 
 
 def graded_trace(root: Path, repo: Path, issue: int, env: dict) -> dict | None:
-    """The issue's last attempt, as trace-build.py compiles it from the sandbox's ledgers and logs."""
+    """The issue's last attempt, as trace-build.py compiles it from the sandbox's ledgers and logs.
+    The fake-github store holds issue_get documents, so it is the review record's comments dir."""
     out = root / "traces.jsonl"
+    comments = ["--comments-dir", str(root / "gh-store")] if (root / "gh-store").is_dir() else []
     r = subprocess.run([sys.executable, str(SCRIPTS / "trace-build.py"), "--log-dir", str(root / "logs"),
-                        "--out", str(out)], cwd=repo, env=env, capture_output=True, text=True)
+                        "--out", str(out), *comments], cwd=repo, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         (root / "trace-build.stderr").write_text(r.stderr)
         return None
@@ -186,17 +221,21 @@ def graded_trace(root: Path, repo: Path, issue: int, env: dict) -> dict | None:
 
 def run_case(split: str, case_dir: Path, repeat: int, args, sha: str | None) -> dict:
     case = json.loads((case_dir / "case.json").read_text())
+    backend = case.get("backend", "file")
     root = Path(tempfile.mkdtemp(prefix=f"eval-{case['id']}-r{repeat}-"))
     began = time.monotonic()
     trace, failed = None, []
     try:
-        repo = build_sandbox(case_dir, root)
-        issue = create_issue(case, (case_dir / "task.md").read_text(), repo)
+        repo = build_sandbox(case_dir, root, backend)
+        issue = create_issue(case, (case_dir / "task.md").read_text(), root, repo)
     except subprocess.CalledProcessError as e:
         (root / "setup.stderr").write_text(f"{e.cmd}\n{e.stderr}")
         failed = ["setup"]
+    except ValueError as e:  # the seed's .autocoder.json is not JSON
+        (root / "setup.stderr").write_text(f"{e}\n")
+        failed = ["setup"]
     if not failed:
-        env = worker_env(root, repo)
+        env = worker_env(root, repo, backend)
         timed_out = run_worker(args.worker, issue, root, repo, env, args.timeout)
         trace = graded_trace(root, repo, issue, env)
         failed = (["timeout"] if timed_out else []) + verify(trace, case["verify"])
@@ -204,7 +243,7 @@ def run_case(split: str, case_dir: Path, repeat: int, args, sha: str | None) -> 
     if passed and not args.keep:
         shutil.rmtree(root, ignore_errors=True)
     return {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "case": case["id"], "split": split,
-            "repeat": repeat, "pass": passed, "failed": failed, "outcome": (trace or {}).get("outcome"),
+            "backend": backend, "repeat": repeat, "pass": passed, "failed": failed, "outcome": (trace or {}).get("outcome"),
             "gates": len(trace["gates"]) if trace else None, "tool_calls": tool_calls(trace) if trace else None,
             "duration_s": round(time.monotonic() - began, 1), "worker": args.worker, "harness": {"sha": sha},
             "root": str(root) if root.exists() else None}
