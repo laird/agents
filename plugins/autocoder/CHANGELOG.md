@@ -8,6 +8,11 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- `/propose-fix` (#395, slice 4): the agent's step of the loop. In a worktree of the plugin
+  without the held-out cases, it proposes ONE harness change for a finding, runs the dev cases
+  before and after, lets the runner score the held-out cases on both commits, and keeps the
+  change only when `eval-decide.py` accepts; a reject allows one refinement, a second ends it.
+
 - `/analyze-traces` (#395, slices 1 and 2): `trace-build.py` compiles one trace per issue
   attempt from the issue, merge, landing and gate ledgers, the worker transcripts and the review
   records; `BEHAVIOR.md` states the fix protocol's rules with stable ids; `analyze-traces.py`

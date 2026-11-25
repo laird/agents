@@ -90,6 +90,7 @@ Based on what you find, give contextual guidance:
 | `/analyze-traces [since] [until]` | Name the agent failures that repeat, from a trace per issue attempt |
 | `/author-evals [findings.json] [N]` | Write a dev and a held-out evaluation case for each of the top N trace findings |
 | `/run-evals [dev\|heldout\|all]` | Run the evaluation cases in sandboxes against a worker and report pass rates |
+| `/propose-fix <finding> [harness] [repeats]` | Propose one harness change for a finding and keep it only when the dev and held-out evals both improve |
 
 ### Setup
 
