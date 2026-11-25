@@ -815,6 +815,56 @@ def test_the_publisher_batch_marker_brackets_a_cycle(fx, tmp_path, monkeypatch):
     assert len(fx.gates()) == 1                                    # the cycle itself pushes nothing to the integration branch
 
 
+def test_the_fast_lane_is_drained_between_gate_passes_not_only_at_the_cycle_end(fx, tmp_path, monkeypatch):
+    # a red set bisects over several passes; a documents-only commit must not wait for the whole cycle (#379)
+    stub = tmp_path / "publisher.sh"
+    stub.write_text('#!/bin/bash\necho "$1 $2 $3" >> "$FX_STATE/publisher.log"\n')
+    monkeypatch.setenv("AUTOCODER_TRAIN_PUBLISHER", str(stub))
+    fx.members(4, bad={3})
+    fx.run()
+    rows = (fx.state / "publisher.log").read_text().splitlines()
+    drains = [i for i, r in enumerate(rows) if r == "drain --branch master"]
+    # four members, the last bad: the set is red (a drain follows that pass), the first half lands, the second
+    # half's first member lands alone and the bad one is red by inference (no gate): one pass that did not
+    # land, followed by a drain, plus the cycle's own drain at the end
+    assert len(fx.gates()) == 3
+    assert len(drains) == 2
+    assert drains[0] < rows.index(next(r for r in rows if r.startswith("batch-end")))   # the first drain came before the batch ended
+
+
+def test_the_daemon_runs_the_project_tick_command_at_most_once_per_interval(fx):
+    marker = fx.state / "tick-cmd.log"
+    fx.train["tickCmd"] = f"echo ran >> {marker}"
+    fx.train["tickCmdEverySeconds"] = 3600
+    fx.write_config()
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=1, max_ticks=3, sleep=lambda s: None)
+    assert d.loop() == 0
+    assert marker.read_text().splitlines() == ["ran"]              # three ticks, one run inside the interval
+    fx.train["tickCmdEverySeconds"] = 0
+    fx.write_config()
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=1, max_ticks=2, sleep=lambda s: None)
+    assert d.loop() == 0
+    assert marker.read_text().splitlines() == ["ran", "ran", "ran"]   # every tick when the interval is 0
+
+
+def test_a_failing_or_slow_tick_command_never_ends_the_tick(fx):
+    logged = []
+    fx.train["tickCmd"] = "echo boom >&2; exit 7"
+    fx.train["tickCmdEverySeconds"] = 0
+    fx.write_config()
+    d = R.Daemon(fx.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None)
+    assert d.loop() == 0
+    assert any("tick command exited 7" in m and "boom" in m for m in logged)
+    assert json.loads((fx.rc().cfg.state_dir / "daemon.json").read_text())["verdict"] == "idle"
+    fx.train["tickCmd"] = "sleep 5"
+    fx.train["tickCmdTimeoutSeconds"] = 1
+    fx.write_config()
+    logged.clear()
+    d = R.Daemon(fx.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None)
+    assert d.loop() == 0
+    assert any("tick command killed after 1s" in m for m in logged)
+
+
 # ── an empty landing is terminal: nothing to land, nobody bisected ──────────────────────
 def gen_member(fx, n, paths):
     """A READY issue whose branch changes only <paths> (generated files on master)."""
