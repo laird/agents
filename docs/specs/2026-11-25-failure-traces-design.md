@@ -45,18 +45,27 @@ an older version) open an implicit attempt whose `started` is the first event se
  "repo": "<repo id>", "issue": 12, "attempt": 1,
  "worker": "<id>|null", "branch": "<branch>|null",
  "started": "<ISO>", "ended": "<ISO>|null",   ended is null while the attempt is open
+ "next_attempt": "<ISO>|null",                 the next claim of the same (repo, issue), when there is one
  "outcome": "landed|returned|escalated|released|abandoned|open",
- "steps": [ {"ts": "<ISO>", "kind": "<event>", "source": "issue-events|merge-events|landing-timings|gate-log",
-             "detail": {...}} ],                sorted by ts; detail is the source row's detail or fields
+ "steps": [ {"ts": "<ISO>", "kind": "<event>", "source": "issue-events|landing-timings",
+             "detail": {...}} ],                sorted by ts; the lifecycle events plus landing rebase/precheck rows
  "gates": [ {"attempt": 1, "outcome": "<merge outcome>", "duration_s": 41, "tests_failed": [...],
              "conflict_files": [...], "red_base": true|false|null, "escalated": false, "reason": "..."} ],
+                                                a field no row recorded is null, never [] or false
  "returned": [ {"ts": "<ISO>", "cause": "defect|conflict|stale-base|red-integration|infra|docs-resync|other"} ],
  "session": null | {"path": "...", "model": "...", "num_turns": 7, "duration_ms": 1, "cost_usd": 0.1,
-                    "is_error": false, "tools": {"calls": 40, "errors": 3, "by_name": {"Bash": 30, "Edit": 10}}},
- "review": null | {"rounds": 1, "verdict": "pass", "findings": {"important": 1, "nit": 2, "pre_existing": 0},
-                   "resolutions": {"fixed": 2, "answered": 1, "filed": 0, "left": 0}},
+                    "is_error": false,
+                    "tools": {"calls": 40, "errors": 3,
+                              "by_name": {"Bash": {"calls": 30, "errors": 3}, "Edit": {"calls": 10, "errors": 0}}}},
+ "review": null | {"status": "reviewed", "rounds": 1, "verdict": "pass",
+                   "findings": {"important": 1, "nit": 2, "pre-existing": 0, "other": 0},
+                   "resolutions": {"fixed": 2, "answered": 1, "filed": 0, "left": 0, "other": 0}}
+         | {"status": "skipped" | "no record" | "unavailable"},
  "tick": null | {"tick_id": "...", "model": "...", "gate_duration_ms": 1200}}
 ```
+
+The `findings` and `resolutions` keys are the ones `issue-metrics.py`'s review parser already
+produces, so the two tools agree on a review record.
 
 Outcome, decided from the steps in order:
 
@@ -65,9 +74,12 @@ Outcome, decided from the steps in order:
 | `landed` | a `landed` step |
 | `escalated` | an `escalated` step and no `landed` |
 | `returned` | the last gate ended non-landed and the attempt then ended (released or re-claimed) |
-| `released` | a `released` step and no gate at all |
+| `released` | a `released` step and no gate, or a release after a gate that landed or parked |
 | `abandoned` | no terminal step, a later `claimed` of the same issue by anyone, or the session's result says error |
 | `open` | no terminal step and nothing later |
+
+`ended` is the terminal step's time. When a later claim or a session error closes an attempt
+that has no terminal step, `ended` is the time of the last row seen for it in any ledger.
 
 Joins, in order of confidence:
 
@@ -75,14 +87,23 @@ Joins, in order of confidence:
   with no matching gate-end becomes a gate of its own (older ledgers).
 - `landing-timings.jsonl` change rows join by (repo, issue) and by time: a row inside the attempt's
   window belongs to it. `returned` rows fill `returned`; `rebase` and `precheck` are steps.
-- `gate.jsonl` ticks whose `claimed` names the issue join the attempt whose `started` is within
-  ten minutes after the tick.
-- Transcripts join by issue number in the file name and by time: the file's first event timestamp
-  (or its mtime when it has none) falls inside the window, widened by `--slack` (default one hour).
-  A transcript with no `result` event gives `tools` and `num_turns` so far and `is_error: null`.
+- `gate.jsonl` ticks whose `claimed` names the issue (`12`, `#12` or `issue#12`) join the attempt
+  whose `started` is within ten minutes after the tick. The gate log names no repository, so this
+  join is by issue number and time alone.
+- Transcripts join by issue number in the file name and by time. The time is the first
+  `timestamp`/`ts` field in the file when one exists; the stream-json `claude -p` writes has none,
+  so it is the name's HHMMSS (local time, as the worker loop stamps it) placed on the day nearest
+  the attempt's start; mtime is the last resort, since a checkout resets it. It must fall inside the
+  window widened by `--slack` (default 60 minutes), and a transcript belongs to the one attempt
+  whose start is nearest, so a re-claimed issue's two attempts never share one. A transcript with
+  no `result` event gives `tools` so far, and null `num_turns`, `duration_ms`, `cost_usd` and
+  `is_error`.
 - Review records come from `--comments-dir DIR` (a directory of `<issue>.json` documents as
   `issue_get` prints them, the same offline shape `issue-metrics.py --reviews` reads), parsed by the
-  parser `issue-metrics.py` already has. No directory, no review, never an empty record.
+  parser `issue-metrics.py` already has. With the directory every trace carries a record with a
+  `status` (a document that cannot be read is `unavailable`, never `no record`); without it,
+  `review` is null. The directory is keyed by issue number, so a run over two repositories needs
+  `--repo-id`.
 
 Writer: `trace-build.py`. Reads the four ledgers at their usual paths (each `--<name> PATH`
 override, same environment variables the writers honour), `--log-dir` for transcripts,
@@ -132,21 +153,31 @@ of findings as markdown (default) or `--json`.
 A classifier is one row of a registry, not a branch in a loop:
 
 ```
-Classifier(id, rules=(...), surface="commands/fix.md#<heading>" | "scripts/<name>" | "gate",
-           match=fn(trace) -> None | evidence-dict, group=fn(evidence) -> str | None)
+Classifier(id, rules=(...),
+           surface="commands/fix.md § <heading>" | "scripts/<name>" | "gate" | "integration branch" | "tool",
+           match=fn(trace) -> None | evidence-dict, group=fn(evidence) -> tuple of keys,
+           weight=1.0, key_rules={key: (rules,)})
 ```
 
 `match` returns evidence when the trace shows the failure (the failing suite, the cause, the
-count). `group` splits a classifier's hits into findings by a key (the failing suite's name, the
+count). `group` splits a classifier's hits into findings by key (the failing suite's name, the
 return cause), so "gate red on suite X" and "gate red on suite Y" are two findings with their
-own traces. A finding is:
+own traces; a trace that fails two suites joins both. `key_rules` lets one classifier cite a
+different rule per key (`returned-by-cause`: defect is B01, conflict B02, stale-base B08,
+red-integration B09; infra, docs-resync and other cite none). The registry is
+`classifiers(tool_error_share)`, a function, so the test can import it without side effects.
+A finding is:
 
 ```
 {"id": "gate-red-suite", "key": "tests/test_x.sh", "rules": ["B01"], "surface": "gate",
  "count": 7, "traces": ["repo:12:1", ...], "share": 0.12,
  "evidence": [{"trace_id": ..., ...first three...}],
- "severity": <count weighted by the classifier's weight>}
+ "severity": <count weighted by the classifier's weight>, "judged": false}
 ```
+
+The report (`--json`) is `{"corpus", "window": {"since", "until"}, "unmatched",
+"judge": null | {"prompt", "traces", "errors"}, "findings": [...]}`; `--since`/`--until`
+filter traces by `started`.
 
 The first classifiers, each citing the spec:
 
@@ -177,10 +208,12 @@ runs `CMD` once per trace that no deterministic classifier matched (or every tra
 then the spec, then the trace's JSON. `CMD` prints a JSON array of
 `{"rule": "B12", "evidence": "...", "confidence": 0.0-1.0}`; anything else is a judge error,
 counted and never a finding. Judged findings are grouped by rule under the id `judged`, marked
-`judged: true`, and sorted after the deterministic ones at equal severity. The prompt file carries
-its version in its name; a new prompt is a new file, and findings record `judge_prompt`. The
-default is no judge. The test drives `--judge` with a shell fake that prints a fixed array and one
-that prints garbage.
+`judged: true` with `surface: null`, and sorted after the deterministic ones at equal severity.
+The prompt file carries its version in its name; a new prompt is a new file, and findings record
+`judge_prompt` (the file name). The default is no judge. `--spec` and `--judge-prompt` point at
+the two files when they are not beside the scripts (an Antigravity install ships the scripts
+without the plugin root). The test drives `--judge` with a shell fake that prints a fixed array
+and one that prints garbage.
 
 ### The command
 
@@ -194,6 +227,27 @@ Slice 3 (findings to replayable evaluations with a held-out set), slice 4 (one c
 accepted when dev and held-out both improve), slice 5 (the loop's numbers on the week page).
 The trace schema carries what those need: trace ids to cite, the gate and review verdicts to grade,
 and the session's tool counts to compare before and after a change.
+
+## Changes accepted during implementation
+
+Accepted on 2026-11-25 while landing the PR, each because the implementation found the sketch
+wrong or short:
+
+- `next_attempt` on the trace, so the `reclaimed` classifier reads one trace, not the corpus.
+- Transcript time from the file name on the nearest day, not the start date: a session starts
+  just before its claim is written, so "start date, or the next day" put most transcripts a day
+  late. One transcript per attempt, the nearest.
+- Gate fields with no merge row are null, to tell "not recorded" from "none".
+- Steps come from the lifecycle ledger and the landing rows only; the merge row's detail lives on
+  the gate, not as a second step for the same gate.
+- `tools.by_name` counts calls and errors per tool, since the most-failing tool is what the
+  finding names.
+- Review records carry a `status`, use the review parser's own keys, and keep `unavailable`
+  apart from `no record`.
+- `group` returns a tuple of keys; `key_rules` cites one rule per return cause; judged findings
+  have no surface.
+- A release after a gate that landed or parked is `released`, not `open`.
+- Every classifier's weight is 1.0 until a reason to rank one class above another appears.
 
 ## Decisions
 
