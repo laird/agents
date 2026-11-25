@@ -13,6 +13,11 @@ once (Version Management in `docs/maintaining.md`).
   records; `BEHAVIOR.md` states the fix protocol's rules with stable ids; `analyze-traces.py`
   runs a registry of classifiers citing those rules and writes the failures that repeat, with an
   optional judge (off by default) for rules only a reader can check.
+- `trace-build.py` reads ledgers the way live runs write them (#395): a claim and its readback,
+  or a lost claim race, are steps of one attempt; landing-timings `landed` rows are train
+  landings; `ready`, `launched`, `batched` and `returned` rows are steps; and
+  `--train-gate-issue` (default `train.gateIssue` from `.autocoder.json`) drops the train gate
+  issue's traces.
 
 ### Fixed
 

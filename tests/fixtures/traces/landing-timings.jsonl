@@ -24,3 +24,12 @@
 {"v":1,"ts":"2026-11-20T19:00:00Z","kind":"change","issue":100,"event":"claimed","batch":null,"cause":null,"repo":"repo-b-5678efgh"}
 {"v":1,"ts":"2026-11-20T19:12:30Z","kind":"change","issue":100,"event":"landed","batch":"b100","cause":null,"repo":"repo-b-5678efgh","sha":"def1001"}
 invalid-line
+{"v":1,"ts":"2026-11-20T21:20:00Z","kind":"change","issue":20,"event":"ready","batch":null,"cause":null,"repo":"repo-a-1234abcd"}
+{"v":1,"ts":"2026-11-20T21:25:00Z","kind":"change","issue":20,"event":"batched","batch":"train-20261120T212500Z-1","cause":null,"repo":"repo-a-1234abcd"}
+{"v":1,"ts":"2026-11-20T21:40:00Z","kind":"change","issue":20,"event":"landed","batch":"train-20261120T212500Z-1","cause":null,"repo":"repo-a-1234abcd","sha":"abc2001"}
+{"v":1,"ts":"2026-11-20T22:10:00Z","kind":"change","issue":21,"event":"ready","batch":null,"cause":null,"repo":"repo-a-1234abcd"}
+{"v":1,"ts":"2026-11-20T22:20:00Z","kind":"change","issue":21,"event":"returned","batch":null,"cause":"infra","repo":"repo-a-1234abcd"}
+{"v":1,"ts":"2026-11-20T22:30:00Z","kind":"change","issue":21,"event":"batched","batch":"solo-21-1","cause":null,"repo":"repo-a-1234abcd"}
+{"v":1,"ts":"2026-11-20T22:30:00Z","kind":"change","issue":21,"event":"landed","batch":"solo-21-1","cause":null,"repo":"repo-a-1234abcd","sha":"abc2101"}
+{"v":1,"ts":"2026-11-20T23:40:00Z","kind":"change","issue":24,"event":"ready","batch":null,"cause":null}
+{"v":1,"ts":"2026-11-20T23:50:00Z","kind":"change","issue":24,"event":"landed","batch":"train-20261120T234500Z-1","cause":null}
