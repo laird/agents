@@ -440,6 +440,12 @@ repeat:
 The run prints one line per case (passes out of repeats, failed checks with counts), one line per
 split, and the root kept for each failing run. `--json` prints `{"rows", "cases", "splits"}`. The
 exit code is 0 whatever the verdicts.
+`/propose-fix <finding> [harness] [repeats]` is the agent's step between the two: in a worktree
+of the plugin checkout (the harness) with no held-out cases, one change for the finding, the dev
+cases run before and after, then the runner scores the held-out cases on both commits and
+`eval-decide.py` gives the verdict. The worker under test loads the proposal with
+`claude --plugin-dir`, so the installed plugin never changes during a proposal.
+
 ### `eval-decide.py`
 
 ```
