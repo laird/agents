@@ -221,12 +221,110 @@ and one that prints garbage.
 run the analyst, and write the findings to `docs/reports/traces/<date>-findings.md`. It does not
 file issues; a later slice turns findings into evaluations.
 
-## Out of scope here
+## Calibration from the first live run
 
-Slice 3 (findings to replayable evaluations with a held-out set), slice 4 (one change at a time,
-accepted when dev and held-out both improve), slice 5 (the loop's numbers on the week page).
-The trace schema carries what those need: trace ids to cite, the gate and review verdicts to grade,
-and the session's tool counts to compare before and after a change.
+The first run over a host's real ledgers (2,044 attempts across one swarm) showed three things
+the fixtures had not:
+
+- **A claim is written twice.** `issue_claim` records `claimed`, and the worker's readback records
+  it again about four seconds later (342 of 344 two-claim issues: same worker, under two minutes).
+  A `claimed` opens a new attempt only when the open attempt has ended (landed, escalated or
+  released before it) or the worker differs; otherwise it is a step of the open attempt. Without
+  this, two thirds of the corpus read as "reclaimed".
+- **The train lands most work.** The lifecycle ledger's `landed` covered 55 issues; the
+  landing-timings `landed` change rows covered 357. A landing-timings `landed` row is a terminal
+  `landed` step. The rows `ready` (the worker's READY, its hand-off), `launched`, `batched` and
+  `returned` are steps too, so a trace shows the hand-off and what the train did with it.
+- **The train's gate issue is not an attempt.** The issue a train's gate runs under (`train.gateIssue`
+  in the repository's main-worktree `.autocoder.json`) carries hundreds of claims and no work.
+  `--train-gate-issue N` (default from that config, `0` keeps it) drops its traces, as
+  `landing-report.py` drops its batches.
+
+Also seen: workers on a tmux swarm are interactive sessions, so no `worker-*-fix-*` transcript
+exists and `session` is null for every trace; the tool-error and session classifiers are silent
+there until a headless worker runs. `gate.jsonl` was absent, so `tick` is null.
+
+## Slice 3: the eval author and the runner
+
+A finding becomes evaluation cases a machine can run and grade. A **case** is a directory:
+
+```
+<cases>/dev/<case-id>/        or  <cases>/heldout/<case-id>/
+  case.json                   the case: finding, verifier, issue metadata
+  task.md                     the issue body the worker gets (the task prompt)
+  seed/                       optional: files copied into the sandbox repository before its first commit
+  setup.sh                    optional: run in the sandbox after the seed commit (ORIGIN names the bare remote),
+                              for a case that needs a second actor (a conflicting commit on the integration branch)
+```
+
+`case.json`:
+
+```
+{"v": 1, "id": "conflict-escalated-early-001", "authored": "2026-11-25", "split": "dev",
+ "finding": {"id": "conflict-escalated-early", "key": null, "rules": ["B02"], "traces": ["<repo>:12:1"]},
+ "issue": {"title": "...", "labels": ["P2", "bug"]},
+ "verify": {"outcome": "landed",                       the attempt's outcome must equal this (null: any)
+            "classifiers_silent": ["conflict-escalated-early"],   none of these may fire on the attempt's trace
+            "max_gates": 2, "max_tool_calls": null,   null: no bound
+            "steps_present": [], "steps_absent": ["verdict-nudged"]}}
+```
+
+The verifier is declarative and behaviour-level: it reads the trace the attempt produced, never
+the worker's text. It reuses the analyst's registry, so a case for finding X passes when X's
+classifier stays silent on the new trace and the task still lands. The default verifier for a
+finding comes from a table keyed by classifier id; the author may tighten it.
+
+`eval-author.py`:
+
+- `new --finding JSON | --findings-file PATH --index N [--split dev|heldout] [--cases DIR] [--id ID]`
+  scaffolds a case: `case.json` with the table's verifier, `task.md` with the rule text from the spec,
+  the finding's evidence and `TODO` markers where the author writes the task and the seed. Without
+  `--split`, the finding's cases alternate dev, heldout, dev, so each finding gets both.
+- `list [--cases DIR] [--split S]` prints the cases.
+- `check [--cases DIR]` validates every case (schema, split matches its directory, no `TODO` left in
+  `task.md`, every classifier in `classifiers_silent` exists, every rule exists in the spec) and
+  exits 1 naming each bad case. `/author-evals` runs it before committing.
+
+`eval-run.py [--cases DIR] [--split dev|heldout|all] [--case ID ...] [--worker CMD] [--repeat N]
+[--timeout S] [--results PATH] [--keep]`, for each case and repeat:
+
+1. A fresh root under the temp dir: a bare `origin.git`, a clone `repo/`, the case's `seed/` copied
+   in, an `.autocoder.json` (`issueSource: file`, merge mode `merge`, integration branch `master`)
+   unless the seed brought one, one commit, pushed to origin; then `setup.sh` if present.
+2. The issue, created through the file backend from `issue.title`, `task.md` and `issue.labels`.
+3. The worker, `CMD` with `{issue}`, `{repo}` and `{root}` substituted, cwd `repo/`, with
+   `XDG_STATE_HOME=<root>/state` and `AUTOCODER_LOG_DIR=<root>/logs`, stdout copied to
+   `logs/worker-<pid>-fix-<issue>-<HHMMSS>.jsonl` as the worker loop names it, killed at `--timeout`.
+   The default `CMD` is the worker loop's own line: `claude -p --output-format stream-json --verbose
+   "/autocoder:fix {issue}"`.
+4. `trace-build.py` over the root's ledgers and logs; the issue's last attempt is the trace graded.
+5. The verifier. One result row appended to `--results` (default
+   `${AUTOCODER_EVAL_RESULTS:-$XDG_STATE_HOME/autocoder/eval-results.jsonl}`; the test prelude gets a
+   private path): `{ts, case, split, repeat, pass, failed: [check names], outcome, gates, tool_calls,
+   duration_s, worker, harness: {sha}, root}`. `harness.sha` is the commit of the plugin checkout the
+   worker ran (`AUTOCODER_HARNESS_SHA`, else the script directory's git HEAD, else null). The root is
+   deleted unless `--keep` or the case failed.
+
+The run prints a table per case (passes of repeats) and a line per split; `--json` the same. Exit 0
+whatever the verdicts; a malformed case exits 2 before any worker runs. A `--worker` that is a
+shell fake makes the runner testable without a model: the tests use one that writes lifecycle
+events through `issue-events-lib.sh` and a stream-json transcript, in a passing and a failing shape.
+
+**Held-out protection.** The split is the directory. `/author-evals` writes both and tells the
+author never to open `heldout/` again. Slice 4's fix-proposing step runs in a worktree with
+`heldout/` removed, and only the runner, after the proposal, reads it.
+
+Commands: `/author-evals [findings.json]` (run the analyst, scaffold a dev and a held-out case per
+top finding, write each task and seed, `check`, commit) and `/run-evals [dev|heldout|all]`.
+
+## Slices 4 and 5, in outline
+
+Slice 4, `/propose-fix <case-or-finding>`: in a worktree of the plugin with `heldout/` removed, the
+agent proposes ONE harness change for the finding (a protocol step, a script, a prompt), runs the
+dev cases before and after, and only then the runner runs the held-out cases; the change is kept
+when both improve and the result is recorded on the finding (`eval-results.jsonl` rows carry the
+two `harness.sha`s). Slice 5 adds to `landing-report.py --week`: findings open (the analyst's
+count for the week), evals passing by split, changes accepted.
 
 ## Changes accepted during implementation
 
