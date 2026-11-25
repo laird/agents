@@ -14,6 +14,12 @@ once (Version Management in `docs/maintaining.md`).
   runs a registry of classifiers citing those rules and writes the failures that repeat, with an
   optional judge (off by default) for rules only a reader can check.
 
+- `/author-evals` and `/run-evals` (#395, slice 3): `eval-author.py` scaffolds a dev and a
+  held-out evaluation case per trace finding, with a default verifier per classifier, and checks
+  the cases before they are committed. `eval-run.py` runs each case against a worker in a fresh
+  sandbox repository with a file-backend issue, grades the attempt's trace, and records pass or
+  fail per harness commit.
+
 ### Fixed
 
 - The merge train's landing proof no longer reports a member as not landed when

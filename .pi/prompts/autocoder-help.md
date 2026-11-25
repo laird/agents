@@ -88,6 +88,8 @@ Based on what you find, give contextual guidance:
 | `/improve-test-coverage` | Analyze and improve test coverage |
 | `/spot-check [number]` | Review merged work sampled for human review (ok / follow-up / revert) |
 | `/analyze-traces [since] [until]` | Name the agent failures that repeat, from a trace per issue attempt |
+| `/author-evals [findings.json] [N]` | Write a dev and a held-out evaluation case for each of the top N trace findings |
+| `/run-evals [dev\|heldout\|all]` | Run the evaluation cases in sandboxes against a worker and report pass rates |
 
 ### Setup
 
