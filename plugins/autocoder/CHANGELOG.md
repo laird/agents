@@ -6,6 +6,17 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- `claim-issue.sh` releases visibly when it refuses an issue over a stale start comment (#402).
+  A work-started comment with no release after it counts in every later claim window, so the
+  refusal, which dropped the `working` label and posted nothing, left the window open: every
+  later claimant refused for the same reason and the issue bounced between the fix-loop gate and
+  the worker (one swarm's ledgers: one issue claimed and dropped 99 times in two days). With no
+  live rival marker, the refusal now posts the `🔓 Releasing claim` comment right after the label
+  removal, as the gate's own release does, and the next claim starts from a clean window. A
+  genuine race (a second live claim marker) still refuses without a comment.
+
 ## [4.67.0] - 2026-11-25
 
 ### Added

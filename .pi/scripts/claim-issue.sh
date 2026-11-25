@@ -87,6 +87,17 @@ CLAIM_ID="claim-id=$$-$(date +%s%N)"
 post_claim_marker() {
   issue_comment "$1" --body "🔒 [autocoder-claim] Starting fix for issue #${1} — lock established (${CLAIM_ID})" 2>/dev/null || true
 }
+# A refusal over a start comment from an earlier run, with no live rival marker, ends
+# the claim window the way the gate's release does: label first, then the 🔓 (#402).
+# Without the 🔓 that start comment counts in every later window, every later claimant
+# refuses for the same reason, and the issue bounces between the gate and the worker.
+release_stale_start() {
+  issue_comment "$1" --body "🔓 **Releasing claim**
+
+**Reason**: a work-started comment from an earlier run has no release after it, so this run cannot tell whether that work was abandoned; releasing so the next claim starts from a clean window.
+**Worker**: \`${CLAIM_ID}\`
+**State left behind**: nothing; no work was started by this run." 2>/dev/null || true
+}
 count_claim_window() {
   local counts
   counts=$(issue_get "$1" 2>/dev/null | "${SCRIPT_DIR}/claim-window.sh" --own "$CLAIM_ID")
@@ -189,6 +200,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
       echo "⚠️  Race: another agent claimed issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, started: $PRIOR_STARTED since the last release). Releasing and aborting."
       issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      [ "$CLAIM_MARKER_COUNT" -gt 1 ] || release_stale_start "$ISSUE_NUM"
       exit 1
     fi
   else
@@ -200,6 +212,7 @@ if [ -n "$SPECIFIED_ISSUE" ]; then
     if [ "$PRIOR_STARTED" -gt 0 ]; then
       echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and aborting."
       issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+      release_stale_start "$ISSUE_NUM"
       exit 1
     fi
   fi
@@ -288,6 +301,7 @@ else
       if [ "$CLAIM_MARKER_COUNT" -gt 1 ] || [ "$PRIOR_STARTED" -gt 0 ]; then
         echo "⚠️  Race condition on issue #$ISSUE_NUM (markers: $CLAIM_MARKER_COUNT, prior: $PRIOR_STARTED since the last release). Releasing and trying next..."
         issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        [ "$CLAIM_MARKER_COUNT" -gt 1 ] || release_stale_start "$ISSUE_NUM"
         continue
       fi
     else
@@ -300,6 +314,7 @@ else
         echo "⚠️  Issue #$ISSUE_NUM has a prior work-started comment — may be an abandoned run. Releasing and trying next..."
         # File backend: release moves the file back from working/ to open/
         issue_release "$ISSUE_NUM" 2>/dev/null || issue_update "$ISSUE_NUM" --remove-label "working" 2>/dev/null || true
+        release_stale_start "$ISSUE_NUM"
         continue
       fi
     fi
