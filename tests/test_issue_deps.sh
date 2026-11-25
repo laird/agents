@@ -202,8 +202,11 @@ case "\$1 \$2" in
       *)
         fields=""; errors=""
         for n in \$(printf '%s' "\$query" | grep -o 'number: [0-9]*)' | grep -o '[0-9]*'); do
+          # 555 and 556 are pull requests (the file backend has none): an open one and a merged one.
+          if [ "\$n" = 555 ]; then fields="\$fields\"i555\":{\"number\":555,\"state\":\"OPEN\",\"body\":\"\"},"
+          elif [ "\$n" = 556 ]; then fields="\$fields\"i556\":{\"number\":556,\"state\":\"MERGED\",\"body\":\"\"},"
           # gh-flaky-70: alias i70 is null with an INTERNAL error (a timeout on one field), not a not-found.
-          if [ -f "$TMP/gh-flaky-70" ] && [ "\$n" = 70 ]; then
+          elif [ -f "$TMP/gh-flaky-70" ] && [ "\$n" = 70 ]; then
             fields="\$fields\"i70\":null,"; errors="\$errors{\"type\":\"INTERNAL\",\"message\":\"Something went wrong while executing your query.\",\"path\":[\"repository\",\"i70\"]},"
           elif f=\$(python3 "$SCRIPT_DIR/issues-file.py" get "\$n" 2>/dev/null | jq -c '{number, state: (.state | ascii_upcase), body}') && [ -n "\$f" ]; then
             fields="\$fields\"i\$n\":\$f,"
@@ -228,8 +231,9 @@ MANY=$(run_gh "_ideps_gh_lookup_many 70 71 999 | sort")
 check "the batched read answers every number: a closed one, an open one with its parent, a typo'd one as not found" "$MANY" "70 CLOSED -
 71 OPEN 9
 999 - -"
-HUGE=$(run_gh "_ideps_gh_lookup_many 70 4294967296 | sort")
-check "a number past GraphQL's Int is a clean not-found and does not fail its chunk" "$HUGE" "4294967296 - -
+HUGE=$(run_gh "_ideps_gh_lookup_many 70 4294967296 1e+23 | sort")
+check "a number past GraphQL's Int, or one jq rendered as a float, is a clean not-found and does not fail its chunk" "$HUGE" "1e+23 - -
+4294967296 - -
 70 CLOSED -"
 FILE_READY=$(run "issue_list --state open | jq -c '[.[].number] | sort'")
 rm -f "$TMP/gh-batch-calls"
@@ -239,10 +243,16 @@ BATCH_CALLS=$(grep -c 'issueOrPullRequest(number:' "$TMP/gh-batch-calls" 2>/dev/
 check "the outside dependencies were read in one batched request" "$BATCH_CALLS" "1"
 VIEW_CALLS=$(grep -c '^issue view' "$TMP/gh-batch-calls" 2>/dev/null); VIEW_CALLS=${VIEW_CALLS:-0}
 check "no per-issue gh issue view behind the batch" "$VIEW_CALLS" "0"
+# After the equality check: the file backend has no pull requests, so these two differ by design.
+issue open 73 "Batch: waits on an open PR"   "Depends on #555"
+issue open 74 "Batch: waits on a merged PR"  "Depends on #556"
+PRS=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 73 or . == 74))'")
+check "a dependency on a pull request is read for its state: open gates, merged frees" "$PRS" "[74]"
 touch "$TMP/gh-outage"
 OUTAGE_READY=$(run_gh "issue_list --state open | jq -c '[.[].number] | map(select(. == 72 or . == 16 or . == 60))'")
 check "a failed batch request leaves every outside dependency unmet (#380), the typo'd ones included" "$OUTAGE_READY" "[]"
 grep -q "#70 could not be read" "$TMP/gh-batch-err" && ok "the outage names the dependency that could not be read" || bad "outage stderr: $(cat "$TMP/gh-batch-err")"
+[ "$(grep -c "batched read of .* dependencies failed" "$TMP/gh-batch-err")" = 1 ] && ok "the failed request is said once, not once per number" || bad "outage stderr: $(cat "$TMP/gh-batch-err")"
 rm -f "$TMP/gh-outage"
 # A null alias with an error that is NOT a not-found (a timeout on one field) is unreadable, never met (#380).
 touch "$TMP/gh-flaky-70"

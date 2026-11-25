@@ -78,10 +78,8 @@ _ideps_parents() {
 # Fails open to {} (no gh, no repo, or a server without issue dependencies).
 _ideps_gh_blockers() {
   local repo
-  # No origin (a scratch repo, a test fixture): nothing to ask GitHub about.
-  git remote get-url origin >/dev/null 2>&1 || { echo '{}'; return; }
-  repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || { echo '{}'; return; }
-  [ -n "$repo" ] || { echo '{}'; return; }
+  # No origin (a scratch repo, a test fixture) or no gh: nothing to ask GitHub about.
+  repo=$(_ideps_gh_repo) || { echo '{}'; return; }
   gh api graphql --paginate -f owner="${repo%%/*}" -f name="${repo#*/}" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
@@ -107,8 +105,24 @@ _ideps_state_is_met() {
 }
 
 # _ideps_say_unreadable <n> — the one wording for a dependency the tracker could not read (#380).
+# A clean "no such issue" never reaches here: it is a met not-found. This line is a tracker error.
 _ideps_say_unreadable() {
-  echo "⏳ #$1 could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
+  echo "⏳ #$1 could not be read (a tracker error): counted as unmet until it can be" >&2
+}
+
+# _ideps_unreadable_lines <n>... — the batched read's line for each number it could not read.
+_ideps_unreadable_lines() { local n; for n in "$@"; do echo "$n unreadable -"; done; }
+
+# _ideps_gh_repo — the repository the GitHub readers ask about, resolved once per shell
+# (both readers run on every queue read; one `gh repo view`, not two). Empty with no origin
+# or no gh.
+_IDEPS_GH_REPO=""
+_ideps_gh_repo() {
+  if [ -z "$_IDEPS_GH_REPO" ]; then
+    git remote get-url origin >/dev/null 2>&1 || return 1
+    _IDEPS_GH_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || { _IDEPS_GH_REPO=""; return 1; }
+  fi
+  [ -n "$_IDEPS_GH_REPO" ] && printf '%s\n' "$_IDEPS_GH_REPO"
 }
 
 # _ideps_lookup <n> [<back>] — one backend read of issue <n>: prints
@@ -139,7 +153,8 @@ _ideps_lookup() {
 # _ideps_gh_lookup_many <n>... — the GitHub backend's batched read of the
 # dependencies outside the open list: ONE GraphQL request per 100 numbers
 # (aliased `issueOrPullRequest(number:)` fields, so a dependency on a pull
-# request keeps its state as `gh issue view` gave it; a merged one is met),
+# request is read for its state: open gates, merged or closed frees, where the
+# per-number `gh issue view` could not read a pull request at all),
 # where `_ideps_lookup` costs one `gh issue view` per number. Measured on a
 # 500-issue backlog, the per-number reads took 0.7 to 0.9 s each and put the
 # claim tick past its ceiling; the batch is one round trip.
@@ -157,20 +172,18 @@ _ideps_lookup() {
 _ideps_gh_lookup_many() {
   local repo owner name n query aliases out chunk
   [ $# -gt 0 ] || return 0
-  local all=("$@")
-  if ! git remote get-url origin >/dev/null 2>&1 \
-     || ! repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || [ -z "$repo" ]; then
-    for n in "${all[@]}"; do echo "$n unreadable -"; done
-    return 0
+  if ! repo=$(_ideps_gh_repo); then
+    echo "⏳ the dependencies could not be read: no origin or no gh here; each is counted as unmet" >&2
+    _ideps_unreadable_lines "$@"; return 0
   fi
   owner="${repo%%/*}"; name="${repo#*/}"
-  set -- "${all[@]}"
   while [ $# -gt 0 ]; do
     chunk=("${@:1:100}"); shift "${#chunk[@]}"
     aliases=""
     for n in "${chunk[@]}"; do
-      case "$n" in ''|*[!0-9]*) echo "$n unreadable -"; continue ;; esac
-      # Past GraphQL's Int a number fails the whole request's validation; it is a pasted id, not an issue: a clean not-found.
+      # Not an integer (jq 1.6 renders a pasted twenty-digit id as 1e+23) or past GraphQL's Int, which
+      # would fail the whole request's validation: a pasted id, not an issue, so a clean not-found.
+      case "$n" in ''|*[!0-9]*) echo "$n - -"; continue ;; esac
       [ "${#n}" -le 10 ] && [ "$n" -le 2147483647 ] 2>/dev/null || { echo "$n - -"; continue; }
       aliases="$aliases i$n: issueOrPullRequest(number: $n) { ... on Issue { number state body } ... on PullRequest { number state body } }"
     done
@@ -180,7 +193,8 @@ _ideps_gh_lookup_many() {
     # read the data whatever the exit; only a missing repository object is a failed request.
     out=$(gh api graphql -f owner="$owner" -f name="$name" -f query="$query" 2>/dev/null) || true
     if ! printf '%s' "$out" | jq -e '.data.repository | type == "object"' >/dev/null 2>&1; then
-      for n in "${chunk[@]}"; do echo "$n unreadable -"; done
+      echo "⏳ the batched read of ${#chunk[@]} dependencies failed (gh api graphql returned no data: a rate limit, an outage, or no gh); each is counted as unmet" >&2
+      _ideps_unreadable_lines "${chunk[@]}"
       continue
     fi
     printf '%s' "$out" | jq -r "$_IDEPS_JQ_DEFS"'
@@ -192,7 +206,7 @@ _ideps_gh_lookup_many() {
           | if ($e.type // "") == "NOT_FOUND" or (($e.message // "") | test("could not resolve|not found|does not exist"; "i"))
             then "\($n) - -" else "\($n) unreadable -" end
         else "\($n) \(.value.state // "unreadable") \(.value | parent_num // "-")" end' 2>/dev/null \
-      || for n in "${chunk[@]}"; do echo "$n unreadable -"; done
+      || _ideps_unreadable_lines "${chunk[@]}"
   done
 }
 
@@ -249,10 +263,11 @@ _ideps_filter() {
   fi
   prev="$unmet"
   unmet=$(jq -n -c --argjson u "$unmet" --argjson s "$split" '$u + $s.inside | unique' 2>/dev/null) || unmet="$prev"
-  mapfile -t outside < <(printf '%s' "$split" | jq -r '.outside[] | select(type == "number") | tostring' 2>/dev/null)
+  # No mapfile: macOS's /bin/bash is 3.2, where it is not a builtin and the list would silently stay empty.
+  while IFS= read -r n; do [ -n "$n" ] && outside+=("$n"); done < <(printf '%s' "$split" | jq -r '.outside[] | select(type == "number") | tostring' 2>/dev/null)
   if [ ${#outside[@]} -gt 0 ]; then
     if [ -n "$split_failed" ]; then
-      lines=$(for n in "${outside[@]}"; do echo "$n unreadable -"; done)
+      lines=$(_ideps_unreadable_lines "${outside[@]}")
     else
       case "$_ifns_BACKEND_BIN" in
         *issues-gh.sh) lines=$(_ideps_gh_lookup_many "${outside[@]}") ;;
