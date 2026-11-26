@@ -145,7 +145,7 @@ Logs agent activity to `HISTORY.md`:
 
 > **Warning**: Experimental and currently non-functional.
 
-Intended for continuous monitoring of GitHub issues.
+Intended to keep `/fix` running in `AUTOCODER_WATCHDOG_TARGET` (default: the current directory).
 
 ## Protocols
 

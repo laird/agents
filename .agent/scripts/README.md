@@ -15,6 +15,10 @@ with the plugin copies by hand.
 
 > [!WARNING]
 > The `watchdog-*.sh` scripts exist only here and are experimental.
+> `watchdog-fix.sh` reads `AUTOCODER_WATCHDOG_TARGET` (or `--target`) and
+> `AUTOCODER_WATCHDOG_AGENT`. `watchdog-fix-github.sh` takes the same
+> variables, or `[agent_command] [target_dir]`. The default directory is the
+> current one.
 
 <a id="script-dir"></a>
 ## Resolving `SCRIPT_DIR` in command files

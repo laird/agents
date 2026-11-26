@@ -1,6 +1,6 @@
 # Critical Design Review: 2026-05-22-issue-storage-and-backend-abstraction-design (Round 2)
 
-**Spec:** `/Users/Laird.Popkin/src/agents/docs/superpowers/specs/2026-05-22-issue-storage-and-backend-abstraction-design.md`
+**Spec:** `docs/superpowers/specs/2026-05-22-issue-storage-and-backend-abstraction-design.md`
 **Verified Assumptions section:** MISSING
 
 > ⚠️ This spec lacks a `Verified assumptions` section. Reviewer cannot distinguish verified facts from unverified assumptions; treat findings accordingly.

@@ -431,7 +431,7 @@ The following load-bearing claims about the current codebase were verified empir
 | 12 | `fix-loop-gate.sh` exists and is the consumer of the `--if-unset` exit-9 contract | `find` confirms `plugins/autocoder/scripts/fix-loop-gate.sh` |
 | 13 | `fix.md`, `fix-loop.md`, `set-issue-source.md` all exist as slash command files in `plugins/autocoder/commands/` | `ls` confirms all three |
 | 14 | `gh` CLI is available locally | `which gh` → `/opt/homebrew/bin/gh`; `gh --version` → `gh version 2.92.0 (2026-04-28)` |
-| 15 | `git worktree list --porcelain` returns the main worktree first | Confirmed against this repo: first line `worktree /Users/Laird.Popkin/src/agents` (main), followed by secondary worktrees |
+| 15 | `git worktree list --porcelain` returns the main worktree first | Confirmed against this repo: first line `worktree $HOME/src/agents` (main), followed by secondary worktrees |
 | 16 | `working` is currently both a status value and a label in `issues-file.py`'s schema | `issues-file.py:206-207,211-212` — `add-label working` sets `status=working`; `remove-label working` resets status to `open` |
 | 17 | `proposal` is treated as a blocking label by the existing fix workflow | `monitor-workers.md:130` includes `contains(["proposal"])` in the excluded set |
 | 18 | POSIX `rename(2)` is atomic within a single filesystem | Documented POSIX guarantee. `.issues/open/`, `working/`, `blocked/`, `closed/` live under one filesystem on supported platforms (macOS APFS, Linux ext4/xfs) — taken on faith for the platforms this project targets |

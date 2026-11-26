@@ -3,8 +3,9 @@
 #
 # The manager model cannot do this for itself: when its own pane is blocked on
 # the limit dialog, the monitor loop never runs. This script is the shell
-# watchdog. The idle sentinel calls it every tick, and --ensure installs a
-# cron entry so the switch still happens when the sentinel is not scheduled.
+# watchdog. The idle sentinel calls it every tick, and --ensure installs one
+# scheduler (crontab, a systemd user timer, or a launchd agent) so the switch
+# still happens when the sentinel is not scheduled.
 #
 # It reads pane text (herdr pane read, tmux capture-pane, cmux read-screen).
 # herdr's agent_status=blocked only catches the Claude dialog, not the
@@ -35,10 +36,11 @@
 #   quota-failover.sh --once [--repo DIR] [--quiet]
 #   quota-failover.sh --loop [--interval SEC] [--repo DIR]
 #   quota-failover.sh --dry-run [--repo DIR]
-#   quota-failover.sh --ensure [--repo DIR]
+#   quota-failover.sh --ensure [--repo DIR]   one scheduler, every 2 minutes
 #
 # Environment:
 #   AUTOCODER_AGENT_PREFERENCE          comma-separated agent order
+#   AGENTS_REPO_ROOT                    checkout that holds the launch scripts
 #   AUTOCODER_QUOTA_UNKNOWN_COOLDOWN_S  until-epoch when no reset time parses (21600)
 #   QUOTA_SWITCH_COOLDOWN               seconds before the same pane switches again (120)
 #   QUOTA_FAILOVER_STATE_DIR            state directory (default under XDG_STATE_HOME)
@@ -59,7 +61,7 @@ while [ -L "$SOURCE_PATH" ]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
-AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)" || AGENTS_REPO_ROOT="$SCRIPT_DIR"
+AGENTS_REPO_ROOT="${AGENTS_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)}" || AGENTS_REPO_ROOT="${AGENTS_REPO_ROOT:-$SCRIPT_DIR}"
 
 # shellcheck source=repo-id-fns.sh
 source "$SCRIPT_DIR/repo-id-fns.sh"
@@ -69,6 +71,8 @@ source "$SCRIPT_DIR/quota-failover-lib.sh"
 source "$SCRIPT_DIR/mux-send-lib.sh"
 # shellcheck source=worker-launch-lib.sh
 source "$SCRIPT_DIR/worker-launch-lib.sh"
+# shellcheck source=scheduler-ensure.sh
+source "$SCRIPT_DIR/scheduler-ensure.sh"
 # shellcheck source=swarm-manifest-lib.sh
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 
@@ -497,31 +501,39 @@ tick() {
   return 0
 }
 
-ensure_cron() {
-  command -v crontab >/dev/null 2>&1 || {
-    echo "quota-failover: crontab not available; run --loop instead" >&2
-    return 1
-  }
-  local mark line dir
-  mark="# autocoder-quota-failover:$QUOTA_REPO"
-  if crontab -l 2>/dev/null | grep -qF "$mark"; then
-    echo "✓ cron entry already installed"
-    return 0
+quota_sched_bind() {
+  local tag
+  if command -v sha256sum >/dev/null 2>&1; then
+    tag=$(printf '%s' "$QUOTA_REPO" | sha256sum | awk '{print substr($1,1,12)}')
+  else
+    tag=$(printf '%s' "$QUOTA_REPO" | shasum -a 256 | awk '{print substr($1,1,12)}')
   fi
-  dir=$(dirname "$(quota_state_path)")
-  mkdir -p "$dir"
-  line="*/2 * * * * PATH='$PATH' '$SELF_PATH' --once --repo $(printf '%q' "$QUOTA_REPO") >> $(printf '%q' "$dir/watchdog.log") 2>&1 $mark"
-  ( crontab -l 2>/dev/null; echo "$line" ) | crontab - || {
-    echo "quota-failover: crontab install failed" >&2
-    return 1
-  }
-  echo "✓ installed cron entry (every 2 minutes); log: $dir/watchdog.log"
+  SCHED_UNIT="autocoder-quota-failover-$tag"
+  SCHED_LABEL="com.autocoder.quota-failover.$tag"
+  # The comment keeps the repo path so two checkouts never share a crontab line.
+  SCHED_MARK="# autocoder-quota-failover:$QUOTA_REPO"
+  SCHED_EVERY=120
+  SCHED_LOG="$(dirname "$(quota_state_path)")/watchdog.log"
+  SCHED_DESC="autocoder quota failover"
+  SCHED_CMD="$SELF_PATH"
+  SCHED_ARGS=(--once --repo "$QUOTA_REPO")
+}
+
+ensure_scheduler() {
+  quota_sched_bind
+  scheduler_ensure
 }
 
 case "$MODE" in
-  ensure) ensure_cron ;;
+  ensure) ensure_scheduler ;;
   dry-run|once) tick ;;
   loop)
+    quota_sched_bind
+    existing=$(scheduler_installed)
+    if [ "$existing" != none ]; then
+      echo "quota-failover: refusing --loop; already scheduled via $existing (never both)" >&2
+      exit 1
+    fi
     while true; do
       tick || true
       sleep "$INTERVAL"

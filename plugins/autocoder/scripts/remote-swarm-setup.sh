@@ -1,8 +1,8 @@
 #!/bin/bash
 # remote-swarm-setup.sh — let another machine join this swarm over Tailscale.
 #
-# The swarm (herdr or tmux) runs on a HOST. A CLIENT (a laptop, a uConsole,
-# another desktop) attaches to it with `join-parallel --remote <name>`, or the
+# The swarm (herdr or tmux) runs on a HOST. A CLIENT (a laptop or another
+# desktop) attaches to it with `join-parallel --remote <name>`, or the
 # short `swarm` command this script installs. SSH is the transport; Tailscale
 # provides the network, so nothing is exposed beyond your tailnet.
 #

@@ -4,7 +4,7 @@
   "description": "Autonomous GitHub issue resolution with infinite loop support. Uses stop hooks to run forever: triages issues, fixes bugs, runs tests, implements approved enhancements, generates proposals. Sleeps when idle, wakes to check for new work. Proposals require human approval before implementation.",
   "author": {
     "name": "Agent Protocols Team",
-    "email": "laird@popk.in"
+    "email": "[email protected]"
   },
   "homepage": "https://github.com/laird/agents",
   "repository": "https://github.com/laird/agents",

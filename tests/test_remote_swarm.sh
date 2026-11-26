@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never
 #
 # A remote join must hand the terminal to herdr's own remote attach (or to
 # `ssh -t … tmux attach`) and never fall through to the LOCAL multiplexer
-# auto-detect: on a client like a uConsole, a local herdr server may well be
+# auto-detect: on a client that also runs herdr, a local herdr server may well be
 # running, and joining that instead of the host's swarm is the silent failure
 # this guards. The three copies of join-parallel-agents.sh must stay identical.
 

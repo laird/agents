@@ -26,9 +26,9 @@ cat > "$TMP/gh.json" <<'EOF'
   "number": 1729, "title": "t", "state": "OPEN", "labels": [],
   "body": "Use onConflict=replace (the default).\n",
   "comments": [
-    {"author": {"login": "laird"}, "createdAt": "2026-01-01T00:00:00Z", "body": "Triage: P1 — x"},
-    {"author": {"login": "w1"}, "createdAt": "2026-01-01T00:01:00Z", "body": "🔒 claim nuc-1 1794875270199"},
-    {"author": {"login": "w3"}, "createdAt": "2026-01-01T00:01:30Z", "body": "🔒 claim nuc-77 1794875270299 start=1794870000 wt=/home/u/src/agents wt-3"},
+    {"author": {"login": "dev"}, "createdAt": "2026-01-01T00:00:00Z", "body": "Triage: P1 — x"},
+    {"author": {"login": "w1"}, "createdAt": "2026-01-01T00:01:00Z", "body": "🔒 claim example-host 1794875270199"},
+    {"author": {"login": "w3"}, "createdAt": "2026-01-01T00:01:30Z", "body": "🔒 claim worker-2 1794875270299 start=1794870000 wt=/home/u/src/agents wt-3"},
     {"author": {"login": "w1"}, "createdAt": "2026-01-01T00:02:00Z", "body": "🔒 [autocoder-claim] Starting fix for issue #1729 — lock established"},
     {"author": {"login": "w1"}, "createdAt": "2026-01-01T00:03:00Z", "body": "🤖 **Automated Fix Started**\n\nBranch: feature/issue-1729"},
     {"author": {"login": "reviewer"}, "createdAt": "2026-01-01T00:14:00Z", "body": "Correction: onConflict=replace is NOT the default. Do not recommend folderPath."},
@@ -43,8 +43,8 @@ has   "a correcting comment is included" "$OUT" "Correction: onConflict=replace 
 has   "comment carries its author and time" "$OUT" "by reviewer at 2026-01-01T00:14:00Z"
 has   "a human triage comment is kept" "$OUT" "Triage: P1"
 has   "precedence rule is stated" "$OUT" "a later comment overrides the body"
-hasnt "gate claim marker is filtered" "$OUT" "🔒 claim nuc-1"
-hasnt "gate claim marker with owner fields is filtered (#202)" "$OUT" "🔒 claim nuc-77"
+hasnt "gate claim marker is filtered" "$OUT" "🔒 claim example-host"
+hasnt "gate claim marker with owner fields is filtered (#202)" "$OUT" "🔒 claim worker-2"
 hasnt "[autocoder-claim] marker is filtered" "$OUT" "autocoder-claim"
 hasnt "work-started marker is filtered" "$OUT" "Automated Fix Started"
 hasnt "blank comments are dropped" "$OUT" "comment 3 by"

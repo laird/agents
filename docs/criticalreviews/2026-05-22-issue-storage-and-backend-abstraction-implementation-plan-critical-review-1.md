@@ -1,6 +1,6 @@
 # Critical Implementation Review: 2026-05-22-issue-storage-and-backend-abstraction-implementation-plan (Round 1)
 
-**Plan:** `/Users/Laird.Popkin/src/agents/docs/plans/2026-05-22-issue-storage-and-backend-abstraction-implementation-plan.md`
+**Plan:** `docs/plans/2026-05-22-issue-storage-and-backend-abstraction-implementation-plan.md`
 **Verified plan-level assumptions section:** present (19 items)
 
 No drift (plan spec SHA `c0b3df6` is reachable; only commit since is the plan commit itself, `c2b8066`).

@@ -1,25 +1,34 @@
 #!/bin/bash
 # watchdog-fix.sh
 # Ensures the /fix workflow runs continuously.
-# Usage: ./watchdog-fix.sh [agent_command] [--once]
+# Usage: ./watchdog-fix.sh [--once] [--target DIR] [agent_command]
 
-# Defaults
-AGENT_CMD="antigravity"
+# Defaults. The directory and the agent are configuration, not a machine:
+#   AUTOCODER_WATCHDOG_TARGET  directory to run in (default: the current directory)
+#   AUTOCODER_WATCHDOG_AGENT   agent command when none is passed (default: antigravity)
+# Pass --target <dir>, or a non-option argument for the agent command.
+AGENT_CMD="${AUTOCODER_WATCHDOG_AGENT:-antigravity}"
 WORKFLOW="/fix"
-TARGET_DIR="/home/laird/src/agents"
+TARGET_DIR="${AUTOCODER_WATCHDOG_TARGET:-$(pwd)}"
 RUN_ONCE=false
 ITERATION=0
-STATE_FILE="${TARGET_DIR}/.agent/fix-loop.local.md"
+STATE_FILE=""
 
 # Simple argument parsing
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --once) RUN_ONCE=true ;;
+        --target)
+            [ "$#" -ge 2 ] || { echo "Error: --target needs a directory"; exit 1; }
+            TARGET_DIR="$2"
+            shift
+            ;;
         -*) echo "Unknown option: $1"; exit 1 ;;
         *) AGENT_CMD="$1" ;;
     esac
     shift
 done
+STATE_FILE="${TARGET_DIR}/.agent/fix-loop.local.md"
 
 echo "=================================================="
 echo "   Antigravity Watchdog: $WORKFLOW"
@@ -31,7 +40,7 @@ echo "=================================================="
 # Check if command exists
 if ! command -v "$AGENT_CMD" &> /dev/null; then
     echo "Error: Command '$AGENT_CMD' not found in PATH."
-    echo "Usage: $0 [--once] [agent_command]"
+    echo "Usage: $0 [--once] [--target DIR] [agent_command]"
     exit 1
 fi
 

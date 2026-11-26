@@ -19,7 +19,7 @@ trap 'rm -rf "$TMP"' EXIT
 unset ISSUE_SOURCE ISSUE_BACKEND ISSUE_DIR
 # Events (#247) go to a private log, never the user's real state dir (#254).
 export AUTOCODER_ISSUE_EVENTS="$TMP/issue-events.jsonl"
-export AUTOCODER_CTL_ACTOR=dashboard-ui
+export AUTOCODER_CTL_ACTOR=example-actor
 
 # run <expected-rc> <expected-ok> <name> -- <cmd...>: one result object, the right
 # exit code and ok, action set. Leaves the object in $OUT.
@@ -67,24 +67,24 @@ run 2 false "file with an unknown argument"         -- "$CTL" file --title t --a
 run 0 true "file creates an issue" -- "$CTL" file --title "Add a dark mode" --body "Please." --label enhancement --label P3
 F=$(jq -r .target <<<"$OUT")
 jq -e --arg n "$F" '.target == $n and .detail.number == ($n | tonumber) and .detail.title == "Add a dark mode"
-  and .detail.labels == ["enhancement","P3"] and .detail.actor == "dashboard-ui"' <<<"$OUT" >/dev/null \
+  and .detail.labels == ["enhancement","P3"] and .detail.actor == "example-actor"' <<<"$OUT" >/dev/null \
   && ok "file reports the new number, title, labels and actor" || bad "file detail: $OUT"
 [ "$(labels_of "$F")" = "enhancement,P3" ] && ok "the labels are on the issue" || bad "labels: $(labels_of "$F")"
-text_of "$F" | grep -q '^Please\.$' && text_of "$F" | grep -q 'Filed by dashboard-ui via autocoder-ctl' \
+text_of "$F" | grep -q '^Please\.$' && text_of "$F" | grep -q 'Filed by example-actor via autocoder-ctl' \
   && ok "the body keeps the text and names the actor" || bad "body: $(text_of "$F")"
 run 0 true "file with only a title" -- "$CTL" file --title "Bare"
 jq -e '.detail.labels == []' <<<"$OUT" >/dev/null && ok "no labels is an empty list" || bad "bare: $OUT"
 B=$(jq -r .target <<<"$OUT")
-[ "$(IF issue_get "$B" | jq -r .body)" = "Filed by dashboard-ui via autocoder-ctl" ] \
+[ "$(IF issue_get "$B" | jq -r .body)" = "Filed by example-actor via autocoder-ctl" ] \
   && ok "an empty body is just the actor line" || bad "bare body: $(text_of "$B")"
 
 # ── approve ───────────────────────────────────────────────────────────────────
 P=$(new_issue "Proposal: cache" --label enhancement --label proposal)
 run 0 true "approve a proposal" -- "$CTL" approve "$P"
-jq -e --arg n "$P" '.target == $n and .detail.approved and .detail.commented and .detail.actor == "dashboard-ui"' \
+jq -e --arg n "$P" '.target == $n and .detail.approved and .detail.commented and .detail.actor == "example-actor"' \
   <<<"$OUT" >/dev/null && ok "approve reports issue and actor" || bad "approve detail: $OUT"
 [ "$(labels_of "$P")" = "enhancement" ] && ok "proposal is removed, other labels stay" || bad "labels: $(labels_of "$P")"
-text_of "$P" | grep -q 'approved\*\* by dashboard-ui' && ok "the comment names the actor" || bad "approve comment: $(text_of "$P")"
+text_of "$P" | grep -q 'approved\*\* by example-actor' && ok "the comment names the actor" || bad "approve comment: $(text_of "$P")"
 [ "$(state_of "$P")" = open ] && ok "an approved proposal stays open" || bad "state: $(state_of "$P")"
 run 1 false "approving it again fails: no longer a proposal" -- "$CTL" approve "$P"
 run 1 false "approve a missing issue" -- "$CTL" approve 999
@@ -105,10 +105,10 @@ run 1 false "request changes on a missing issue" -- "$CTL" request-changes 999 "
 
 # ── reject ────────────────────────────────────────────────────────────────────
 run 0 true "reject with a reason" -- "$CTL" reject "$Q" "Out of scope"
-jq -e --arg n "$Q" '.target == $n and .detail.closed and .detail.reason == "Out of scope" and .detail.actor == "dashboard-ui"' \
+jq -e --arg n "$Q" '.target == $n and .detail.closed and .detail.reason == "Out of scope" and .detail.actor == "example-actor"' \
   <<<"$OUT" >/dev/null && ok "reject reports issue, actor and reason" || bad "reject detail: $OUT"
 [ "$(state_of "$Q")" = closed ] && ok "the rejected issue is closed" || bad "state: $(state_of "$Q")"
-text_of "$Q" | grep -q 'Rejected\*\* by dashboard-ui' && text_of "$Q" | grep -q 'Reason\*\*: Out of scope' \
+text_of "$Q" | grep -q 'Rejected\*\* by example-actor' && text_of "$Q" | grep -q 'Reason\*\*: Out of scope' \
   && ok "the close comment names the actor and the reason" || bad "reject comment: $(text_of "$Q")"
 run 1 false "rejecting a closed issue fails"         -- "$CTL" reject "$Q"
 run 1 false "approving a closed issue fails"         -- "$CTL" approve "$Q"

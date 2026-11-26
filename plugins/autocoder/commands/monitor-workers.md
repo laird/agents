@@ -541,7 +541,7 @@ Read each worker's context percentage from its pane. The swarm installs a status
 (`install-statusline.sh`, wired into every launch path) that renders one line per pane:
 
 ```
-ctx 47% of 1M | mem 12 | Sonnet 5 | wt athena2-wt-3 | branch feature/issue-264
+ctx 47% of 1M | mem 12 | Sonnet 5 | wt example-wt-3 | branch feature/issue-264
 ```
 
 That line is the intended read for this step — it also tells you, in the same glance, which
@@ -694,7 +694,7 @@ outage while credentials are still invalid, and once they are valid sends
 at most once per 10 minutes). It costs zero tokens; install it once per host:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --ensure    # cron, every 2 min
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --ensure    # crontab, systemd user timer, or launchd; every 2 min
 "${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --dry-run   # what a tick would do
 ```
 
@@ -711,7 +711,7 @@ The manager is restarted at most once and then sent
 prefix on Claude). Install it once per repo; the idle sentinel also runs a tick:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/quota-failover.sh" --ensure
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/quota-failover.sh" --ensure    # crontab, systemd user timer, or launchd; every 2 min
 "${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/quota-failover.sh" --dry-run
 ```
 
@@ -1047,9 +1047,13 @@ step down — in this exact order:
    immediately re-wake a manager over work nobody can action.
 2. **Ensure the sentinel is scheduled**: run `idle-sentinel.sh --ensure` (from the
    same resolved `SCRIPT_DIR` as Step 2). It is idempotent — it inspects
-   crontab/systemd/running loops and never double-installs. With no `crontab` it
-   installs a systemd user timer that survives reboots and follows plugin upgrades,
-   and it warns if lingering is off.
+   crontab, systemd user timers, launchd agents and running loops, and never
+   double-installs. Ubuntu and Debian get a crontab entry when cron is
+   running. Linux without cron (Arch, Fedora) gets a systemd user timer; if
+   lingering is off it prints `loginctl enable-linger` and does not run it.
+   macOS gets a LaunchAgent under `$HOME/Library/LaunchAgents`. With no
+   scheduler it says to run `--loop`, which refuses to start when one of
+   those is already installed.
 3. **Delete the counter**: `rm -f .autocoder/quiescent-iterations` (R2-F8 — a
    surviving counter would let the NEXT woken manager step down after a single
    iteration).

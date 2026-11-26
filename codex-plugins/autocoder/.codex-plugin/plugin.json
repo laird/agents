@@ -4,7 +4,7 @@
   "description": "Autonomous GitHub issue resolution workflows for Codex, including fix loops, worker coordination, proposal handling, and validation-oriented issue triage.",
   "author": {
     "name": "Agent Protocols Team",
-    "email": "laird@popk.in",
+    "email": "[email protected]",
     "url": "https://github.com/laird/agents"
   },
   "homepage": "https://github.com/laird/agents",

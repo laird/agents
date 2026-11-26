@@ -21,7 +21,7 @@ Each assumption cross-checked against the cited evidence:
 | `gh issue list --json` supports `number, title, body, labels, state` | ✅ Reconfirmed — all listed in help JSON fields |
 | Python `fcntl.flock` available on macOS | ✅ Reconfirmed — `import fcntl` succeeds on darwin |
 | Shell `flock` NOT available on macOS | ✅ Reconfirmed — `which flock` returns nothing |
-| `git worktree list --porcelain \| grep -m1 "^worktree" \| cut -d' ' -f2` returns main worktree path | ✅ Reconfirmed — returned `/Users/Laird.Popkin/src/agents` |
+| `git worktree list --porcelain \| grep -m1 "^worktree" \| cut -d' ' -f2` returns main worktree path | ✅ Reconfirmed — returned `$HOME/src/agents` |
 | 13 files with functional `gh issue` calls in migration scope | ✅ Reconfirmed — grep returns 14 files; `autocoder-help.md` correctly excluded (documentation example, not executed code) |
 
 All verified assumptions reconfirmed.

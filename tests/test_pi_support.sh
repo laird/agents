@@ -99,8 +99,8 @@ resolve_worker_launch pi "$ROOT"
 assert_contains "pi worker runs its fix loop" "pi-fix-loop.sh" "$WORKER_CMD"
 assert_contains "pi manager runs its monitor loop" "pi-manage-workers-loop.sh" "$MANAGER_CMD"
 
-# agents-tui waits on these banner lines to decide the manager pane started.
-assert_contains "manager loop prints the banner agents-tui waits for" \
+# External UIs wait on these banner lines to decide the manager pane started.
+assert_contains "manager loop prints its banner" \
   "== Pi Worker Monitor ==" "$(cat scripts/pi-manage-workers-loop.sh)"
 
 echo ""

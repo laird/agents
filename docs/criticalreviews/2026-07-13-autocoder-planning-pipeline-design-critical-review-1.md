@@ -1,6 +1,6 @@
 # Critical Design Review: 2026-07-13-autocoder-planning-pipeline-design (Round 1)
 
-**Spec:** `/Users/Laird.Popkin/src/agents/docs/specs/2026-07-13-autocoder-planning-pipeline-design.md`
+**Spec:** `docs/specs/2026-07-13-autocoder-planning-pipeline-design.md`
 **Verified Assumptions section:** present
 
 ## 1. Verified-assumptions cross-check

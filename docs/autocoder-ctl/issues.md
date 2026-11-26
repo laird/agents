@@ -36,7 +36,7 @@ so a second click on the same button does not post a second comment.
 
 ```json
 {"ok": true, "action": "approve", "target": "17",
- "detail": {"issue": "17", "approved": true, "commented": true, "actor": "dashboard-ui"}}
+ "detail": {"issue": "17", "approved": true, "commented": true, "actor": "example-actor"}}
 ```
 
 `commented` is `false` if the label was removed but the comment could not be
@@ -54,7 +54,7 @@ reason. Rejecting an issue that is already closed fails (exit 1).
 
 ```json
 {"ok": true, "action": "reject", "target": "17",
- "detail": {"issue": "17", "closed": true, "actor": "dashboard-ui", "reason": "Out of scope"}}
+ "detail": {"issue": "17", "closed": true, "actor": "example-actor", "reason": "Out of scope"}}
 ```
 
 `reason` is `null` if none was given. Quote a reason that contains spaces: it is
@@ -75,7 +75,7 @@ a usage error (exit 2), and a closed issue fails (exit 1).
 
 ```json
 {"ok": true, "action": "request-changes", "target": "17",
- "detail": {"issue": "17", "commented": true, "actor": "dashboard-ui", "proposal": true}}
+ "detail": {"issue": "17", "commented": true, "actor": "example-actor", "proposal": true}}
 ```
 
 ## file
@@ -91,7 +91,7 @@ issue's number:
 
 ```json
 {"ok": true, "action": "file", "target": "42",
- "detail": {"number": 42, "title": "Add a dark mode", "labels": ["enhancement", "P3"], "actor": "dashboard-ui"}}
+ "detail": {"number": 42, "title": "Add a dark mode", "labels": ["enhancement", "P3"], "actor": "example-actor"}}
 ```
 
 A missing or blank `--title`, a flag with no value, or an unknown argument is a

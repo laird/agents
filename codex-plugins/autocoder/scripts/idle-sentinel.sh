@@ -134,7 +134,9 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE_PATH")" && pwd)"
 SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
 
-AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# Checkout that holds the launch scripts. Set AGENTS_REPO_ROOT when this file
+# is not three directories under that checkout. Never a fixed home directory.
+AGENTS_REPO_ROOT="${AGENTS_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 
 # shellcheck source=swarm-manifest-lib.sh
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
@@ -144,6 +146,11 @@ source "$SCRIPT_DIR/mux-send-lib.sh"
 # registry, shared with reboot-recover.sh (#275).
 # shellcheck source=reboot-lib.sh
 source "$SCRIPT_DIR/reboot-lib.sh"
+# Host line and the linger hint. The sentinel's own units stay in this file:
+# they run the version-independent shim, which scheduler-ensure.sh's fixed argv
+# does not.
+# shellcheck source=scheduler-ensure.sh
+source "$SCRIPT_DIR/scheduler-ensure.sh"
 
 # The sentinel must never carry the manager identity marker itself (it may
 # inherit one when a manager runs `idle-sentinel.sh --ensure`). unset scrubs
@@ -1978,7 +1985,7 @@ CRON_MARK="# autocoder-idle-sentinel:$PROJECT_ROOT"
 detect_scheduler() {
   # Prints cron|systemd|loop|none. Never installs anything.
   # Every check is anchored to THIS exact project (#18): on a shared host,
-  # sibling checkouts with a common prefix (…/agents vs …/agents-tui) are the
+  # sibling checkouts with a common prefix (…/agents vs …/agents-extra) are the
   # norm, and a substring false-positive here means --ensure reports
   # "already scheduled", the manager exits trusting it, and nobody watches.
   if command -v crontab >/dev/null 2>&1 &&
@@ -2000,7 +2007,7 @@ detect_scheduler() {
     #   sha256 of the absolute project root — this script prints it as
     #   part of --ensure output when relevant).
     # The .timer suffix anchors the name so …-agents.timer never matches
-    # …-agents-tui.timer.
+    # …-agents-extra.timer.
     local unit_tag esc_name
     unit_tag=$(sentinel_unit_tag)
     esc_name=$(printf '%s' "$PROJECT_NAME" | sed 's/[][\\.*^$()+?{}|]/\\&/g')
@@ -2108,7 +2115,7 @@ replace_stale_loop() {
 }
 
 # ── host detection (#271, #273) ─────────────────────────────────────────────
-# Nothing about the host is assumed: Arch/Omarchy (systemd user, no crontab),
+# Nothing about the host is assumed: Arch (systemd user, no crontab),
 # Ubuntu/Debian/Fedora (cron and systemd user), WSL or a container (cron, often
 # no user manager), macOS (launchd; cron needs Full Disk Access). --ensure
 # probes each scheduler, prints what it found, and picks the first that works.
@@ -2121,19 +2128,10 @@ sentinel_unit_tag() {
 }
 launchd_label() { printf 'com.autocoder.idle-sentinel.%s' "$(sentinel_unit_tag)"; }
 
-yes_no() { if "$@"; then echo yes; else echo no; fi; }
-
-print_host_detection() {
-  local sd linger=n/a cron
-  sd=$(yes_no systemd_user_available)
-  [ "$sd" = yes ] && linger=$(linger_state)
-  cron=$(yes_no cron_available)
-  [ "$cron" = yes ] && ! cron_daemon_running && cron="yes(no daemon running)"
-  echo "host: os=$(host_os) cron=$cron systemd-user=$sd launchd=$(yes_no launchd_available) linger=$linger"
-}
+print_host_detection() { scheduler_print_host; }
 
 # ── systemd user timer (#273) ───────────────────────────────────────────────
-# Used when crontab is missing (Arch/Omarchy ship without it) and the user
+# Used when crontab is missing (Arch ships without it; Fedora may too) and the user
 # manager answers. The detached --loop it replaces dies on reboot, and it
 # pins the plugin version that started it. The unit runs the shim, which
 # resolves the newest sentinel at run time.
@@ -2189,16 +2187,7 @@ install_sentinel_shim() {
     || { rm -f "$SENTINEL_SHIM.tmp.$$"; return 1; }
 }
 
-# warn_if_no_linger: without lingering the user manager, and the timer with
-# it, stops when the user's last session ends and does not start at boot.
-warn_if_no_linger() {
-  local user
-  user=$(id -un 2>/dev/null) || return 0
-  if [ "$(linger_state)" = no ]; then
-    echo "⚠️  Lingering is off for $user: the timer runs only while $user is logged in, and not after a reboot until they log in."
-    echo "    To keep it running: loginctl enable-linger $user  (may need sudo; never done for you)"
-  fi
-}
+warn_if_no_linger() { scheduler_warn_linger; }
 
 # install_systemd_scheduler: write + enable the timer. 0 = scheduled.
 install_systemd_scheduler() {

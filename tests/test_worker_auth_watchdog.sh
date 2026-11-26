@@ -44,7 +44,7 @@ CHROME='
 ────────────────────────────────────────
 ❯
 ────────────────────────────────────────
-  ctx 39% of 1M | Sonnet 5 | repo athena2 | wt athena2-wt-2
+  ctx 39% of 1M | Sonnet 5 | repo example-repo | wt example-wt-2
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 # Turn failed outright → needs a resume prompt.
@@ -196,6 +196,16 @@ if OUT=$(run 0 --once); then fail "unreachable herdr exits non-zero"; else pass 
 assert_contains "unreachable herdr is named" "herdr unreachable" "$OUT"
 
 # ── --ensure installs one cron entry, idempotently ───────────────────────────
+mkdir -p "$T/home"
+# A cron daemon is "running", so --ensure picks crontab even when this host's
+# systemd user manager would otherwise win.
+cat > "$T/bin/pgrep" <<'STUB'
+#!/bin/bash
+if [ "${1:-}" = -x ] && { [ "${2:-}" = cron ] || [ "${2:-}" = crond ]; }; then exit 0; fi
+exit 1
+STUB
+chmod +x "$T/bin/pgrep"
+export HOME="$T/home"
 cat > "$T/bin/crontab" <<'STUB'
 #!/bin/bash
 if [ "${1:-}" = "-l" ]; then cat "$CRONTAB_FILE" 2>/dev/null || exit 1
