@@ -6,6 +6,23 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Self-improvement decisions stay inside one comparison (#434). `eval-run.py
+  --comparison` stamps the id, the case-manifest and grader fingerprints, and
+  the settings both sides must share (manifest, grader, worker, repeats,
+  timeout). `eval-decide.py --comparison` tallies only those rows. It returns
+  inconclusive when the settings disagree or a case's repeat counts differ, and
+  rows from another comparison that reuse the same harness sha no longer move
+  the verdict. A missing side stays "fewer than N runs". A second batch past
+  the planned repeat count is inconclusive instead of being pooled. The
+  manifest covers the task, seed and setup, not only `case.json`, including
+  followed symlinks, link targets and file modes. Frames are length-prefixed
+  so a file cannot impersonate the next one.
+  `/propose-fix` keeps one id across a refine and re-runs only the candidate
+  sha; a new repeat count or case set starts a new id with the worktree
+  checked out at the baseline sha.
+
 ## [4.71.0] - 2026-11-26
 
 ### Added
@@ -65,23 +82,6 @@ once (Version Management in `docs/maintaining.md`).
   environment. A long comment thread made that exec die with "Argument list
   too long", the script failed toward "none", and the gate claimed new work
   over a bounce that stayed `working` (#432).
-
-### Fixed
-
-- Self-improvement decisions stay inside one comparison (#434). `eval-run.py
-  --comparison` stamps the id, the case-manifest and grader fingerprints, and
-  the settings both sides must share (manifest, grader, worker, repeats,
-  timeout). `eval-decide.py --comparison` tallies only those rows. It returns
-  inconclusive when the settings disagree or a case's repeat counts differ, and
-  rows from another comparison that reuse the same harness sha no longer move
-  the verdict. A missing side stays "fewer than N runs". A second batch past
-  the planned repeat count is inconclusive instead of being pooled. The
-  manifest covers the task, seed and setup, not only `case.json`, including
-  followed symlinks, link targets and file modes. Frames are length-prefixed
-  so a file cannot impersonate the next one.
-  `/propose-fix` keeps one id across a refine and re-runs only the candidate
-  sha; a new repeat count or case set starts a new id with the worktree
-  checked out at the baseline sha.
 
 ## [4.70.0] - 2026-11-26
 
