@@ -9,7 +9,7 @@ bash /path/to/agents/scripts/install-codex.sh /path/to/your-project
 Example:
 
 ```bash
-bash ~/src/agents/scripts/install-codex.sh ~/src/your-project
+bash "$HOME/src/agents/scripts/install-codex.sh" "$HOME/src/your-project"
 ```
 
 This installer:

@@ -202,17 +202,17 @@ EOF
 OUT=$(promote --to uat 2>&1); RC=$?
 check "requires a later environment: exit 1" '[ "$RC" -eq 1 ] && grep -q "listed before it" <<< "$OUT"'
 cat > "$REPO/.autocoder.json" <<'EOF'
-{"environments": [{"name": "nuc-1", "requires": "integration", "deploy": "true"},
-                  {"name": "release", "requires": "nuc-1"},
+{"environments": [{"name": "example-host", "requires": "integration", "deploy": "true"},
+                  {"name": "release", "requires": "example-host"},
                   {"name": "staging", "requires": "green"}]}
 EOF
 OUT=$(promote --list 2>&1); RC=$?
 check "deploy-recorded environments (requires integration) are accepted and skipped" \
-  '[ "$RC" -eq 0 ] && grep -q "^staging" <<< "$OUT" && ! grep -qE "^(nuc-1|release) " <<< "$OUT"'
-OUT=$(promote --to nuc-1 2>&1); RC=$?
+  '[ "$RC" -eq 0 ] && grep -q "^staging" <<< "$OUT" && ! grep -qE "^(example-host|release) " <<< "$OUT"'
+OUT=$(promote --to example-host 2>&1); RC=$?
 check "a deploy-recorded environment cannot be promoted to" '[ "$RC" -eq 2 ] && grep -q "unknown environment" <<< "$OUT"'
 cat > "$REPO/.autocoder.json" <<'EOF'
-{"environments": [{"name": "nuc-1", "requires": "integration"}, {"name": "release", "requires": "nuc-1"}]}
+{"environments": [{"name": "example-host", "requires": "integration"}, {"name": "release", "requires": "example-host"}]}
 EOF
 OUT=$(promote --auto 2>&1); RC=$?
 check "--auto with only deploy-recorded environments: exit 0, silent (the sentinel's every green tick)" '[ "$RC" -eq 0 ] && [ -z "$OUT" ]'

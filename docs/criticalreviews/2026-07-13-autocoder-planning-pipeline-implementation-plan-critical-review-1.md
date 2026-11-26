@@ -1,6 +1,6 @@
 # Critical Implementation Review: 2026-07-13-autocoder-planning-pipeline-implementation-plan (Round 1)
 
-**Plan:** `/Users/Laird.Popkin/src/agents/docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md`
+**Plan:** `docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md`
 **Verified plan-level assumptions section:** present
 
 ⚠️ 1 commit since plan-write time (SHA `538c4537`); cited file:line references re-checked under §1. (The commit is the plan-doc addition `c5132e0`; no source files changed.)

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
 # tests/test_deploy_release.sh — deploy.sh, release.sh and the pre-push release hook
-# (release-pre-push.sh, install-release-hook.sh), ported from agents-ui's
-# tools/test_deploy.sh and tools/test_release.sh (#200). Each case runs the real
+# (release-pre-push.sh, install-release-hook.sh), ported from the earlier deploy and release tests (#200). Each case runs the real
 # scripts in a throwaway git repo with its own origin and .autocoder.json, and a
 # stub `gh` on PATH, so nothing is installed, restarted, released or recorded for
 # real. The environment's own deploy/restart/check commands are stubs that log.
@@ -57,12 +56,12 @@ git init -q "$TMP/work"
   git config user.email t@example.com; git config user.name test
   cat > .autocoder.json <<'EOF'
 {"environments": [
-  {"name": "nuc-1", "requires": "integration", "label": "agents-tui",
+  {"name": "example-host", "requires": "integration", "label": "example-app",
    "preflight": "step preflight", "deploy": "step deploy", "restart": "step restart",
    "check": "step check", "wait": 3, "release": true},
   {"name": "plain", "requires": "integration"},
   {"name": "staging", "requires": "green", "deploy": "step deploy"},
-  {"name": "release", "requires": "nuc-1"}
+  {"name": "release", "requires": "example-host"}
 ]}
 EOF
   echo one > file
@@ -113,17 +112,17 @@ run "$DEPLOY" no-env --
 check "--env is required when several environments deploy" test "$RC" -eq 1
 check "says so" has "--env is required" "$OUT"
 
-run "$DEPLOY" preflight-fails STUB_PREFLIGHT_RC=1 -- --env nuc-1
+run "$DEPLOY" preflight-fails STUB_PREFLIGHT_RC=1 -- --env example-host
 check "a failing preflight: exit 1" test "$RC" -eq 1
 check "says the preflight failed" has "the preflight failed" "$OUT"
 check "opens no Deployment" hasnt "gh " "$LOG"
 check "installs nothing" hasnt "step deploy" "$LOG"
 
-run "$DEPLOY" preflight-fails-dry STUB_PREFLIGHT_RC=1 -- --env nuc-1 --dry-run
+run "$DEPLOY" preflight-fails-dry STUB_PREFLIGHT_RC=1 -- --env example-host --dry-run
 check "a dry run runs the preflight too" test "$RC" -eq 1
 
 echo dirty > "$TMP/work/file"
-run "$DEPLOY" dirty -- --env nuc-1
+run "$DEPLOY" dirty -- --env example-host
 check "a dirty tree: exit 1" test "$RC" -eq 1
 check "says so" has "uncommitted changes" "$OUT"
 git -C "$TMP/work" checkout -q -- file
@@ -131,12 +130,12 @@ mkdir -p "$TMP/work/.claude"; echo x > "$TMP/work/.claude/state"
 git -C "$TMP/work" add -f .claude/state 2>/dev/null; git -C "$TMP/work" commit -qm "harness state" 2>/dev/null
 git -C "$TMP/work" push -q origin main; SHA=$(git -C "$TMP/work" rev-parse HEAD)
 echo y > "$TMP/work/.claude/state"
-run "$DEPLOY" claude-dirt -- --env nuc-1 --dry-run
+run "$DEPLOY" claude-dirt -- --env example-host --dry-run
 check "harness state under .claude/ does not count as dirty" test "$RC" -eq 0
 git -C "$TMP/work" checkout -q -- .claude/state
 
 git -C "$TMP/work" commit -q --allow-empty -m "not pushed"
-run "$DEPLOY" unlanded -- --env nuc-1
+run "$DEPLOY" unlanded -- --env example-host
 check "a HEAD not on origin/main: exit 1" test "$RC" -eq 1
 check "says only landed work deploys" has "is not on origin/main; only landed work deploys" "$OUT"
 git -C "$TMP/work" reset -q --hard origin/main
@@ -149,7 +148,7 @@ run "$DEPLOY" branch-env-landed -- --env staging --dry-run
 check "and deploys once HEAD is on origin/env/staging" test "$RC" -eq 0
 
 # ---- deploy.sh: dry run --------------------------------------------------------------
-run "$DEPLOY" dry-run -- --env nuc-1 --dry-run
+run "$DEPLOY" dry-run -- --env example-host --dry-run
 check "exits 0" test "$RC" -eq 0
 check "names the deploy command" has "would run: step deploy" "$OUT"
 check "names the restart command" has "would run: step restart" "$OUT"
@@ -157,36 +156,36 @@ check "names the check and its wait" has "would wait up to 3s for: step check" "
 check "names the tag and commit it would release" has "release: dry run: would run: gh release create v2026.11.09.1 --target $SHA" "$OUT"
 check "records nothing" hasnt "gh " "$LOG"
 check "installs nothing" hasnt "step deploy" "$LOG"
-run "$DEPLOY" dry-run-no-release -- --env nuc-1 --dry-run --no-release
+run "$DEPLOY" dry-run-no-release -- --env example-host --dry-run --no-release
 check "a dry run with --no-release says it would not release" has "would not release (--no-release)" "$OUT"
 
 # ---- deploy.sh: deploys --------------------------------------------------------------
-run "$DEPLOY" deploys -- --env nuc-1
+run "$DEPLOY" deploys -- --env example-host
 check "exits 0" test "$RC" -eq 0
-check "opens the Deployment of HEAD to the environment" has "-f ref=$SHA -f environment=nuc-1" "$LOG"
-check "describes it with the label" has "description=agents-tui installed on $(hostname)" "$LOG"
+check "opens the Deployment of HEAD to the environment" has "-f ref=$SHA -f environment=example-host" "$LOG"
+check "describes it with the label" has "description=example-app installed on $(hostname)" "$LOG"
 check "runs preflight, deploy, restart, check in order" \
   test "$(grep -o '^step [a-z]*' <<< "$LOG" | tr '\n' ' ')" = "step preflight step deploy step restart step check "
-check "commands see DEPLOY_ENV and DEPLOY_SHA" has "step deploy env=nuc-1 sha=$SHA" "$LOG"
+check "commands see DEPLOY_ENV and DEPLOY_SHA" has "step deploy env=example-host sha=$SHA" "$LOG"
 check "the check sees the time left" grep -q '^step check .* left=[1-3]$' <<< "$LOG"
 check "records in_progress, then success" \
   test "$(grep -o 'state=[a-z_]*' <<< "$LOG" | head -2 | tr '\n' ' ')" = "state=in_progress state=success "
-check "the success names label, commit and host" has "description=agents-tui ${SHA:0:12} installed on $(hostname)" "$LOG"
+check "the success names label, commit and host" has "description=example-app ${SHA:0:12} installed on $(hostname)" "$LOG"
 check "then releases the same commit under a date tag" has "gh release create v2026.11.09.1 --target $SHA --generate-notes" "$LOG"
 check "and records the release Deployment" has "environment=release -f description=Release v2026.11.09.1" "$LOG"
 
-run "$DEPLOY" slow-check STUB_CHECK_AFTER=2 -- --env nuc-1 --no-release
+run "$DEPLOY" slow-check STUB_CHECK_AFTER=2 -- --env example-host --no-release
 check "a check that passes within the wait: exit 0" test "$RC" -eq 0
 check "is retried until it passes" test "$(grep -c '^step check' <<< "$LOG")" -eq 3
 
-run "$DEPLOY" check-never STUB_CHECK_AFTER=99 AUTOCODER_DEPLOY_WAIT=1 -- --env nuc-1
+run "$DEPLOY" check-never STUB_CHECK_AFTER=99 AUTOCODER_DEPLOY_WAIT=1 -- --env example-host
 check "a check that never passes: exit 2" test "$RC" -eq 2
 check "says it did not pass within the wait" has "the check did not pass within 1s" "$OUT"
 check "records failure" has "state=failure" "$LOG"
 check "does not record success" hasnt "state=success" "$LOG"
 check "does not release" hasnt "release create" "$LOG"
 
-run "$DEPLOY" bad-wait AUTOCODER_DEPLOY_WAIT=soon -- --env nuc-1
+run "$DEPLOY" bad-wait AUTOCODER_DEPLOY_WAIT=soon -- --env example-host
 check "a non-numeric AUTOCODER_DEPLOY_WAIT is refused before anything is opened" test "$RC" -eq 1
 check "records nothing" hasnt "gh " "$LOG"
 
@@ -196,22 +195,22 @@ check "a failing long command: exit 2" test "$RC" -eq 2
 check "its failure description fits GitHub's 140 characters" \
   test "$(grep 'state=failure' <<< "$LOG" | sed 's/.*-f description=//' | awk '{ print length($0) }')" -le 140
 
-run "$DEPLOY" deploy-fails STUB_DEPLOY_RC=1 -- --env nuc-1
+run "$DEPLOY" deploy-fails STUB_DEPLOY_RC=1 -- --env example-host
 check "a failing deploy command: exit 2" test "$RC" -eq 2
 check "records failure" has "state=failure" "$LOG"
 check "restarts nothing" hasnt "step restart" "$LOG"
 
-run "$DEPLOY" restart-fails STUB_RESTART_RC=1 -- --env nuc-1
+run "$DEPLOY" restart-fails STUB_RESTART_RC=1 -- --env example-host
 check "a failing restart: exit 2" test "$RC" -eq 2
 check "records failure" has "state=failure" "$LOG"
 
-run "$DEPLOY" no-restart -- --env nuc-1 --no-release --no-restart
+run "$DEPLOY" no-restart -- --env example-host --no-release --no-restart
 check "--no-restart: exit 0" test "$RC" -eq 0
 check "installs" has "step deploy" "$LOG"
 check "neither restarts" hasnt "step restart" "$LOG"
 check "nor checks" hasnt "step check" "$LOG"
 
-run "$DEPLOY" no-release -- --env nuc-1 --no-release
+run "$DEPLOY" no-release -- --env example-host --no-release
 check "--no-release: exit 0" test "$RC" -eq 0
 check "deploys" has "state=success" "$LOG"
 check "does not release" hasnt "release create" "$LOG"
@@ -226,7 +225,7 @@ with_config "$TMP/rod.json" 'd["releaseOnDeploy"] = True'
 run "$DEPLOY" release-on-deploy AUTOCODER_CONFIG="$TMP/rod.json" -- --env plain
 check "a top-level releaseOnDeploy releases every environment's deploy" has "release create" "$LOG"
 
-run "$DEPLOY" release-fails STUB_CREATE_RC=1 -- --env nuc-1
+run "$DEPLOY" release-fails STUB_CREATE_RC=1 -- --env example-host
 check "a failed release: exit 3" test "$RC" -eq 3
 check "the deploy still stands" has "state=success" "$LOG"
 check "and never records failure" hasnt "state=failure" "$LOG"
@@ -234,7 +233,7 @@ check "says the release failed and will be retried" has "but the release failed;
 
 # Released already: tag the deployed commit on origin, and a redeploy cuts no second release.
 git -C "$TMP/work" tag v2026.11.09.1 && git -C "$TMP/work" push -q origin --tags
-run "$DEPLOY" redeploy -- --env nuc-1
+run "$DEPLOY" redeploy -- --env example-host
 check "a redeploy: exit 0" test "$RC" -eq 0
 check "deploys again" has "state=success" "$LOG"
 check "but does not release the same commit twice" hasnt "release create" "$LOG"

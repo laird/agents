@@ -562,16 +562,116 @@ assert_contains "tmux restart respawns the cwd pane" "respawn-pane -k -t claude-
 assert_not_contains "tmux restart error is not a missing session" "No tmux session" "$(cat "$T/restart.err" "$T/restart.out")"
 
 # --ensure installs one cron line and keeps the others.
+# PATH is this test's fakes plus the real PATH minus crontab, systemctl,
+# loginctl, launchctl, uname and pgrep. A GitHub runner has a real crontab
+# and a systemd user manager; leaving them on PATH makes "no crontab" and
+# "no scheduler" cases install the host's cron instead of the fake.
+SAFEBIN="$T/safebin"
+mkdir -p "$SAFEBIN"
+IFS=: read -ra _dirs <<< "$PATH"
+for _d in "${_dirs[@]}"; do
+  [ -d "$_d" ] || continue
+  for _f in "$_d"/*; do
+    _n=${_f##*/}
+    case "$_n" in crontab|systemctl|loginctl|launchctl|uname|pgrep) continue ;; esac
+    [ -e "$SAFEBIN/$_n" ] && continue
+    [ -x "$_f" ] && [ ! -d "$_f" ] && ln -s "$_f" "$SAFEBIN/$_n" 2>/dev/null
+  done
+done
+SCHEDPATH="$T/bin:$SAFEBIN"
+# GitHub Actions sets XDG_CONFIG_HOME outside $HOME. Units follow that
+# variable, so the scratch home must own it or later cases see a leftover timer.
+export XDG_CONFIG_HOME="$T/home/.config"
+# A cron daemon is "running", so a systemd user manager is not chosen.
+cat > "$T/bin/pgrep" <<'STUB'
+#!/bin/bash
+if [ "${1:-}" = -x ] && { [ "${2:-}" = cron ] || [ "${2:-}" = crond ]; }; then
+  [ "${FAKE_CROND:-yes}" = yes ]; exit
+fi
+exit 1
+STUB
+chmod +x "$T/bin/pgrep"
 export CRONTAB_FILE="$T/crontab"
 echo "0 3 * * * existing-job" > "$CRONTAB_FILE"
-OUT=$(PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO")
+OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO")
 assert_contains "ensure installs the entry" "installed cron entry" "$OUT"
-OUT=$(PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO")
+OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO")
 assert_contains "ensure is idempotent" "already installed" "$OUT"
 [ "$(grep -c 'autocoder-quota-failover:' "$CRONTAB_FILE")" = "1" ] \
   && ok "exactly one quota cron line" || bad "exactly one quota cron line — $(cat "$CRONTAB_FILE")"
 assert_contains "existing cron jobs are preserved" "existing-job" "$(cat "$CRONTAB_FILE")"
 assert_contains "cron line runs --once" "--once" "$(cat "$CRONTAB_FILE")"
+if OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" timeout 3 bash "$SCRIPT" --loop --repo "$REPO" 2>&1); then
+  bad "--loop with cron exits non-zero"
+else
+  ok "--loop with cron exits non-zero"
+fi
+assert_contains "--loop names the existing scheduler" "already scheduled via cron" "$OUT"
+
+# No crontab: a systemd user timer, with the linger hint, and a second run does not also write cron.
+mv "$T/bin/crontab" "$T/bin/crontab.off"
+mkdir -p "$T/sysd"
+cat > "$T/bin/systemctl" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$SYSD/calls"
+[ "${1:-}" = "--user" ] || exit 1
+shift
+[ "${SYSTEMCTL_DOWN:-0}" = 1 ] && exit 1
+case "$1" in
+  show-environment) echo "HOME=$HOME"; exit 0 ;;
+  daemon-reload) exit 0 ;;
+  enable) shift; [ "${1:-}" = "--now" ] && shift; echo "$1" >> "$SYSD/enabled"; exit 0 ;;
+esac
+exit 0
+EOF
+cat > "$T/bin/loginctl" <<'EOF'
+#!/bin/bash
+echo "Linger=${FAKE_LINGER:-no}"
+EOF
+chmod +x "$T/bin/systemctl" "$T/bin/loginctl"
+OUT=$(SYSD="$T/sysd" FAKE_LINGER=no SYSTEMCTL_DOWN=0 PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+assert_contains "systemd ensure names the timer" "installed systemd user timer" "$OUT"
+assert_contains "systemd ensure notes linger" "loginctl enable-linger" "$OUT"
+UNIT=$(find "$XDG_CONFIG_HOME/systemd/user" -name 'autocoder-quota-failover-*.timer' 2>/dev/null | head -1)
+[ -n "$UNIT" ] && ok "systemd timer file written" || bad "systemd timer file written"
+grep -q 'OnUnitInactiveSec=120s' "$UNIT" && ok "quota timer is every 2 minutes" || bad "timer interval: $(cat "$UNIT" 2>/dev/null)"
+OUT=$(SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+assert_contains "systemd re-run is idempotent" "systemd entry already installed" "$OUT"
+mv "$T/bin/crontab.off" "$T/bin/crontab"
+[ "$(grep -c 'autocoder-quota-failover:' "$CRONTAB_FILE")" = "1" ] \
+  && ok "systemd ensure did not add a second cron line" || bad "systemd ensure wrote cron: $(cat "$CRONTAB_FILE")"
+
+# macOS: launchd, even if crontab is present.
+REAL_UNAME=$(command -v uname)
+cat > "$T/bin/uname" <<EOF
+#!/bin/bash
+if [ "\${1:-}" = -s ] && [ -n "\${FAKE_UNAME:-}" ]; then echo "\$FAKE_UNAME"; exit 0; fi
+exec "$REAL_UNAME" "\$@"
+EOF
+cat > "$T/bin/launchctl" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$SYSD/launchctl"
+exit 0
+EOF
+chmod +x "$T/bin/uname" "$T/bin/launchctl"
+: > "$CRONTAB_FILE"
+echo "0 3 * * * existing-job" > "$CRONTAB_FILE"
+rm -rf "$XDG_CONFIG_HOME/systemd" "$HOME/Library"
+OUT=$(FAKE_UNAME=Darwin FAKE_CROND=yes SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+assert_contains "launchd ensure names the agent" "installed launchd agent" "$OUT"
+PLIST=$(find "$HOME/Library/LaunchAgents" -name 'com.autocoder.quota-failover.*.plist' 2>/dev/null | head -1)
+[ -n "$PLIST" ] && ok "LaunchAgent plist written" || bad "LaunchAgent plist written"
+grep -q '<integer>120</integer>' "$PLIST" && ok "launchd interval is 120s" || bad "plist interval"
+grep -q 'autocoder-quota-failover:' "$CRONTAB_FILE" \
+  && bad "launchd ensure also wrote cron" || ok "launchd ensure leaves crontab alone"
+
+# Nothing available.
+rm -f "$T/bin/crontab" "$T/bin/launchctl"
+rm -rf "$HOME/Library" "$XDG_CONFIG_HOME/systemd"
+OUT=$(FAKE_UNAME= SYSTEMCTL_DOWN=1 SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1); RC=$?
+[ "$RC" -ne 0 ] && ok "no scheduler exits non-zero" || bad "no scheduler exits non-zero — rc $RC: $OUT"
+assert_contains "no scheduler names --loop" "--loop" "$OUT"
+assert_contains "no scheduler says none was found" "No scheduler available" "$OUT"
 
 if bash "$SCRIPT" --bogus >/dev/null 2>&1; then bad "unknown flag exits non-zero"; else ok "unknown flag exits non-zero"; fi
 if bash "$SCRIPT" >/dev/null 2>&1; then bad "no mode exits non-zero"; else ok "no mode exits non-zero"; fi

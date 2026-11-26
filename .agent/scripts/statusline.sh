@@ -2,7 +2,7 @@
 # Claude Code status line: context | memory | model | repo | worktree | branch | quota
 #
 # Renders one line like:
-#   ctx 47% of 1M | mem 12 | Sonnet 5 | repo athena2 | wt athena2-wt-3 | branch feature/issue-264
+#   ctx 47% of 1M | mem 12 | Sonnet 5 | repo example-repo | wt example-wt-3 | branch feature/issue-264
 #
 # In a swarm this is the manager's only cheap read on worker health. `tmux
 # capture-pane` shows it on every worker pane, so context exhaustion is visible

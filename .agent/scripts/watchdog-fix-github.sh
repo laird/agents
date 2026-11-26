@@ -1,13 +1,15 @@
 #!/bin/bash
 # watchdog-fix-github.sh
 # Ensures the /fix-github workflow runs continuously.
-# Usage: ./watchdog-fix-github.sh [agent_command]
+# Usage: ./watchdog-fix-github.sh [agent_command] [target_dir]
 
 # Default agent command - change this if your binary is named differently (e.g., 'cortex', 'claude')
-AGENT_CMD=${1:-"antigravity"}
+# Directory: AUTOCODER_WATCHDOG_TARGET, else the second argument, else the
+# current directory. There is no default checkout.
+AGENT_CMD="${1:-${AUTOCODER_WATCHDOG_AGENT:-antigravity}}"
 WORKFLOW="/fix-github"
 
-TARGET_DIR="/home/laird/src/librarian"
+TARGET_DIR="${2:-${AUTOCODER_WATCHDOG_TARGET:-$(pwd)}}"
 
 echo "=================================================="
 echo "   Antigravity Watchdog: $WORKFLOW"

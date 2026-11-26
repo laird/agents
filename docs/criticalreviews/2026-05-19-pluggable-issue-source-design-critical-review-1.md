@@ -74,7 +74,7 @@ None of these appear in the spec's "Updated Scripts" table or anywhere else in t
 
 **Description:** Section 1 correctly extracts the main worktree path with `git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`. Section 2's Worktree Coordination sub-section uses `git worktree list --porcelain | head -1` for the same purpose. `head -1` returns the entire first line — `worktree /path/to/repo` — not just the path.
 
-**Evidence:** Running `git worktree list --porcelain | head -1` on this repo produces `worktree /Users/Laird.Popkin/src/agents`. Using that as a directory path would make every file operation target a path beginning with `worktree ` (the literal string), causing all of them to fail with "no such file."
+**Evidence:** Running `git worktree list --porcelain | head -1` on this repo produces `worktree $HOME/src/agents`. Using that as a directory path would make every file operation target a path beginning with `worktree ` (the literal string), causing all of them to fail with "no such file."
 
 **Proposed fix:** Use Section 1's form everywhere: `git worktree list --porcelain | grep -m1 "^worktree" | cut -d' ' -f2`. Update Section 2's prose to match.
 

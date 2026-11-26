@@ -17,8 +17,8 @@
 # Observed cases this excludes (all had no `working` label):
 #   #20 -> feature/issue-20, fix/issue-20   #18 -> fix/issue-18
 #   #36 -> feature/issue-36                 #25 -> feature/issue-25
-#   #7177 -> hotfix/7177-retry-args-engagement-id (athena2#7185: a hotfix lane's
-#   branch names its issue first, without `issue-`; the gate re-claimed it twice)
+#   #7177 -> hotfix/7177-retry-args (a hotfix lane's branch names its issue
+#   first, without `issue-`; the gate re-claimed one of these twice)
 #
 # LIMITATION, stated plainly: this cannot see claims whose branch is not yet
 # pushed, and it cannot see branches whose name does not encode an issue number
@@ -47,7 +47,7 @@ fi
 # Match issue-<N> anywhere in the branch name. This deliberately accepts
 # feature/, fix/, enhancement/ and any future prefix, and tolerates trailing
 # text (fix/issue-8-rename-... -> 8). A hotfix branch names its issue first:
-# hotfix/<N>-<slug> and hotfix/<N> count too (athena2#7185). Branches with no
+# hotfix/<N>-<slug> and hotfix/<N> count too. Branches with no
 # number are skipped, and a shape with no match is an empty list, not an exit.
 {
     printf '%s\n' "$BRANCHES" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true

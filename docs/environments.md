@@ -163,16 +163,18 @@ The two kinds of environment share the `environments` array:
   has no branch. `deploy.sh` deploys any commit on `origin/<integration>`, and
   `promote.sh` skips it.
 
+`example-host` and `example-app` below are placeholders: the environment name is whatever you call that machine, and the label is whatever you install. Paths in a real `deploy` command are yours (`$HOME/...`), not a fixed home directory.
+
 ```json
 {
   "environments": [
-    {"name": "nuc-1", "requires": "integration", "label": "agents-tui",
-     "preflight": "systemctl --user cat agents-tui.service >/dev/null",
+    {"name": "example-host", "requires": "integration", "label": "example-app",
+     "preflight": "systemctl --user cat example-app.service >/dev/null",
      "deploy": "cargo install --path . --locked",
-     "restart": "systemctl --user restart agents-tui.service",
-     "check": "agents-tui service status --wait",
+     "restart": "systemctl --user restart example-app.service",
+     "check": "example-app service status --wait",
      "release": true},
-    {"name": "release", "requires": "nuc-1"}
+    {"name": "release", "requires": "example-host"}
   ]
 }
 ```
@@ -193,9 +195,9 @@ example `. ~/.cargo/env && cargo install ...`). An environment with no commands
 only records the Deployment.
 
 ```bash
-plugins/autocoder/scripts/deploy.sh --env nuc-1             # deploy, record, release
-plugins/autocoder/scripts/deploy.sh --env nuc-1 --dry-run   # refusals and preflight only
-plugins/autocoder/scripts/deploy.sh --env nuc-1 --no-restart --no-release
+plugins/autocoder/scripts/deploy.sh --env example-host             # deploy, record, release
+plugins/autocoder/scripts/deploy.sh --env example-host --dry-run   # refusals and preflight only
+plugins/autocoder/scripts/deploy.sh --env example-host --no-restart --no-release
 ```
 
 `deploy.sh` refuses (exit 1, nothing recorded) for an environment that is not

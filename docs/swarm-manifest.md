@@ -17,7 +17,7 @@ the only one in the directory.
 
 This page is the contract between the autocoder scripts that write the
 manifest and the tools that read it (the idle sentinel, `start-workers.sh`,
-`remove-worker.sh`, and external readers such as the agents-tui village). It
+`remove-worker.sh`, and external readers such as a manager UI). It
 covers what is written today; the code is in
 `plugins/autocoder/scripts/swarm-manifest-lib.sh` and `swarm-register.sh`.
 

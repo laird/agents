@@ -2,7 +2,7 @@
 # install-statusline.sh — give every worker (and the manager) a status line
 # showing context / memory / model / worktree / branch.
 #
-#   ctx 47% of 1M | mem 12 | Sonnet 5 | wt athena2-wt-3 | branch feature/issue-264
+#   ctx 47% of 1M | mem 12 | Sonnet 5 | wt example-wt-3 | branch feature/issue-264
 #
 # Why this is installed rather than typed: workers relaunch Claude once per
 # issue (claude-worker-loop.sh), so a `/statusline` typed into a pane is gone at

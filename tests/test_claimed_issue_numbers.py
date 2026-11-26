@@ -54,8 +54,8 @@ def remote_repo(tmp_path):
                    "fix/issue-8-rename-autofix-to-autocoder",
                    "enhancement/issue-51-auto",
                    "fix/issue-idle-alias", "merge/fix-line-to-master",
-                   # athena2#7185: a hotfix lane's branch names its issue first
-                   "hotfix/7177-retry-args-engagement-id", "hotfix/7190",
+                   # a hotfix lane's branch names its issue first
+                   "hotfix/7177-retry-args", "hotfix/7190",
                    "hotfix/no-number-here", "release/2026-11-18"):
         sh(f"git branch {branch} master && git push -q origin {branch}", work)
     return work
@@ -74,7 +74,7 @@ def test_extracts_issue_numbers_from_branch_names(remote_repo):
 
 
 def test_hotfix_branches_count_and_a_release_tag_shaped_branch_does_not(remote_repo):
-    """hotfix/<N>-<slug> and hotfix/<N> name their issue first (athena2#7185);
+    """hotfix/<N>-<slug> and hotfix/<N> name their issue first;
     hotfix/no-number-here and release/2026-11-18 encode no issue."""
     nums = json.loads(run(remote_repo).stdout)
     assert 7177 in nums and 7190 in nums

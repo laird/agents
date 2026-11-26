@@ -19,7 +19,7 @@
 # branch that exists only on origin is another worker's (a banked READY, a
 # worker mid-flight whose claim the gate took over): the gate's label is still
 # the only thing this worktree put on the issue, and giving it back is right
-# (athena2#7185; the still-ours check below keeps a rival's claim untouched).
+# (the still-ours check below keeps a rival's claim untouched).
 #
 # Exit codes:
 #   0  released, or the claim had already ended or passed to another worker

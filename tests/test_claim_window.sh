@@ -184,7 +184,7 @@ assert_eq "e2e fresh rival marker: refused (exit 1)" 1 "$RC"
 # 4d. The pre-claimed handoff (the gate holds `working`): an ended start comment
 #     on the branch no longer reads as another agent's lock.
 issue_json "2026-11-17T02:26:57Z|$START" "2026-11-17T02:27:53Z|🎨 **Blocked — Needs Design**" \
-  "2026-11-22T00:30:00Z|🔒 claim nuc-1 1795307845997 wt=/x" > "$FAKE_JSON"
+  "2026-11-22T00:30:00Z|🔒 claim example-host 1795307845997 wt=/x" > "$FAKE_JSON"
 jq '.labels += [{"name": "working"}]' "$FAKE_JSON" > "$FAKE_JSON.t" && mv "$FAKE_JSON.t" "$FAKE_JSON"
 run_claim
 assert_eq "e2e handoff with an ended start comment: claimed" 0 "$RC"

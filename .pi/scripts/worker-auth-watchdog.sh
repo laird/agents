@@ -45,8 +45,16 @@
 #   worker-auth-watchdog.sh --loop       tick forever, sleeping --interval
 #   worker-auth-watchdog.sh --dry-run    report what a tick WOULD do; no sends,
 #                                        no notifications, no state writes
-#   worker-auth-watchdog.sh --ensure     idempotently install a cron entry
-#                                        running --once every 2 minutes
+#   worker-auth-watchdog.sh --ensure     idempotently install ONE scheduler that
+#                                        runs --once every 2 minutes: crontab when
+#                                        a cron daemon is available; otherwise a
+#                                        systemd user timer (Linux without cron,
+#                                        e.g. Arch or Fedora); a launchd
+#                                        LaunchAgent on macOS; or a message to
+#                                        run --loop when none of those exist.
+#                                        Re-running does not add a second one,
+#                                        and drops any other of these three so
+#                                        only one stays active for this user.
 #   Options: --interval N (seconds, --loop only; default 120)
 #
 # Environment:
@@ -55,6 +63,10 @@
 #   AUTH_WATCHDOG_PROBE_CMD   credential probe, run with bash -c; exit 0 = valid
 #   AUTH_WATCHDOG_ERROR_RE    extended regex of auth-error signatures
 #   AUTH_WATCHDOG_RESUME_PROMPT  text sent to resume a failed turn
+#   XDG_CONFIG_HOME           systemd user units go under $XDG_CONFIG_HOME/systemd/user
+#                             (default ~/.config/systemd/user). LaunchAgents go
+#                             under ~/Library/LaunchAgents. Nothing here is a
+#                             fixed host or home directory.
 #
 # Exit status: 0 on a completed tick (stalls found or not); 1 on bad usage or
 # when herdr is unreachable.
@@ -72,6 +84,8 @@ SELF_PATH="$SCRIPT_DIR/$(basename "$SOURCE_PATH")"
 
 # shellcheck source=mux-send-lib.sh
 source "$SCRIPT_DIR/mux-send-lib.sh"
+# shellcheck source=scheduler-ensure.sh
+source "$SCRIPT_DIR/scheduler-ensure.sh"
 
 STATE_DIR="${AUTH_WATCHDOG_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/auth-watchdog}"
 COOLDOWN="${AUTH_WATCHDOG_COOLDOWN:-600}"
@@ -239,24 +253,37 @@ tick() {
 }
 
 # ── Scheduler install ────────────────────────────────────────────────────────
-ensure_cron() {
-  command -v crontab >/dev/null 2>&1 || { echo "❌ crontab not available; run --loop instead" >&2; return 1; }
-  if crontab -l 2>/dev/null | grep -qF "$CRON_MARK"; then
-    echo "✓ cron entry already installed"
-    return 0
-  fi
+# One mechanism per user (scheduler-ensure.sh). This watchdog watches every
+# herdr pane on the host, so the unit is not named after a repo or a machine.
+
+auth_sched_bind() {
+  SCHED_UNIT="autocoder-worker-auth-watchdog"
+  SCHED_LABEL="com.autocoder.worker-auth-watchdog"
+  SCHED_MARK="$CRON_MARK"
+  SCHED_EVERY=120
+  SCHED_LOG="$STATE_DIR/watchdog.log"
+  SCHED_DESC="autocoder worker auth watchdog"
+  SCHED_CMD="$SELF_PATH"
+  SCHED_ARGS=(--once)
+}
+
+ensure_scheduler() {
   mkdir -p "$STATE_DIR"
-  # cron's PATH is minimal; carry ours so herdr, gcloud and python3 resolve.
-  local line="*/2 * * * * PATH='$PATH' '$SELF_PATH' --once >> '$STATE_DIR/watchdog.log' 2>&1 $CRON_MARK"
-  ( crontab -l 2>/dev/null; echo "$line" ) | crontab - || { echo "❌ crontab install failed" >&2; return 1; }
-  echo "✓ installed cron entry (every 2 minutes); log: $STATE_DIR/watchdog.log"
+  auth_sched_bind
+  scheduler_ensure
 }
 
 case "$MODE" in
-  ensure)  ensure_cron ;;
+  ensure)  ensure_scheduler ;;
   dry-run) tick true ;;
   once)    mkdir -p "$STATE_DIR"; tick false ;;
   loop)
+    auth_sched_bind
+    existing=$(scheduler_installed)
+    if [ "$existing" != none ]; then
+      echo "❌ Refusing --loop: watchdog already scheduled via $existing (never both)" >&2
+      exit 1
+    fi
     mkdir -p "$STATE_DIR"
     while true; do tick false || true; sleep "$INTERVAL"; done
     ;;

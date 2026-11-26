@@ -45,7 +45,7 @@ This is a **network-policy block, not an auth failure** — see §3 Dead Ends be
 - Uncommitted changes: no — working tree clean
 - Staged changes: none
 - Untracked (pre-existing, NOT created this session, deliberately left alone): `docs/criticalreviews/2026-07-13-autocoder-planning-pipeline-implementation-plan-critical-review-1.md`
-- ENV vars or config required: none. `gh` is authed as account `laird` (scopes `gist, read:org, repo, workflow`); repo perms confirmed `{"admin":true,"push":true}`
+- ENV vars or config required: none. `gh` is authed as account `example-user` (scopes `gist, read:org, repo, workflow`); repo perms confirmed `{"admin":true,"push":true}`
 - Running processes / background jobs: none
 - Test tooling gotcha: system `python3` (3.14, Homebrew) has **no pytest** and is PEP-668 externally-managed. A venv was created at `/tmp/vpt` — `/tmp/vpt/bin/python -m pytest tests/ -q`. It is in `/tmp` and may be gone; recreate with `python3 -m venv /tmp/vpt && /tmp/vpt/bin/pip -q install pytest`.
 
@@ -71,7 +71,7 @@ This is a **network-policy block, not an auth failure** — see §3 Dead Ends be
 
 Two independent decisions drove this session.
 
-*(a) Why `peters-toolkit:bugfix` gets an autonomy wrapper rather than being rejected or adopted verbatim.* Reading `/Users/Laird.Popkin/.claude/plugins/marketplaces/peters-toolkit/skills/bugfix/SKILL.md` shows five **mandatory in-chat human STOP gates** (G1 tier confirm, G2 root-cause sign-off, G4 design, G5 plan, G8 pre-PR review) plus a resume picker when invoked with no id. Dropped verbatim into `/dev`, every one of those would hang an unattended loop iteration forever. But the skill's *other* content — failing-repro-test-first, never-under-tier, full-verify-before-PR — is exactly the discipline autocoder wants. So the design **separates the skill's process laws (kept, binding) from its human-interaction mechanics (remapped)**. Each gate resolves to "self-decide + record the decision on the issue," and genuine ambiguity escalates through autocoder's *existing* blocking-label mechanism (`needs-clarification`, `needs-design`, `needs-approval`, `too-complex` → picked up by `/review-blocked`) instead of pausing. Escalation replaces waiting. This reuses machinery that already exists rather than inventing a second pause concept.
+*(a) Why `peters-toolkit:bugfix` gets an autonomy wrapper rather than being rejected or adopted verbatim.* Reading `$HOME/.claude/plugins/marketplaces/peters-toolkit/skills/bugfix/SKILL.md` shows five **mandatory in-chat human STOP gates** (G1 tier confirm, G2 root-cause sign-off, G4 design, G5 plan, G8 pre-PR review) plus a resume picker when invoked with no id. Dropped verbatim into `/dev`, every one of those would hang an unattended loop iteration forever. But the skill's *other* content — failing-repro-test-first, never-under-tier, full-verify-before-PR — is exactly the discipline autocoder wants. So the design **separates the skill's process laws (kept, binding) from its human-interaction mechanics (remapped)**. Each gate resolves to "self-decide + record the decision on the issue," and genuine ambiguity escalates through autocoder's *existing* blocking-label mechanism (`needs-clarification`, `needs-design`, `needs-approval`, `too-complex` → picked up by `/review-blocked`) instead of pausing. Escalation replaces waiting. This reuses machinery that already exists rather than inventing a second pause concept.
 
 *(b) Why the rename followed a plan file instead of my own sweep.* My first instinct was to enumerate every `fix` reference and rename them all. That would have been wrong: `docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md` already exists on this branch and governs this exact rename as Tasks 1–4, with *deliberate* scope exclusions that a naive sweep would have violated (see the Dead Ends table). **Check for a governing plan before doing large mechanical work in this repo** — the repo plans its own changes.
 
@@ -90,10 +90,10 @@ Two independent decisions drove this session.
 | Same push with `dangerouslyDisableSandbox: true` | Identical 403 — it is not the Claude Code sandbox | — |
 | `git -c credential.helper='!gh auth git-credential' push` | Identical 403 — credentials were never the problem | — |
 | Inline `https://x-access-token:<token>@github.com/...` | Identical 403 | — |
-| Inline `https://laird:<token>@github.com/...` | Identical 403 | — |
+| Inline `https://example-user:<token>@github.com/...` | Identical 403 | — |
 | `git -c http.version=HTTP/1.1 push` | Identical 403 | — |
 | SSH `git@github.com:22` and `git@ssh.github.com:443` | `Connection closed by 140.82.112.4 port 22` / `...113.35 port 443` — no banner, proxy kills it | — |
-| `curl -H "Authorization: Bearer $TOKEN" .../git-receive-pack` | Returned 401 — **misleading**, git-over-HTTPS wants Basic auth, not Bearer. With `-u laird:$TOKEN` the same endpoint returns **200**. Do not conclude "bad token" from the Bearer 401. | — |
+| `curl -H "Authorization: Bearer $TOKEN" .../git-receive-pack` | Returned 401 — **misleading**, git-over-HTTPS wants Basic auth, not Bearer. With `-u example-user:$TOKEN` the same endpoint returns **200**. Do not conclude "bad token" from the Bearer 401. | — |
 | `python3 -m pip install pytest` | PEP-668 externally-managed environment; needs a venv | §1 Environment |
 | Renaming `fix-loop-gate.sh`, `watchdog-fix*.sh`, `codex/droid/gemini-fix-loop.sh`, `tests/test_fix_loop_idle.sh` | Explicit plan scope exclusion — "out-of-scope churn the spec didn't ask for" | `docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md:231` |
 | Renaming `.claude/fix-loop.local.md` | Plan assumption #7 — ~10 consumers across mirrors, zero functional benefit | `docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md:65` |
@@ -129,7 +129,7 @@ Two pre-existing bugs fixed in passing (user-requested): `plugins/autocoder/comm
 
 1. **Verify state** (run first to confirm environment):
    ```bash
-   cd /Users/Laird.Popkin/src/agents && git log --oneline -4 && git status --short && bash scripts/check-optional-skills-drift.sh
+   cd $HOME/src/agents && git log --oneline -4 && git status --short && bash scripts/check-optional-skills-drift.sh
    ```
    Expected output: HEAD `be7bbc9`, clean tree except the untracked `docs/criticalreviews/...critical-review-1.md`, and every drift line reading `OK` (exit 0).
 
@@ -157,7 +157,7 @@ Two pre-existing bugs fixed in passing (user-requested): `plugins/autocoder/comm
 - **Governing plan**: `docs/plans/2026-07-13-autocoder-planning-pipeline-implementation-plan.md:86` (Task 1 Step 2), `:231` (scope exclusions)
 - **Source spec**: `docs/specs/2026-07-13-autocoder-planning-pipeline-design.md`
 - **Open critical review** (untracked, unaddressed): `docs/criticalreviews/2026-07-13-autocoder-planning-pipeline-implementation-plan-critical-review-1.md`
-- **Skill being integrated**: `/Users/Laird.Popkin/.claude/plugins/marketplaces/peters-toolkit/skills/bugfix/SKILL.md` — gates table at its §"The three tiers + gates", non-negotiables at §"The four non-negotiables"
+- **Skill being integrated**: `$HOME/.claude/plugins/marketplaces/peters-toolkit/skills/bugfix/SKILL.md` — gates table at its §"The three tiers + gates", non-negotiables at §"The four non-negotiables"
 - **New files created this session**: `plugins/autocoder/commands/fix.md`, `plugins/autocoder/commands/fix-loop.md`, `.agent/workflows/fix.md`, `.agent/workflows/fix-loop.md` (all four are alias stubs); `docs/dev-loop-multi-agent-coordination.md` (renamed from `docs/fix-loop-multi-agent-coordination.md`)
 - **Parity rules**: `CLAUDE.md:189` "Key parallel files" / `CLAUDE.md:197` "Key parallel scripts"; version-management rule at `CLAUDE.md` §"Version Management"
 - **Related tickets / issues**: none — this work is plan-driven, not issue-driven

@@ -55,7 +55,7 @@ Failures are recorded too, usage errors included:
 ```json
 {"v":1,"ts":"2026-11-17T05:02:11Z","repo":"agents-5ea0ca80","issue":17,"worker":"agents",
  "branch":"master","event":"ctl","detail":{"action":"release","target":"17","ok":true,
- "exit":0,"actor":"dashboard-ui","summary":"{\"issue\":\"17\",\"released\":true,...}"}}
+ "exit":0,"actor":"example-actor","summary":"{\"issue\":\"17\",\"released\":true,...}"}}
 ```
 
 `issue` is the target when the target is an issue number, else `null`. `summary` is the
@@ -95,7 +95,7 @@ claimable again afterwards.
 `detail` on success:
 
 ```json
-{"issue": "17", "released": true, "commented": true, "actor": "dashboard-ui", "reason": "worker crashed"}
+{"issue": "17", "released": true, "commented": true, "actor": "example-actor", "reason": "worker crashed"}
 ```
 
 `commented` is `false` when the release worked but the comment could not be

@@ -142,7 +142,7 @@ Use the Skill tool to invoke: autocoder:fix
 With args: <issue number from work JSON>
 ```
 
-**A branch on origin is a claim (athena2#7185).** The gate does not claim an issue that a branch on
+**A branch on origin is a claim.** The gate does not claim an issue that a branch on
 origin names, and does not take over a `working` issue that has one. `issue-<N>` anywhere in the branch
 name counts, and so do `hotfix/<N>-<slug>` and `hotfix/<N>`.
 

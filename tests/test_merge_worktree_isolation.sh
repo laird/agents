@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never
 # merge finishes — checks out feature/issue-B in the SAME directory. The
 # detached merge for A, still running, would then test and push whatever B's
 # checkout had left in that directory, not A's tree (observed for #1809/#1812
-# on athena2-wt-1).
+# on a worker worktree).
 #
 # THIS TEST reproduces that exact sequence for real, with a real git repo and
 # a real detached merge-launch.sh, and asserts the fix (an isolated `git

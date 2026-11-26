@@ -1,8 +1,7 @@
 # Remote swarm over Tailscale
 
 Run the swarm on one machine (the **host**, say a desktop or a server) and
-manage it from another (the **client**: a laptop, a ClockworkPi uConsole,
-another desktop). The client attaches to the host's herdr or tmux session over
+manage it from another (the **client**: a laptop or another desktop). The client attaches to the host's herdr or tmux session over
 SSH, and Tailscale carries the SSH, so nothing is exposed beyond your tailnet.
 
 ```
@@ -28,7 +27,7 @@ of this repo.
 **1. On the client**, name the host as Tailscale knows it:
 
 ```bash
-remote-swarm-setup client nuc-1          # or user@nuc-1, --name <alias>
+remote-swarm-setup client example-host   # or user@example-host, --name <alias>
 ```
 
 This:
@@ -47,7 +46,7 @@ SSH policy decides who may log in. To turn it on from the host, run
 **2. On the host** (only when step 1 asks for it), paste the line it printed:
 
 ```bash
-remote-swarm-setup host --authorize 'ssh-ed25519 AAAA… uconsole-swarm'
+remote-swarm-setup host --authorize 'ssh-ed25519 AAAA… example-swarm'
 ```
 
 This:

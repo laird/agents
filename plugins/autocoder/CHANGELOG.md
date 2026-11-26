@@ -8,6 +8,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- `quota-failover.sh --ensure` and `worker-auth-watchdog.sh --ensure` share `scheduler-ensure.sh`: one scheduler per job (crontab, a systemd user timer with a `loginctl enable-linger` note, or a macOS LaunchAgent). Re-running does not add a second one, and `--loop` refuses when one is already installed. The idle sentinel uses the same host line and linger hint; its units still run the version-independent shim.
+- Personal host names, home directories, tailnet examples, and the plugin author email are gone from the tree. Environment names in docs and tests are `example-host`. Antigravity `watchdog-fix.sh` takes `AUTOCODER_WATCHDOG_TARGET` / `--target` (default: the current directory) instead of a fixed checkout. `AGENTS_REPO_ROOT` overrides the derived checkout.
 - The merge train can lift a red-integration hold when the red's fix has landed
   (`train.redHold.releaseOn`, #428). `closed` (the default, and an absent
   `redHold`) still holds until the tracking issue closes. `landed` stops

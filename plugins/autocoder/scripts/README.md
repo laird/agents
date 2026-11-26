@@ -476,7 +476,8 @@ Every gate (merge job, sentinel, `promote.sh`) then runs the command under
 host home) plus `/usr/bin:/bin`; `HOME` is a fresh temporary directory, with
 `XDG_*` under it, removed afterwards; `LANG=C.UTF-8`; and the variables named in
 `env` are passed through. `PATH`, `HOME`, `XDG_*` and `LANG` cannot be overridden
-by a declared name. Host tools (`omarchy`, `hyprctl`, user systemd) are absent
+by a declared name. Host tools outside that PATH (a window-manager CLI, a
+user-session helper) are absent
 unless their directory is declared. The gate log prints `gate-env: hermetic …`
 or `gate-env: host environment`.
 

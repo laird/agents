@@ -6,7 +6,7 @@ Autonomous GitHub issue resolution system with infinite loop support.
 
 ## ⚠️ Compatibility Notice
 
-**This plugin is primarily developed for personal use.** While it should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees it will work in all environments. Use at your own risk.
+**This plugin is a general-purpose tool.** It is meant to run on whatever Linux, macOS, or WSL host you point it at. It does not assume a particular machine, user, home directory, or tailnet. There is still no guarantee it works in every environment. Use it at your own risk.
 
 **Tested Platforms:**
 - ✅ Linux
@@ -40,7 +40,7 @@ If you cloned this repository and want to sync the installed plugin with the lat
 
 ```bash
 # From anywhere
-bash ~/src/agents/scripts/update-plugin.sh
+bash "$HOME/src/agents/scripts/update-plugin.sh"
 
 # Or from the repo
 bash scripts/update-plugin.sh
@@ -56,6 +56,37 @@ Alternatively, update via Claude Code (if available):
 ```bash
 /plugin update autocoder
 ```
+
+## Persistence on any host
+
+`idle-sentinel.sh --ensure`, `worker-auth-watchdog.sh --ensure`, and `quota-failover.sh --ensure` each install **one** scheduler for that job and refuse to stack a second on top of it. Re-running `--ensure` does not add another timer. `--loop` refuses to start when a scheduler for that job is already installed, so a crontab entry and a detached loop never both fire. The two watchdogs share `scheduler-ensure.sh`. The idle sentinel uses the same host line and linger hint; its units stay in `idle-sentinel.sh` because they run a version-independent shim.
+
+They probe the machine. Nothing in the choice is a hostname, a user, or a tailnet:
+
+| Host | What `--ensure` installs |
+|---|---|
+| Ubuntu, Debian, and any host whose `crontab` has a running cron daemon | a crontab entry |
+| Linux without cron (Arch, and Fedora when cron is not installed) when `systemctl --user` answers | a systemd **user** timer. If lingering is off, the script prints `loginctl enable-linger $USER` and does not run it. With lingering, the timer survives logout and reboot. |
+| macOS | a LaunchAgent under `$HOME/Library/LaunchAgents` (`launchd`) |
+| none of those | a message that names `--loop`. A loop does not survive reboot or logout. |
+
+The idle sentinel is per repository (`--project`, default the current directory). Its systemd unit and launchd label are a hash of that directory, so two checkouts on one host do not share a timer. Quota failover is also per repository (`--repo`, default the current checkout): the crontab mark contains that path, and the systemd unit and LaunchAgent are a hash of it. The auth watchdog is per user: it watches every herdr pane on the host, and its unit name is not a repo path.
+
+Paths, the swarm list, and which agent to wake come from arguments, the swarm manifest, or the environment. They are not hard-coded home directories.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `AGENTS_REPO_ROOT` | Checkout that holds the launch scripts the sentinel uses | three directories above `idle-sentinel.sh` |
+| `AUTOCODER_AGENT` | Agent the sentinel wakes | the swarm manifest's agent, else `claude` |
+| `AUTOCODER_MUX` | Multiplexer | detected |
+| `--project DIR` | Repository the sentinel watches | the current directory |
+| `AUTOCODER_WATCHDOG_TARGET` | Directory for the experimental Antigravity `watchdog-fix.sh` / `watchdog-fix-github.sh` | the current directory (`--target` or the second argument wins) |
+| `AUTOCODER_WATCHDOG_AGENT` | Agent command for those scripts when you do not pass one | `antigravity` |
+| `AUTOCODER_AGENT_PREFERENCE` | Agent order for `quota-failover.sh` | `claude,codex,grok,gemini,droid,pi` (or `.autocoder.json` `agentPreference`) |
+| `AUTH_WATCHDOG_STATE_DIR` | Auth-watchdog state and log | `${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/auth-watchdog` |
+| `XDG_CONFIG_HOME` | Where the auth watchdog writes its systemd user unit | `~/.config` |
+
+Swarm roots the reboot trigger walks are the registry `swarm_roots_register` appends (one absolute path per line under the autocoder state directory), not a list of machines.
 
 ## Required Labels
 
@@ -222,7 +253,8 @@ In the train model, workers bank; the **manager lands**, and it lands in **merge
   gate on a gate host is its first full test. Nothing on that host gates, pre-checks, or pushes the
   integration branch. Configuration: `train.enqueue` in `.autocoder.json` (see scripts/README.md).
 
-The reference implementation is athena2's `scripts/mgr-train.sh` (issue #5956 there). This
+The reference implementation of a train assembler sits in the project that adopts
+the model. This
 plugin's `merge-to-integration.sh` gates whatever branch it is handed, so a manager can land a
 train branch through it (and through the host queue) unchanged; assembling the train, dropping red
 members and closing member issues are left to the manager. A project adopting the model states it
@@ -696,7 +728,7 @@ Auto-detection prefers a *running* cmux, then a *running* herdr, then tmux — e
 
 **Landing is a merge, after the tests.** A swarm worker runs the repo's regression suite and lands through `merge-launch.sh` / `merge-to-integration.sh` onto the integration branch (`master` in this repo). It does not run `gh pr create`. Two safety stops still open a pull request instead of merging: a high-risk diff (`landing-mode.sh`) and an open revert-breaker issue. Those are the only pull-request writers on the landing path.
 
-**Quota failover.** `quota-failover.sh` watches worker and manager panes on herdr, tmux, and cmux. When the pane text says that agent is out of usage (Claude's weekly-limit dialog or the "Usage limit reached" banner, Grok's team credit message, Codex's usage-limit text, and the daily-quota text for Gemini, Droid, and Pi), it restarts the pane on the next agent that is installed and authenticated. Preference defaults to `claude`, `codex`, `grok`, then `gemini`, `droid`, and `pi`, so Claude, Codex, and Grok can take over for each other. Panes in one swarm may run different agents at the same time. Set `AUTOCODER_AGENT_PREFERENCE` (comma-separated) or `.autocoder.json` `agentPreference` to change it. A reset time shown on the pane is stored; once it has passed, an idle pane moves back. A GitHub API or GraphQL rate-limit line in the scrollback does not count. The worker switch is `restart-worker.sh --worktree … --mux … --agent …`, which keeps the branch, uncommitted files, and the `working` claim and does not `git reset`. The new agent is sent `/fix N` when the branch names an issue, otherwise `/fix-loop` (`/autocoder:…` on Claude). The manager is restarted once per repo and sent `/manager-resume --non-interactive`, then `/monitor-loop`. The idle sentinel runs a tick every poll. Install the cron watchdog once so a manager that is itself out of usage still gets switched:
+**Quota failover.** `quota-failover.sh` watches worker and manager panes on herdr, tmux, and cmux. When the pane text says that agent is out of usage (Claude's weekly-limit dialog or the "Usage limit reached" banner, Grok's team credit message, Codex's usage-limit text, and the daily-quota text for Gemini, Droid, and Pi), it restarts the pane on the next agent that is installed and authenticated. Preference defaults to `claude`, `codex`, `grok`, then `gemini`, `droid`, and `pi`, so Claude, Codex, and Grok can take over for each other. Panes in one swarm may run different agents at the same time. Set `AUTOCODER_AGENT_PREFERENCE` (comma-separated) or `.autocoder.json` `agentPreference` to change it. A reset time shown on the pane is stored; once it has passed, an idle pane moves back. A GitHub API or GraphQL rate-limit line in the scrollback does not count. The worker switch is `restart-worker.sh --worktree … --mux … --agent …`, which keeps the branch, uncommitted files, and the `working` claim and does not `git reset`. The new agent is sent `/fix N` when the branch names an issue, otherwise `/fix-loop` (`/autocoder:…` on Claude). The manager is restarted once per repo and sent `/manager-resume --non-interactive`, then `/monitor-loop`. The idle sentinel runs a tick every poll. Install one scheduler once so a manager that is itself out of usage still gets switched (crontab, a systemd user timer, or a macOS LaunchAgent; `--ensure` does not install a second one):
 
 ```bash
 plugins/autocoder/scripts/quota-failover.sh --ensure

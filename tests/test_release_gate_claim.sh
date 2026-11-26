@@ -64,7 +64,7 @@ bash "$REL" 43 "x" >/dev/null 2>&1 && bad "released an issue with a feature bran
 git branch -D --quiet feature/issue-43
 
 # 3b. A branch that exists only on origin is another worker's (a banked READY, a
-#     claim the gate took over, athena2#7185): the gate's label is all this
+#     claim the gate took over): the gate's label is all this
 #     worktree put on the issue, so it is given back.
 reset 45
 ORIGIN="$TMP/origin.git"; git init --quiet --bare "$ORIGIN"

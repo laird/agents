@@ -141,16 +141,16 @@ N=$(IF issue_create --title "t" --body "b" | jq -r .number)
 IF issue_claim "$N" >/dev/null 2>&1
 
 mark
-run 0 true "release drops a claim" -- env AUTOCODER_CTL_ACTOR=dashboard-ui "$CTL" release "$N" --reason "worker crashed"
+run 0 true "release drops a claim" -- env AUTOCODER_CTL_ACTOR=example-actor "$CTL" release "$N" --reason "worker crashed"
 one_ctl "release records the issue and the actor" \
-  ".issue == $N and .detail.target == \"$N\" and .detail.ok == true and .detail.exit == 0 and .detail.actor == \"dashboard-ui\""
-jq -e --arg n "$N" '.target == $n and .detail.released and .detail.commented and .detail.actor == "dashboard-ui"
+  ".issue == $N and .detail.target == \"$N\" and .detail.ok == true and .detail.exit == 0 and .detail.actor == \"example-actor\""
+jq -e --arg n "$N" '.target == $n and .detail.released and .detail.commented and .detail.actor == "example-actor"
   and .detail.reason == "worker crashed"' <<<"$OUT" >/dev/null && ok "release reports issue, actor and reason" || bad "release detail: $OUT"
 J=$(IF issue_get "$N")
 jq -e '.labels | map(.name? // .) | index("working") | not' <<<"$J" >/dev/null && ok "the working label is gone" || bad "still working: $J"
 # The file backend appends comments to the body; others list them under comments.
 TEXT=$(jq -r '[.body, (.comments[]?.body)] | join("\n")' <<<"$J")
-grep -q 'released\*\* by dashboard-ui' <<<"$TEXT" && grep -q 'Reason\*\*: worker crashed' <<<"$TEXT" \
+grep -q 'released\*\* by example-actor' <<<"$TEXT" && grep -q 'Reason\*\*: worker crashed' <<<"$TEXT" \
   && ok "a comment names the actor and the reason" || bad "comment: $J"
 
 run 1 false "releasing an unclaimed issue fails" -- "$CTL" release "$N"

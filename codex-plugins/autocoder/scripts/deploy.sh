@@ -19,12 +19,12 @@
 #   --integration  the integration branch (default: origin/HEAD, else main)
 #
 # CONFIG (.autocoder.json in the main worktree), per environment:
-#   {"name": "nuc-1", "requires": "integration",
-#    "label": "agents-tui",                      what is installed, for descriptions (default: repo dir name)
-#    "preflight": "systemctl --user cat agents-tui.service >/dev/null",
+#   {"name": "example-host", "requires": "integration",
+#    "label": "example-app",                     what is installed, for descriptions (default: repo dir name)
+#    "preflight": "systemctl --user cat example-app.service >/dev/null",
 #    "deploy": "cargo install --path . --locked",
-#    "restart": "systemctl --user restart agents-tui.service",
-#    "check": "agents-tui service status --wait",
+#    "restart": "systemctl --user restart example-app.service",
+#    "check": "example-app service status --wait",
 #    "wait": 30,                                 seconds the check may take, retried (default 30)
 #    "release": true}                            release after a successful deploy
 #   Top level: "releaseOnDeploy": true releases after every environment's deploy;

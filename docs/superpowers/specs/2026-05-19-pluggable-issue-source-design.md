@@ -51,7 +51,7 @@ Empirically verified facts this design depends on. CDR reviewers treat these as 
 
 | Claim | Verified evidence |
 |-------|------------------|
-| `git worktree list --porcelain \| grep -m1 "^worktree" \| cut -d' ' -f2` returns the main worktree absolute path | Returns `/Users/Laird.Popkin/src/agents` (the repo root) in this repo |
+| `git worktree list --porcelain \| grep -m1 "^worktree" \| cut -d' ' -f2` returns the main worktree absolute path | Returns `$HOME/src/agents` (the repo root) in this repo |
 
 ### Migration scope (verified by grepping `plugins/autocoder/`)
 
