@@ -1310,6 +1310,25 @@ _retest_report() {  # <base-offset> <green> <files>
   done
 }
 
+# (#390) Defined before _gate_integrated_tree: the gate phase reads it to tell a documents-only
+# move of the integration tip from a code delta when it judges a red, and bash binds a function
+# only once execution has passed its definition.
+# A re-sync whose incoming files are all documents, none a file this change touched or a
+# path the gate command runs: prints the incoming file count (rc 0), or nothing (rc 1).
+# Needs a merge base, like the overlap test: an unknown file set is never documents-only.
+_resync_docs_only() {
+  local old="$1" new="$2" f n=0
+  [ -n "$FEATURE_BASE" ] || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -z "${FEATURE_FILE_SET[$f]+x}" ] || return 1
+    _path_is_gate_cmd "$f" && return 1
+    is_docs_path "$f" || return 1
+    n=$((n + 1))
+  done < <(git diff --name-only --no-renames "$old" "$new")
+  echo "$n"
+}
+
 _gate_integrated_tree() {
   if [ "$DOCS_ONLY" -eq 1 ]; then
     PUBLISH_BASIS=docs-only
@@ -1369,7 +1388,17 @@ _gate_integrated_tree() {
   git_net_long fetch origin "$INTEGRATION_BRANCH" >/dev/null 2>&1 || true   # a stale ref only skips the re-sync
   tip_sha=$(git rev-parse "origin/${INTEGRATION_BRANCH}")
   base_sha=$(git merge-base HEAD "$tip_sha" 2>/dev/null) || base_sha="$tip_sha"
-  if [ "$base_sha" != "$tip_sha" ] && [ "$MOVED_BASE_REGATES" -lt "$MOVED_BASE_REGATE_MAX" ]; then
+  # A tip that moved only by documents (the same rule the push re-sync applies: documents
+  # extensions and paths, none of them a file this change touched or a path the gate command
+  # reads) left the code this tree was built on unchanged, so the red is judged against that
+  # base as it stands; a re-sync would buy a full second gate for a delta no test reads.
+  local docs_moved=""
+  if [ "$base_sha" != "$tip_sha" ]; then
+    docs_moved=$(_resync_docs_only "$base_sha" "$tip_sha") || docs_moved=""
+  fi
+  if [ -n "$docs_moved" ]; then
+    echo "ℹ️  origin/${INTEGRATION_BRANCH} moved from ${base_sha:0:8} to ${tip_sha:0:8} by ${docs_moved} documents-only file(s) since this tree was built; the code is the base's, so the red is judged against ${base_sha:0:8} without a re-sync (a code delta would re-sync and re-gate)."
+  elif [ "$base_sha" != "$tip_sha" ] && [ "$MOVED_BASE_REGATES" -lt "$MOVED_BASE_REGATE_MAX" ]; then
     MOVED_BASE_REGATES=$((MOVED_BASE_REGATES + 1))
     echo "❌ Tests fail on the integrated tree ${tree:0:8}, built on origin/${INTEGRATION_BRANCH} ${base_sha:0:8}; origin/${INTEGRATION_BRANCH} has since moved to ${tip_sha:0:8}."
     echo "ℹ️  Re-syncing onto ${tip_sha:0:8} and re-gating (${MOVED_BASE_REGATES}/${MOVED_BASE_REGATE_MAX}) instead of judging this change against a base it was not built on (#375)."
@@ -1569,21 +1598,6 @@ _resync_overlap() {
   return 1
 }
 
-# A re-sync whose incoming files are all documents, none a file this change touched or a
-# path the gate command runs: prints the incoming file count (rc 0), or nothing (rc 1).
-# Needs a merge base, like the overlap test: an unknown file set is never documents-only.
-_resync_docs_only() {
-  local old="$1" new="$2" f n=0
-  [ -n "$FEATURE_BASE" ] || return 1
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    [ -z "${FEATURE_FILE_SET[$f]+x}" ] || return 1
-    _path_is_gate_cmd "$f" && return 1
-    is_docs_path "$f" || return 1
-    n=$((n + 1))
-  done < <(git diff --name-only --no-renames "$old" "$new")
-  echo "$n"
-}
 
 # AUTOCODER_DOCS_RESYNC_CMD on the re-synced tree (a repo's cheap document checks): rc 0
 # when unset or passing; on failure says so and returns 1, so the delta is re-gated as code.

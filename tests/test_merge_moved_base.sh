@@ -129,5 +129,28 @@ grep -q "gate-cache: pass recorded for tree" "$LOG" && bad "the base-alone retes
 grep -q "so this change broke it" "$LOG" && bad "cache: the change was blamed" || ok "cache: the change is not blamed"
 
 echo ""
+
+echo "=== the tip moves by a documents-only commit during the gate: judged against the built base, no re-sync (#390) ==="
+# gate2 lands a documents-only commit on master mid-gate (a note page), then runs the gate.
+cat > "$TMP/gate2.sh" <<G
+if [ -e "$TMP/landdocs" ]; then
+  rm -f "$TMP/landdocs"
+  ( cd "$TMP/fixer" && git pull -q origin master && echo note > NOTES.md && git add NOTES.md \\
+      && git commit -q -m "docs: a note" && git push -q origin master ) >/dev/null 2>&1
+  git fetch -q origin master
+fi
+exec bash "$TMP/gate.sh" "\$@"
+G
+master_set bad
+RED=$(git rev-parse origin/master)
+touch "$TMP/landdocs"
+run_one 37504 src.txt change4 "bash $TMP/gate2.sh"
+[ "$(attempt 37504)" = "parked red_base=true" ] && ok "docs move: the red base it was built on is recognised" || bad "docs move attempt: $(attempt 37504); log: $(cat "$LOG")"
+grep -q "documents-only file(s) since this tree was built" "$LOG" && ok "docs move: the log says the tip moved by documents only" || bad "docs move: no documents-only line: $(grep -nE 'moved|documents' "$LOG")"
+grep -q "origin/master has since moved to" "$LOG" && bad "docs move: a re-sync re-gate ran for a documents-only delta" || ok "docs move: no re-sync re-gate"
+grep -q "Gating origin/master (${RED:0:8}," "$LOG" && ok "docs move: the base gated alone is the tree's own base ${RED:0:8}" || bad "docs move base line: $(grep -n 'Gating origin' "$LOG")"
+[ "$(git -C "$TMP/fixer" log --oneline -1 origin/master 2>/dev/null | grep -c 'docs: a note')" = 1 ] || git -C "$TMP/fixer" fetch -q origin
+grep -q "so this change broke it" "$LOG" && bad "docs move: the change was blamed" || ok "docs move: the change is not blamed"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
