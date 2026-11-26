@@ -280,7 +280,7 @@ names the failures that repeat. `/analyze-traces` runs both.
 
 ```
 trace-build.py [--issue-events PATH] [--merge-events PATH] [--landing-timings PATH]
-               [--gate-log PATH] [--log-dir DIR] [--comments-dir DIR]
+               [--gate-log PATH] [--ticks PATH] [--log-dir DIR] [--comments-dir DIR]
                [--out PATH|-] [--since DATE] [--until DATE] [--repo-id ID] [--slack MINUTES]
                [--repo DIR] [--train-gate-issue N]
 ```
@@ -320,6 +320,9 @@ null while open), `next_attempt` (the next attempt's claim, or null), `outcome`
 - **Tick**: the gate.jsonl row whose `claimed` names the issue, written in the ten minutes
   before the attempt started.
 
+Attempt traces carry `kind: "attempt"`. Each line of `ticks.jsonl` becomes a trace of
+`kind: "tick"`; see [Operational loops' ticks](#operational-loops-ticks).
+
 `--since`/`--until` keep attempts whose start is in `[since, until)`. The train's gate issue
 carries claims and no work, so its traces are dropped: `--train-gate-issue N` names it, and by
 default it is `train.gateIssue` in the main-worktree `.autocoder.json` of `--repo DIR` (default:
@@ -345,8 +348,8 @@ analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE]
 ```
 
 `classifiers()` returns the registry: each row has an id, the rules it cites, the surface it
-points at (`commands/fix.md § <heading>`, `scripts/<name>`, `gate`, `integration branch` or
-`tool`), a `match` that returns evidence or None, and a `group` that splits hits into findings
+points at (`commands/fix.md § <heading>`, `scripts/<name>`, `gate`, `integration branch`,
+`tool` or `loop`), a `match` that returns evidence or None, and a `group` that splits hits into findings
 by key (the failing suite, the return cause, the most-failing tool). `tool-errors` fires at an
 error share above `--tool-error-share` (default 0.25) with at least ten calls. `claim-bounced`
 fires on an attempt released within two minutes of its claim with no READY and no gate (B13,
@@ -362,6 +365,72 @@ JSON on stdin. `CMD` prints a JSON array of `{"rule", "evidence", "confidence"}`
 exit, non-JSON, a non-array or an element without a string `rule` is a judge error, counted and
 never a finding. Judged findings have id `judged`, key the rule, and `judge_prompt` naming the
 prompt file. A new prompt is a new file.
+
+## Operational loops' ticks
+
+The loops around a swarm (a queue pass, a merge train's cycle hook, a health check, a sentinel
+tick, a watchdog) record each run as one line of a fifth ledger (#422), so the analyst can name a
+loop that keeps failing, runs slow, does nothing, or stops running. Loop ids are the writer's
+choice; the plugin names none.
+
+```
+${AUTOCODER_TICKS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/ticks.jsonl}
+
+{"v":1,"ts":"2026-11-20T22:20:00Z","repo":"agents-3f9a1c2b","loop":"queue-pass","run_id":"03",
+ "duration_s":12.3,"outcome":"ok|noop|error|timeout","observed":{"queued":4},"actions":{"claimed":1},
+ "error":null}
+```
+
+`ts` is the run's start. `observed` holds what the run saw and `actions` what it did. `duration_s`
+is null when the start was not recorded. The file is not rotated.
+
+A shell loop sources `tick-fns.sh`:
+
+```bash
+source "$SCRIPT_DIR/tick-fns.sh"
+tick_start queue-pass            # [run_id], default: the start time and $$
+# ... the run ...
+tick_end ok observed.queued=4 actions.claimed=1      # or: tick_end error error="lock held"
+```
+
+`tick_start` writes nothing; it only notes the loop, the run id and the start time. `tick_end`
+writes the line, with `repo` from `autocoder_repo_id` (else the checkout's directory name) and
+values that read as numbers written as numbers. `tick_end` with no `tick_start` writes
+`duration_s: null` under the calling script's name. Recording is best effort: an unwritable ledger
+or a bad argument writes nothing and still returns 0.
+
+A Python loop runs `tick-log.py`, which writes the same line:
+
+```
+tick-log.py --loop L --outcome O [--run-id R] [--duration-s S] [--observed JSON] [--actions JSON]
+            [--error TEXT] [--repo ID] [--ts ISO] [observed.KEY=VALUE | actions.KEY=VALUE | error=TEXT ...]
+```
+
+It exits 1 with a line on stderr when the line cannot be written, and 2 on a bad argument.
+
+`trace-build.py` reads the ledger (`--ticks PATH`) and turns each line into a trace of
+`kind: "tick"`, joined to nothing: trace id `<repo>:tick:<loop>:<run_id>`, the loop id as `worker`,
+`started` the line's `ts`, `ended` the start plus `duration_s` (null when that is null), the run's
+`outcome`, and `tick: {duration_s, observed, actions, error}`. The attempt keys a tick lacks are null
+or empty. A line with no parseable `ts`, no `loop`, no `run_id`, or another outcome counts as
+malformed. `--repo-id`, `--since` and `--until` apply to ticks too.
+
+`analyze-traces.py`'s attempt classifiers never see a tick. Four tick classifiers read one
+repository's ticks of one loop at a time, in start order, key their findings by loop id, and cite
+rules B14 to B17 with surface `loop`:
+
+| Classifier | Fires on | Rule |
+|---|---|---|
+| `tick-error-streak` | each tick in a run of three or more consecutive `error` or `timeout` outcomes | B14 |
+| `tick-slow` | a tick that took more than five times its loop's median duration, over at least ten timed ticks | B15 |
+| `tick-noop-only` | the latest tick of a loop with at least ten ticks in the corpus's last 24 hours, all `noop` (one finding per idle loop) | B16 |
+| `tick-missing` | the tick before a silence longer than five times the loop's median gap, over at least ten ticks; the silence after the last tick runs to the corpus's end (`resumed: null`) | B17 |
+
+The corpus's end is its latest tick start. A tick finding's share is of the ticks, an attempt
+finding's of the attempts; the report's `ticks` counts the ticks in the corpus. The judge never
+reads a tick. `landing-report.py --week` counts tick findings in its loop block as it counts any
+other. A case written for a tick finding cannot name a tick classifier in `classifiers_silent`,
+because the verifier reads one attempt.
 
 ## Evaluation cases
 

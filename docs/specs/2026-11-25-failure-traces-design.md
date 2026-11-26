@@ -403,6 +403,35 @@ wrong or short:
 - A release after a gate that landed or parked is `released`, not `open`.
 - Every classifier's weight is 1.0 until a reason to rank one class above another appears.
 
+## Operational loops' ticks (#422)
+
+Added on 2026-11-26. The loops around a swarm leave logs nothing joins, so a fifth ledger,
+`ticks.jsonl`, takes one line per run of an operational loop: `ts` (the start), `repo`, `loop`,
+`run_id`, `duration_s`, `outcome` (`ok|noop|error|timeout`), `observed`, `actions`, `error`.
+`tick-fns.sh` (`tick_start`, `tick_end`) and `tick-log.py` write it; neither rotates it.
+
+Each line is a trace of `kind: "tick"`, joined to nothing, and attempt traces gain
+`kind: "attempt"` with no other change to their shape. A tick trace keeps the attempt keys, null or
+empty, so a reader that reads `issue` or `gates` needs no branch. Its `tick` holds
+`{duration_s, observed, actions, error}`, a different shape from an attempt's gate `tick`; `kind`
+tells them apart.
+
+Attempt classifiers never see a tick. A tick classifier reads one repository's ticks of one loop at
+a time, because a streak, a median and a cadence exist only across runs, and returns evidence by
+trace id. Four ship: `tick-error-streak` (B14), `tick-slow` (B15), `tick-noop-only` (B16) and
+`tick-missing` (B17), with the thresholds in `scripts/README-measurement-tooling.md`. Two choices
+the issue left open:
+
+- `tick-noop-only` fires once per idle loop, on its latest tick, and needs ten ticks inside the
+  last day. If it fired on every tick, a five-minute loop idle for a day would score 288 and outrank
+  every attempt finding.
+- `tick-missing` also measures the silence after a loop's last tick, up to the corpus's latest
+  tick start. Otherwise a loop that stopped for good, the case that matters most, would never fire.
+
+A finding's share is of its own kind, so ticks do not dilute the attempts' shares. The judge reads
+attempts only. Evaluation cases are attempts, so a case for a tick finding has an empty
+`classifiers_silent`.
+
 ## Decisions
 
 - **Compiler, not emitter.** The ledgers and transcripts already hold the steps, tool calls and
