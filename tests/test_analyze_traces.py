@@ -1,4 +1,4 @@
-"""analyze-traces.py: classifiers, priority, report and the judged pass, on the fixture corpus (#395)."""
+"""analyze-traces.py: classifiers, priority, report and the judged pass, on the fixture corpus (#395, #422)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -19,14 +20,12 @@ A, B = "repo-a-1234abcd", "repo-b-5678efgh"
 
 
 def env_for(tmp_path, **extra):
-    e = {k: v for k, v in os.environ.items() if k != "AUTOCODER_TRACES"}
+    e = {k: v for k, v in os.environ.items() if k not in ("AUTOCODER_TRACES", "AUTOCODER_TICKS")}
     e.update({"XDG_STATE_HOME": str(tmp_path / "state"), "TZ": "UTC", **extra})
     return e
 
 
-@pytest.fixture(scope="module")
-def corpus(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("corpus")
+def build_corpus(tmp, *extra):
     out = tmp / "traces.jsonl"
     r = subprocess.run([sys.executable, str(SCRIPTS / "trace-build.py"),
                         "--issue-events", str(FIXTURES / "issue-events.jsonl"),
@@ -34,9 +33,14 @@ def corpus(tmp_path_factory):
                         "--landing-timings", str(FIXTURES / "landing-timings.jsonl"),
                         "--gate-log", str(FIXTURES / "gate.jsonl"), "--train-gate-issue", "23",
                         "--log-dir", str(FIXTURES), "--comments-dir", str(FIXTURES / "comments"),
-                        "--out", str(out)], capture_output=True, text=True, env=env_for(tmp), cwd=tmp)
+                        "--out", str(out), *extra], capture_output=True, text=True, env=env_for(tmp), cwd=tmp)
     assert r.returncode == 0, r.stderr
     return out
+
+
+@pytest.fixture(scope="module")
+def corpus(tmp_path_factory):
+    return build_corpus(tmp_path_factory.mktemp("corpus"))
 
 
 def analyze(tmp_path, traces, *args, **extra_env):
@@ -94,7 +98,7 @@ def load_analyst():
 
 
 def test_every_classifier_has_a_row():
-    assert sorted(c.id for c in load_analyst().classifiers()) == sorted(EXPECTED)
+    assert sorted(c.id for c in load_analyst().classifiers()) == sorted({**EXPECTED, **TICK_EXPECTED})
 
 
 @pytest.mark.parametrize("classifier_id", sorted(EXPECTED))
@@ -194,7 +198,7 @@ def test_markdown_report(tmp_path, corpus):
     assert lines[0] == "# Trace findings"
     section = lines.index("## gate-red-suite: tests/test_x.sh")
     assert lines[section + 2:section + 6] == [
-        "- Rules: B01", "- Surface: gate", f"- Count: 1 ({1 / CORPUS:.0%} of the corpus)",
+        "- Rules: B01", "- Surface: gate", f"- Count: 1 ({1 / CORPUS:.0%} of the attempts)",
         f'- `{A}:11:1`: {{"tests_failed": ["tests/test_x.sh"]}}']
     assert "## red-base" in lines
     tail = lines[lines.index("## Corpus"):]
@@ -282,3 +286,113 @@ def test_judge_all_judges_every_trace(tmp_path, corpus):
     assert calls == CORPUS
     assert rep["judge"]["traces"] == CORPUS
 
+
+
+# ── ticks (#422) ─────────────────────────────────────────────────────────────
+# Tick classifier -> the fixture ticks it fires on (tests/fixtures/traces/ticks.jsonl). The healthy
+# loop is the near miss: two errors in a row, and one run 4.5 times its median.
+TICK_EXPECTED = {
+    "tick-error-streak": [f"{A}:tick:streaky:02", f"{A}:tick:streaky:03", f"{A}:tick:streaky:04"],
+    "tick-slow": [f"{A}:tick:slow:06"],
+    "tick-noop-only": [f"{A}:tick:idle:12"],
+    "tick-missing": [f"{A}:tick:lapsed:10", f"{B}:tick:stopped:10"],
+}
+TICKS = 63
+
+
+@pytest.fixture(scope="module")
+def mixed(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("mixed")
+    return report(tmp, build_corpus(tmp, "--ticks", str(FIXTURES / "ticks.jsonl")))
+
+
+@pytest.mark.parametrize("classifier_id", sorted(TICK_EXPECTED))
+def test_tick_classifier_fires_on_exactly_its_scenario(mixed, classifier_id):
+    found = [f for f in mixed["findings"] if f["id"] == classifier_id]
+    assert sorted(t for f in found for t in f["traces"]) == TICK_EXPECTED[classifier_id]
+    assert {f["key"] for f in found} == {t.split(":")[2] for t in TICK_EXPECTED[classifier_id]}
+    assert {(f["kind"], f["surface"]) for f in found} == {("tick", "loop")}
+
+
+def test_no_attempt_classifier_sees_a_tick(full, mixed):
+    def attempt_findings(rep):
+        return [(f["id"], f["key"], f["traces"], f["evidence"], f["share"]) for f in rep["findings"] if f["kind"] == "attempt"]
+    assert attempt_findings(mixed) == attempt_findings(full)
+    assert not [t for f in mixed["findings"] if f["id"] in EXPECTED for t in f["traces"] if ":tick:" in t]
+
+
+def test_tick_evidence_and_share(mixed):
+    by_id = {f["id"]: f for f in mixed["findings"]}
+    assert by_id["tick-slow"]["evidence"] == [
+        {"trace_id": f"{A}:tick:slow:06", "loop": "slow", "duration_s": 60.0, "median_s": 10.0}]
+    assert by_id["tick-slow"]["share"] == round(1 / TICKS, 3)
+    assert by_id["tick-noop-only"]["evidence"] == [
+        {"trace_id": f"{A}:tick:idle:12", "loop": "idle", "noop_ticks": 12, "since": "2026-11-20T12:00:00Z"}]
+    gaps = {f["key"]: f["evidence"][0] for f in mixed["findings"] if f["id"] == "tick-missing"}
+    assert gaps == {
+        "lapsed": {"trace_id": f"{A}:tick:lapsed:10", "loop": "lapsed", "gap_s": 7200, "median_gap_s": 600,
+                   "resumed": "2026-11-20T22:30:00Z"},
+        "stopped": {"trace_id": f"{B}:tick:stopped:10", "loop": "stopped", "gap_s": 15300, "median_gap_s": 300,
+                    "resumed": None}}
+    streak = next(f for f in mixed["findings"] if f["id"] == "tick-error-streak")
+    assert [(e["outcome"], e["streak"], e["error"]) for e in streak["evidence"]] == [
+        ("error", 3, "lock held"), ("timeout", 3, "killed after 300s"), ("error", 3, "lock held")]
+
+
+def test_corpus_counts_ticks(mixed, tmp_path):
+    assert (mixed["corpus"], mixed["ticks"]) == (CORPUS + TICKS, TICKS)
+    r = analyze(tmp_path, build_corpus(tmp_path, "--ticks", str(FIXTURES / "ticks.jsonl")))
+    lines = r.stdout.splitlines()
+    section = lines.index("## tick-slow: slow")
+    assert lines[section + 2:section + 5] == ["- Rules: B15", "- Surface: loop", f"- Count: 1 ({1 / TICKS:.0%} of the ticks)"]
+    assert lines[lines.index("## Corpus") + 2:lines.index("## Corpus") + 4] == [
+        f"- Traces: {CORPUS + TICKS}", f"- Ticks among them: {TICKS}"]
+
+
+def test_since_until_apply_to_ticks(tmp_path):
+    corpus = build_corpus(tmp_path, "--ticks", str(FIXTURES / "ticks.jsonl"))
+    rep = report(tmp_path, corpus, "--since", "2026-11-20T22:00:00Z", "--until", "2026-11-20T22:40:00Z")
+    assert rep["ticks"] == 14   # healthy, streaky and slow 4 each, lapsed and idle 1 each
+    assert {f["id"] for f in rep["findings"] if f["kind"] == "tick"} == {"tick-error-streak"}
+
+
+def test_judge_reads_no_ticks(tmp_path):
+    corpus = build_corpus(tmp_path, "--ticks", str(FIXTURES / "ticks.jsonl"))
+    calls = tmp_path / "calls"
+    rep = report(tmp_path, corpus, "--judge", fake_judge(tmp_path, "echo '[]'\n"), "--judge-all",
+                 JUDGE_CALLS=str(calls), JUDGE_LAST=str(tmp_path / "last"))
+    assert len(calls.read_text().splitlines()) == rep["judge"]["traces"] == CORPUS
+
+
+def tick(minute, outcome="ok", duration=1.0, loop="l"):
+    started = datetime(2026, 11, 20, tzinfo=timezone.utc) + timedelta(minutes=minute)
+    return {"kind": "tick", "trace_id": f"r:tick:{loop}:{minute}", "repo": "r", "loop": loop,
+            "started": started.strftime("%Y-%m-%dT%H:%M:%SZ"), "outcome": outcome, "tick": {"duration_s": duration}}
+
+
+def tick_hits(classifier_id, ticks):
+    analyst = load_analyst()
+    c = {c.id: c for c in analyst.classifiers()}[classifier_id]
+    return sorted(tid for loop in analyst.loops_of(ticks) for tid in c.match(loop))
+
+
+@pytest.mark.parametrize("classifier_id,ticks,hits", [
+    ("tick-noop-only", [tick(60 * i, "noop") for i in range(10)], ["r:tick:l:540"]),
+    ("tick-noop-only", [tick(60 * i, "noop") for i in range(9)], []),
+    ("tick-noop-only", [tick(60 * i, "ok" if i == 9 else "noop") for i in range(10)], []),
+    # Older than the corpus's last day: the ok tick does not count, the ten noops after it do.
+    ("tick-noop-only", [tick(0, "ok")] + [tick(1500 + 60 * i, "noop") for i in range(10)], ["r:tick:l:2040"]),
+    ("tick-slow", [tick(i, duration=1.0) for i in range(9)] + [tick(9, duration=60.0)], ["r:tick:l:9"]),
+    ("tick-slow", [tick(i, duration=1.0) for i in range(8)] + [tick(9, duration=60.0)], []),
+    ("tick-slow", [tick(i, duration=None) for i in range(12)], []),
+    ("tick-missing", [tick(i) for i in range(9)], []),
+    ("tick-missing", [tick(i) for i in range(10)] + [tick(14)], []),
+    ("tick-missing", [tick(i) for i in range(10)] + [tick(15)], ["r:tick:l:9"]),
+    # Another loop's later tick is the corpus's end, so the silence after this loop's last tick counts.
+    ("tick-missing", [tick(i) for i in range(10)] + [tick(60, loop="other")], ["r:tick:l:9"]),
+    ("tick-error-streak", [tick(i, o) for i, o in enumerate(["error", "timeout", "ok", "error", "error"])], []),
+    ("tick-error-streak", [tick(i, o) for i, o in enumerate(["ok", "timeout", "error", "error"])],
+     ["r:tick:l:1", "r:tick:l:2", "r:tick:l:3"]),
+])
+def test_tick_classifier_bounds(classifier_id, ticks, hits):
+    assert tick_hits(classifier_id, ticks) == hits

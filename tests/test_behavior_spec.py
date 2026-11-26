@@ -18,7 +18,7 @@ ROW_RE = re.compile(r"^\|\s*B\d+\s*\|")
 CITATION_RE = re.compile(r"^`([^`]+)`\s*(.*)$")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.M)
 QUALIFIER_RE = re.compile(r"\s*\([^()]*\)$")
-PLAIN_SURFACES = {"gate", "integration branch", "tool"}
+PLAIN_SURFACES = {"gate", "integration branch", "tool", "loop"}
 
 
 def parse_rules(text: str) -> list[dict]:

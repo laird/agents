@@ -70,6 +70,11 @@ VERIFY_DEFAULTS = {
     "red-base": {"outcome": None, "classifiers_silent": [], "max_gates": 1},
     "tool-errors": {"outcome": "landed", "classifiers_silent": ["tool-errors"]},
     "session-without-gate": {"outcome": None, "classifiers_silent": ["session-without-gate"]},
+    # A tick classifier reads a loop's runs, not the attempt a case leaves, so a verifier cannot name it.
+    "tick-error-streak": {"outcome": None, "classifiers_silent": []},
+    "tick-slow": {"outcome": None, "classifiers_silent": []},
+    "tick-noop-only": {"outcome": None, "classifiers_silent": []},
+    "tick-missing": {"outcome": None, "classifiers_silent": []},
 }
 # A judged finding has no classifier: the attempt must still land.
 JUDGED_VERIFY = {"outcome": "landed"}
@@ -80,7 +85,8 @@ def default_verify(classifier_id: str) -> dict:
 
 
 def classifier_ids() -> set[str]:
-    return {c.id for c in ANALYST.classifiers()}
+    """The classifiers a verifier can name in classifiers_silent: those that read one attempt."""
+    return {c.id for c in ANALYST.classifiers() if c.kind == "attempt"}
 
 
 def read_rules(spec: Path) -> dict[str, str]:
