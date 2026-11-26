@@ -98,6 +98,15 @@ assert_eq "custom readyLabels: only the issue with neither label is claimed" '{"
 assert_eq "custom readyLabels: both ready issues stay open" "yes yes" "$(still_open 1) $(still_open 2)"
 assert_eq "custom readyLabels: both skips are counted" "2" "$(ready_count)"
 
+# ── 5. Only ready issues: the gate idles and claims nothing ───────────────
+printf '{"train": {}}\n' > "$REPO/.autocoder.json"
+reset_issues
+add_issue 1 "bug, P0, ready-for-review"; add_issue 2 "bug, P1, ready-for-review"
+RC=$(run_gate)
+assert_eq "only ready issues: gate exits 1 (idle)" "1" "$RC"
+assert_eq "only ready issues: no work plan" "" "$(work_plan)"
+assert_eq "only ready issues: both stay open" "yes yes" "$(still_open 1) $(still_open 2)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -13,9 +13,13 @@
 #   release-gate-claim.sh <issue> "<reason>"
 #
 # Releases only a claim this worktree's gate recorded (the worker-state record,
-# worker-state-fns.sh) and only before /fix has started on it: if a
-# feature/issue-<N> branch exists here or on origin, the work has begun and /fix's
-# explicit-release path (comment + label removal) is the right tool, not this.
+# worker-state-fns.sh) and only before /fix has started on it HERE: if a
+# feature/issue-<N> branch exists in this checkout, the work has begun and /fix's
+# explicit-release path (comment + label removal) is the right tool, not this. A
+# branch that exists only on origin is another worker's (a banked READY, a
+# worker mid-flight whose claim the gate took over): the gate's label is still
+# the only thing this worktree put on the issue, and giving it back is right
+# (athena2#7185; the still-ours check below keeps a rival's claim untouched).
 #
 # Exit codes:
 #   0  released, or the claim had already ended or passed to another worker
@@ -46,11 +50,11 @@ if [ "$HELD" != "$N" ]; then
   exit 1
 fi
 
-# A remote check that fails reads as "no branch": a branch pushed from another
-# clone means another worker, and the still-ours check below catches its claim.
-if git show-ref --verify --quiet "refs/heads/feature/issue-${N}" \
-   || [ -n "$(git ls-remote --heads origin "feature/issue-${N}" 2>/dev/null)" ]; then
-  echo "release-gate-claim: feature/issue-${N} exists, so work on #${N} has started; use /fix's explicit release instead" >&2
+# Only a LOCAL branch means this worktree started the work (claim-issue.sh cuts
+# it here); a branch on origin alone is another worker's, and the still-ours
+# check below keeps that worker's own claim untouched.
+if git show-ref --verify --quiet "refs/heads/feature/issue-${N}"; then
+  echo "release-gate-claim: feature/issue-${N} exists in this checkout, so work on #${N} has started here; use /fix's explicit release instead" >&2
   exit 1
 fi
 
