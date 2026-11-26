@@ -562,7 +562,24 @@ assert_contains "tmux restart respawns the cwd pane" "respawn-pane -k -t claude-
 assert_not_contains "tmux restart error is not a missing session" "No tmux session" "$(cat "$T/restart.err" "$T/restart.out")"
 
 # --ensure installs one cron line and keeps the others.
-# A cron daemon is "running", so this host's systemd user manager is not chosen.
+# PATH is this test's fakes plus the real PATH minus crontab, systemctl,
+# loginctl, launchctl, uname and pgrep. A GitHub runner has a real crontab
+# and a systemd user manager; leaving them on PATH makes "no crontab" and
+# "no scheduler" cases install the host's cron instead of the fake.
+SAFEBIN="$T/safebin"
+mkdir -p "$SAFEBIN"
+IFS=: read -ra _dirs <<< "$PATH"
+for _d in "${_dirs[@]}"; do
+  [ -d "$_d" ] || continue
+  for _f in "$_d"/*; do
+    _n=${_f##*/}
+    case "$_n" in crontab|systemctl|loginctl|launchctl|uname|pgrep) continue ;; esac
+    [ -e "$SAFEBIN/$_n" ] && continue
+    [ -x "$_f" ] && [ ! -d "$_f" ] && ln -s "$_f" "$SAFEBIN/$_n" 2>/dev/null
+  done
+done
+SCHEDPATH="$T/bin:$SAFEBIN"
+# A cron daemon is "running", so a systemd user manager is not chosen.
 cat > "$T/bin/pgrep" <<'STUB'
 #!/bin/bash
 if [ "${1:-}" = -x ] && { [ "${2:-}" = cron ] || [ "${2:-}" = crond ]; }; then
@@ -573,15 +590,15 @@ STUB
 chmod +x "$T/bin/pgrep"
 export CRONTAB_FILE="$T/crontab"
 echo "0 3 * * * existing-job" > "$CRONTAB_FILE"
-OUT=$(FAKE_CROND=yes PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO")
+OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO")
 assert_contains "ensure installs the entry" "installed cron entry" "$OUT"
-OUT=$(FAKE_CROND=yes PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO")
+OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO")
 assert_contains "ensure is idempotent" "already installed" "$OUT"
 [ "$(grep -c 'autocoder-quota-failover:' "$CRONTAB_FILE")" = "1" ] \
   && ok "exactly one quota cron line" || bad "exactly one quota cron line — $(cat "$CRONTAB_FILE")"
 assert_contains "existing cron jobs are preserved" "existing-job" "$(cat "$CRONTAB_FILE")"
 assert_contains "cron line runs --once" "--once" "$(cat "$CRONTAB_FILE")"
-if OUT=$(FAKE_CROND=yes PATH="$T/bin:/usr/bin:/bin" timeout 3 bash "$SCRIPT" --loop --repo "$REPO" 2>&1); then
+if OUT=$(FAKE_CROND=yes PATH="$SCHEDPATH" timeout 3 bash "$SCRIPT" --loop --repo "$REPO" 2>&1); then
   bad "--loop with cron exits non-zero"
 else
   ok "--loop with cron exits non-zero"
@@ -609,13 +626,13 @@ cat > "$T/bin/loginctl" <<'EOF'
 echo "Linger=${FAKE_LINGER:-no}"
 EOF
 chmod +x "$T/bin/systemctl" "$T/bin/loginctl"
-OUT=$(SYSD="$T/sysd" FAKE_LINGER=no SYSTEMCTL_DOWN=0 PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+OUT=$(SYSD="$T/sysd" FAKE_LINGER=no SYSTEMCTL_DOWN=0 PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
 assert_contains "systemd ensure names the timer" "installed systemd user timer" "$OUT"
 assert_contains "systemd ensure notes linger" "loginctl enable-linger" "$OUT"
 UNIT=$(find "$HOME/.config/systemd/user" -name 'autocoder-quota-failover-*.timer' 2>/dev/null | head -1)
 [ -n "$UNIT" ] && ok "systemd timer file written" || bad "systemd timer file written"
 grep -q 'OnUnitInactiveSec=120s' "$UNIT" && ok "quota timer is every 2 minutes" || bad "timer interval: $(cat "$UNIT" 2>/dev/null)"
-OUT=$(SYSD="$T/sysd" PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+OUT=$(SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
 assert_contains "systemd re-run is idempotent" "systemd entry already installed" "$OUT"
 mv "$T/bin/crontab.off" "$T/bin/crontab"
 [ "$(grep -c 'autocoder-quota-failover:' "$CRONTAB_FILE")" = "1" ] \
@@ -637,7 +654,7 @@ chmod +x "$T/bin/uname" "$T/bin/launchctl"
 : > "$CRONTAB_FILE"
 echo "0 3 * * * existing-job" > "$CRONTAB_FILE"
 rm -rf "$HOME/.config/systemd" "$HOME/Library"
-OUT=$(FAKE_UNAME=Darwin FAKE_CROND=yes SYSD="$T/sysd" PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
+OUT=$(FAKE_UNAME=Darwin FAKE_CROND=yes SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
 assert_contains "launchd ensure names the agent" "installed launchd agent" "$OUT"
 PLIST=$(find "$HOME/Library/LaunchAgents" -name 'com.autocoder.quota-failover.*.plist' 2>/dev/null | head -1)
 [ -n "$PLIST" ] && ok "LaunchAgent plist written" || bad "LaunchAgent plist written"
@@ -648,7 +665,7 @@ grep -q 'autocoder-quota-failover:' "$CRONTAB_FILE" \
 # Nothing available.
 rm -f "$T/bin/crontab" "$T/bin/launchctl"
 rm -rf "$HOME/Library" "$HOME/.config/systemd"
-OUT=$(FAKE_UNAME= SYSTEMCTL_DOWN=1 SYSD="$T/sysd" PATH="$T/bin:/usr/bin:/bin" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1); RC=$?
+OUT=$(FAKE_UNAME= SYSTEMCTL_DOWN=1 SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1); RC=$?
 [ "$RC" -ne 0 ] && ok "no scheduler exits non-zero" || bad "no scheduler exits non-zero — rc $RC: $OUT"
 assert_contains "no scheduler names --loop" "--loop" "$OUT"
 assert_contains "no scheduler says none was found" "No scheduler available" "$OUT"
