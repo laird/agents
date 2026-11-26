@@ -14,8 +14,15 @@
 #   rebase       the working tree must be clean; HEAD is rebased onto <remote>/<integration>
 #                when it is behind (a conflict aborts the rebase and FAILS naming the files)
 #   merge-tree   git merge-tree --write-tree <remote>/<integration> HEAD is clean
+#   budget       (with --budget) a host preflight slot is taken from preflight-budget.sh's budget
+#                before anything heavy runs: the rows below run holding it, and it is released
+#                before the push. The wait is in line (a `hotfix/*` branch or --priority hotfix
+#                first, then arrival), admitted on memory and on CPU load, and the row's line says
+#                which slot came after how long. See preflight-budget.sh for the sizing variables.
 #   preflight    the project's own preflight command when one is configured (it prints its own
-#                rows; its exit status is the row's), ELSE the two generic rows below
+#                rows; its exit status is the row's), ELSE the two generic rows below. With
+#                --host-exclusive NAME it runs under the host-exclusive lock NAME (role preflight:
+#                a gate taking the same name goes first)
 #   build        the project's build-or-typecheck command over what changed, when configured
 #   tests        the project's test command over the CHANGED TEST FILES (`{files}`), when
 #                configured and at least one changed file matches the test pattern
@@ -29,17 +36,21 @@
 #   AUTOCODER_ENQUEUE_INTEGRATION   the integration branch name
 #   AUTOCODER_ENQUEUE_CHANGED_FILE  a file listing the changed paths, one per line
 #   AUTOCODER_ENQUEUE_TEST_FILES    (tests row) the changed test files, space-separated
+#   AUTOCODER_HOST_EXCLUSIVE_ROLE   preflight: a stage runner (or a script) taking a host-exclusive
+#                                   lock in the project's preflight yields to a gate wanting it
+#   AUTOCODER_SCRIPTS_DIR           where the plugin's scripts are (stage-runner.py, preflight-budget.sh)
 #
 # Usage:
 #   enqueue.sh --issue N [--branch B] [--repo DIR] [--remote NAME] [--integration BRANCH]
 #              [--preflight-cmd CMD] [--build-cmd CMD] [--test-cmd CMD] [--test-pattern REGEX]
+#              [--budget | --no-budget] [--priority hotfix|ordinary] [--host-exclusive NAME]
 #              [--add-label L]... [--remove-label L]... [--note TEXT]...
 #              [--no-fetch] [--no-push] [--no-post] [--block-only]
 #
 # Configuration, lowest precedence first: the `train.enqueue` object of the main worktree's
-# .autocoder.json {preflightCmd, buildCmd, testCmd, testPattern, workingLabel}, the environment
-# (AUTOCODER_ENQUEUE_PREFLIGHT_CMD, _BUILD_CMD, _TEST_CMD, _TEST_PATTERN, _WORKING_LABEL), then
-# the flags. The ready labels are `train.readyLabels` (default ready-for-review); the working
+# .autocoder.json {preflightCmd, buildCmd, testCmd, testPattern, workingLabel, budget (true/false),
+# hostExclusive (a stage name)}, the environment (AUTOCODER_ENQUEUE_PREFLIGHT_CMD, _BUILD_CMD,
+# _TEST_CMD, _TEST_PATTERN, _WORKING_LABEL, _BUDGET, _HOST_EXCLUSIVE, _PRIORITY), then the flags. The ready labels are `train.readyLabels` (default ready-for-review); the working
 # label removed at READY defaults to `working`. The integration branch and remote default to
 # the queue's (AUTOCODER_TRAIN_INTEGRATION / _REMOTE, `train.integration` / `train.remote`, the
 # remote HEAD, master).
@@ -54,9 +65,10 @@ REPO="." REMOTE="" INTEGRATION="" BRANCH="" ISSUE=""
 PREFLIGHT_CMD="${AUTOCODER_ENQUEUE_PREFLIGHT_CMD-}" BUILD_CMD="${AUTOCODER_ENQUEUE_BUILD_CMD-}"
 TEST_CMD="${AUTOCODER_ENQUEUE_TEST_CMD-}" TEST_PATTERN="${AUTOCODER_ENQUEUE_TEST_PATTERN-}"
 WORKING_LABEL="${AUTOCODER_ENQUEUE_WORKING_LABEL-}"
+BUDGET="${AUTOCODER_ENQUEUE_BUDGET-}" HOST_EXCLUSIVE="${AUTOCODER_ENQUEUE_HOST_EXCLUSIVE-}" PRIORITY="${AUTOCODER_ENQUEUE_PRIORITY-}"
 ADD_LABELS=() REMOVE_LABELS=() NOTES=()
 NO_FETCH=0 NO_PUSH=0 NO_POST=0 BLOCK_ONLY=0
-FLAG_PREFLIGHT="" FLAG_BUILD="" FLAG_TEST="" FLAG_PATTERN="" FLAG_WORKING=""
+FLAG_PREFLIGHT="" FLAG_BUILD="" FLAG_TEST="" FLAG_PATTERN="" FLAG_WORKING="" FLAG_BUDGET="" FLAG_EXCLUSIVE=""
 
 usage() { sed -n '2,/^set -uo pipefail/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
@@ -72,6 +84,10 @@ while [ $# -gt 0 ]; do
     --test-cmd) FLAG_TEST="$2"; shift 2 ;;
     --test-pattern) FLAG_PATTERN="$2"; shift 2 ;;
     --working-label) FLAG_WORKING="$2"; shift 2 ;;
+    --budget) FLAG_BUDGET=true; shift ;;
+    --no-budget) FLAG_BUDGET=false; shift ;;
+    --priority) PRIORITY="$2"; shift 2 ;;
+    --host-exclusive) FLAG_EXCLUSIVE="$2"; shift 2 ;;
     --add-label) ADD_LABELS+=("$2"); shift 2 ;;
     --remove-label) REMOVE_LABELS+=("$2"); shift 2 ;;
     --note) NOTES+=("$2"); shift 2 ;;
@@ -123,11 +139,21 @@ fi
 [ -n "$TEST_CMD" ] || TEST_CMD="$(_cfg train.enqueue.testCmd)"
 [ -n "$TEST_PATTERN" ] || TEST_PATTERN="$(_cfg train.enqueue.testPattern)"
 [ -n "$WORKING_LABEL" ] || WORKING_LABEL="$(_cfg train.enqueue.workingLabel)"
+[ -n "$BUDGET" ] || BUDGET="$(_cfg train.enqueue.budget)"
+[ -n "$HOST_EXCLUSIVE" ] || HOST_EXCLUSIVE="$(_cfg train.enqueue.hostExclusive)"
 [ -n "$FLAG_PREFLIGHT" ] && PREFLIGHT_CMD="$FLAG_PREFLIGHT"
 [ -n "$FLAG_BUILD" ] && BUILD_CMD="$FLAG_BUILD"
 [ -n "$FLAG_TEST" ] && TEST_CMD="$FLAG_TEST"
 [ -n "$FLAG_PATTERN" ] && TEST_PATTERN="$FLAG_PATTERN"
 [ -n "$FLAG_WORKING" ] && WORKING_LABEL="$FLAG_WORKING"
+[ -n "$FLAG_BUDGET" ] && BUDGET="$FLAG_BUDGET"
+[ -n "$FLAG_EXCLUSIVE" ] && HOST_EXCLUSIVE="$FLAG_EXCLUSIVE"
+case "$(printf '%s' "$BUDGET" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) BUDGET=1 ;; *) BUDGET=0 ;; esac
+case "$(printf '%s' "$PRIORITY" | tr '[:upper:]' '[:lower:]')" in hotfix|ordinary|"") PRIORITY="$(printf '%s' "$PRIORITY" | tr '[:upper:]' '[:lower:]')" ;;
+  *) echo "enqueue: --priority must be hotfix or ordinary, got '$PRIORITY'" >&2; exit 2 ;; esac
+if [ -n "$HOST_EXCLUSIVE" ] && ! [[ "$HOST_EXCLUSIVE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+  echo "enqueue: --host-exclusive must be a stage name (letters, digits, . _ -), got '$HOST_EXCLUSIVE'" >&2; exit 2
+fi
 [ -n "$TEST_PATTERN" ] || TEST_PATTERN='(^|/)(tests?|__tests__|spec)/|[._](test|spec)\.[A-Za-z0-9]+$|(^|/)test_[^/]*\.py$'
 [ -n "$WORKING_LABEL" ] || WORKING_LABEL=working
 READY_LABELS="$(_cfg train.readyLabels)"; [ -n "$READY_LABELS" ] || READY_LABELS=ready-for-review
@@ -187,14 +213,30 @@ row_merge_tree() {
   echo "clean against $BASE_REF (${BASE_SHA:0:10}); $(grep -c . "$CHANGED_FILE") file(s) changed"
 }
 
-_project() {  # <command>: run a configured command in the repo root with the enqueue environment
+_project() {  # [--exclusive NAME] <command>: run a configured command in the repo root with the enqueue environment
+  local -a pre=()
+  if [ "$1" = --exclusive ]; then
+    pre=(bash "$SCRIPT_DIR/preflight-budget.sh" exclusive --name "$2" --role preflight --what "enqueue #$ISSUE $BRANCH" --); shift 2
+  fi
   AUTOCODER_ENQUEUE_BASE="$BASE_SHA" AUTOCODER_ENQUEUE_INTEGRATION="$INTEGRATION" AUTOCODER_ENQUEUE_CHANGED_FILE="$CHANGED_FILE" \
-    bash -c "$1" </dev/null
+    AUTOCODER_HOST_EXCLUSIVE_ROLE=preflight AUTOCODER_SCRIPTS_DIR="$SCRIPT_DIR" \
+    "${pre[@]+"${pre[@]}"}" bash -c "$1" </dev/null
 }
 
+# row_budget: a host preflight slot (preflight-budget.sh), held in THIS shell across the rows that follow (the
+# descriptor is the lock), released by budget_release before the push. The wait lines are the row's log; the
+# row's line says which slot came after how long.
+row_budget() {
+  # shellcheck source=preflight-budget.sh
+  source "$SCRIPT_DIR/preflight-budget.sh" || { echo "cannot source $SCRIPT_DIR/preflight-budget.sh"; return 1; }
+  pfb_acquire ${PRIORITY:+--priority "$PRIORITY"} --branch "$BRANCH" --what "enqueue #$ISSUE" || { echo "no preflight slot (see the lines above); nothing ran"; return 1; }
+  echo "$PFB_BUDGET_LINE"
+}
+budget_release() { command -v pfb_release >/dev/null 2>&1 && pfb_release; return 0; }
+
 row_preflight() {
-  echo "enqueue: running the project's preflight: $PREFLIGHT_CMD"
-  _project "$PREFLIGHT_CMD" 2>&1 | tee "$PREFLIGHT_LOG"
+  echo "enqueue: running the project's preflight: $PREFLIGHT_CMD${HOST_EXCLUSIVE:+ (under the host-exclusive lock $HOST_EXCLUSIVE, role preflight)}"
+  _project ${HOST_EXCLUSIVE:+--exclusive "$HOST_EXCLUSIVE"} "$PREFLIGHT_CMD" 2>&1 | tee "$PREFLIGHT_LOG"
   local rc=${PIPESTATUS[0]}
   [ "$rc" -eq 0 ] && echo "project preflight passed: $PREFLIGHT_CMD" || echo "project preflight FAILED (exit $rc): $PREFLIGHT_CMD"
   return "$rc"
@@ -232,8 +274,10 @@ row_push() {
 run_row fetch row_fetch
 run_row rebase row_rebase
 run_row merge-tree row_merge_tree
+[ "$BUDGET" -eq 0 ] || run_row budget row_budget
 if [ -n "$PREFLIGHT_CMD" ]; then run_row preflight row_preflight
 else run_row build row_build; run_row tests row_tests; fi
+budget_release
 run_row push row_push
 
 # ── the block ──────────────────────────────────────────────────────────────────
