@@ -351,15 +351,16 @@ pfb_acquire() {
     if [ -z "$cpu_line" ] && [ "$ahead" -eq 0 ] && pfb_slot_try "$PFB_SLOTS_DIR" "$PFB_SLOTS" "$detail"; then break; fi
     waited=$(( $(date +%s) - t0 ))
     pfb_slot_holders "$PFB_SLOTS_DIR"
+    # Say why before judging the bound, so a wait that ends at once on a slow host still names its reason.
+    if [ -n "$cpu_line" ]; then line="waiting: $cpu_line (position $((ahead + 1)) in line; $PFB_HOTFIX_AHEAD hotfix ahead; this one is $(pfb_rank_name "$rank"))"
+    else line="waiting: all $PFB_SLOTS slot(s) held ($PFB_HELD live; $(pfb_budget_line)); behind $ahead waiter(s), $PFB_HOTFIX_AHEAD hotfix ahead; this one is $(pfb_rank_name "$rank"); holders: ${PFB_HOLDERS:-none}"; fi
+    if [ "$line" != "$said" ]; then pfb_say "$line"; said="$line"; fi
     if [ "$waited" -ge "$waitmax" ]; then
       rm -f "$ticket"
       if [ -n "$cpu_line" ]; then pfb_say "no slot after ${waited}s (AUTOCODER_PREFLIGHT_WAIT_MAX_S=$waitmax): $cpu_line; $ahead waiting ahead. Wait for the load to fall, or raise AUTOCODER_PREFLIGHT_LOAD_FACTOR (off disables the rule)."
       else pfb_say "no slot after ${waited}s (AUTOCODER_PREFLIGHT_WAIT_MAX_S=$waitmax): all $PFB_SLOTS slot(s) held, $ahead waiting ahead ($PFB_HOTFIX_AHEAD hotfix); holders: ${PFB_HOLDERS:-none}"; fi
       return 1
     fi
-    if [ -n "$cpu_line" ]; then line="waiting: $cpu_line (position $((ahead + 1)) in line; $PFB_HOTFIX_AHEAD hotfix ahead; this one is $(pfb_rank_name "$rank"))"
-    else line="waiting: all $PFB_SLOTS slot(s) held ($PFB_HELD live; $(pfb_budget_line)); behind $ahead waiter(s), $PFB_HOTFIX_AHEAD hotfix ahead; this one is $(pfb_rank_name "$rank"); holders: ${PFB_HOLDERS:-none}"; fi
-    if [ "$line" != "$said" ]; then pfb_say "$line"; said="$line"; fi
     sleep "$poll"
     pfb_compute_slots
     [ "$PFB_SLOTS" = "$slots_seen" ] || { pfb_say "the host budget moved while waiting ($slots_seen -> $PFB_SLOTS slot(s): $PFB_GATES running gate(s) now)"; slots_seen="$PFB_SLOTS"; }

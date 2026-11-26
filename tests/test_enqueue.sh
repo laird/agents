@@ -158,9 +158,10 @@ git -C "$W" checkout -q feature/three-b
 out=$(enq --issue "$I3B" --block-only --preflight-cmd 'true'); RC=$?
 hasnt "budget: off by default (no row)" '^(PASS|FAIL|SKIP) budget ' "$out"
 # a slot that never comes fails the budget row, runs no preflight and posts nothing
-bash "$SCRIPTS/preflight-budget.sh" run --what other -- sleep 2 2>/dev/null &
-sleep 0.3
+bash "$SCRIPTS/preflight-budget.sh" run --what other -- sh -c "until [ -e '$TMP/go-budget' ]; do sleep 0.05; done" 2>/dev/null &
+i=0; until [ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]; do sleep 0.05; i=$((i + 1)); [ "$i" -lt 400 ] || break; done
 out=$(AUTOCODER_PREFLIGHT_WAIT_MAX_S=1 enq --issue "$I3B" --budget --preflight-cmd 'echo MUST-NOT-RUN'); RC=$?
+touch "$TMP/go-budget"
 eq "budget: no slot fails the enqueue (1)" 1 "$RC"
 has "budget: the row says no slot came and names the holder" '^FAIL budget .*no preflight slot' "$out"
 has "budget: the refusal named the holder" 'holders: slot 0: pid=[0-9]+ .*what=other' "$out"

@@ -71,7 +71,7 @@ reset; export AUTOCODER_PREFLIGHT_SLOTS=1
 out=$(run run --what smoke -- sh -c 'echo ran; exit 3' 2>&1); RC=$?
 eq "run: the command's exit status" 3 "$RC"
 has "run: the command ran" '^ran$' "$out"
-has "run: the line names the slot and the sizing" 'preflight budget: slot 1/1 after 0s in line; 1 slot\(s\) \(AUTOCODER_PREFLIGHT_SLOTS' "$out"
+has "run: the line names the slot and the sizing" 'preflight budget: slot 1/1 after [0-9]+s in line; 1 slot\(s\) \(AUTOCODER_PREFLIGHT_SLOTS' "$out"
 st=$(run status 2>&1)
 has "run: the slot is free after" '^held: 0$' "$st"
 has "run: nobody waits after" '^waiting: 0$' "$st"
@@ -114,9 +114,10 @@ has "cpu: the refusal names the reason and the remedy" 'no slot after [0-9]+s \(
 out=$(AUTOCODER_PREFLIGHT_WAIT_MAX_S=1 run run --priority hotfix -- sh -c 'echo MUST-NOT-RUN' 2>&1); RC=$?
 eq "cpu: a hotfix obeys the rule too" 1 "$RC"
 has "cpu: the hotfix's line says it is a hotfix" 'this one is hotfix\)' "$out"
-( sleep 0.6; printf '3.00 10.00 20.00 1/900 1\n' > "$LA" ) &
-out=$(run run -- sh -c 'echo RAN-WHEN-CLEAR' 2>&1); RC=$?
-wait
+run run -- sh -c 'echo RAN-WHEN-CLEAR' > "$TMP/clear.out" 2>&1 &
+wait_for 'grep -q "waiting: host 1-minute load 41.20" "$TMP/clear.out"'   # it is held by the load before it clears
+printf '3.00 10.00 20.00 1/900 1\n' > "$LA"
+wait $!; RC=$?; out=$(cat "$TMP/clear.out")
 eq "cpu: admitted once the load clears" 0 "$RC"
 has "cpu: it waited first" 'waiting: host 1-minute load 41.20' "$out"
 has "cpu: then ran" '^RAN-WHEN-CLEAR$' "$out"
@@ -171,17 +172,16 @@ for line in open(sys.argv[1]):
 sys.exit(0 if peak == 1 else 1)
 PY
 eq "race: every racer ran once" 6 "$(grep -c '^enter$' "$TRACE")"
-export AUTOCODER_PREFLIGHT_SLOTS=2; : > "$TRACE"
-for i in 1 2 3 4; do run run -- sh -c "echo enter >> '$TRACE'; sleep 0.3; echo exit >> '$TRACE'" 2>/dev/null & done
-wait
-python3 - "$TRACE" <<'PY' && ok "race: two slots admit two at once and never three" || bad "race: the two-slot peak was not 2"
-import sys
-depth = peak = 0
-for line in open(sys.argv[1]):
-    depth += 1 if line.strip() == "enter" else -1
-    peak = max(peak, depth)
-sys.exit(0 if peak == 2 else 1)
-PY
+export AUTOCODER_PREFLIGHT_SLOTS=2; : > "$TRACE"; reset
+# four racers that hold until a go-file: two are admitted and two wait, whatever the host's speed
+for i in 1 2 3 4; do run run -- sh -c "echo enter >> '$TRACE'; $(hold "$TMP/go6"); echo exit >> '$TRACE'" 2>/dev/null & done
+wait_for '[ "$(grep -c "^enter$" "$TRACE")" -eq 2 ] && [ "$(tickets)" -eq 2 ]'
+st=$(run status 2>&1)
+has "race: two slots admit two at once" '^held: 2$' "$st"
+has "race: and the other two wait" '^waiting: 2$' "$st"
+eq "race: never a third while two hold" 2 "$(grep -c '^enter$' "$TRACE")"
+touch "$TMP/go6"; wait
+eq "race: every racer ran once the slots freed" 4 "$(grep -c '^enter$' "$TRACE")"
 export AUTOCODER_PREFLIGHT_SLOTS=1
 n_mkdir=$(grep -cE '(^|[^A-Za-z_-])mkdir( |$)' "$LIB"); n_mkdir_p=$(grep -cE '(^|[^A-Za-z_-])mkdir -p( |$)' "$LIB")
 eq "claims: every mkdir in the library is mkdir -p (never an exit-status claim)" "$n_mkdir" "$n_mkdir_p"
