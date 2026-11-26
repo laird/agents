@@ -178,6 +178,10 @@ def test_fingerprint_parts_do_not_collide_and_seed_links_and_modes_count(tmp_pat
     run = seed / "real" / "lib.py"
     run.chmod(0o755)
     assert mod.manifest_id(selected) != retargeted
+    (seed / "empty").mkdir()
+    with_empty = mod.manifest_id(selected)
+    (seed / "empty").rmdir()
+    assert mod.manifest_id(selected) != with_empty
 
 
 def test_the_worker_sees_the_seed_the_setup_commit_and_the_issue(tmp_path, env):

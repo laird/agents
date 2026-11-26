@@ -300,6 +300,8 @@ def _seed_parts(case_dir: Path) -> list[bytes]:
             continue
         seen.add(key)
         rel_dir = current.relative_to(case_dir).as_posix()
+        if not dirnames and not filenames:
+            parts.append(f"dir {rel_dir}/\n".encode())
         for name in dirnames:
             link = current / name
             if link.is_symlink():
