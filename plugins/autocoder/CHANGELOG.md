@@ -58,6 +58,12 @@ once (Version Management in `docs/maintaining.md`).
   `depbot: unknown (pr list failed)`, never a silent zero. The planner now
   reads a branch whose last segment ends in a version (`...-4.17.21`) as a
   branch, not a file.
+- The merge train attributes a red to the member whose files a failing test
+  reaches (#378). When the failure names a test file and no member's own path,
+  the test's static imports (two hops) and the paths it reads are intersected
+  with each member's merge-base diff. One hit is returned and the rest are
+  re-gated as a set. Two or more are the only members bisected. None falls
+  through to the full bisection, as a failure that names no test still does.
 
 ## [4.70.0] - 2026-11-26
 

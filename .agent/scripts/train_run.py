@@ -370,6 +370,126 @@ def changed_files(cfg: T.Config, base, tip):
     return set(T.git(cfg.repo, "diff", "--name-only", "--no-renames", mb, tip).stdout.split())
 
 
+def _tree_has(cfg: T.Config, rev, path) -> bool:
+    return T.git(cfg.repo, "cat-file", "-e", f"{rev}:{path}").returncode == 0
+
+
+def _tree_blob(cfg: T.Config, rev, path) -> str:
+    r = T.git(cfg.repo, "show", f"{rev}:{path}")
+    return r.stdout if r.returncode == 0 else ""
+
+
+def _is_test_path(path: str) -> bool:
+    """A path the failure can name as the test that failed, rather than a source file."""
+    name = path.rsplit("/", 1)[-1]
+    if name.startswith("test_") or name.endswith("_test.py") or name.endswith(".test") or ".spec." in name:
+        return True
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    return any(part in ("test", "tests", "spec", "__tests__") for part in parent.split("/"))
+
+
+_PY_FROM_RE = re.compile(r"(?m)^[ \t]*from[ \t]+(\.*)([A-Za-z_][\w.]*)[ \t]+import[ \t]")
+_PY_IMPORT_RE = re.compile(r"(?m)^[ \t]*import[ \t]+([A-Za-z_][\w.]*(?:[ \t]*,[ \t]*[A-Za-z_][\w.]*)*)")
+_JS_SPEC_RE = re.compile(r"""(?:from|require\s*\(|import\s*\()\s*['\"]([^'\"]+)['\"]""")
+_READ_RE = re.compile(r"""(?:open|Path|read_text|read_bytes|source)\s*\(\s*['\"]([^'\"]+)['\"]""")
+
+
+def _py_mod_paths(mod: str):
+    if not mod:
+        return []
+    rel = mod.replace(".", "/")
+    return [rel + ".py", rel + "/__init__.py", rel + ".pyi"]
+
+
+def _py_rel_paths(file_path: str, dots: str, mod: str):
+    parts = file_path.split("/")[:-1]
+    up = len(dots) - 1
+    if up:
+        if up > len(parts):
+            return []
+        parts = parts[:-up]
+    if mod:
+        parts.extend(mod.split("."))
+    if not parts:
+        return []
+    rel = "/".join(parts)
+    return [rel + ".py", rel + "/__init__.py", rel + ".pyi"]
+
+
+def _js_paths(file_path: str, spec: str):
+    if not spec.startswith("."):
+        return []
+    base = file_path.split("/")[:-1]
+    for part in spec.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not base:
+                return []
+            base = base[:-1]
+        else:
+            base.append(part)
+    if not base:
+        return []
+    rel = "/".join(base)
+    if "." in rel.rsplit("/", 1)[-1]:
+        return [rel]
+    return [rel + ext for ext in (".js", ".ts", ".tsx", ".mjs", ".py")]
+
+
+def _keep_dep(cfg: T.Config, rev, path: str) -> bool:
+    """A repo path, or a slash-path a member may be adding. A bare stdlib name is not."""
+    path = path.lstrip("./")
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        return False
+    if _tree_has(cfg, rev, path):
+        return True
+    return "/" in path
+
+
+def _deps_of(cfg: T.Config, rev, file_path: str, text: str):
+    out = []
+
+    def add(cands):
+        for cand in cands:
+            cand = cand.lstrip("./")
+            if cand and cand not in out and _keep_dep(cfg, rev, cand):
+                out.append(cand)
+
+    for m in _PY_FROM_RE.finditer(text):
+        dots, mod = m.group(1), m.group(2)
+        add(_py_rel_paths(file_path, dots, mod) if dots else _py_mod_paths(mod))
+    for m in _PY_IMPORT_RE.finditer(text):
+        for mod in re.split(r"\s*,\s*", m.group(1)):
+            add(_py_mod_paths(mod.split()[0]))
+    for m in _JS_SPEC_RE.finditer(text):
+        add(_js_paths(file_path, m.group(1)))
+    for m in _READ_RE.finditer(text):
+        add([m.group(1)])
+    return out
+
+
+def reached_paths(cfg: T.Config, rev, starts) -> set:
+    """Modules and fixture paths a test file reaches: its static imports, two hops, and paths it reads.
+
+    The test file itself is not included. A hop whose file is not on `rev` still contributes the path
+    (a member may be adding it) and is not opened."""
+    found = []
+    frontier = list(starts)
+    for _hop in range(2):
+        nxt = []
+        for path in frontier:
+            text = _tree_blob(cfg, rev, path)
+            if not text:
+                continue
+            for dep in _deps_of(cfg, rev, path, text):
+                if dep not in found:
+                    found.append(dep)
+                    nxt.append(dep)
+        frontier = nxt
+    return set(found)
+
+
 def remote_tip(cfg: T.Config, branch):
     r = T.git(cfg.repo, "rev-parse", "--verify", "--quiet", cfg.remote_ref(branch) + "^{commit}")
     return r.stdout.strip() if r.returncode == 0 else ""
@@ -935,19 +1055,55 @@ class Cycle:
                 hits.append(m)
         return hits if len(hits) < len(members) or len(members) == 1 else []
 
+    def subject_members(self, base, members, text):
+        """Members whose diff touches a module or fixture a failing test reaches, when the text names no member.
+
+        The failure names a test file that is already on the integration tip. That file's imports (two hops)
+        and the paths it reads are intersected with each member's merge-base diff. One hit is the member the
+        failure names. Two or more are the only members worth bisecting. A path every member touches, or a
+        test that reaches nothing of theirs, names nobody."""
+        tokens = {t.lstrip("./") for t in PATH_TOKEN_RE.findall(text)}
+        tests = [t for t in tokens if _is_test_path(t) and _tree_has(self.cfg, base, t)]
+        if not tests:
+            return []
+        reached = reached_paths(self.cfg, base, tests)
+        if not reached:
+            return []
+        hits = [m for m in members if changed_files(self.cfg, base, m["tip"]) & reached]
+        return hits if len(hits) < len(members) or len(members) == 1 else []
+
+    def _return_named(self, members, named, red, why):
+        for m in named:
+            self._return_to_owner(m, f"the gate failed and this branch is the one the failure names: `{red['line'][:200]}`.", cause="defect", log_path=red["log"])
+        rest = [m for m in members if m not in named]
+        self.log(why)
+        if rest and self.budget():
+            if self.gate_set(rest) == "red":
+                self.bisect_or_attribute(rest)
+        return rest
+
     def bisect_or_attribute(self, members):
         red = self.record["lastRed"]
         text = Path(red["log"]).read_text(errors="replace")
         base = T.git(self.cfg.repo, "rev-parse", self.cfg.ref).stdout.strip()
         named = self.named_members(base, members, text) if len(members) > 1 else []
         if named:
-            for m in named:
-                self._return_to_owner(m, f"the gate failed and this branch is the one the failure names: `{red['line'][:200]}`.", cause="defect", log_path=red["log"])
-            rest = [m for m in members if m not in named]
-            self.log(f"returned {', '.join('#' + m['issue'] for m in named)} (named by the failure); re-gating the remaining {len(rest)} as a new set")
+            self._return_named(members, named, red,
+                               f"returned {', '.join('#' + m['issue'] for m in named)} (named by the failure); re-gating the remaining {len(members) - len(named)} as a new set")
+            return
+        implicated = self.subject_members(base, members, text) if len(members) > 1 else []
+        if len(implicated) == 1:
+            self._return_named(members, implicated, red,
+                               f"returned #{implicated[0]['issue']} (the failing test reaches its files); re-gating the remaining {len(members) - 1} as a new set")
+            return
+        if len(implicated) > 1:
+            rest = [m for m in members if m not in implicated]
+            self.log(f"bisecting {', '.join('#' + m['issue'] for m in implicated)} (the failing test reaches their files); re-gating the other {len(rest)} as a set")
             if rest and self.budget():
                 if self.gate_set(rest) == "red":
                     self.bisect_or_attribute(rest)
+            if self.budget():
+                self.bisect(implicated)
             return
         self.bisect(members)
 

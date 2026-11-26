@@ -97,7 +97,9 @@ if [ -z "$changed" ]; then
 fi
 bad=$(git diff --name-only origin/master "$TIP" | grep '^bad/' | head -1)
 if [ -n "$bad" ]; then
-  if [ -e "$FX_STATE/name-path" ]; then echo "::error::lint: $bad is wrong"; else echo "::error::tests: 1 failed"; fi
+  if [ -e "$FX_STATE/name-path" ]; then echo "::error::lint: $bad is wrong"
+  elif [ -s "$FX_STATE/name-test" ]; then echo "::error::tests: $(head -1 "$FX_STATE/name-test") failed"
+  else echo "::error::tests: 1 failed"; fi
   exit 1
 fi
 if [ -e "$FX_STATE/squash" ]; then
@@ -479,6 +481,70 @@ def test_a_red_that_names_a_member_returns_it_and_regates_the_remaining_members(
     assert [fx.on_master(i) for i in range(5)] == [True, True, False, True, True]
     assert [d[0] for d in fx.dropped()] == [str(issues[2])]
     assert "the one the failure names" in fx.comments(issues[2])
+
+
+def _commit(fx, branch, files, message):
+    sh("git", "checkout", "-q", branch, cwd=fx.work)
+    for path, content in files.items():
+        dest = fx.work / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+    sh("git", "add", "-A", cwd=fx.work)
+    sh("git", "commit", "-q", "-m", message, cwd=fx.work)
+    sh("git", "push", "-q", "-f", "origin", branch, cwd=fx.work)
+    sh("git", "checkout", "-q", "master", cwd=fx.work)
+
+
+def test_reached_paths_follows_an_import_two_hops_and_a_read(fx):
+    _commit(fx, "master", {
+        "tests/contract_test.py": "import lib.api\nfrom pathlib import Path\nPath('fixtures/app.json').read_text()\n",
+        "lib/api.py": "import lib.model\n",
+        "lib/model.py": "x = 1\n",
+        "fixtures/app.json": "{}\n",
+        "web/page.ts": "import { row } from './row'\n",
+        "web/row.ts": "export const row = 1\n",
+    }, "contract test")
+    cfg = fx.rc().cfg
+    base = T.git(fx.work, "rev-parse", "origin/master").stdout.strip()
+    got = R.reached_paths(cfg, base, ["tests/contract_test.py"])
+    assert {"lib/api.py", "lib/model.py", "fixtures/app.json"} <= got
+    assert "pathlib.py" not in got and "tests/contract_test.py" not in got
+    assert "web/row.ts" in R.reached_paths(cfg, base, ["web/page.ts"])
+
+
+def test_a_red_whose_test_imports_one_members_file_returns_that_member(fx):
+    issues = fx.members(4, bad={1})
+    _commit(fx, "master", {"tests/contract_test.py": "import lib.feature\n"}, "contract test")
+    _commit(fx, "feature/m1", {"lib/feature.py": "x = 1\n"}, "the module the test imports")
+    (fx.state / "name-test").write_text("tests/contract_test.py\n")
+    logs = []
+    cyc = R.Cycle(fx.rc(), log=logs.append)
+    code, _ = cyc.run()
+    assert code == 0
+    gates = fx.gates()
+    assert len(gates) == 2
+    assert "bad/m1.txt" in gates[0] and not any("m1" in f for f in gates[1]) and len(gates[1]) == 3
+    assert [fx.on_master(i) for i in range(4)] == [True, False, True, True]
+    assert [d[0] for d in fx.dropped()] == [str(issues[1])]
+    assert "the one the failure names" in fx.comments(issues[1])
+    assert any("the failing test reaches its files" in ln for ln in logs)
+
+
+def test_two_members_a_failing_test_reaches_are_bisected_and_the_others_regated(fx):
+    issues = fx.members(4, bad={1})
+    _commit(fx, "master", {"tests/contract_test.py": "import lib.feature\nimport lib.other\n"}, "contract test")
+    _commit(fx, "feature/m1", {"lib/feature.py": "x = 1\n"}, "feature")
+    _commit(fx, "feature/m2", {"lib/other.py": "y = 1\n"}, "other")
+    (fx.state / "name-test").write_text("tests/contract_test.py\n")
+    logs = []
+    cyc = R.Cycle(fx.rc(), log=logs.append)
+    code, _ = cyc.run()
+    assert code == 0
+    assert len(fx.gates()) == 4
+    assert [fx.on_master(i) for i in range(4)] == [True, False, True, True]
+    assert [d[0] for d in fx.dropped()] == [str(issues[1])]
+    assert any("bisecting" in ln and "reaches their files" in ln for ln in logs)
+    assert [fx.state_of(i) for i in issues] == ["CLOSED", "OPEN", "CLOSED", "CLOSED"]
 
 
 def test_a_path_every_member_touches_names_nobody(fx, tmp_path):
