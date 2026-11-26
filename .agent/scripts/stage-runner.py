@@ -51,7 +51,17 @@ MANIFEST (JSON; keys not listed are rejected, so a typo is an error, not a silen
                                          summary shows each stage's measured peak (sum of the RSS of its
                                          process tree, sampled each second) to calibrate it against
           "est_s": 120,                  expected seconds: of the ready stages the longest starts first
-          "timeout_s": 7200}             optional; a safety bound for dead work, never an SLA
+          "timeout_s": 7200,             optional; a safety bound for dead work, never an SLA (a
+                                         host-exclusive stage's wait for its lock is not counted)
+          "host_exclusive": true}        ONE AT A TIME HOST-WIDE: the stage runs under the host-exclusive
+                                         lock of its name (preflight-budget.sh `host_exclusive_lock`,
+                                         beside this script), shared with every other gate and every
+                                         preflight on the host that takes the same name. The gate's
+                                         run is admitted ahead of waiting preflights; the role is
+                                         AUTOCODER_HOST_EXCLUSIVE_ROLE (gate, the default, or
+                                         preflight, which enqueue.sh exports). For a whole-tree
+                                         typecheck or anything else that saturates the host alone.
+                                         The seconds waited are reported apart from the stage's own
 
   GROUP  a STAGE with "stages": [...] and "wrapper": "tool {inner}" instead of "cmd". The group is
          one node of the outer schedule; the runner starts `wrapper` with {inner} replaced by ONE
@@ -63,6 +73,12 @@ Output order is the manifest's: a stage's block is printed once it and every sta
 have ended, so the log reads the same whatever the scheduling. A block is a header line, the tail, and
 nothing else; a failing stage's block comes before the final lines, and the LAST line of a run is the
 verdict (`stage runner: PASS` or `stage runner: FAIL ...`), after the timings summary.
+
+HOST LOAD. Every stage records the host's 1-minute load average when it starts and when it ends
+(`load1_start`, `load1_end` in --timings; `load a->b` in the summary; AUTOCODER_LOADAVG_FILE is the
+seam, default /proc/loadavg), and `--stage-args` prints `--stage-load name=start:end` words beside the
+`--stage name=seconds` words, which landing-timings.py records on the batch row. A slow stage under a
+load far above the core count is the host, not the code; the columns keep the two apart.
 """
 
 from __future__ import annotations
@@ -85,7 +101,8 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TOP_KEYS = {"version", "title", "concurrency", "memory_budget_mib", "memory_headroom_mib", "heartbeat_s",
             "on_failure", "tree_guard", "env", "default_tail", "stages"}
 STAGE_KEYS = {"name", "cmd", "needs", "conflicts", "exclusive", "tail", "memory_mib", "est_s", "timeout_s",
-              "wrapper", "stages"}
+              "wrapper", "stages", "host_exclusive"}
+BUDGET_LIB = Path(__file__).resolve().parent / "preflight-budget.sh"
 DEFAULT_TAIL = 15
 GROUP_TAIL = 60
 KILL_GRACE_S = 5.0
@@ -161,6 +178,9 @@ class Stage:
         if not all(isinstance(n, str) for n in self.conflicts):
             raise ManifestError(f"stage {name}: conflicts must be a list of stage names")
         self.exclusive = bool(raw.get("exclusive", False))
+        if "host_exclusive" in raw and not isinstance(raw["host_exclusive"], bool):
+            raise ManifestError(f"stage {name}: host_exclusive must be true or false")
+        self.host_exclusive = bool(raw.get("host_exclusive", False))
         self.tail = _int(raw, "tail", max(GROUP_TAIL, default_tail) if self.is_group else default_tail, name, lo=0)
         self.memory_mib = _int(raw, "memory_mib", 0, name, lo=0)
         self.est_s = _int(raw, "est_s", 0, name, lo=0)
@@ -179,6 +199,10 @@ class Stage:
         self.printed = False
         self.note = ""
         self.peak_mib = 0
+        self.load_start: float | None = None
+        self.load_end: float | None = None
+        self.waited_path: Path | None = None   # host-exclusive: the seconds waited for the lock, written when it is taken
+        self.lock_wait_s: float | None = None
 
 
 def _int(raw: dict, key: str, default: int, name: str, lo: int) -> int:
@@ -301,6 +325,18 @@ def resolve_limits(manifest: dict, args) -> tuple[int, int | None]:
     return max(int(conc), 1), (int(budget) if budget else None)
 
 
+def load1() -> float | None:
+    """The host's 1-minute load average (AUTOCODER_LOADAVG_FILE, default /proc/loadavg), or None."""
+    try:
+        return float(Path(os.environ.get("AUTOCODER_LOADAVG_FILE") or "/proc/loadavg").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def fmt_load(v: float | None) -> str:
+    return "-" if v is None else f"{v:.2f}"
+
+
 # ---------------------------------------------------------------- tree guard
 
 def tree_signature(cwd: str) -> str | None:
@@ -385,15 +421,35 @@ class Runner:
 
     def command_of(self, s: Stage) -> str:
         if not s.is_group:
-            return s.cmd
-        inner = " ".join(shlex.quote(a) for a in [
-            sys.executable, os.path.abspath(__file__), "--manifest", self.m["_path"], "--group", s.name,
-            "--cwd", self.cwd, "--run-dir", str(self.run_dir / f"group-{s.name}")])
-        return s.wrapper.replace("{inner}", shlex.quote(inner))
+            cmd = s.cmd
+        else:
+            inner = " ".join(shlex.quote(a) for a in [
+                sys.executable, os.path.abspath(__file__), "--manifest", self.m["_path"], "--group", s.name,
+                "--cwd", self.cwd, "--run-dir", str(self.run_dir / f"group-{s.name}")])
+            cmd = s.wrapper.replace("{inner}", shlex.quote(inner))
+        if not s.host_exclusive:
+            return cmd
+        # One at a time host-wide: the lock helper runs the stage's command holding the lock of the stage's
+        # name and writes the seconds it waited the moment it has it, so the wait is reported apart.
+        s.waited_path = self.run_dir / f"{s.index:02d}-{s.name}.lock-wait"
+        role = os.environ.get("AUTOCODER_HOST_EXCLUSIVE_ROLE") or "gate"
+        return " ".join(shlex.quote(a) for a in [
+            "bash", str(BUDGET_LIB), "exclusive", "--name", s.name, "--role", role, "--waited-file", str(s.waited_path),
+            "--what", f"{self.label}: stage {s.name}", "--", "bash", "-o", "pipefail", "-c", cmd])
+
+    def lock_wait_of(self, s: Stage) -> float | None:
+        """A host-exclusive stage's seconds waited for its lock, once the helper has written them; None before."""
+        if s.lock_wait_s is None and s.waited_path is not None:
+            try:
+                s.lock_wait_s = float(s.waited_path.read_text().split()[0])
+            except (OSError, ValueError, IndexError):
+                return None
+        return s.lock_wait_s
 
     def start(self, s: Stage) -> None:
         s.out_path = self.run_dir / f"{s.index:02d}-{s.name}.log"
         s.started = time.monotonic()
+        s.load_start = load1()
         s.status = "running"
         try:
             fh = open(s.out_path, "wb")
@@ -428,8 +484,19 @@ class Runner:
             used += s.memory_mib
         return picked
 
+    def own_elapsed(self, s: Stage) -> float:
+        """Seconds the stage has run for ITSELF: a host-exclusive stage still waiting for its lock has run for 0,
+        and once it holds it the wait is taken off, so a long wait never trips the stage's own timeout."""
+        elapsed = time.monotonic() - s.started
+        if not s.host_exclusive:
+            return elapsed
+        wait = self.lock_wait_of(s)
+        return 0.0 if wait is None else max(elapsed - wait, 0.0)
+
     def settle(self, s: Stage, rc: int) -> None:
         s.rc, s.ended = rc, time.monotonic()
+        s.load_end = load1()
+        self.lock_wait_of(s)
         s.status = "pass" if rc == 0 else "fail"
         if rc != 0:
             self.failed.append(s)
@@ -451,6 +518,7 @@ class Runner:
                 self.kill_group(s, signal.SIGKILL)
             s.proc.wait()
             s.status, s.rc, s.ended = "cancelled", s.proc.returncode, time.monotonic()
+            s.load_end = load1()
 
     def mark_unreachable(self) -> None:
         changed = True
@@ -476,7 +544,7 @@ class Runner:
         while True:
             for s in list(running):
                 rc = s.proc.poll()
-                if rc is None and s.timeout_s and time.monotonic() - s.started > s.timeout_s:
+                if rc is None and s.timeout_s and self.own_elapsed(s) > s.timeout_s:
                     self.kill_group(s, signal.SIGKILL)
                     s.proc.wait()
                     rc, s.note = 124, f"exceeded its {s.timeout_s} s timeout"
@@ -558,7 +626,9 @@ class Runner:
             if s.started:
                 secs = (s.ended or time.monotonic()) - s.started
                 mem = f"  peak {s.peak_mib:6d} MiB" if s.peak_mib else ""
-                self.say(f"  {s.name:<{width}}  {secs:7.0f} s  +{s.started - self.t0:5.0f} s  {s.status.upper()}{mem}")
+                load = f"  load {fmt_load(s.load_start)}->{fmt_load(s.load_end)}" if s.load_start is not None or s.load_end is not None else ""
+                wait = f"  waited {s.lock_wait_s:.0f} s for the host lock" if s.lock_wait_s else ""
+                self.say(f"  {s.name:<{width}}  {secs:7.0f} s  +{s.started - self.t0:5.0f} s  {s.status.upper()}{mem}{load}{wait}")
             else:
                 self.say(f"  {s.name:<{width}}  {'-':>7}    {'':>7}  {s.status.upper()}")
         serial = sum((s.ended or 0) - s.started for s in ran if s.ended and s.started)
@@ -569,7 +639,9 @@ class Runner:
         wall = wall if wall is not None else time.monotonic() - self.t0
         return {"v": 1, "verdict": self._verdict, "wall_s": round(wall, 1), "stages": {
             s.name: {"seconds": round((s.ended - s.started), 1) if s.started and s.ended else None,
-                     "status": s.status, "rc": s.rc, "peak_rss_mib": s.peak_mib or None, "start_s": round(s.started - self.t0, 1) if s.started else None}
+                     "status": s.status, "rc": s.rc, "peak_rss_mib": s.peak_mib or None, "start_s": round(s.started - self.t0, 1) if s.started else None,
+                     "load1_start": s.load_start, "load1_end": s.load_end,
+                     "host_exclusive_wait_s": s.lock_wait_s if s.host_exclusive else None}
             for s in self.stages}}
 
 
@@ -609,7 +681,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.stage_args:
         data = json.loads(Path(args.stage_args).read_text())
-        print(" ".join(f"--stage {n}={v['seconds']:.0f}" for n, v in data["stages"].items() if v["seconds"] is not None))
+        ran = [(n, v) for n, v in data["stages"].items() if v.get("seconds") is not None]
+        words = [f"--stage {n}={v['seconds']:.0f}" for n, v in ran]
+        # The load columns (a timings file from before them carries neither key: no word, as before).
+        words += [f"--stage-load {n}={fmt_load(v.get('load1_start'))}:{fmt_load(v.get('load1_end'))}" for n, v in ran
+                  if v.get("load1_start") is not None or v.get("load1_end") is not None]
+        print(" ".join(words))
         return 0
     if not args.manifest:
         ap.error("--manifest is required")
@@ -634,6 +711,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         for s in stages:
             kind = "group" if s.is_group else ("exclusive" if s.exclusive else "stage")
+            if s.host_exclusive:
+                kind += ", host-exclusive"
             print(f"{s.name}\t{kind}\tafter: {','.join(sorted(s.deps)) or '-'}")
         return 0
 

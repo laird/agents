@@ -317,7 +317,7 @@ def merge_batches(batches):
         for k, v in b.items():
             if k == "members":
                 cur[k] = sorted(set(cur.get(k) or []) | set(v or []))
-            elif k == "stages":
+            elif k in ("stages", "stage_load"):
                 cur[k] = {**(cur.get(k) or {}), **(v or {})}
             elif v is not None:
                 cur[k] = v
@@ -585,6 +585,7 @@ def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=No
     for b in batches:
         for k, v in (b.get("stages") or {}).items():
             stage_tot[k] += v
+    stage_load_max = stage_load_peaks(batches)
     asm = [b["assembly_s"] for b in batches if b.get("assembly_s") is not None]
     pub = [b["publish_s"] for b in batches if b.get("publish_s") is not None]
     red = Counter(b.get("cause") or "unknown" for b in batches if b.get("verdict") in ("red", "aborted", "infra"))
@@ -639,7 +640,7 @@ def analyze(rows, since, until, bucket="week", ci=None, claims=None, verdicts=No
                     "ready_to_launch_s": dist(launch)},
         "batches": {"count": len(batches), "size_distribution": {str(k): v for k, v in sorted(sizes.items())},
                     "assembly_s": dist(asm), "publish_s": dist(pub), "stage_s_total": dict(stage_tot),
-                    "resyncs": resyncs, "push_rejected": pushrej, "red_by_cause": dict(red)},
+                    "stage_load_max": stage_load_max, "resyncs": resyncs, "push_rejected": pushrej, "red_by_cause": dict(red)},
         "planning": {"candidates": len(plans), "s_total": sum(r["seconds"] for r in plans) if plans else None,
                      "per_candidate_s": dist([r["seconds"] for r in plans]), "by_verdict": plan_by},
         "buckets": {k: {**v, "returned": len(v["returned"]), "seen": len(v["seen"])} for k, v in sorted(bk.items())},
@@ -1060,6 +1061,27 @@ def member_outcomes(es, bid, batch_ts):
     return f"returned:{returned[0].get('cause') or 'unknown'}" if returned else "open"
 
 
+def batch_load_max(b):
+    """The highest host 1-minute load any stage of the batch recorded (start or end), or None when the row
+    carries no `stage_load` (written before the column existed, or by a gate that read none)."""
+    loads = [x for pair in (b.get("stage_load") or {}).values() for x in (pair or []) if x is not None]
+    return max(loads) if loads else None
+
+
+def stage_load_peaks(batches):
+    """Per stage name, the highest load recorded over the window's batches: {name: {"start": max|None, "end": max|None, "n": rows}}.
+    A stage under a load far above the core count is the host's problem, not the code's; this is where it shows."""
+    out = {}
+    for b in batches:
+        for k, pair in (b.get("stage_load") or {}).items():
+            d = out.setdefault(k, {"start": None, "end": None, "n": 0})
+            d["n"] += 1
+            for side, v in zip(("start", "end"), (pair or [None, None])):
+                if v is not None and (d[side] is None or v > d[side]):
+                    d[side] = v
+    return out
+
+
 def batch_outcomes(ev, batches):
     """Per-batch rows (members and their outcomes) in time order, and the re-gates among them.
 
@@ -1075,7 +1097,7 @@ def batch_outcomes(ev, batches):
         bt, bid, members = parse_ts(b["ts"]), b["batch"], set(b["members"])
         outcomes = {n: member_outcomes(ev.get(n, []), bid, bt) for n in b["members"]}
         row = {"batch": bid, "ts": b["ts"], "members": list(b["members"]), "verdict": b.get("verdict"), "cause": b.get("cause"),
-               "gate_s": b.get("gate_s"), "landed": [n for n, o in outcomes.items() if o == "landed"],
+               "gate_s": b.get("gate_s"), "load_max": batch_load_max(b), "landed": [n for n, o in outcomes.items() if o == "landed"],
                "returned": {n: o.split(":", 1)[1] for n, o in outcomes.items() if o.startswith("returned:")},
                "open": [n for n, o in outcomes.items() if o == "open"], "regate_of": None}
         earlier = [(ts, reason) for ts, ms, reason in seen_red if ms & members]
@@ -1275,16 +1297,17 @@ def render_week(a):
 
 def render_batches(a):
     """Every batch of the window with each member's outcome: the row a reader checks a number against."""
-    out = ["## Batches", "", "| batch | gated (UTC) | members | verdict | gate | landed | returned | no outcome | re-gate of | CI verdict |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["## Batches", "", "| batch | gated (UTC) | members | verdict | gate | host load | landed | returned | no outcome | re-gate of | CI verdict |",
+           "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in a["batch_rows"]:
         verdict = (r["verdict"] or "n/a") + (f":{r['cause']}" if r["cause"] else "")
-        out.append(f"| {r['batch']} | {r['ts']} | {' '.join('#' + str(n) for n in r['members'])} | {verdict} | {human(r['gate_s'])} | "
+        load = "n/a" if r.get("load_max") is None else f"{r['load_max']:.1f}"
+        out.append(f"| {r['batch']} | {r['ts']} | {' '.join('#' + str(n) for n in r['members'])} | {verdict} | {human(r['gate_s'])} | {load} | "
                    f"{' '.join('#' + str(n) for n in r['landed']) or '-'} | "
                    f"{' '.join(f'#{n} ({c})' for n, c in r['returned'].items()) or '-'} | "
                    f"{' '.join('#' + str(n) for n in r['open']) or '-'} | {r['regate_of'] or '-'} | {ci_cell(r.get('ci'))} |")
     if not a["batch_rows"]:
-        out.append("| (no batch in the window) | | | | | | | | | |")
+        out.append("| (no batch in the window) | | | | | | | | | | |")
     return out + [""]
 
 
@@ -1331,6 +1354,12 @@ def render(a, week=None, batches=False):
     if b["stage_s_total"]:
         tot = sum(b["stage_s_total"].values())
         out.append("- Gate stage time: " + ", ".join(f"{k} {human(v)} ({pct(v, tot)})" for k, v in sorted(b["stage_s_total"].items(), key=lambda kv: -kv[1])))
+    if b.get("stage_load_max"):
+        def _l(v):
+            return "-" if v is None else f"{v:.1f}"
+        out.append("- Host 1-minute load at gate stages (max start->end over the window's batches; a stage slow under a load far "
+                   "above the core count is the host, not the code): "
+                   + ", ".join(f"{k} {_l(d['start'])}->{_l(d['end'])}" for k, d in sorted(b["stage_load_max"].items(), key=lambda kv: -((kv[1]["end"] or kv[1]["start"] or 0)))))
     p = a["planning"]
     if p["s_total"] is None:
         out.append("- Planning (candidate probes): n/a (not recorded)")

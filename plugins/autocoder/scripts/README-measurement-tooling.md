@@ -76,7 +76,7 @@ shell wrappers drop errors so recording never fails or delays a gate.
 landing-timings.py [--repo ID] change --issue N --event claimed|ready|batched|landed|returned|rebase|precheck
                           [--batch ID] [--cause CAUSE] [--sha HEX] [--ts ISO]
 landing-timings.py [--repo ID] batch  --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECS ...]
-                          [--gate-s N] [--discarded-gate-s N] [--publish-s N]
+                          [--stage-load NAME=START:END ...] [--gate-s N] [--discarded-gate-s N] [--publish-s N]
                           [--verdict green|red|aborted|infra] [--cause CAUSE]
                           [--resyncs N] [--push-rejected N] [--ts ISO]
 landing-timings.py [--repo ID] plan   --issue N --verdict train|skip|drop|fault --seconds S [--batch ID] [--ts ISO]
@@ -100,7 +100,12 @@ without the test prelude's private path once left fixture rows beside a real wee
 itself was wrong, the only useful rejection), `conflict`, `stale-base`, `red-integration`,
 `infra`, `docs-resync`, `other`. `gate_s` defaults to the sum of the stages; `discarded_gate_s` is
 the gate time spent on trees a later re-sync replaced, which is waste even when the batch ends
-green. A figure never measured is null, never 0.
+green. A figure never measured is null, never 0. `--stage-load NAME=START:END` is the host's 1-minute
+load average when the stage started and ended (`-` for a side not read); the stage runner's
+`--stage-args` prints the words beside the `--stage` ones, the row keeps them as `stage_load` only when
+given (older rows and readers never see the key), and the report prints a `host load` column per batch
+(the highest load any of its stages saw, `n/a` without the column) and the per-stage maxima over the
+window, so a slow stage under a load far above the core count reads as the host's, not the code's.
 
 Who writes what:
 

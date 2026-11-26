@@ -127,6 +127,49 @@ B3=$(body "$I3")
 has "project preflight: the comment carries the project's own lines" '=== project preflight: PASS === master' "$B3"
 eq "project preflight: labels moved" "P1,ready-for-review" "$(labels "$I3")"
 
+# ── 4b. the host preflight budget (--budget): a slot row, held across the project preflight, a hotfix first ──
+export AUTOCODER_PREFLIGHT_DIR="$TMP/budget" AUTOCODER_PREFLIGHT_SLOTS=1 AUTOCODER_PREFLIGHT_POLL_S=0.1 \
+       AUTOCODER_PREFLIGHT_LOAD_FACTOR=off AUTOCODER_PREFLIGHT_WAIT_MAX_S=30 AUTOCODER_PREFLIGHT_ADMISSION_GAP_S=0 \
+       AUTOCODER_HOST_EXCLUSIVE_POLL_S=0.1
+I3B=$(issue three-b)
+mk feature/three-b src/three-b.txt three-b
+out=$(enq --issue "$I3B" --budget --host-exclusive types --preflight-cmd 'bash "$AUTOCODER_SCRIPTS_DIR/preflight-budget.sh" status; echo "role=$AUTOCODER_HOST_EXCLUSIVE_ROLE"; cat "$AUTOCODER_PREFLIGHT_DIR/exclusive/types.lock.holder"'); RC=$?
+eq "budget: enqueues" 0 "$RC"
+has "budget: a budget row names the slot" '^PASS budget +[0-9]+s +slot 1/1 after [0-9]+s in line; 1 slot\(s\) \(AUTOCODER_PREFLIGHT_SLOTS' "$out"
+has "budget: the project preflight ran holding the slot" '^held: 1$' "$out"
+has "budget: the slot's holder is this enqueue" 'slot 0: pid=[0-9]+ .*priority=ordinary branch=feature/three-b what=enqueue #'"$I3B" "$out"
+has "budget: the project preflight sees the preflight role" '^role=preflight$' "$out"
+has "budget: --host-exclusive runs it under the named lock, role preflight" '^pid=[0-9]+ token=[^ ]+ role=preflight since=.* what=enqueue #'"$I3B"' feature/three-b$' "$out"
+has "budget: the preflight row says so" "under the host-exclusive lock types, role preflight" "$out"
+eq "budget: the budget row comes before the preflight row" "budget preflight" "$(printf '%s\n' "$out" | grep -oE '^PASS (budget|preflight)' | awk '{print $2}' | paste -sd ' ')"
+st=$(bash "$SCRIPTS/preflight-budget.sh" status 2>&1)
+has "budget: the slot is released after" '^held: 0$' "$st"
+# a hotfix branch ranks first; --priority says so too; a bad priority is usage
+mk hotfix/77 src/hf.txt hf
+out=$(enq --issue "$I3B" --budget --block-only); RC=$?
+eq "budget: a hotfix branch enqueues" 0 "$RC"
+has "budget: a hotfix branch takes the hotfix line" 'preflight budget: hotfix preflight: it takes the next free slot ahead of every ordinary waiter' "$out"
+out=$(enq --issue "$I3B" --budget --priority bogus --block-only 2>&1); RC=$?
+eq "budget: a bad --priority is usage (2)" 2 "$RC"
+out=$(enq --issue "$I3B" --host-exclusive 'no good' --block-only 2>&1); RC=$?
+eq "budget: a bad --host-exclusive name is usage (2)" 2 "$RC"
+# the budget is opt-in: without it there is no budget row and nothing is held
+git -C "$W" checkout -q feature/three-b
+out=$(enq --issue "$I3B" --block-only --preflight-cmd 'true'); RC=$?
+hasnt "budget: off by default (no row)" '^(PASS|FAIL|SKIP) budget ' "$out"
+# a slot that never comes fails the budget row, runs no preflight and posts nothing
+bash "$SCRIPTS/preflight-budget.sh" run --what other -- sh -c "until [ -e '$TMP/go-budget' ]; do sleep 0.05; done" 2>/dev/null &
+i=0; until [ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]; do sleep 0.05; i=$((i + 1)); [ "$i" -lt 400 ] || break; done
+out=$(AUTOCODER_PREFLIGHT_WAIT_MAX_S=1 enq --issue "$I3B" --budget --preflight-cmd 'echo MUST-NOT-RUN'); RC=$?
+touch "$TMP/go-budget"
+eq "budget: no slot fails the enqueue (1)" 1 "$RC"
+has "budget: the row says no slot came and names the holder" '^FAIL budget .*no preflight slot' "$out"
+has "budget: the refusal named the holder" 'holders: slot 0: pid=[0-9]+ .*what=other' "$out"
+hasnt "budget: the preflight never ran" 'MUST-NOT-RUN' "$out"
+has "budget: the preflight row is SKIP" '^SKIP preflight .*not run: budget failed first' "$out"
+wait
+unset AUTOCODER_PREFLIGHT_SLOTS
+
 # ── 5. a dirty tree is refused before anything runs ─────────────────────────────────────────
 I4=$(issue four)
 mk feature/four src/four.txt four

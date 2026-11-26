@@ -7,8 +7,10 @@ a group's wrapper spans its inner stages, and the tree guard catches a mutation 
 """
 
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -17,14 +19,15 @@ import pytest
 RUNNER = Path(__file__).parent.parent / "plugins/autocoder/scripts/stage-runner.py"
 
 
-def run(tmp_path, stages, *extra, top=None, expect_rc=None, cwd=None):
+def run(tmp_path, stages, *extra, top=None, expect_rc=None, cwd=None, env=None, name="m"):
     manifest = {"version": 1, "heartbeat_s": 0, **(top or {}), "stages": stages}
-    mpath = tmp_path / "m.json"
+    mpath = tmp_path / f"{name}.json"
     mpath.write_text(json.dumps(manifest))
-    timings = tmp_path / "t.json"
+    timings = tmp_path / f"{name}-t.json" if name != "m" else tmp_path / "t.json"
     t0 = time.monotonic()
     p = subprocess.run([sys.executable, str(RUNNER), "--manifest", str(mpath), "--timings", str(timings),
-                        "--cwd", str(cwd or tmp_path), *extra], capture_output=True, text=True, timeout=120)
+                        "--cwd", str(cwd or tmp_path), *extra], capture_output=True, text=True, timeout=120,
+                       env={**os.environ, **(env or {})})
     p.wall = time.monotonic() - t0
     p.timings = json.loads(timings.read_text()) if timings.exists() else None
     if expect_rc is not None:
@@ -234,9 +237,130 @@ def test_list_commands_includes_group_wrapper_and_inner_commands(tmp_path):
 
 
 def test_stage_args_turns_timings_into_landing_batch_words(tmp_path):
-    p = run(tmp_path, [st("a", "sleep 0.2"), st("b", "true")], expect_rc=0)
+    p = run(tmp_path, [st("a", "sleep 0.2"), st("b", "true")], expect_rc=0, env={"AUTOCODER_LOADAVG_FILE": str(tmp_path / "none")})
     q = subprocess.run([sys.executable, str(RUNNER), "--stage-args", str(tmp_path / "t.json")], capture_output=True, text=True)
     assert q.stdout.split() == ["--stage", "a=0", "--stage", "b=0"]
+
+
+# ── host load columns (issue: host overload separable from slow code) ─────────────────────────
+def test_load_columns_are_recorded_per_stage_and_printed(tmp_path):
+    la = tmp_path / "loadavg"
+    la.write_text("12.50 8.00 4.00 1/900 1\n")
+    p = run(tmp_path, [st("a", f"sleep 0.3; echo '41.20 30.00 20.00 2/900 1' > {la}"), st("b", "true", needs=["a"])],
+            expect_rc=0, env={"AUTOCODER_LOADAVG_FILE": str(la)})
+    s = p.timings["stages"]
+    assert s["a"]["load1_start"] == 12.5 and s["a"]["load1_end"] == 41.2
+    assert s["b"]["load1_start"] == 41.2 and s["b"]["load1_end"] == 41.2
+    assert s["a"]["host_exclusive_wait_s"] is None
+    assert "load 12.50->41.20" in p.stdout and "load 41.20->41.20" in p.stdout
+    q = subprocess.run([sys.executable, str(RUNNER), "--stage-args", str(tmp_path / "t.json")], capture_output=True, text=True)
+    assert q.stdout.split() == ["--stage", "a=0", "--stage", "b=0",
+                                "--stage-load", "a=12.50:41.20", "--stage-load", "b=41.20:41.20"]
+
+
+def test_load_columns_are_null_and_silent_when_the_host_has_none(tmp_path):
+    p = run(tmp_path, [st("a", "true")], expect_rc=0, env={"AUTOCODER_LOADAVG_FILE": str(tmp_path / "missing")})
+    assert p.timings["stages"]["a"]["load1_start"] is None and p.timings["stages"]["a"]["load1_end"] is None
+    assert "load " not in p.stdout
+    q = subprocess.run([sys.executable, str(RUNNER), "--stage-args", str(tmp_path / "t.json")], capture_output=True, text=True)
+    assert q.stdout.split() == ["--stage", "a=0"]
+
+
+def test_stage_args_reads_a_timings_file_from_before_the_load_columns(tmp_path):
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"v": 1, "verdict": "pass", "wall_s": 3, "stages": {
+        "build": {"seconds": 1.4, "status": "pass"}, "skipped": {"seconds": None, "status": "skipped"}}}))
+    q = subprocess.run([sys.executable, str(RUNNER), "--stage-args", str(old)], capture_output=True, text=True)
+    assert q.returncode == 0 and q.stdout.split() == ["--stage", "build=1"]
+
+
+# ── host-exclusive stages: one at a time host-wide, the gate ahead of a preflight ──────────────
+def wait_until(cond, timeout=20.0):
+    t0 = time.monotonic()
+    while not cond():
+        assert time.monotonic() - t0 < timeout, "condition not met in time"
+        time.sleep(0.05)
+
+
+def budget_env(tmp_path, role=None):
+    env = {"AUTOCODER_PREFLIGHT_DIR": str(tmp_path / "budget"), "AUTOCODER_HOST_EXCLUSIVE_POLL_S": "0.1",
+           "AUTOCODER_HOST_EXCLUSIVE_WAIT_MAX_S": "30", "AUTOCODER_LOADAVG_FILE": str(tmp_path / "no-loadavg")}
+    if role:
+        env["AUTOCODER_HOST_EXCLUSIVE_ROLE"] = role
+    return env
+
+
+def test_host_exclusive_must_be_a_boolean(tmp_path):
+    p = run(tmp_path, [st("types", "true", host_exclusive="yes")], expect_rc=2)
+    assert "host_exclusive must be true or false" in p.stderr
+
+
+def test_host_exclusive_is_listed(tmp_path):
+    p = run(tmp_path, [st("types", "true", host_exclusive=True), st("lint", "true")], "--list", expect_rc=0)
+    assert "types\tstage, host-exclusive\t" in p.stdout and "lint\tstage\t" in p.stdout
+
+
+def test_host_exclusive_stages_of_two_runners_never_overlap_and_the_wait_is_reported_apart(tmp_path):
+    order = tmp_path / "order"
+    stage = f"echo start-$AUTOCODER_STAGE_NAME-$RUNNER_TAG >> {order}; sleep 0.8; echo end-$AUTOCODER_STAGE_NAME-$RUNNER_TAG >> {order}"
+    results = {}
+
+    def go(tag, name):
+        results[tag] = run(tmp_path, [st("types", stage, host_exclusive=True)], expect_rc=0, name=name,
+                           env={**budget_env(tmp_path), "RUNNER_TAG": tag})
+
+    t1 = threading.Thread(target=go, args=("one", "r1"))
+    t2 = threading.Thread(target=go, args=("two", "r2"))
+    t1.start(); time.sleep(0.3); t2.start(); t1.join(); t2.join()
+    lines = order.read_text().split()
+    assert lines[0] == "start-types-one" and lines[1] == "end-types-one", lines   # never interleaved
+    assert lines[2] == "start-types-two" and lines[3] == "end-types-two", lines
+    waited = results["two"].timings["stages"]["types"]["host_exclusive_wait_s"]
+    assert waited is not None and waited >= 0, results["two"].stdout
+    assert results["one"].timings["stages"]["types"]["host_exclusive_wait_s"] == 0
+    assert "waited" in results["two"].stdout or waited == 0   # the summary names a wait when there was one
+    assert "stage types: PASS" in results["two"].stdout
+
+
+def test_gate_role_is_admitted_ahead_of_a_waiting_preflight(tmp_path):
+    order = tmp_path / "order"
+    lib = RUNNER.parent / "preflight-budget.sh"
+    env = budget_env(tmp_path)
+    go_file, lock_dir = tmp_path / "go", tmp_path / "budget" / "exclusive"
+    holder = subprocess.Popen(["bash", str(lib), "exclusive", "--name", "types", "--role", "preflight", "--",
+                               "sh", "-c", f"echo holder >> {order}; until [ -e {go_file} ]; do sleep 0.05; done"],
+                              env={**os.environ, **env})
+    wait_until(lambda: (lock_dir / "types.lock.holder").exists())
+    out = {}
+
+    def go(tag, role):
+        out[tag] = run(tmp_path, [st("types", f"echo {tag} >> {order}", host_exclusive=True)], expect_rc=0, name=tag,
+                       env=budget_env(tmp_path, role))
+
+    tp = threading.Thread(target=go, args=("preflight", "preflight"))
+    tg = threading.Thread(target=go, args=("gate", "gate"))
+    tp.start(); time.sleep(1.0)   # the preflight is in line first (its wait is not observable from outside the run dir)
+    tg.start(); wait_until(lambda: list(lock_dir.glob("types.lock.wants.*")))   # the gate's marker is
+    go_file.touch(); tp.join(); tg.join(); holder.wait()
+    assert order.read_text().split() == ["holder", "gate", "preflight"]
+    assert "the gate wants it next" in out["preflight"].stdout   # the preflight's stage tail carries the helper's line
+
+
+def test_host_exclusive_wait_is_not_counted_against_the_stage_timeout(tmp_path):
+    lib = RUNNER.parent / "preflight-budget.sh"
+    env = budget_env(tmp_path)
+    go_file, lock_dir = tmp_path / "go", tmp_path / "budget" / "exclusive"
+    holder = subprocess.Popen(["bash", str(lib), "exclusive", "--name", "types", "--role", "preflight", "--",
+                               "sh", "-c", f"until [ -e {go_file} ]; do sleep 0.05; done"], env={**os.environ, **env})
+    wait_until(lambda: (lock_dir / "types.lock.holder").exists())
+    res = {}
+    t = threading.Thread(target=lambda: res.update(p=run(tmp_path, [st("types", "sleep 0.2", host_exclusive=True, timeout_s=1)],
+                                                         expect_rc=0, env=env)))
+    t.start(); wait_until(lambda: list(lock_dir.glob("types.lock.wants.*"))); time.sleep(1.3)   # held past the stage's timeout
+    go_file.touch(); t.join(); holder.wait()
+    p = res["p"]
+    assert p.timings["stages"]["types"]["host_exclusive_wait_s"] >= 1
+    assert "exceeded its 1 s timeout" not in p.stdout
 
 
 def test_conflicting_stages_never_overlap(tmp_path):
