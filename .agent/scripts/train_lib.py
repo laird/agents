@@ -101,6 +101,10 @@ class Config:
     # fix (the branch that issue's READY names), a lane-labelled branch, or a documents-only diff; every other READY is
     # `held` (told once per tip and red set) and the status line names the red.
     red_master: dict = field(default_factory=dict)
+    # `redHold.releaseOn` (#428): `closed` (default) keeps the hold until the tracking issue closes; `landed` lifts it
+    # once that red's fix is on the integration tip and the gate that published the fix was green.
+    red_hold: str = "closed"
+    gate_log_dir: Path = None   # train gate logs (gateLogDir / AUTOCODER_TRAIN_LOG_DIR); the red-hold lift reads them
     ready_pattern: str = DEFAULT_READY_RE
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
     preflight_pattern: str = DEFAULT_PREFLIGHT_RE   # a READY matching this was preflighted, not pre-checked (enqueue.sh)
@@ -182,6 +186,23 @@ def _red_master(raw, path) -> dict:
     return {"label": raw["label"].strip(), "titlePrefix": raw["titlePrefix"].strip()}
 
 
+RED_HOLD_RELEASES = ("closed", "landed")
+
+
+def _red_hold(raw, path) -> str:
+    """`redHold.releaseOn`: absent, null or {} is `closed` (today's hold, until the issue closes).
+
+    `landed` lifts the hold once the red's fix is on the integration tip and the gate that published it was
+    green (#428). Any other shape is refused here, naming the file, as a malformed `redMaster` is. Keys this
+    slice does not read (`closeOnGreenCi`) may sit beside `releaseOn`."""
+    if raw in (None, {}, False):
+        return "closed"
+    release = raw.get("releaseOn") if isinstance(raw, dict) else None
+    if release not in RED_HOLD_RELEASES:
+        raise SystemExit(f'merge-train: train.redHold in {path} must be {{"releaseOn": "landed"|"closed"}}, got {raw!r}')
+    return release
+
+
 def _branch_ownership(raw, path) -> str:
     """`branchOwnership`: `issue` (default) refuses a READY whose branch does not belong to the issue as
     `foreign-branch`; `any` takes any branch the READY names. Anything else refuses to load, naming the file."""
@@ -226,7 +247,7 @@ def _gate_dirs(env_value, raw, env) -> list:
 def load_config(repo, config_file=None, env=None) -> Config:
     """`.autocoder.json` of the main worktree, key `train`; environment overrides win.
 
-    keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, redMaster{label, titlePrefix}, readyPattern, notePattern, preflightPattern, size,
+    keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, redMaster{label, titlePrefix}, redHold{releaseOn}, gateLogDir, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
     seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{preflight, prepareScratch, mergeFault, regenerate, attribute, landed, redBase},
     depbot{enabled, authors, labels, priority, everySeconds, titlePrefix, limit} (train_depbot.py);
@@ -255,6 +276,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
         priority_labels=list(raw.get("priorityLabels") or ["P0", "P1", "P2", "P3"]),
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
         red_master=_red_master(raw.get("redMaster"), path),
+        red_hold=_red_hold(raw.get("redHold"), path),
+        gate_log_dir=Path(env.get("AUTOCODER_TRAIN_LOG_DIR") or raw.get("gateLogDir") or state_root / "logs"),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
         note_pattern=raw.get("notePattern") or "",
         preflight_pattern=raw.get("preflightPattern") or DEFAULT_PREFLIGHT_RE,
@@ -1227,8 +1250,156 @@ def red_master_hold(cfg: Config, reds: list, labels, branch, ref):
         return ""
     names = ", ".join(f"#{red['number']}" for red in reds)
     lane = "/".join(f"`{lb}`" for lb in cfg.lane_labels) or "a lane"
+    until = "until it closes" if cfg.red_hold != "landed" else "until its fix is on the integration tip with a green gate"
     return (f"red {cfg.integration} {names} is open: only its fix (the branch its READY names), a {lane}-labelled branch "
-            f"or a documents-only diff lands until it closes; this READY waits, nothing to do on your side")
+            f"or a documents-only diff lands {until}; this READY waits, nothing to do on your side")
+
+
+# A gate log is green when it carries merge-to-integration's success line and not a red-base publish (that line
+# also says "merged into", then that the gate did not pass). The hex tokens are the published tree.
+_GATE_MERGED_RE = re.compile(r"✅ Issue #\d+ merged into ")
+_GATE_DID_NOT_PASS_RE = re.compile(r"RED-BASE|gate did not pass|NOT pushing|on a red base")
+_HOTFIX_BRANCH_RE = re.compile(r"(?<![A-Za-z0-9_])hotfix/")
+_ISSUE_NUM_RE = re.compile(r"(?<![0-9])#(\d+)(?![0-9])")
+
+
+def _mentions_issue(text, number) -> bool:
+    n = str(number)
+    return any(m.group(1) == n for m in _ISSUE_NUM_RE.finditer(text or ""))
+
+
+def _integration_commits(cfg: Config, limit=120):
+    """`(sha, message)` of the newest commits on the integration tip, message = subject + body."""
+    r = git(cfg.repo, "log", "-n", str(limit), "--format=%H%x1f%s%x1f%b%x1e", cfg.ref)
+    if r.returncode != 0:
+        return []
+    out = []
+    for rec in r.stdout.split("\x1e"):
+        if not rec.strip():
+            continue
+        sha, subject, body = (rec.strip("\n").split("\x1f", 2) + ["", ""])[:3]
+        sha = sha.strip()
+        if sha:
+            out.append((sha, f"{subject}\n{body}"))
+    return out
+
+
+def _introduced_by(cfg: Config, sha) -> set:
+    """Commits a published tip introduced: the tip itself, plus what is reachable from it and not from its
+    first parent (a train merge's members, a squash's single commit). The root commit introduces only itself."""
+    parent = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{sha}^")
+    if parent.returncode != 0:
+        return {sha}
+    listed = git(cfg.repo, "rev-list", sha, "--not", parent.stdout.strip())
+    return {ln.strip() for ln in listed.stdout.splitlines() if ln.strip()} or {sha}
+
+
+def _merge_log_roots():
+    roots = []
+    if os.environ.get("AUTOCODER_TMP"):
+        roots.append(Path(os.environ["AUTOCODER_TMP"]))
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    roots.append(Path(state) / "autocoder" / "merge")
+    return roots
+
+
+def _green_gate_commits(cfg: Config) -> set:
+    """Commits a green gate published onto the integration tip.
+
+    Train gate logs (`gate_log_dir`) and worker merge logs (`autocoder-merge-*.log`) count. A log is green when
+    it has merge-to-integration's success line and does not say the gate failed (a red-base publish still says
+    `merged into`). Hex words in that log that resolve and sit on the integration tip are published trees; each
+    contributes the commits it introduced. The newest 40 logs are enough: under a hold only the lane lands."""
+    paths = []
+    if cfg.gate_log_dir and Path(cfg.gate_log_dir).is_dir():
+        paths.extend(Path(cfg.gate_log_dir).glob("*.log"))
+    for root in _merge_log_roots():
+        if root.is_dir():
+            paths.extend(p for p in root.glob("autocoder-merge-*.log") if p.is_file())
+    paths = sorted({p for p in paths if p.is_file()}, key=lambda p: p.stat().st_mtime, reverse=True)[:40]
+    found = set()
+    for path in paths:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if not _GATE_MERGED_RE.search(text) or _GATE_DID_NOT_PASS_RE.search(text):
+            continue
+        for token in HEX_WORD_RE.findall(text.lower()):
+            rev = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{token}^{{commit}}")
+            if rev.returncode != 0:
+                continue
+            full = rev.stdout.strip()
+            if git(cfg.repo, "merge-base", "--is-ancestor", full, cfg.ref).returncode != 0:
+                continue
+            found.update(_introduced_by(cfg, full))
+    return found
+
+
+def _lane_issue_blobs(cfg: Config) -> list:
+    """Lane-labelled issues in any state: `{blob, branches}`. `blob` is title, body and comments, so a READY
+    that names the red still counts after the lane issue has closed and its branch has been deleted."""
+    out, seen = [], set()
+    for label in cfg.lane_labels:
+        listed = tracker(cfg, "issue_list", "--state", "all", "--label", label, "--limit", "100")
+        for it in json.loads(listed.stdout or "[]"):
+            number = int(it["number"])
+            if number in seen:
+                continue
+            seen.add(number)
+            full = it if (it.get("body") or it.get("comments")) else json.loads(tracker(cfg, "issue_get", str(number)).stdout)
+            if "> **" not in (full.get("body") or "") and not full.get("comments"):
+                full = json.loads(tracker(cfg, "issue_get", str(number)).stdout)
+            blob = "\n".join([str(full.get("title") or ""), str(full.get("body") or "")]
+                             + [str(c.get("body") or "") for c in (full.get("comments") or []) if isinstance(c, dict)])
+            out.append({"blob": blob, "branches": branch_candidates(blob, {cfg.integration})})
+    return out
+
+
+def red_fixes_landed(cfg: Config, reds: list) -> dict:
+    """`{issue: sha}` of open reds whose fix has landed, when `redHold.releaseOn` is `landed`; {} otherwise.
+
+    A fix is a commit on the integration tip that a green gate published, and it is a lane or hotfix landing
+    that references the red. The commit message cites `#<red>` and names a `hotfix/` branch or the lane
+    issue's branch; or a lane-labelled issue cites `#<red>` and its READY branch's tip (or the sha its
+    close-out comment names, once the branch is deleted) is that published commit. A different commit that
+    only cites the red does not lift the hold, nor does a fix that is not on the tip or whose gate did not pass."""
+    if cfg.red_hold != "landed" or not reds:
+        return {}
+    commits = _integration_commits(cfg)
+    covered = _green_gate_commits(cfg)
+    lane = _lane_issue_blobs(cfg) if covered else []
+    out = {}
+    for red in reds:
+        number = red["number"]
+        sha = _landed_fix_sha(cfg, number, commits, covered, lane)
+        if sha:
+            out[number] = sha
+    return out
+
+
+def _landed_fix_sha(cfg: Config, number, commits, covered, lane) -> str:
+    """The published commit that is this red's lane or hotfix landing, or ""."""
+    citing = [b for b in lane if _mentions_issue(b["blob"], number)]
+    for csha, message in commits:
+        if csha not in covered or not _mentions_issue(message, number):
+            continue
+        # The commit itself is the hotfix landing, or it names the lane issue's branch (a squash message
+        # carries that branch). A different commit that merely cites the red — a documents landing — is not.
+        if _HOTFIX_BRANCH_RE.search(message) or any(br in message for b in citing for br in b["branches"]):
+            return csha
+    for b in citing:
+        for branch in b["branches"]:
+            tip = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{cfg.remote_ref(branch)}^{{commit}}").stdout.strip()
+            if tip and tip in covered:
+                return tip
+        # The branch is gone once the landing deletes it. The close-out comment names the published sha.
+        for token in HEX_WORD_RE.findall(b["blob"].lower()):
+            rev = git(cfg.repo, "rev-parse", "--verify", "--quiet", f"{token}^{{commit}}")
+            full = rev.stdout.strip()
+            if rev.returncode == 0 and full in covered:
+                return full
+    return ""
 
 
 def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_check=False, now=None, gates=(), hold_note=""):
@@ -1260,7 +1431,8 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     driver-fault / generator-failed   the project's mergeFault hook classified the real merge
     launched    this queue already launched this tip and no `retry <issue>` row says again
     held        a `redMaster` issue is open and this item is neither its fix, a lane-labelled item nor a documents-only
-                diff (`hold_note`, computed by plan_queue): waits, told once per tip and red set, never planned
+                diff (`hold_note`, computed by plan_queue): waits, told once per tip and red set, never planned.
+                `redHold.releaseOn: landed` drops a red from that set once its fix is on the tip with a green gate
     queue       launchable
     """
     branch = picked["branch"] if picked else None
@@ -1376,6 +1548,9 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
     in_flight = {int(x) for x in in_flight}
     gates = live_gates(cfg)   # once per listing: the host's live gates, which no item is planned beside
     reds = red_master_open(cfg)   # once per listing: the open red-integration issues (#7179), which hold every other item
+    lifted = red_fixes_landed(cfg, reds)   # releaseOn landed: a red whose fix is already on the tip with a green gate (#428)
+    holding = [red for red in reds if red["number"] not in lifted]
+    lifted_shas = [lifted[red["number"]] for red in reds if red["number"] in lifted]
 
     def key(it):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
@@ -1389,10 +1564,11 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         if picked is None:
             if mentions_ready(cfg, comments):   # the word appears, but no comment SAYS READY (an FYI, a quote, a note): say so
                 rows.append({"order": n, "state": "no-ready", "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, it["labels"]),
-                             "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": ""})
+                             "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": "",
+                             "red": [red["number"] for red in holding], "lifted": lifted_shas})
             continue   # labelled ready-for-review but says READY nowhere: not an item
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
-        hold_note = red_master_hold(cfg, reds, it["labels"], picked["branch"], cfg.remote_ref(picked["branch"])) if reds and picked.get("branch") else ""
+        hold_note = red_master_hold(cfg, holding, it["labels"], picked["branch"], cfg.remote_ref(picked["branch"])) if holding and picked.get("branch") else ""
         state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates, hold_note=hold_note)
         if not skip and state in ("queue", "launched"):
             found += 1
@@ -1402,7 +1578,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
-                     "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in reds]})
+                     "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in holding], "lifted": lifted_shas})
     return rows
 
 
@@ -1455,9 +1631,12 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, named, preflight, reds = {}, None, {"no-branch": [], "in-lane": [], "held": []}, 0, []
+    counts, nxt, named, preflight, reds, lifted = {}, None, {"no-branch": [], "in-lane": [], "held": []}, 0, [], []
     for r in rows:
         reds = r.get("red") or reds
+        for sha in r.get("lifted") or []:
+            if sha not in lifted:
+                lifted.append(sha)
         counts[r["state"]] = counts.get(r["state"], 0) + 1
         preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
@@ -1469,6 +1648,8 @@ def status_line(rows, when=None):
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     if reds:
         line += " | red master " + ",".join(f"#{n}" for n in reds)
+    for sha in lifted:
+        line += f" | hold lifted: fix landed {sha} (CI verdict pending)"
     for s in order:
         if counts.get(s):
             line += f" | {counts[s]} {s}" + (f" ({','.join(named[s])})" if s in named else "")

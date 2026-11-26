@@ -105,12 +105,14 @@ if [ -e "$FX_STATE/squash" ]; then
   git merge -q --squash "$TIP" >/dev/null
   if [ -s "$FX_STATE/squash-omit" ]; then while read -r p; do git rm -q --cached "$p"; rm -f "$p"; done < "$FX_STATE/squash-omit"; fi
   git -c user.name=g -c user.email=g@x commit -qm "squash of $1 (the branch contained merge commits)"
+  PUB=$(git rev-parse HEAD)
   git push -q origin HEAD:refs/heads/master || { echo "::error::push rejected"; exit 1; }
   git checkout -q master
 else
   git push -q origin "$TIP":refs/heads/master || { echo "::error::push rejected"; exit 1; }
+  PUB=$TIP
 fi
-echo "✅ Issue #0 merged into 'master' and verified: tests passed."
+echo "✅ Issue #0 merged into 'master' and verified: tests passed on the published tree ${PUB:0:8}."
 """
 
 TIMINGS_STUB = """#!/bin/bash
@@ -157,7 +159,7 @@ class Fx:
     def rc(self):
         return R.load_run_config(self.work)
 
-    def member(self, n, bad=False, labels=(), title=None):
+    def member(self, n, bad=False, labels=(), title=None, message=None):
         """A READY issue whose branch adds files/m<n>.txt (and bad/m<n>.txt when bad); `labels` beside ready-for-review."""
         name = f"feature/m{n}"
         sh("git", "checkout", "-q", "-B", name, "origin/master", cwd=self.work)
@@ -166,7 +168,7 @@ class Fx:
             (self.work / p).parent.mkdir(parents=True, exist_ok=True)
             (self.work / p).write_text(c)
         sh("git", "add", "-A", cwd=self.work)
-        sh("git", "commit", "-q", "-m", f"work {n}", cwd=self.work)
+        sh("git", "commit", "-q", "-m", message or f"work {n}", cwd=self.work)
         sh("git", "push", "-q", "-f", "origin", name, cwd=self.work)
         sh("git", "checkout", "-q", "master", cwd=self.work)
         r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", title or f"m{n}", "--body", "", "--label", "ready-for-review", *[x for lb in labels for x in ("--label", lb)], cwd=self.work)
@@ -380,6 +382,33 @@ def test_while_a_red_master_is_open_a_cycle_lands_only_the_hotfix_and_the_hold_l
     sh(sys.executable, str(ISSUES_FILE), "close", str(red), "--comment", "fixed", cwd=fx.work)
     code, _ = fx.run()
     assert code == 0 and fx.on_master(0) and fx.state_of(ordinary) == "CLOSED"
+
+
+def test_release_on_landed_lifts_the_hold_on_the_next_cycle_once_the_hotfix_gate_was_green(fx):
+    """#428: the first cycle still holds the ordinary READY (the fix is not on the tip yet) and lands only the
+    hotfix. The next cycle sees that commit on the tip with a green gate log, logs the lift naming the sha,
+    and lands the ordinary member without the red issue closing."""
+    fx.train["redMaster"] = {"label": "P0", "titlePrefix": "Red master:"}
+    fx.train["redHold"] = {"releaseOn": "landed"}
+    fx.write_config()
+    r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", "Red master: tests/x.test.ts fails at abcdef12", "--body", "", "--label", "P0", "--label", "bug", cwd=fx.work)
+    red = json.loads(r.stdout)["number"]
+    ordinary = fx.member(0)
+    hot = fx.member(1, labels=("hotfix",), message=f"hotfix/m1: fix #{red}")
+    logs = []
+    cyc = R.Cycle(fx.rc(), log=logs.append)
+    code, _ = cyc.run()
+    assert code == 0 and fx.on_master(1) and not fx.on_master(0)
+    assert [fx.state_of(hot), fx.state_of(ordinary)] == ["CLOSED", "OPEN"]
+    assert not any(ln.startswith("hold lifted:") for ln in logs)
+    logs.clear()
+    code, _ = cyc.run()
+    assert code == 0 and fx.on_master(0) and fx.state_of(ordinary) == "CLOSED"
+    lifted = [ln for ln in logs if ln.startswith("hold lifted: fix landed ") and ln.endswith("(CI verdict pending)")]
+    assert len(lifted) == 1
+    sha = lifted[0].split("fix landed ", 1)[1].split(" ", 1)[0]
+    subjects = sh("git", "log", "-n", "20", "--format=%H %s", "origin/master", cwd=fx.work).stdout
+    assert f"{sha} hotfix/m1: fix #{red}" in subjects
 
 
 def test_a_retest_that_proves_every_failing_file_red_on_the_base_is_a_red_base_whatever_the_gate_concluded(fx):

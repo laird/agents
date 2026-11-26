@@ -1570,3 +1570,139 @@ def test_red_master_guard_ignores_a_label_match_whose_title_is_not_the_prefix_an
     sh(sys.executable, str(ISSUES_FILE), "close", str(closed), "--comment", "fixed", cwd=fx.work)
     code = fx.ready("an ordinary change", "feature/code")
     assert fx.queue()[code]["state"] == "queue"
+
+
+def _hold_fx(root: Path, release=None):
+    """A red-master fixture whose gate logs live in <root>/gatelogs. `release` None omits redHold."""
+    logs = root / "gatelogs"
+    logs.mkdir(parents=True)
+    train = dict(RED)
+    train["gateLogDir"] = str(logs)
+    if release is not None:
+        train["redHold"] = {"releaseOn": release}
+    return Fixture(root, train), logs
+
+
+def _green_log(logs: Path, sha, *, passed=True):
+    line = f"✅ Issue #1 merged into 'master' and verified: tests passed on the published tree {sha[:8]}.\n"
+    if not passed:
+        line = ("merge-to-integration: RED-BASE -- origin/master (c44669ae) fails alone too with the same 1 named failure(s) "
+                "in t.test: red master, not this change's.\n" + line + "which the gate did not pass.\n")
+    (logs / "gate.log").write_text(line)
+
+
+def _land_fix(fx, red, message):
+    """Commit <message> on hotfix/urgent and merge it to master. Returns the fix commit's full sha."""
+    fx.branch("hotfix/urgent", {"src/fix.txt": "fixed\n"})
+    fx.commit_on("hotfix/urgent", {"src/fix.txt": "fixed-2\n"}, message=message)
+    sha = sh("git", "rev-parse", "origin/hotfix/urgent", cwd=fx.work).stdout.strip()
+    fx.land("hotfix/urgent")
+    return sha
+
+
+def test_red_hold_defaults_to_closed_and_closed_still_holds_after_a_green_landing(tmp_path):
+    """No redHold key, and releaseOn closed, keep today's hold until the red issue closes (#428)."""
+    for name, release in (("default", None), ("closed", "closed")):
+        fx, logs = _hold_fx(tmp_path / name, release)
+        fx.branch("feature/code", {"src/b.txt": "code\n"})
+        red = fx.issue("Red master: tests/x.test.ts fails at abcdef12", labels=("P0", "bug"))
+        code = fx.ready("an ordinary change", "feature/code")
+        sha = _land_fix(fx, red, f"hotfix/urgent: fix #{red}")
+        _green_log(logs, sha)
+        q = fx.queue()
+        assert q[code]["state"] == "held" and q[code]["red"] == [red] and q[code]["lifted"] == []
+        assert "until it closes" in q[code]["note"]
+        assert "hold lifted" not in T.status_line(list(q.values()), when="W")
+        sh(sys.executable, str(ISSUES_FILE), "close", str(red), "--comment", "fixed", cwd=fx.work)
+        assert fx.queue()[code]["state"] == "queue"
+
+
+def test_red_hold_landed_lifts_when_the_fix_is_on_the_tip_and_its_gate_was_green(tmp_path):
+    """releaseOn landed: a hotfix commit that cites the red, on the tip, published by a green gate, lifts the hold.
+    The status line names that sha. A commit that merely cites the red does not."""
+    fx, logs = _hold_fx(tmp_path, "landed")
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    fx.branch("feature/cite", {"src/cite.txt": "cite\n"})
+    red = fx.issue("Red master: tests/x.test.ts fails at abcdef12", labels=("P0", "bug"))
+    code = fx.ready("an ordinary change", "feature/code")
+    fx.ready("a commit that only cites the red", "feature/cite")
+    fx.commit_on("feature/cite", {"src/cite.txt": "cited\n"}, message=f"cite #{red}")
+    cite_sha = sh("git", "rev-parse", "origin/feature/cite", cwd=fx.work).stdout.strip()
+    fx.land("feature/cite")
+    _green_log(logs, cite_sha)
+    fx.branch("feature/queued", {"src/q.txt": "q\n"})
+    queued = fx.ready("a hotfix that has not landed", "feature/queued", labels=("ready-for-review", "hotfix"))
+    fx.comment(queued, f"READY on `feature/queued`\nfixes #{red}")
+    q = fx.queue()
+    assert q[code]["state"] == "held" and q[queued]["state"] == "queue" and q[code]["lifted"] == []
+    assert "until its fix is on the integration tip with a green gate" in q[code]["note"]
+    assert q[code]["lifted"] == []
+    sha = _land_fix(fx, red, f"hotfix/urgent: fix #{red}")
+    _green_log(logs, sha)
+    q = fx.queue()
+    assert q[code]["state"] == "queue" and q[code]["red"] == [] and q[code]["lifted"] == [sha]
+    line = T.status_line(list(q.values()), when="W")
+    assert f"hold lifted: fix landed {sha} (CI verdict pending)" in line
+    assert "red master" not in line
+    rows, fault = fx.plan()
+    assert fault is None and any(r.startswith(f"train\t{code}\t") for r in rows)
+
+
+def test_red_hold_landed_still_holds_when_the_fix_is_not_on_the_tip_or_the_gate_was_not_green(tmp_path):
+    fx, logs = _hold_fx(tmp_path / "off", "landed")
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    red = fx.issue("Red master: tests/x.test.ts fails at abcdef12", labels=("P0", "bug"))
+    code = fx.ready("an ordinary change", "feature/code")
+    fx.branch("hotfix/urgent", {"src/fix.txt": "fixed\n"})
+    fx.commit_on("hotfix/urgent", {"src/fix.txt": "fixed-2\n"}, message=f"hotfix/urgent: fix #{red}")
+    sha = sh("git", "rev-parse", "origin/hotfix/urgent", cwd=fx.work).stdout.strip()
+    _green_log(logs, sha)   # green, but the commit is only on the hotfix branch
+    q = fx.queue()
+    assert q[code]["state"] == "held" and q[code]["lifted"] == []
+
+    fx, logs = _hold_fx(tmp_path / "redgate", "landed")
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    red = fx.issue("Red master: tests/x.test.ts fails at abcdef12", labels=("P0", "bug"))
+    code = fx.ready("an ordinary change", "feature/code")
+    sha = _land_fix(fx, red, f"hotfix/urgent: fix #{red}")
+    _green_log(logs, sha, passed=False)   # on the tip, and the log names it, but the gate did not pass
+    q = fx.queue()
+    assert q[code]["state"] == "held" and q[code]["red"] == [red] and q[code]["lifted"] == []
+    assert "hold lifted" not in T.status_line(list(q.values()), when="W")
+
+
+def test_red_hold_landed_lifts_when_the_lane_ready_names_the_red(tmp_path):
+    """The commit message says nothing about the red; the lane issue's READY does, and that branch tip was published green."""
+    fx, logs = _hold_fx(tmp_path, "landed")
+    fx.branch("feature/code", {"src/b.txt": "code\n"})
+    fx.branch("feature/lane", {"src/lane.txt": "lane\n"})
+    red = fx.issue("Red master: tests/x.test.ts fails at abcdef12", labels=("P0", "bug"))
+    code = fx.ready("an ordinary change", "feature/code")
+    lane = fx.ready("the lane fix", "feature/lane", labels=("ready-for-review", "hotfix"))
+    fx.comment(lane, f"READY on `feature/lane`\nfixes #{red}")
+    sha = sh("git", "rev-parse", "origin/feature/lane", cwd=fx.work).stdout.strip()
+    fx.land("feature/lane")
+    _green_log(logs, sha)
+    q = fx.queue()
+    assert q[code]["state"] == "queue" and q[code]["lifted"] == [sha]
+    assert f"hold lifted: fix landed {sha} (CI verdict pending)" in T.status_line(list(q.values()), when="W")
+
+
+def test_red_hold_refuses_a_malformed_value_and_accepts_the_two_release_values(tmp_path):
+    fx = Fixture(tmp_path, RED)
+    base = json.loads((fx.work / ".autocoder.json").read_text())
+    for bad in ("landed", {"releaseOn": "soon"}, {"release": "landed"}, []):
+        base["train"]["redHold"] = bad
+        (fx.work / ".autocoder.json").write_text(json.dumps(base))
+        with pytest.raises(SystemExit, match="train.redHold"):
+            T.load_config(fx.work)
+    for release in ("closed", "landed"):
+        base["train"]["redHold"] = {"releaseOn": release}
+        (fx.work / ".autocoder.json").write_text(json.dumps(base))
+        assert T.load_config(fx.work).red_hold == release
+    base["train"]["redHold"] = {}
+    (fx.work / ".autocoder.json").write_text(json.dumps(base))
+    assert T.load_config(fx.work).red_hold == "closed"
+    del base["train"]["redHold"]
+    (fx.work / ".autocoder.json").write_text(json.dumps(base))
+    assert T.load_config(fx.work).red_hold == "closed"
