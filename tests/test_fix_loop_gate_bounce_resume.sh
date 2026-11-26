@@ -145,6 +145,11 @@ path, n = sys.argv[1], int(sys.argv[2])
 with open(path, "a", encoding="utf-8") as f:
     f.write("\n> **t** " + ("y" * n) + "\n")
 PY
+sz=$(wc -c < "$ISSUE_DIR_PATH/working/005.md")
+# A missing or unpadded file would still resolve as a normal bounce, and the
+# ARG_MAX assertions below would pass without ever exercising the limit.
+[ "$sz" -gt "$issue_bytes" ] && ok "large thread: issue file exceeds ARG_MAX ($sz bytes)" \
+  || bad "large thread: issue file was not padded ($sz bytes)"
 ERR="$TMP/bounce-large.err"
 OUT=$(bash "$SCRIPT_DIR/bounce-resume.sh" check 5 2>"$ERR"); RC=$?
 assert_eq "large thread: check exits 0" "0" "$RC"
