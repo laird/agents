@@ -672,6 +672,7 @@ This is a contract. Field set **version 1**:
 | `gate-queued` | `merge-launch.sh` | `attempt`, `sha` (the commit sent to the gate) |
 | `gate-start` | `merge-to-integration.sh`, once it holds the landing queue | `attempt` |
 | `gate-end` | `merge-to-integration.sh`, on every exit | `outcome` (as `merge-events.jsonl`), `attempt`, `duration_s`, `exit`, `reason` |
+| `plan-dropped` | `merge-train-run.py`, per candidate a plan could not judge | `state` (`unread`, `unlisted`, or the row's state of an item launchable at the tick and not in the plan; `missing` for one with no row), `reason` (the row's note) |
 | `landed` | `merge-to-integration.sh` | `sha`, `integration` |
 | `escalated` | `issue_escalate`, or `issue_update --add-label` of a blocking label (`add-blocking-label.sh`) | `label`, `reason` (first 200 characters) |
 | `decomposed` | `issue_update --add-label decomposed` | `children` (from `AUTOCODER_EVENT_CHILDREN`) |
@@ -790,7 +791,18 @@ and the hold lifts the moment the red closes), `unchecked`
 (`classifyLimit` launchable items were already found), `no-branch` (the READY names nothing on the remote),
 `foreign-branch` (the READY names a branch that EXISTS but does not belong to the issue, where `no-branch` names none that exists: no `issue-<n>` or `<n>-`
 in its name and no `stack:` line naming it with `#<n>`; never planned; a cycle tells the issue once per tip, naming
-the `stack:` line to write), `no-ready` (the label is set and a comment mentions READY, but none says READY first).
+the `stack:` line to write), `no-ready` (the label is set and the read holds comments, but none says READY first: a true
+no-READY, not retried), `unread` (the label is set and the READY could not be read: `issue_get` exited non-zero after the
+transport retries, or came back with no comment at all, which under transport pressure is a short answer rather than a
+verdict; the note carries the exit code and the comment count, and the item is read again next cycle), `unlisted` (a
+cycle only: the daemon's tick listed the item as launchable and the plan's own listing did not return it; a listing lost
+in transport or a label change). EVERY LABELLED ITEM HAS A ROW: a plan never passes one over silently. The planner logs
+one line per `unread`, `no-ready` and `unlisted` row (`plan: #N: unread: issue_get exit 0, 0 comment(s) read ...` in the
+daemon log, `# queue:` lines on stderr from `merge-train.py queue|plan`), the cycle logs every skip row of its plan
+(`plan skip: #N <branch>: <state>: <note>`) and keeps them in `plan.json` beside `cycle.json` (and in the cycle's own
+record), and compares the tick's launchable list with its own (`launchable at the tick but not launchable in this plan:
+#A (unread) #G (unlisted)`, `launchable in this plan but not at the tick: #J`). Each candidate the plan could not judge
+gets a `plan-dropped` row in the lifecycle ledger (`state`, `reason`), so the trace loop sees the drop as a step.
 
 **The planner** (`plan`) takes the next `size` launchable items, each merged for real into a scratch
 worktree onto the integration branch plus the train so far, so the output is a train that assembles:

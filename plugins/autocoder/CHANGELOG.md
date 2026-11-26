@@ -22,6 +22,23 @@ once (Version Management in `docs/maintaining.md`).
   `/propose-fix` keeps one id across a refine and re-runs only the candidate
   sha; a new repeat count or case set starts a new id with the worktree
   checked out at the baseline sha.
+- The merge-train plan no longer drops a labelled item silently when its tracker
+  read fails or comes back short under transport pressure. Every item the listing
+  returns gets a row: `unread` (the read exited non-zero after the transport
+  retries, or returned no comment at all; the note carries the exit code and the
+  comment count, and the item is read again next cycle) or `no-ready` (a complete
+  read whose comments never say READY: not retried), and the plan goes on past one
+  item's failure instead of aborting the cycle. A cycle the daemon launches receives
+  the tick's launchable list: items listed then and absent from the plan's own
+  listing get an `unlisted` row, every difference between the two lists is logged,
+  every skip row of the plan is logged and kept in `plan.json` (and the cycle's
+  record), and each candidate the plan could not judge gets a `plan-dropped`
+  lifecycle event (`state`, `reason`) for the trace loop. `TRACKER_TRANSPORT_ERROR`
+  covers the HTTP client's GraphQL forms (`Post "https://api.github.com/graphql":
+  dial tcp ...: i/o timeout`, a TLS handshake timeout, a reset, a bare `EOF`,
+  `error connecting to ...`, a `graphql:` error with a transport cause), so a dying
+  read is retried and never read as empty. The status line counts `unread` and
+  `unlisted` items by number.
 
 ## [4.71.0] - 2026-11-26
 
