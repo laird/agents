@@ -11,7 +11,9 @@ once (Version Management in `docs/maintaining.md`).
 - Grok CLI installs this repo's Claude Code marketplace. `/fix-loop` and
   `/monitor-loop` schedule with `scheduler_create` on Grok (its `/loop`), and
   `/stop-loop` deletes those jobs. Script lookup also searches
-  `~/.grok/installed-plugins`.
+  `~/.grok/installed-plugins`. Claude Code's Stop hook stays
+  `settings.json` only: `hooks/hooks.json` is not shipped, because Claude
+  would load it beside the existing hook.
 
 ## [4.68.0] - 2026-11-25
 

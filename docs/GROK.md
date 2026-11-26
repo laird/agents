@@ -50,9 +50,10 @@ sleep inside the hook is also cut off at the hook timeout (600 seconds unless
 set higher). Recurring Grok tasks themselves expire after 7 days; run
 `/fix-loop` again to renew.
 
-The plugin still ships `hooks/hooks.json` so a Claude Code stop-hook loop can
-run from the installed tree (`${CLAUDE_PLUGIN_ROOT}`, which Grok also sets).
-Grok does not read `plugins/autocoder/settings.json`.
+The plugin does not ship `hooks/hooks.json`. Claude Code loads that file for
+an enabled plugin, and `plugins/autocoder/settings.json` already defines the
+same Stop hook, so a second file would run the hook twice on Claude Code.
+Grok does not read `settings.json`. Its loops use `scheduler_create` instead.
 
 ## Where the scripts are
 
@@ -82,6 +83,6 @@ live install when `grok` is on `PATH`.
   enabled, which a `--trust` install does.
 - Modernize agents are spawnable only when their frontmatter has `description`.
   That field is set. `model` in a command's frontmatter is ignored by Grok.
-- If a Claude Code build loads both `hooks/hooks.json` and
-  `plugins/autocoder/settings.json`, a stop-hook loop can fire the Stop script
-  twice. Grok loads only `hooks/hooks.json`.
+- Grok does not load `plugins/autocoder/settings.json`, and this repo does not
+  add `hooks/hooks.json`. A Stop hook is not installed for Grok. `/fix-loop`
+  uses `scheduler_create` instead.

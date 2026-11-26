@@ -49,20 +49,46 @@ done
 grep -q 'scheduler_delete' plugins/autocoder/commands/stop-loop.md \
   && ok "stop-loop deletes Grok schedules" \
   || bad "stop-loop does not call scheduler_delete"
+# The Claude Code stop-hook script stays the original one. Grok steps come after it.
+python3 - << 'PY'
+import pathlib, sys
+text = pathlib.Path("plugins/autocoder/commands/stop-loop.md").read_text()
+start = text.index('LOOP_STATE_FILE=".claude/fix-loop.local.md"')
+start = text.rindex("```bash\n", 0, start)
+end = text.index("```", start + 4)
+block = text[start:end]
+required = [
+    'LOOP_STATE_FILE=".claude/fix-loop.local.md"',
+    'echo "🛑 Fix loop stopped"',
+    'echo "ℹ️  No active fix loop found"',
+    'echo "   To restart: /fix-loop"',
+]
+missing = [line for line in required if line not in block]
+if missing or "scheduler_delete" in block or ".grok/" in block:
+    print("FAIL: Claude stop-loop script changed:", missing)
+    sys.exit(1)
+print("PASS: Claude stop-loop script is unchanged")
+PY
+[ $? -eq 0 ] && ok "Claude stop-loop script unchanged" || bad "Claude stop-loop script changed"
 grep -q 'at most 8 times' plugins/autocoder/commands/fix-loop.md \
   && ok "fix-loop records why a Stop hook is not the Grok loop" \
   || bad "fix-loop does not explain the Grok Stop continuation cap"
 
+if [ -e plugins/autocoder/hooks/hooks.json ]; then
+  bad "hooks/hooks.json exists; Claude Code would load it beside settings.json"
+else
+  ok "no hooks/hooks.json, so Claude Code's plugin hooks are unchanged"
+fi
 python3 - << 'PY'
 import json, pathlib, sys
 fail = 0
-hooks = json.load(open("plugins/autocoder/hooks/hooks.json"))
-cmd = hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
-if "CLAUDE_PLUGIN_ROOT" not in cmd or "stop-hook.sh" not in cmd:
-    print("FAIL: hooks.json command is", cmd)
+settings = json.load(open("plugins/autocoder/settings.json"))
+cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+if cmd != "bash plugins/autocoder/hooks/stop-hook.sh":
+    print("FAIL: settings.json Stop command changed:", cmd)
     fail += 1
 else:
-    print("PASS: hooks.json Stop command uses CLAUDE_PLUGIN_ROOT")
+    print("PASS: settings.json Stop command is unchanged")
 for path in list(pathlib.Path("plugins/modernize/agents").glob("*.md")) + list(pathlib.Path(".agent/rules").glob("*.md")):
     text = path.read_text().split("---", 2)[1]
     if "description:" not in text:
