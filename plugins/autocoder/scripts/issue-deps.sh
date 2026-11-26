@@ -78,10 +78,8 @@ _ideps_parents() {
 # Fails open to {} (no gh, no repo, or a server without issue dependencies).
 _ideps_gh_blockers() {
   local repo
-  # No origin (a scratch repo, a test fixture): nothing to ask GitHub about.
-  git remote get-url origin >/dev/null 2>&1 || { echo '{}'; return; }
-  repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || { echo '{}'; return; }
-  [ -n "$repo" ] || { echo '{}'; return; }
+  # No origin (a scratch repo, a test fixture) or no gh: nothing to ask GitHub about.
+  repo=$(_ideps_gh_repo) || { echo '{}'; return; }
   gh api graphql --paginate -f owner="${repo%%/*}" -f name="${repo#*/}" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
@@ -101,9 +99,30 @@ _ideps_gh_blockers() {
 # _ideps_state_is_met <state> — true (exit 0) for a closed state, or none.
 _ideps_state_is_met() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    ''|closed|done|resolved|completed|removed) return 0 ;;
+    ''|closed|done|resolved|completed|removed|merged) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# _ideps_say_unreadable <n> — the one wording for a dependency the tracker could not read (#380).
+# A clean "no such issue" never reaches here: it is a met not-found. This line is a tracker error.
+_ideps_say_unreadable() {
+  echo "⏳ #$1 could not be read (a tracker error): counted as unmet until it can be" >&2
+}
+
+# _ideps_unreadable_lines <n>... — the batched read's line for each number it could not read.
+_ideps_unreadable_lines() { local n; for n in "$@"; do echo "$n unreadable -"; done; }
+
+# _ideps_gh_repo — the repository the GitHub readers ask about, resolved once per shell
+# (both readers run on every queue read; one `gh repo view`, not two). Empty with no origin
+# or no gh.
+_IDEPS_GH_REPO=""
+_ideps_gh_repo() {
+  if [ -z "$_IDEPS_GH_REPO" ]; then
+    git remote get-url origin >/dev/null 2>&1 || return 1
+    _IDEPS_GH_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || { _IDEPS_GH_REPO=""; return 1; }
+  fi
+  [ -n "$_IDEPS_GH_REPO" ] && printf '%s\n' "$_IDEPS_GH_REPO"
 }
 
 # _ideps_lookup <n> [<back>] — one backend read of issue <n>: prints
@@ -129,6 +148,66 @@ _ideps_lookup() {
     | jq -r --argjson back "${2:-0}" "$_IDEPS_JQ_DEFS"'
         "\(.state // "-" | if . == "" then "-" else . end) \(parent_num // "-") \(if (decl_deps | index($back)) then 1 else 0 end)"' 2>/dev/null)
   echo "${out:-unreadable - 0}"
+}
+
+# _ideps_gh_lookup_many <n>... — the GitHub backend's batched read of the
+# dependencies outside the open list: ONE GraphQL request per 100 numbers
+# (aliased `issueOrPullRequest(number:)` fields, so a dependency on a pull
+# request is read for its state: open gates, merged or closed frees, where the
+# per-number `gh issue view` could not read a pull request at all),
+# where `_ideps_lookup` costs one `gh issue view` per number. Measured on a
+# 500-issue backlog, the per-number reads took 0.7 to 0.9 s each and put the
+# claim tick past its ceiling; the batch is one round trip.
+#
+# Prints one line per number: "<n> <state> <parent>" ("-" for no parent).
+#   - a number GitHub answered: its state (OPEN, CLOSED, MERGED) and the
+#     "Sub-task of #N" parent read from its body;
+#   - a clean not-found (the alias is null AND its error is NOT_FOUND, "Could
+#     not resolve"): state "-", met as before (a typo'd number never wedges the
+#     queue);
+#   - anything else (no origin, no gh, no repo, a failed request, a null alias
+#     with any other error or none): state "unreadable", unmet and said (#380).
+#     A failed request marks ONLY its own chunk's numbers unreadable; the
+#     chunks GitHub answered keep their answers.
+_ideps_gh_lookup_many() {
+  local repo owner name n query aliases out chunk
+  [ $# -gt 0 ] || return 0
+  if ! repo=$(_ideps_gh_repo); then
+    echo "⏳ the dependencies could not be read: no origin or no gh here; each is counted as unmet" >&2
+    _ideps_unreadable_lines "$@"; return 0
+  fi
+  owner="${repo%%/*}"; name="${repo#*/}"
+  while [ $# -gt 0 ]; do
+    chunk=("${@:1:100}"); shift "${#chunk[@]}"
+    aliases=""
+    for n in "${chunk[@]}"; do
+      # Not an integer (jq 1.6 renders a pasted twenty-digit id as 1e+23) or past GraphQL's Int, which
+      # would fail the whole request's validation: a pasted id, not an issue, so a clean not-found.
+      case "$n" in ''|*[!0-9]*) echo "$n - -"; continue ;; esac
+      [ "${#n}" -le 10 ] && [ "$n" -le 2147483647 ] 2>/dev/null || { echo "$n - -"; continue; }
+      aliases="$aliases i$n: issueOrPullRequest(number: $n) { ... on Issue { number state body } ... on PullRequest { number state body } }"
+    done
+    [ -n "$aliases" ] || continue
+    query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) {$aliases } }"
+    # gh exits 1 when any alias is an error, with the data of the others beside the errors:
+    # read the data whatever the exit; only a missing repository object is a failed request.
+    out=$(gh api graphql -f owner="$owner" -f name="$name" -f query="$query" 2>/dev/null) || true
+    if ! printf '%s' "$out" | jq -e '.data.repository | type == "object"' >/dev/null 2>&1; then
+      echo "⏳ the batched read of ${#chunk[@]} dependencies failed (gh api graphql returned no data: a rate limit, an outage, or no gh); each is counted as unmet" >&2
+      _ideps_unreadable_lines "${chunk[@]}"
+      continue
+    fi
+    printf '%s' "$out" | jq -r "$_IDEPS_JQ_DEFS"'
+      ( [ (.errors // [])[] | select((.path // []) | length >= 2) | { key: (.path[1] | tostring), value: . } ] | from_entries ) as $errs
+      | .data.repository | to_entries[] | select(.key | test("^i[0-9]+$"))
+      | (.key | ltrimstr("i")) as $n
+      | if .value == null then
+          ( $errs[.key] // {} ) as $e
+          | if ($e.type // "") == "NOT_FOUND" or (($e.message // "") | test("could not resolve|not found|does not exist"; "i"))
+            then "\($n) - -" else "\($n) unreadable -" end
+        else "\($n) \(.value.state // "unreadable") \(.value | parent_num // "-")" end' 2>/dev/null \
+      || _ideps_unreadable_lines "${chunk[@]}"
+  done
 }
 
 # Cycles in a wait graph: {"<n>": [m, ...]} on stdin → one line per cycle,
@@ -168,24 +247,58 @@ _ideps_filter() {
   # Resolve each distinct body dependency once. One that is itself in this
   # (open) list is unmet without asking the backend; one outside it is read
   # once, for its state and for its parent (a sub-task being worked must not
-  # gate its parent).
-  for n in $(printf '%s' "$body_deps" | jq -r '[ .[][] ] | unique | .[]'); do
-    if printf '%s' "$issues" | jq -e --argjson n "$n" 'any(.[]; .number == $n or .number == ($n | tostring))' >/dev/null 2>&1; then
-      unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
-      continue
+  # gate its parent). On the GitHub backend the outside ones are read in ONE
+  # batched request (`_ideps_gh_lookup_many`); any other backend reads each.
+  # One jq pass splits the two sets, and one more adds the unmet ones, so a
+  # backlog of a hundred dependencies costs a handful of processes, not hundreds.
+  local split outside=() lines unmet_add=() seen split_failed="" prev
+  split=$(printf '%s' "$issues" | jq -c --argjson deps "$body_deps" '
+    [ .[].number | tonumber? // . ] as $open
+    | ([ $deps[][] ] | unique) as $all
+    | { inside: [ $all[] | select(IN($open[])) ], outside: [ $all[] | select(IN($open[]) | not) ] }' 2>/dev/null) || split=""
+  if [ -z "$split" ]; then
+    # The split could not be made: every dependency is unreadable, never silently met (#380).
+    split_failed=1
+    split=$(printf '%s' "$body_deps" | jq -c '{ inside: [], outside: ([ .[][] ] | unique) }' 2>/dev/null) || split='{"inside":[],"outside":[]}'
+  fi
+  prev="$unmet"
+  unmet=$(jq -n -c --argjson u "$unmet" --argjson s "$split" '$u + $s.inside | unique' 2>/dev/null) || unmet="$prev"
+  # No mapfile: macOS's /bin/bash is 3.2, where it is not a builtin and the list would silently stay empty.
+  while IFS= read -r n; do [ -n "$n" ] && outside+=("$n"); done < <(printf '%s' "$split" | jq -r '.outside[] | select(type == "number") | tostring' 2>/dev/null)
+  if [ ${#outside[@]} -gt 0 ]; then
+    if [ -n "$split_failed" ]; then
+      lines=$(_ideps_unreadable_lines "${outside[@]}")
+    else
+      case "$_ifns_BACKEND_BIN" in
+        *issues-gh.sh) lines=$(_ideps_gh_lookup_many "${outside[@]}") ;;
+        *) lines=$(for n in "${outside[@]}"; do read -r state parent _ <<<"$(_ideps_lookup "$n")"; echo "$n $state $parent"; done) ;;
+      esac
     fi
-    read -r state parent _ <<<"$(_ideps_lookup "$n")"
-    [ "$state" = "-" ] && state=""
-    if [ "$state" = "unreadable" ]; then
-      echo "⏳ #$n could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
-      unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
-      continue
+    seen=" "
+    while read -r n state parent _; do
+      case "$n" in ''|*[!0-9]*) continue ;; esac   # not a number: no line of ours; the number stays unanswered below
+      seen="$seen$n "
+      [ "$state" = "-" ] && state=""
+      if [ "$state" = "unreadable" ]; then
+        _ideps_say_unreadable "$n"; unmet_add+=("$n"); continue
+      fi
+      _ideps_state_is_met "$state" || unmet_add+=("$n")
+    done <<<"$lines"
+    # A number no line answered (a read that produced nothing) is unreadable, never silently met.
+    for n in "${outside[@]}"; do
+      case "$seen" in *" $n "*) ;; *) _ideps_say_unreadable "$n"; unmet_add+=("$n") ;; esac
+    done
+    # The parents the answered dependencies named, in one pass over the same lines.
+    prev="$parents"
+    parents=$(printf '%s\n' "$lines" | jq -R -s -c --argjson p "$parents" '
+      $p + ( [ split("\n")[] | select(length > 0) | split(" ")
+               | select(length >= 3 and (.[0] | test("^[0-9]+$")) and (.[2] | test("^[0-9]+$")))
+               | { key: .[0], value: (.[2] | tonumber) } ] | from_entries )' 2>/dev/null) || parents="$prev"
+    if [ ${#unmet_add[@]} -gt 0 ]; then
+      prev="$unmet"
+      unmet=$(printf '%s\n' "${unmet_add[@]}" | jq -R -s -c --argjson u "$unmet" '$u + (split("\n") | map(select(test("^[0-9]+$")) | tonumber)) | unique' 2>/dev/null) || unmet="$prev"
     fi
-    if [ "$parent" != "-" ] && [ -n "$parent" ]; then
-      parents=$(printf '%s' "$parents" | jq -c --arg k "$n" --argjson p "$parent" '. + {($k): $p}' 2>/dev/null || printf '%s' "$parents")
-    fi
-    _ideps_state_is_met "$state" || unmet=$(printf '%s' "$unmet" | jq -c --argjson n "$n" '. + [$n]')
-  done
+  fi
   result=$(printf '%s' "$issues" | jq -c --argjson deps "$body_deps" --argjson native "$native" \
                                         --argjson unmet "$unmet" --argjson parents "$parents" '
     [ .[] | (.number | tostring) as $k | (.number | tonumber? // .) as $self
@@ -220,8 +333,7 @@ issue_unmet_dependencies() {
     read -r state dparent back <<<"$(_ideps_lookup "$d" "$n")"
     [ "$state" = "-" ] && state=""
     if [ "$state" = "unreadable" ]; then
-      echo "⏳ #$d could not be read (a tracker error, or no such issue): counted as unmet until it can be" >&2
-      waiting+=("#$d"); continue
+      _ideps_say_unreadable "$d"; waiting+=("#$d"); continue
     fi
     [ "$dparent" = "$n" ] && continue        # its own sub-task
     _ideps_state_is_met "$state" && continue
