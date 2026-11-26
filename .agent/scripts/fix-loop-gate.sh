@@ -127,6 +127,14 @@ if [ -f "${SCRIPT_DIR}/worker-state-fns.sh" ]; then
     case "$RESUME_RC" in
       0) printf '%s\n' "$RESUME_PLAN" > "$WORK_JSON"; exit 0 ;;
       2) exit 1 ;;   # holding an issue that cannot resume this tick: never claim over it
+      1) # issue_get failed and the record was kept (#362). Falling through
+         # would claim fresh work and overwrite it. A cleared record (the
+         # claim has ended) is not this case: the file is gone, so claim.
+         if [ -f "$(worker_state_file 2>/dev/null || echo /nonexistent/x)" ]; then
+           echo "fix-loop-gate: resume read failed; holding the record and not claiming" >&2
+           exit 1
+         fi
+         ;;
     esac
   fi
 fi

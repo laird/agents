@@ -69,6 +69,12 @@ once (Version Management in `docs/maintaining.md`).
   after the claim comment was posted, and the gate treated that crash as a
   lost race, so the `working` label stayed. The JSON is read from a file. A
   check that does not run releases the claim; a lost race still does not.
+- The fix-loop gate no longer claims a new issue when the resume read fails
+  (#362). `worker_resume_plan` keeps the worktree's record and returns 1 on a
+  tracker hiccup; the gate treated that like "nothing held" and overwrote the
+  record with a fresh claim. A kept record now ends the tick with nothing
+  claimed. A record the resume step already cleared (the claim ended) still
+  falls through to a new claim.
 
 - The merge train's landing proof no longer reports a member as not landed when
   a co-member's edit of the same source file conflicts on re-merge and a

@@ -204,6 +204,15 @@ rm -f "$WORK_JSON"
 AUTOCODER_RESUME_OWN_CLAIM=0 AUTOCODER_WORK_JSON="$WORK_JSON" bash "$SCRIPT_DIR/fix-loop-gate.sh" >/dev/null 2>&1
 assert_eq "with resume disabled the gate claims new work" "16" "$(plan .issue)"
 
+# ── 8. A failed resume read does not claim over the held record (#362) ─────
+reset
+add_issue 17 "P0"
+echo "999 1 -" > "$STATE"
+assert_eq "hiccup: gate claims nothing" "1" "$(gate)"
+assert_eq "hiccup: the record is kept" "999" "$(cut -d' ' -f1 "$STATE" 2>/dev/null)"
+assert_eq "hiccup: no work plan" "" "$(plan .issue)"
+[ -f "$ISSUE_DIR_PATH/open/017.md" ] && ok "hiccup: #17 left open" || bad "hiccup: #17 was claimed"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
