@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.71.0] - 2026-11-26
+
 ### Added
 
 - The merge train can lift a red-integration hold when the red's fix has landed
