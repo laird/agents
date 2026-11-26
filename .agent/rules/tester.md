@@ -1,5 +1,6 @@
 ---
 name: tester
+description: Quality assurance specialist for testing, quality gates, and fix-and-retest cycles.
 version: 0.1
 type: agent
 ---

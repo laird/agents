@@ -18,6 +18,7 @@ Pick your platform:
 | I'm using… | Go to |
 |------------|-------|
 | **Claude Code** | [Claude Code install](#claude-code) |
+| **Grok** | [Grok](docs/GROK.md) |
 | **Gemini CLI / Antigravity** | [Antigravity Support](#antigravity-support) |
 | **OpenAI Codex CLI** | [Codex Support](#codex-support) |
 | **Droid (Factory)** | [Droid (Factory) Support](#droid-factory-support) |
@@ -45,6 +46,7 @@ This repository supports multiple agentic platforms. Please refer to the corresp
 | Platform | Directory | Documentation |
 |----------|-----------|---------------|
 | **Claude Code** | `.claude-plugin/` and `plugins/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
+| **Grok** | the Claude marketplace, plus `plugins/*/.grok-plugin/plugin.json` | [docs/GROK.md](docs/GROK.md) |
 | **Antigravity** | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
 | **Pi** | `.pi/` with `skills/`, `prompts/` (slash commands) and `scripts/` | [pi.dev](https://pi.dev) |
 | **Gemini CLI skill extensions** | `skills/` with per-skill `gemini-extension.json` and `GEMINI.md` | [skills/autocoder/README.md](skills/autocoder/README.md), [skills/modernize/README.md](skills/modernize/README.md) |

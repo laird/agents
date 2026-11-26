@@ -1,5 +1,6 @@
 ---
 name: documentation
+description: Documentation specialist for changelogs, migration guides, API docs, and ADR summaries.
 version: 0.1
 type: agent
 ---

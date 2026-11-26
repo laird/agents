@@ -6,6 +6,13 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Grok CLI installs this repo's Claude Code marketplace. `/fix-loop` and
+  `/monitor-loop` schedule with `scheduler_create` on Grok (its `/loop`), and
+  `/stop-loop` deletes those jobs. Script lookup also searches
+  `~/.grok/installed-plugins`.
+
 ## [4.68.0] - 2026-11-25
 
 ### Added

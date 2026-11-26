@@ -1,6 +1,6 @@
 # Stop Fix Loop
 
-Stops the infinite `/fix-loop` by removing the state file.
+Stops the infinite `/fix-loop`. Also follow `plugins/autocoder/commands/stop-loop.md` when `.grok/autocoder-loops.json` exists or `scheduler_list` shows a fix or monitor schedule: those jobs are how Grok keeps a loop alive.
 
 ## Usage
 

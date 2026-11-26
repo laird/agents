@@ -1,5 +1,6 @@
 ---
 name: architect
+description: Architectural decision-making specialist for software projects.
 version: 0.1
 type: agent
 ---

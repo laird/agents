@@ -1,5 +1,6 @@
 ---
 name: security
+description: Security vulnerability assessment and remediation specialist.
 version: 0.1
 type: agent
 ---

@@ -93,6 +93,7 @@ files were removed for this reason — they were maintained by hand and read by 
 | Platform | Manifest it reads | Per-plugin manifest |
 |---|---|---|
 | Claude Code | `.claude-plugin/marketplace.json` | none — the marketplace entry *is* the manifest |
+| Grok | the same `.claude-plugin/marketplace.json` (Grok reads it when `.grok-plugin/marketplace.json` is absent) | `plugins/<name>/.grok-plugin/plugin.json` (name and version; without it Grok installs the plugin as `<name>-<hash>`) |
 | Codex | `.agents/plugins/marketplace.json` | `codex-plugins/<name>/.codex-plugin/plugin.json` (carries the version) |
 | Droid | `.factory-plugin/marketplace.json` | `.factory-plugin/plugins/<name>/plugin.json` |
 | Antigravity | `.agent/` (rules + workflows, no marketplace) | — |
@@ -109,6 +110,7 @@ versions behind because only the Claude one was bumped.
 2. `.factory-plugin/marketplace.json` — root `version` **and** each `plugins[].version`
 3. `.factory-plugin/plugins/<name>/plugin.json`
 4. `codex-plugins/<name>/.codex-plugin/plugin.json`
+5. `plugins/<name>/.grok-plugin/plugin.json`
 
 Both root marketplace versions must match; the update mechanism keys on them. Run
 `bash tests/test_manifest_versions.sh` after any bump.
