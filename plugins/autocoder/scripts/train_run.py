@@ -108,6 +108,16 @@ PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+")
 IDENT = ["-c", "user.name=autocoder-train", "-c", "user.email=autocoder-train@localhost"]
 
 
+def _lifted_shas(rows):
+    """The shas a `redHold.releaseOn: landed` queue has already lifted, in first-seen order."""
+    out = []
+    for r in rows:
+        for sha in r.get("lifted") or []:
+            if sha not in out:
+                out.append(sha)
+    return out
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -502,6 +512,8 @@ class Cycle:
             self.log(f"ABORT: git fetch {c.remote} failed in {c.repo} before the plan: {f.stderr.strip()}")
             return 3, []
         rows = T.plan_queue(c)
+        for sha in _lifted_shas(rows):
+            self.log(f"hold lifted: fix landed {sha} (CI verdict pending)")
         self.note_readys(rows)
         self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
@@ -1256,6 +1268,9 @@ class Daemon:
         launchable = [r for r in rows if r["state"] == "queue"]
         held = [r for r in rows if r["state"] == "held"]
         if not launchable:
+            # A lift with nothing else launchable is still told: the hold ended (#428). A cycle logs its own.
+            for sha in _lifted_shas(rows):
+                self.log(f"hold lifted: fix landed {sha} (CI verdict pending)")
             # #7179: the status says what holds the queue, and the log says it once per change.
             note = f"{len(held)} held: red master " + ",".join(f"#{n}" for n in (held[0].get("red") or [])) if held else ""
             if note and note != getattr(self, "held_said", ""):
