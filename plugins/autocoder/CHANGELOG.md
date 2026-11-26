@@ -8,6 +8,16 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- `--agent grok` (and `AUTOCODER_AGENT=grok`) starts a Grok CLI worker or manager
+  in the same worktree and issue as the other agents. The launch command is
+  `grok --trust`: that flag is the folder-trust exception (it records
+  `~/.grok/trusted_folders.toml`). The launcher still does not type an answer
+  into a consent or permission dialog, and it does not pass `--always-approve`,
+  `--yolo`, or `--dangerously-skip-permissions`. Commands are the bare names
+  Grok lists: `/fix N`, `/fix-loop`, `/monitor-loop`, and
+  `/manager-resume --non-interactive`. Herdr registers the pane with
+  `herdr agent start --kind grok`.
+
 - Grok CLI installs this repo's Claude Code marketplace. `/fix-loop` and
   `/monitor-loop` schedule with `scheduler_create` on Grok (its `/loop`), and
   `/stop-loop` deletes those jobs. Script lookup also searches

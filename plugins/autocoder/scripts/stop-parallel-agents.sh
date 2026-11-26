@@ -55,9 +55,9 @@ PROJECT_NAME=$(basename "$(pwd)")
 # ============================================================================
 if [ "$MUX" = "tmux" ]; then
 
-  # Try both claude- and gemini- prefixed sessions
+  # Session names are <agent>-<project>. Cover every agent the launchers accept.
   KILLED=false
-  for PREFIX in claude gemini; do
+  for PREFIX in claude gemini codex droid pi grok; do
     SESSION_NAME="${PREFIX}-${PROJECT_NAME}"
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
       echo "🛑 Killing tmux session: $SESSION_NAME"
@@ -70,7 +70,7 @@ if [ "$MUX" = "tmux" ]; then
     echo "No parallel agent sessions found for $PROJECT_NAME"
     echo ""
     # Show any agent sessions that do exist
-    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini)-" || true)
+    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini|codex|droid|pi|grok)-" || true)
     if [ -n "$AGENT_SESSIONS" ]; then
       echo "📋 Other agent sessions:"
       echo "$AGENT_SESSIONS" | sed 's/^/   /'

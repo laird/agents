@@ -5,7 +5,7 @@
 #
 # Options:
 #   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
-#   --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)
+#   --agent claude|gemini|codex|droid|grok  Agent framework (default: auto-detect)
 #   --no-worktrees         Run in the same directory as the main repo
 #
 # Examples:
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     --no-worktrees) USE_WORKTREES=false; shift ;;
     --no-attach) NO_ATTACH=true; shift ;;
     -h|--help)
-      echo "Usage: add-worker.sh [count] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--no-worktrees]"
+      echo "Usage: add-worker.sh [count] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--no-worktrees]"
       echo ""
       echo "Adds and starts one or more workers in an existing swarm."
       exit 0
@@ -81,7 +81,7 @@ fi
 
 # ── Auto-detect agent framework ──────────────────────────────────────────────
 if [ -z "$AGENT" ]; then
-  for a in claude gemini codex droid; do
+  for a in claude gemini codex droid grok; do
     command -v "$a" &>/dev/null && { AGENT="$a"; break; }
   done
   [ -z "$AGENT" ] && { echo "❌ No agent framework found" >&2; exit 1; }

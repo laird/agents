@@ -74,10 +74,84 @@ Against `grok` 1.0.92, in a throwaway `HOME`:
 `tests/test_grok_marketplace.sh` repeats the manifest and loop checks, and the
 live install when `grok` is on `PATH`.
 
-## Gaps
+## Swarm launch
 
-- Swarm launch (`start-parallel --agent`) still takes `claude`, `gemini`,
-  `codex`, `droid`, or `pi`. It does not start `grok` workers.
+`--agent grok` and `AUTOCODER_AGENT=grok` are accepted everywhere the other
+agents are: `start-parallel-agents.sh`, `add-worker.sh`, `start-workers.sh`,
+`restart-worker.sh`, `remove-worker.sh`, `autocoder-ctl start`, and the herdr
+path (`herdr agent start <name> --kind grok --pane <id> -- --trust`).
+
+The binary is started as an interactive TUI, the same shape as Gemini, so
+herdr can list the pane:
+
+```bash
+grok --trust
+```
+
+Then the launcher types a bare command. `grok inspect` lists this plugin's
+user-invocable commands without the `autocoder:` prefix:
+
+| Role | Command |
+|---|---|
+| Worker loop | `/fix-loop` |
+| One issue | `/fix N` |
+| Manager loop | `/monitor-loop` |
+| Manager after a reset or reboot | `/manager-resume --non-interactive`, then `/monitor-loop` |
+
+Claude is still `/autocoder:fix` and `/autocoder:fix-loop`. `worktree-issue.sh`,
+the idle sentinel, and `reboot-recover.sh` already switch on
+`AUTOCODER_AGENT`: anything other than `claude` gets the bare names.
+
+### Folder trust, and nothing else
+
+Launchers do not type an answer into a consent or folder-trust dialog
+(`send_agent_prompt` returns 3 and leaves the pane alone). Grok is the
+exception for **folder trust only**, and the exception is the flag, not a
+keystroke. [docs.x.ai hooks](https://docs.x.ai/build/features/hooks) says
+project hooks require trust, granted with `/hooks-trust` or by launching with
+`--trust`. The decision is stored in `~/.grok/trusted_folders.toml` and covers
+project hooks, project MCP, and LSP.
+
+Tool-permission prompts are not auto-answered. The launch command does not
+include `--always-approve`, `--yolo`, or `--dangerously-skip-permissions`
+(aliases documented on the [CLI reference](https://docs.x.ai/build/cli/reference)
+and [headless](https://docs.x.ai/build/cli/headless-scripting) pages). The
+user's own `[ui] permission_mode` in `~/.grok/config.toml` applies. A dialog
+that still shows is left for a person.
+
+### Fail a pane over
+
+When Claude Code is out of quota, restart that pane's worktree on Grok. The
+worktree, branch, and `working` claim stay:
+
+```bash
+restart-worker.sh --worktree /path/to/repo-wt-2 --mux herdr --agent grok
+```
+
+A new swarm on the same tracker:
+
+```bash
+start-parallel-agents.sh 3 --mux herdr --agent grok
+```
+
+Auto-detect still prefers `claude`, then `gemini`, `codex`, `droid`, `pi`,
+and only then `grok`. Pass `--agent grok` to fail over.
+
+### What was not verified here
+
+- `grok --trust` is documented on docs.x.ai (hooks). The short CLI reference's
+  common-flags table does not list it. This checkout did not re-run
+  `grok 1.0.92 --help`, so the flag was not confirmed against that binary.
+- The exact wording of Grok's folder-trust dialog was not captured. If
+  `--trust` does not suppress it, the launcher still will not type "yes".
+- `--permission-mode` (`default`, `acceptEdits`, `auto`, `dontAsk`,
+  `bypassPermissions`, `plan`) is described in the enterprise and permissions
+  docs. The launcher does not set it.
+- `/monitor-loop`'s Claude text still shows `/autocoder:fix` in its dispatch
+  examples. On Grok, send `/fix`. The routing section of that command says so.
+
+## Other gaps
+
 - Grok runs a scheduled prompt in a background subagent, not as the next turn
   of the session that called `/fix-loop`. The subagent must have the plugin
   enabled, which a `--trust` install does.

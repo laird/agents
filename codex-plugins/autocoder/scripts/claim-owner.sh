@@ -14,7 +14,7 @@
 #                             that outlives the agent sessions it starts. Used
 #                             only while that pid is alive.
 #   3. The nearest ancestor whose command, or its first two argv words, is an
-#      agent CLI (claude, codex, droid, gemini, pi) — the interactive session a /loop gate runs inside.
+#      agent CLI (claude, codex, droid, gemini, pi, grok) — the interactive session a /loop gate runs inside.
 #   4. The claimer's parent (the gate's caller), as a last resort.
 #
 # Usage (sourced, as fix-loop-gate.sh does):
@@ -34,7 +34,7 @@
 #   wt=<path>      the worktree the claim was made from
 
 # Agent CLIs whose process is the long-lived owner of an interactive session.
-CLAIM_OWNER_AGENTS="${CLAIM_OWNER_AGENTS:-claude codex droid gemini pi}"
+CLAIM_OWNER_AGENTS="${CLAIM_OWNER_AGENTS:-claude codex droid gemini pi grok}"
 
 # _co_comm <pid> — the process's command name, basename only.
 _co_comm() {

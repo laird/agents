@@ -939,6 +939,28 @@ echo "$OUT" | grep -q "autocoder:manager-resume" \
   && bad "gemini prompt uses the claude-only autocoder: namespace" \
   || ok "gemini prompt avoids the claude-only autocoder: namespace"
 
+# Grok is the same non-argv shape: bare /manager-resume --non-interactive, then /monitor-loop.
+P=$(new_project grokwake file)
+ISSUE_DIR_PATH="$P/.issues" python3 "$SCRIPTS/issues-file.py" create \
+  --title "grok wake" --body "b" >/dev/null
+OUT=$(run_sentinel "$BASEPATH" AUTOCODER_MUX=tmux AUTOCODER_AGENT=grok \
+  -- --dry-run --project "$P" 2>&1)
+echo "$OUT" | grep -q "grok --trust" \
+  && ok "grok wake launches grok --trust" \
+  || bad "grok dry-run did not launch grok --trust: $OUT"
+echo "$OUT" | grep -q "<send prompt> Run /manager-resume --non-interactive" \
+  && ok "grok wake types bare /manager-resume --non-interactive" \
+  || bad "grok wake prompt wrong or missing: $OUT"
+echo "$OUT" | grep -q "Then run /monitor-loop" \
+  && ok "grok wake continues with bare /monitor-loop" \
+  || bad "grok wake prompt lacks /monitor-loop: $OUT"
+echo "$OUT" | grep -q "autocoder:" \
+  && bad "grok prompt uses the claude-only autocoder: namespace" \
+  || ok "grok prompt avoids the claude-only autocoder: namespace"
+echo "$OUT" | grep -Eq -- '--always-approve|--yolo|dangerously-skip-permissions' \
+  && bad "grok wake auto-approves tool permissions" \
+  || ok "grok wake does not pass a tool-permission bypass flag"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 12. Failed-wake pane cleanup (#28): when the sentinel created the manager
 #     window this tick and the spawn dies, the failure path removes that

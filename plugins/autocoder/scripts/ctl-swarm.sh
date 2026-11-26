@@ -149,6 +149,7 @@ _ctls_plugin() {  # <agent> <repo>
     claude|droid) ;;
     gemini) jq -cn --arg a "$agent" '{agent: $a, status: "skipped", reason: "gemini loads the workflows from the repo; nothing to install"}'; return 0 ;;
     codex)  jq -cn --arg a "$agent" '{agent: $a, status: "skipped", reason: "codex skills are installed by scripts/install-codex.sh, not per swarm"}'; return 0 ;;
+    grok)   jq -cn --arg a "$agent" '{agent: $a, status: "skipped", reason: "grok installs this repo'\''s Claude marketplace (grok plugin install autocoder --trust); see docs/GROK.md"}'; return 0 ;;
     *)      jq -cn --arg a "$agent" '{agent: $a, status: "skipped", reason: ("no plugin install for " + $a)}'; return 0 ;;
   esac
   if ! command -v "$agent" >/dev/null 2>&1; then
@@ -176,7 +177,7 @@ _ctls_pos()    { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
 # ── start ─────────────────────────────────────────────────────────────────────
 ctl_verb_start() {
   local repo="" workers="" agent="" mux="" route="" paused=false plugin=true wait="$AUTOCODER_CTL_PROMPT_WAIT"
-  local usage="usage: start <repo> [--workers N] [--agent claude|codex|gemini|droid|pi] [--mux tmux|cmux|herdr] [--route self|manager] [--paused] [--no-plugin-install] [--prompt-wait S]"
+  local usage="usage: start <repo> [--workers N] [--agent claude|codex|gemini|droid|pi|grok] [--mux tmux|cmux|herdr] [--route self|manager] [--paused] [--no-plugin-install] [--prompt-wait S]"
   while [ $# -gt 0 ]; do
     case "$1" in
       --workers|--agent|--mux|--route|--prompt-wait)
@@ -198,7 +199,7 @@ ctl_verb_start() {
   done
   [ -n "$repo" ] || { ctl_usage "$usage"; return; }
   [ -z "$workers" ] || _ctls_pos "$workers" || { ctl_usage "start: --workers must be a positive integer, not '$workers'"; return; }
-  case "$agent" in ""|claude|codex|gemini|droid|pi) ;; *) ctl_usage "start: unknown agent '$agent'"; return ;; esac
+  case "$agent" in ""|claude|codex|gemini|droid|pi|grok) ;; *) ctl_usage "start: unknown agent '$agent'"; return ;; esac
   case "$mux" in ""|tmux|cmux|herdr) ;; *) ctl_usage "start: unknown multiplexer '$mux'"; return ;; esac
   case "$route" in ""|self|manager) ;; *) ctl_usage "start: --route is self or manager, not '$route'"; return ;; esac
   _ctls_nonneg "$wait" || { ctl_usage "start: --prompt-wait must be a whole number of seconds"; return; }
@@ -212,8 +213,8 @@ ctl_verb_start() {
   # and the swarm use the same one.
   if [ -z "$agent" ]; then
     local a
-    for a in claude gemini codex droid pi; do command -v "$a" >/dev/null 2>&1 && { agent="$a"; break; }; done
-    [ -n "$agent" ] || { ctl_fail "$repo" "no agent CLI found on PATH (claude, gemini, codex, droid, pi)"; return; }
+    for a in claude gemini codex droid pi grok; do command -v "$a" >/dev/null 2>&1 && { agent="$a"; break; }; done
+    [ -n "$agent" ] || { ctl_fail "$repo" "no agent CLI found on PATH (claude, gemini, codex, droid, pi, grok)"; return; }
   fi
 
   local plugin_json='{"status": "skipped", "reason": "--no-plugin-install"}'

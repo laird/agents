@@ -54,6 +54,11 @@ hasnt "main checkout not listed" "$R${TAB}" "$OUT"
 OUT=$(AUTOCODER_AGENT=gemini bash "$SCRIPT" --project "$R")
 has "non-claude agent gets bare names" "${TAB}/fix 2" "$OUT"
 
+OUT=$(AUTOCODER_AGENT=grok bash "$SCRIPT" --project "$R")
+has "grok claimed worktree gets bare /fix-loop" "${TAB}claimed${TAB}/fix-loop" "$OUT"
+has "grok open issue gets bare /fix N" "${TAB}open${TAB}/fix 2" "$OUT"
+hasnt "grok does not use the autocoder: prefix" "/autocoder:" "$OUT"
+
 OUT=$(bash "$SCRIPT" --project "$R" --orphan-claims)
 has "claim with no worktree on its branch is an orphan" "6${TAB}-" "$OUT"
 hasnt "claim whose worktree exists is not an orphan" "1${TAB}" "$OUT"
