@@ -218,7 +218,10 @@ resolve_worker_launch() {
         # is --ask-for-approval never, which is the same idea: do not stop for a
         # tool-approval prompt. The shell-loop fallback sets the same flag on
         # `codex exec` (CODEX_FLAGS_DEFAULT in codex-autocoder.sh).
-        AGENT_LAUNCH_CMD="codex --ask-for-approval never"
+        # workspace-write can write the worktree cwd but not a linked worktree's
+        # git dir, so git commit cannot create index.lock. --add-dir makes the
+        # common git dir writable (index, objects, and worktree metadata).
+        AGENT_LAUNCH_CMD="codex --ask-for-approval never --add-dir /home/laird/src/agents/.git"
         WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$repo_root/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, run the repo tests, commit, and land with merge-to-integration.sh so the gate merges onto the integration branch. Do not open a pull request. Remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
         WORKER_LAUNCH_MODE="interactive"
         WORKER_COMMAND_MODE="agent-input"

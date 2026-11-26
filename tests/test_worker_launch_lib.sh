@@ -126,7 +126,7 @@ rm -f /tmp/codex-goals-probe-codex-cli-0.0.0-test-goals
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Codex with goal support launches interactively"
 assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Codex with goal support receives agent input"
-assert_eq "$AGENT_LAUNCH_CMD" "codex --ask-for-approval never" "Codex launch asks for approval never"
+assert_eq "$AGENT_LAUNCH_CMD" "codex --ask-for-approval never --add-dir /home/laird/src/agents/.git" "Codex launch asks for approval never and can write the agents git dir"
 case "$WORKER_CMD$MANAGER_CMD" in
   *'gh pr create'*|*'close or PR'*) echo "FAIL: Codex goal tells the swarm to open a PR" >&2; exit 1 ;;
 esac
