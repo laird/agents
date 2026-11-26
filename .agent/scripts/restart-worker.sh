@@ -11,7 +11,11 @@
 # worker-health.sh flags a worker as UNHEALTHY (stalled AND high memory).
 #
 # Usage:
-#   restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok]
+#   restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--prompt TEXT]
+#
+# --prompt replaces the agent's usual loop command. Quota failover passes
+# /fix N or /autocoder:fix N so the new agent resumes that issue. The worktree
+# is never git-reset: the branch, uncommitted files, and working claim stay.
 #
 # Examples:
 #   restart-worker.sh --worktree /Users/me/src/agents-wt-2
@@ -31,14 +35,16 @@ AGENTS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MUX=""
 AGENT=""
 WORKTREE=""
+PROMPT_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mux)      MUX="$2";      shift 2 ;;
     --agent)    AGENT="$2";    shift 2 ;;
     --worktree) WORKTREE="$2"; shift 2 ;;
+    --prompt)   PROMPT_OVERRIDE="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok]"
+      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--prompt TEXT]"
       exit 0
       ;;
     *)
@@ -88,6 +94,17 @@ source "$SCRIPT_DIR/issue-source-lib.sh"
 source "$SCRIPT_DIR/swarm-manifest-lib.sh"
 resolve_worker_launch "$AGENT" "$AGENTS_REPO_ROOT" "$MUX" || exit 1
 
+# Quota failover passes the resume slash command. A shell-loop agent (pi,
+# droid, codex without goals) resumes through that loop instead; typing a
+# slash command at its shell would not start it.
+if [ -n "$PROMPT_OVERRIDE" ]; then
+  if [ "$WORKER_COMMAND_MODE" != "agent-input" ]; then
+    echo "❌ --prompt is only for an interactive agent; $AGENT resumes with its shell loop" >&2
+    exit 1
+  fi
+  WORKER_CMD="$PROMPT_OVERRIDE"
+fi
+
 PROJECT_ROOT=$(resolve_main_worktree)
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 SESSION_NAME="${AGENT}-${PROJECT_NAME}"
@@ -120,18 +137,19 @@ echo "♻️  Restarting worker in worktree: $WORKTREE"
 # ── tmux: respawn the pane whose cwd is the worktree ─────────────────────────
 if [ "$MUX" = "tmux" ]; then
 
-  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    echo "❌ No tmux session '$SESSION_NAME' found." >&2
-    exit 1
-  fi
-
-  # Find the pane whose current path matches the worktree.
+  # Find the pane whose current path matches the worktree, in any session.
+  # A quota failover changes the agent, so the live pane may still sit in the
+  # previous agent's session (<old>-<project>) rather than $SESSION_NAME.
   PANE=$(tmux list-panes -a \
       -F '#{pane_current_path}|#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
     | awk -F'|' -v w="$WORKTREE" '$1==w {print $2; exit}')
 
   if [ -z "$PANE" ]; then
-    echo "❌ No tmux pane found with cwd '$WORKTREE'. Is the worker still in this worktree?" >&2
+    if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      echo "❌ No tmux session '$SESSION_NAME' and no pane with cwd '$WORKTREE'." >&2
+    else
+      echo "❌ No tmux pane found with cwd '$WORKTREE'. Is the worker still in this worktree?" >&2
+    fi
     exit 1
   fi
 

@@ -945,9 +945,9 @@ ISSUE_DIR_PATH="$P/.issues" python3 "$SCRIPTS/issues-file.py" create \
   --title "grok wake" --body "b" >/dev/null
 OUT=$(run_sentinel "$BASEPATH" AUTOCODER_MUX=tmux AUTOCODER_AGENT=grok \
   -- --dry-run --project "$P" 2>&1)
-echo "$OUT" | grep -q "grok --trust" \
-  && ok "grok wake launches grok --trust" \
-  || bad "grok dry-run did not launch grok --trust: $OUT"
+echo "$OUT" | grep -q "grok --trust --always-approve" \
+  && ok "grok wake launches grok --trust --always-approve" \
+  || bad "grok dry-run did not launch grok --trust --always-approve: $OUT"
 echo "$OUT" | grep -q "<send prompt> Run /manager-resume --non-interactive" \
   && ok "grok wake types bare /manager-resume --non-interactive" \
   || bad "grok wake prompt wrong or missing: $OUT"
@@ -957,9 +957,9 @@ echo "$OUT" | grep -q "Then run /monitor-loop" \
 echo "$OUT" | grep -q "autocoder:" \
   && bad "grok prompt uses the claude-only autocoder: namespace" \
   || ok "grok prompt avoids the claude-only autocoder: namespace"
-echo "$OUT" | grep -Eq -- '--always-approve|--yolo|dangerously-skip-permissions' \
-  && bad "grok wake auto-approves tool permissions" \
-  || ok "grok wake does not pass a tool-permission bypass flag"
+echo "$OUT" | grep -Eq -- '--yolo|dangerously-skip-permissions' \
+  && bad "grok wake passes --yolo or dangerously-skip-permissions" \
+  || ok "grok wake auto-approves with --always-approve only"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 12. Failed-wake pane cleanup (#28): when the sentinel created the manager

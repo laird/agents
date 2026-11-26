@@ -38,9 +38,9 @@ case "$WORKER_CMD" in
   *claude-worker-loop.sh*) ;;
   *) echo "FAIL: Claude worker should run claude-worker-loop.sh, got '$WORKER_CMD'" >&2; exit 1 ;;
 esac
-# #283: nothing forced by default: no bypass flag, no hard-coded model, so the
-# user's own Claude Code settings decide (an unattended spawn must not open the
-# bypass-permissions consent dialog).
+# Swarm claude defaults to --permission-mode bypassPermissions so a pane does
+# not sit on a tool prompt. That is not --dangerously-skip-permissions, which
+# opens the "No, exit" consent dialog (#283). No hard-coded model.
 _launch() {  # _launch <env...>: MANAGER|AGENT launch commands for claude under herdr
   env -u WORKER_MODEL -u MANAGER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_MANAGER_MODEL \
     -u AUTOCODER_CLAUDE_PERMISSION_MODE "$@" bash -c \
@@ -48,13 +48,17 @@ _launch() {  # _launch <env...>: MANAGER|AGENT launch commands for claude under 
     _ "$LIB_PATH_283" "$TMP" 2>/dev/null
 }
 LIB_PATH_283="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/autocoder/scripts/worker-launch-lib.sh"
-assert_eq "$(_launch)" "claude|claude" "Claude launches with no flags by default (no bypass, no model)"
-case "$(_launch)" in *dangerously*|*--model*) echo "FAIL: default claude launch forces a flag" >&2; exit 1 ;; esac
+assert_eq "$(_launch)" "claude --permission-mode bypassPermissions|claude --permission-mode bypassPermissions" \
+  "Claude launches in bypassPermissions by default"
+case "$(_launch)" in *dangerously*|*--model*) echo "FAIL: default claude launch forces a consent flag or a model" >&2; exit 1 ;; esac
 assert_eq "$(_launch AUTOCODER_CLAUDE_PERMISSION_MODE=auto)" "claude --permission-mode auto|claude --permission-mode auto" \
   "AUTOCODER_CLAUDE_PERMISSION_MODE=auto -> --permission-mode auto"
 assert_eq "$(_launch AUTOCODER_WORKER_MODEL=claude-sonnet-5-5 AUTOCODER_MANAGER_MODEL=claude-opus-5-5)" \
-  "claude --model claude-opus-5-5|claude --model claude-sonnet-5-5" "AUTOCODER_*_MODEL set the model per role"
-assert_eq "$(_launch WORKER_MODEL=w MANAGER_MODEL=m)" "claude --model m|claude --model w" "legacy WORKER_MODEL / MANAGER_MODEL still honoured"
+  "claude --permission-mode bypassPermissions --model claude-opus-5-5|claude --permission-mode bypassPermissions --model claude-sonnet-5-5" \
+  "AUTOCODER_*_MODEL set the model per role"
+assert_eq "$(_launch WORKER_MODEL=w MANAGER_MODEL=m)" \
+  "claude --permission-mode bypassPermissions --model m|claude --permission-mode bypassPermissions --model w" \
+  "legacy WORKER_MODEL / MANAGER_MODEL still honoured"
 assert_eq "$(_launch 'AUTOCODER_CLAUDE_PERMISSION_MODE=auto; rm -rf x')" "claude|claude" "a permission mode that is not a plain word is refused"
 
 # The worker-loop path must resolve to a file that EXISTS, not just to a
@@ -83,6 +87,8 @@ resolve_worker_launch claude "$REPO"
 resolve_worker_launch gemini "$REPO"
 assert_eq "$WORKER_CMD" "/fix-loop" "Gemini worker command"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Gemini manager command"
+assert_eq "$AGENT_LAUNCH_CMD" "gemini --sandbox=false -y" "Gemini worker auto-approves tool calls"
+assert_eq "$MANAGER_LAUNCH_CMD" "gemini --sandbox=false -y" "Gemini manager auto-approves tool calls"
 
 # "No goal support" must be simulated through the real signal -- what `codex
 # features list` reports -- not by hiding probe-codex-goals.sh from the repo
@@ -120,18 +126,25 @@ rm -f /tmp/codex-goals-probe-codex-cli-0.0.0-test-goals
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Codex with goal support launches interactively"
 assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Codex with goal support receives agent input"
-assert_eq "$AGENT_LAUNCH_CMD" "codex" "Codex launch command"
+assert_eq "$AGENT_LAUNCH_CMD" "codex --ask-for-approval never" "Codex launch asks for approval never"
+case "$WORKER_CMD$MANAGER_CMD" in
+  *'gh pr create'*|*'close or PR'*) echo "FAIL: Codex goal tells the swarm to open a PR" >&2; exit 1 ;;
+esac
+case "$WORKER_CMD" in
+  *'Do not open a pull request.'*) ;;
+  *) echo "FAIL: Codex worker goal does not forbid a pull request" >&2; exit 1 ;;
+esac
 
 resolve_worker_launch droid "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "shell" "Droid uses shell fallback"
 assert_eq "$WORKER_COMMAND_MODE" "shell" "Droid command mode"
 assert_eq "$MANAGER_LAUNCH_MODE" "shell" "Droid manager launch mode"
 
-# Grok is an interactive TUI with bare slash commands. Folder trust is the
-# --trust flag; tool-permission bypass flags are not passed.
+# Grok is an interactive TUI with bare slash commands. Folder trust is --trust.
+# Tool permissions are --always-approve. --yolo is not the flag we pass.
 resolve_worker_launch grok "$REPO" herdr
-assert_eq "$AGENT_LAUNCH_CMD" "grok --trust" "Grok worker launch is grok --trust"
-assert_eq "$MANAGER_LAUNCH_CMD" "grok --trust" "Grok manager launch is grok --trust"
+assert_eq "$AGENT_LAUNCH_CMD" "grok --trust --always-approve" "Grok worker launch auto-approves"
+assert_eq "$MANAGER_LAUNCH_CMD" "grok --trust --always-approve" "Grok manager launch auto-approves"
 assert_eq "$WORKER_CMD" "/fix-loop" "Grok worker command is bare /fix-loop"
 assert_eq "$MANAGER_CMD" "/monitor-loop" "Grok manager command is bare /monitor-loop"
 assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Grok workers are an interactive TUI"
@@ -139,8 +152,8 @@ assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Grok workers take a typed slash 
 assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Grok manager is an interactive TUI"
 assert_eq "$MANAGER_COMMAND_MODE" "agent-input" "Grok manager takes a typed slash command"
 case "$AGENT_LAUNCH_CMD$MANAGER_LAUNCH_CMD" in
-  *always-approve*|*--yolo*|*dangerously-skip-permissions*|*bypassPermissions*)
-    echo "FAIL: Grok launch auto-approves tool permissions" >&2
+  *--yolo*|*dangerously-skip-permissions*)
+    echo "FAIL: Grok launch uses a flag other than --always-approve" >&2
     exit 1 ;;
 esac
 resolve_worker_launch grok "$REPO" tmux

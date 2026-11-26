@@ -1,13 +1,14 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/lib/private-event-logs.sh"  # #255: never write the real event logs
-# tests/test_agent_exec_flags.sh — codex/droid launch flags are documented defaults,
-# never a bypass, and overridable (#286).
+# tests/test_agent_exec_flags.sh — codex/droid launch flags are documented defaults
+# and overridable (#286).
 #
 # The codex and droid wrappers used to hard-code --full-auto. Current codex rejects
 # that flag outright ("unexpected argument"), and it is not droid's flag either.
-# Each wrapper now passes one default its CLI needs to work headless (codex:
-# --sandbox workspace-write; droid: --auto high), replaced by AUTOCODER_CODEX_FLAGS /
-# AUTOCODER_DROID_FLAGS, and nothing at all when the variable is set but empty.
+# Codex's default is --sandbox workspace-write --ask-for-approval never (the
+# approval-never form of the old --full-auto). Droid's default is --auto high.
+# AUTOCODER_CODEX_FLAGS / AUTOCODER_DROID_FLAGS replace the default, and an empty
+# value passes nothing.
 set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASS=0; FAIL=0
@@ -40,8 +41,8 @@ expect() {  # expect <desc> <actual> <literal argv prefix>
 
 echo "codex"
 unset AUTOCODER_CODEX_FLAGS AUTOCODER_DROID_FLAGS
-expect "codex-autocoder default is workspace-write" "$(run codex codex-autocoder.sh review-blocked)" "[exec][--sandbox][workspace-write][-C]"
-expect "codex-monitor-workers default"             "$(run codex codex-monitor-workers.sh)"        "[exec][--sandbox][workspace-write][/monitor-workers]"
+expect "codex-autocoder default is workspace-write and approval-never" "$(run codex codex-autocoder.sh review-blocked)" "[exec][--sandbox][workspace-write][--ask-for-approval][never][-C]"
+expect "codex-monitor-workers default"             "$(run codex codex-monitor-workers.sh)"        "[exec][--sandbox][workspace-write][--ask-for-approval][never][/monitor-workers]"
 expect "override replaces the default"   "$(AUTOCODER_CODEX_FLAGS='-s read-only -m o3' run codex codex-autocoder.sh fix)" "[exec][-s][read-only][-m][o3][-C]"
 expect "empty defers to config.toml"     "$(AUTOCODER_CODEX_FLAGS='' run codex codex-autocoder.sh fix)"        "[exec][-C]"
 expect "monitor empty"                   "$(AUTOCODER_CODEX_FLAGS='' run codex codex-monitor-workers.sh)"      "[exec][/monitor-workers]"
