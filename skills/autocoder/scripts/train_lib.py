@@ -59,10 +59,11 @@ HEX_WORD_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])")
 # with `#<n>`); `any` takes any branch the READY names, as before.
 BRANCH_OWNERSHIPS = ("issue", "any")
 STACK_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?(?:\*\*)?stack(?:\*\*)?\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
-# `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not.
+# `<prefix>/<name>`, no file extension in the last segment: `fix/7-x` is a branch, `docs/x.md` is not. An all-digit
+# "extension" is a version, not a file: a dependency-update bot's `dependabot/npm_and_yarn/lodash-4.17.21` is a branch.
 BRANCH_TOKEN_RE = re.compile(r"`([A-Za-z0-9_./-]+)`")
 BRANCH_SHAPE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$")
-FILE_EXT_RE = re.compile(r"(^|/)[^/]*\.[A-Za-z0-9]{1,6}$")
+FILE_EXT_RE = re.compile(r"(^|/)[^/]*\.(?![0-9]+$)[A-Za-z0-9]{1,6}$")
 ENV_BRANCHES = {"master", "main", "develop", "uat", "prod"}
 BLOCKQUOTE_COMMENT_RE = re.compile(r"^> \*\*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}[^*]*)\*\* ?(.*)$")
 # Every merge the planner or the assembly makes runs with the repository's HOOKS OFF. A project's
@@ -119,6 +120,7 @@ class Config:
     regenerated_drivers: list = field(default_factory=list)   # merge drivers of paths a landing regenerates
     regenerated_advice: str = ""    # appended to a regenerate-only item's note and comment (the project's remedy)
     gate_dirs: list = field(default_factory=list)   # where live gates leave `autocoder-merge-*.pid` (default: the launcher's tmp root and the temp dir)
+    depbot: dict = None                             # the dependency-bot pass (train_depbot.py reads it): None = no object = off
 
     @property
     def ref(self):
@@ -226,7 +228,8 @@ def load_config(repo, config_file=None, env=None) -> Config:
 
     keys: readyLabels, anyLabels, readyStates, readyTip, branchOwnership, swarm, priorityLabels, laneLabels, redMaster{label, titlePrefix}, readyPattern, notePattern, preflightPattern, size,
     staleDays, classifyLimit, integration, remote, stateDir, overridesFile, launchedFile, scratch,
-    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{preflight, prepareScratch, mergeFault, regenerate, attribute, landed, redBase};
+    seedDirs, seedMarker, regeneratedMergeDrivers, regeneratedAdvice, gateDirs, hooks{preflight, prepareScratch, mergeFault, regenerate, attribute, landed, redBase},
+    depbot{enabled, authors, labels, priority, everySeconds, titlePrefix, limit} (train_depbot.py);
     `enqueue` is enqueue.sh's (see there).
     """
     env = os.environ if env is None else env
@@ -271,6 +274,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         regenerated_drivers=list(raw.get("regeneratedMergeDrivers") or []),
         regenerated_advice=str(raw.get("regeneratedAdvice") or ""),
         gate_dirs=_gate_dirs(env.get("AUTOCODER_TRAIN_GATE_DIRS"), raw.get("gateDirs"), env),
+        depbot=dict(raw["depbot"]) if isinstance(raw.get("depbot"), dict) else None,
     )
     if cfg.size < 1:
         raise SystemExit(f"merge-train: train size must be a positive integer, got {cfg.size}")

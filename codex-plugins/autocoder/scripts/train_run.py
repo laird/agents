@@ -65,6 +65,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import train_lib as T
+import train_depbot as D  # the dependency-bot pass (the daemon's tick) and its landing close-out
 
 SCRIPTS = T.SCRIPTS
 LANDED_RE = re.compile(r"✅ Issue #\d+ merged into ")
@@ -376,6 +377,7 @@ class Cycle:
         self.record = {}
         self.landed_total, self.returned_total = [], []
         self.repo_id = T.repo_id(rc.cfg)   # every ledger row names the repository (landing-timings.py --repo)
+        self.depbot = D.settings(rc.cfg)   # the dependency-bot pass's settings: a landed tracking issue closes its PR
 
     # ----- timings (wqb's writer; best effort, never fails the cycle) -----
     def _ledger_env(self):
@@ -1042,6 +1044,11 @@ class Cycle:
             T.reopen_if_newer_ready(c, m["issue"], m["branch"], landed, who=self.rc.swarm)   # the train's prefix, so the queue never reads it as a READY
         except RuntimeError as e:
             self.log(f"could not check #{m['issue']} for a newer READY ({e}); reopen it by hand if its newest READY names another branch")
+        # A dependency-bot tracking issue (train_depbot): its PR is closed naming the landed sha BEFORE the branch goes, so
+        # the PR reads closed-by-the-train, never closed-because-the-branch-vanished. A branch kept (moved after the plan)
+        # keeps its PR open too: the next pass sees an open PR on a closed tracking issue and says so for a person.
+        if not kept:
+            D.close_landed_pr(c, self.depbot, m["issue"], landed, m["branch"], train=train, log=self.log)
         if cur and not kept:
             T.git(c.repo, "push", "-q", c.remote, "--delete", m["branch"], f"--force-with-lease=refs/heads/{m['branch']}:{cur}")
 
@@ -1181,6 +1188,36 @@ class Daemon:
         except OSError as e:
             self.log(f"tick command could not run: {e}")
 
+    def run_depbot(self):
+        """The plugin's own dependency-bot pass (train_depbot.Pass), when `train.depbot` is on: at most once per
+        `everySeconds` (the stamp `depbot.last`), after its own fetch (the pass reads the bot branches), one log line
+        with the status segment, never fatal to the tick. A pass that cannot read PRs records `unknown`, never zero."""
+        try:
+            st = D.settings(self.cfg)
+        except SystemExit as e:
+            self.log(f"the dependency-bot pass is misconfigured: {e}")
+            return
+        if not st.enabled:
+            return
+        stamp = self.state.dir / "depbot.last"
+        try:
+            last = float(stamp.read_text().strip() or 0)
+        except (OSError, ValueError):
+            last = 0.0
+        if time.time() - last < st.every:
+            return
+        stamp.write_text(f"{time.time():.3f}")
+        t0 = time.time()
+        try:
+            f = T.git(self.cfg.repo, "fetch", self.cfg.remote, "-q")
+            if f.returncode != 0:
+                self.log(f"dependency-bot pass: git fetch {self.cfg.remote} failed ({f.stderr.strip()[:200]}); the pass reads what this clone has")
+            ps = D.Pass(self.cfg, st, log=lambda m: self.log(f"depbot: {m}")).run()
+            ps.save()
+            self.log(f"dependency-bot pass in {int(time.time() - t0)}s: {D.status_segment(ps.record())}")
+        except Exception as e:   # the pass is a side job of the tick: a failure is logged, the tick goes on
+            self.log(f"dependency-bot pass failed ({type(e).__name__}: {str(e)[:300]}); next pass in {st.every}s")
+
     def _record(self, verdict, launchable, note=""):
         _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
 
@@ -1200,6 +1237,7 @@ class Daemon:
             return "paused"
         self.paused_said = ""
         self.run_tick_cmd()
+        self.run_depbot()
         if not lease_free(self.state):
             self._record("train-live", [])
             return "train-live"
