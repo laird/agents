@@ -444,9 +444,11 @@ def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tr
     return sorted(conflicted), ignored
 
 
-# merge drivers git implements itself; none of them reorders lines, so a line-order difference in a path
-# they own (or in a path with no driver) is a real change of the branch's, never a driver's artefact.
-BUILTIN_MERGE_DRIVERS = {"", "unspecified", "unset", "text", "binary", "union"}
+# merge drivers git implements itself, plus the attribute states check-attr reports when no named driver
+# is set. `set` is the boolean `merge` attribute (built-in 3-way); `unset` is `-merge`; `unspecified` is
+# no attribute. A named driver is `merge=<name>` and is not in this set. None of the built-in drivers
+# reorders lines, so a line-order difference in a path they own is a real change of the branch's.
+BUILTIN_MERGE_DRIVERS = {"", "unspecified", "unset", "set", "text", "binary", "union"}
 
 
 def merge_driver_attrs(cfg: Config, source, paths):

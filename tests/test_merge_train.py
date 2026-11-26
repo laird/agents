@@ -585,6 +585,26 @@ def test_landing_proof_ignores_a_driver_owned_page_beside_a_co_member_edit(tmp_p
     assert "export const d = 4;" in gap, gap
 
 
+def test_landing_proof_does_not_treat_a_boolean_merge_attribute_as_a_custom_driver(tmp_path):
+    """`merge` with no driver name is git's built-in 3-way merge (`check-attr` says `set`).
+    A missing line in that file is real work, not a driver artefact, so the member stays unproven
+    and the gap names the file and the line."""
+    fx = Fixture(tmp_path)
+    attrs = (fx.work / ".gitattributes").read_text()
+    fx.commit_on("master", {".gitattributes": attrs + "*.md merge\n",
+                            "src.ts": "export const a = 1;\n",
+                            "docs/page.md": "intro\n"}, "boolean merge on markdown")
+    fx.branch("feature/a", {"src.ts": "export const a = 1;\nexport const b = 2;\n",
+                            "docs/page.md": "intro\nfrom A\n"})
+    fx.branch("feature/b", {"src.ts": "export const a = 1;\nexport const c = 3;\n"})
+    fx.commit_on("master", {"src.ts": "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n",
+                            "docs/page.md": "intro\n"}, "sources landed, page line did not")
+    proof = T.landing_proof(fx.cfg(), "origin/feature/a")
+    assert proof == "", proof
+    gap = T.landing_gap(fx.cfg(), "origin/feature/a")
+    assert "docs/page.md" in gap and "from A" in gap, gap
+
+
 def test_queue_reads_a_squash_landed_branch_as_on_master_and_a_planner_never_retakes_it(fx):
     fx.branch("feature/sq", {"s.txt": "1\n"})
     fx.commit_on("feature/sq", {"t.txt": "1\n"})
