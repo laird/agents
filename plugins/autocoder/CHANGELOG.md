@@ -6,6 +6,17 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+### Added
+
+- After `train.redHold.releaseOn: landed` lifts a red-integration hold, the
+  daemon keeps a CI watch on that tip (#429). No verdict yet leaves the hold
+  lifted (`CI verdict pending`). A red verdict on the job the red names
+  (`ci-job:` or ``job `<name>```; every run on the tip when it names none)
+  puts the queue back on the hold and the log and status line say
+  `hold back: CI red on <sha>`. A green verdict closes the tracking issue,
+  naming the run, only when `train.redHold.closeOnGreenCi` is true (default
+  false, so the repository's own closer still owns the issue).
+
 ## [4.72.0] - 2026-11-27
 
 ### Fixed

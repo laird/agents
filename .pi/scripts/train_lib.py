@@ -103,7 +103,10 @@ class Config:
     red_master: dict = field(default_factory=dict)
     # `redHold.releaseOn` (#428): `closed` (default) keeps the hold until the tracking issue closes; `landed` lifts it
     # once that red's fix is on the integration tip and the gate that published the fix was green.
+    # `redHold.closeOnGreenCi` (#429): when the lift's CI watch sees green, close the tracking issue. Default false,
+    # so a green CI leaves the issue for the repository's own closer. A red CI on that tip puts the hold back.
     red_hold: str = "closed"
+    close_on_green_ci: bool = False
     gate_log_dir: Path = None   # train gate logs (gateLogDir / AUTOCODER_TRAIN_LOG_DIR); the red-hold lift reads them
     ready_pattern: str = DEFAULT_READY_RE
     note_pattern: str = ""          # a comment matching this is a coordinator's note, not a worker's READY
@@ -193,14 +196,25 @@ def _red_hold(raw, path) -> str:
     """`redHold.releaseOn`: absent, null or {} is `closed` (today's hold, until the issue closes).
 
     `landed` lifts the hold once the red's fix is on the integration tip and the gate that published it was
-    green (#428). Any other shape is refused here, naming the file, as a malformed `redMaster` is. Keys this
-    slice does not read (`closeOnGreenCi`) may sit beside `releaseOn`."""
+    green (#428). Any other shape is refused here, naming the file, as a malformed `redMaster` is.
+    `closeOnGreenCi` may sit beside `releaseOn`; `_close_on_green_ci` reads it (#429)."""
     if raw in (None, {}, False):
         return "closed"
     release = raw.get("releaseOn") if isinstance(raw, dict) else None
     if release not in RED_HOLD_RELEASES:
         raise SystemExit(f'merge-train: train.redHold in {path} must be {{"releaseOn": "landed"|"closed"}}, got {raw!r}')
     return release
+
+
+def _close_on_green_ci(raw, path) -> bool:
+    """`redHold.closeOnGreenCi`: absent is false. A green CI on a lifted tip closes the tracking issue only
+    when this is true (#429). A non-bool is a typo and is refused here, naming the file."""
+    if not isinstance(raw, dict) or "closeOnGreenCi" not in raw:
+        return False
+    value = raw.get("closeOnGreenCi")
+    if not isinstance(value, bool):
+        raise SystemExit(f"merge-train: train.redHold.closeOnGreenCi in {path} must be true or false, got {value!r}")
+    return value
 
 
 def _branch_ownership(raw, path) -> str:
@@ -277,6 +291,7 @@ def load_config(repo, config_file=None, env=None) -> Config:
         lane_labels=list(raw.get("laneLabels") or ["hotfix"]),
         red_master=_red_master(raw.get("redMaster"), path),
         red_hold=_red_hold(raw.get("redHold"), path),
+        close_on_green_ci=_close_on_green_ci(raw.get("redHold"), path),
         gate_log_dir=Path(env.get("AUTOCODER_TRAIN_LOG_DIR") or raw.get("gateLogDir") or state_root / "logs"),
         ready_pattern=raw.get("readyPattern") or DEFAULT_READY_RE,
         note_pattern=raw.get("notePattern") or "",
@@ -1362,14 +1377,67 @@ def _lane_issue_blobs(cfg: Config) -> list:
     return out
 
 
-def red_fixes_landed(cfg: Config, reds: list) -> dict:
+# A CI conclusion that puts a lifted hold back (#429). The same set ci-watch.sh treats as a red run.
+RED_CI_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
+CI_JOB_RE = re.compile(r"(?m)^[ \t]*ci-job:[ \t]*(\S+)[ \t]*$")
+CI_JOB_TICK_RE = re.compile(r"job `([^`]+)`")
+
+
+def named_ci_job(text) -> str:
+    """The CI job a red issue names, or "".
+
+    A `ci-job: <name>` line wins. Otherwise the first ``job `<name>``` (the shape ci-watch.sh writes).
+    A red that names none is judged on every run of the fix tip."""
+    m = CI_JOB_RE.search(text or "")
+    if m:
+        return m.group(1)
+    m = CI_JOB_TICK_RE.search(text or "")
+    return m.group(1).strip() if m else ""
+
+
+def ci_watch_path(cfg: Config) -> Path:
+    return cfg.state_dir / "ci-watch.json"
+
+
+def ci_watch_read(cfg: Config) -> dict:
+    """The daemon's CI watch (`{sha: {conclusion, run_id, run_name, job, issue}}`), or {}."""
+    try:
+        data = json.loads(ci_watch_path(cfg).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def ci_watch_write(cfg: Config, data: dict) -> None:
+    path = ci_watch_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def ci_red_phrase(sha, run_id="", job="") -> str:
+    """The log and status-line wording when a lifted tip's CI is red (#429)."""
+    job_bit = f", job `{job}`" if job else ""
+    run_bit = f" (run {run_id}{job_bit})" if run_id else ""
+    return f"hold back: CI red on {sha}{run_bit}"
+
+
+def _ci_red_shas(cfg: Config) -> set:
+    return {sha for sha, rec in ci_watch_read(cfg).items()
+            if isinstance(rec, dict) and rec.get("conclusion") in RED_CI_CONCLUSIONS}
+
+
+def landed_fix_map(cfg: Config, reds: list) -> dict:
     """`{issue: sha}` of open reds whose fix has landed, when `redHold.releaseOn` is `landed`; {} otherwise.
 
     A fix is a commit on the integration tip that a green gate published, and it is a lane or hotfix landing
     that references the red. The commit message cites `#<red>` and names a `hotfix/` branch or the lane
     issue's branch; or a lane-labelled issue cites `#<red>` and its READY branch's tip (or the sha its
     close-out comment names, once the branch is deleted) is that published commit. A different commit that
-    only cites the red does not lift the hold, nor does a fix that is not on the tip or whose gate did not pass."""
+    only cites the red does not lift the hold, nor does a fix that is not on the tip or whose gate did not pass.
+    This map ignores the CI watch: a red verdict hides the sha from `red_fixes_landed` without forgetting
+    which issue it belongs to."""
     if cfg.red_hold != "landed" or not reds:
         return {}
     commits = _integration_commits(cfg)
@@ -1381,6 +1449,27 @@ def red_fixes_landed(cfg: Config, reds: list) -> dict:
         sha = _landed_fix_sha(cfg, number, commits, covered, lane)
         if sha:
             out[number] = sha
+    return out
+
+
+def red_fixes_landed(cfg: Config, reds: list) -> dict:
+    """`landed_fix_map` minus tips whose CI watch recorded a red verdict (#429).
+
+    A red CI puts that red back in the holding set. No verdict, or a green one, leaves the lift in place
+    (a green closes the issue only when `closeOnGreenCi` is true, which removes the red entirely)."""
+    red_ci = _ci_red_shas(cfg)
+    return {n: sha for n, sha in landed_fix_map(cfg, reds).items() if sha not in red_ci}
+
+
+def ci_hold_backs(cfg: Config, landed: dict) -> list:
+    """Status-line records for fixes that landed and whose CI came back red, in `landed`'s order."""
+    watch = ci_watch_read(cfg)
+    out = []
+    for number, sha in landed.items():
+        rec = watch.get(sha)
+        if not isinstance(rec, dict) or rec.get("conclusion") not in RED_CI_CONCLUSIONS:
+            continue
+        out.append({"sha": sha, "run": str(rec.get("run_id") or ""), "job": str(rec.get("job") or ""), "issue": number})
     return out
 
 
@@ -1438,7 +1527,8 @@ def classify(cfg: Config, ov: Overrides, issue, picked, in_flight, skip_merge_ch
     launched    this queue already launched this tip and no `retry <issue>` row says again
     held        a `redMaster` issue is open and this item is neither its fix, a lane-labelled item nor a documents-only
                 diff (`hold_note`, computed by plan_queue): waits, told once per tip and red set, never planned.
-                `redHold.releaseOn: landed` drops a red from that set once its fix is on the tip with a green gate
+                `redHold.releaseOn: landed` drops a red from that set once its fix is on the tip with a green gate,
+                unless the daemon's CI watch recorded a red verdict for that sha (#429)
     queue       launchable
     """
     branch = picked["branch"] if picked else None
@@ -1591,9 +1681,11 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
     in_flight = {int(x) for x in in_flight}
     gates = live_gates(cfg)   # once per listing: the host's live gates, which no item is planned beside
     reds = red_master_open(cfg)   # once per listing: the open red-integration issues (#7179), which hold every other item
-    lifted = red_fixes_landed(cfg, reds)   # releaseOn landed: a red whose fix is already on the tip with a green gate (#428)
+    landed = landed_fix_map(cfg, reds)   # releaseOn landed: a red whose fix is on the tip with a green gate (#428)
+    lifted = {n: sha for n, sha in landed.items() if sha not in _ci_red_shas(cfg)}   # a red CI puts that red back (#429)
     holding = [red for red in reds if red["number"] not in lifted]
     lifted_shas = [lifted[red["number"]] for red in reds if red["number"] in lifted]
+    ci_backs = ci_hold_backs(cfg, landed)
 
     def key(it):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
@@ -1604,7 +1696,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
     def skip_row(n, issue, labels, created, state, note):
         return {"order": n, "state": state, "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, labels),
                 "created": created or "-", "note": note, "basis": "ready", "named": "-", "followed": "", "readyAt": "",
-                "red": [red["number"] for red in holding], "lifted": lifted_shas}
+                "red": [red["number"] for red in holding], "lifted": lifted_shas, "ciBack": ci_backs}
 
     rows, found = [], 0
     for n, it in enumerate(sorted(items, key=key), 1):
@@ -1633,7 +1725,8 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
                      "rank": priority_rank(cfg, it["labels"]), "created": it["createdAt"] or "-", "note": "; ".join(parts) or "-", "basis": basis,
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
-                     "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in holding], "lifted": lifted_shas})
+                     "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in holding],
+                     "lifted": lifted_shas, "ciBack": ci_backs})
     if expected is not None:
         want = {int(x) for x in expected}
         listed = {it["number"] for it in items}
@@ -1693,12 +1786,15 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, named, preflight, reds, lifted = {}, None, {"no-branch": [], "in-lane": [], "held": [], "unread": [], "unlisted": []}, 0, [], []
+    counts, nxt, named, preflight, reds, lifted, backs = {}, None, {"no-branch": [], "in-lane": [], "held": [], "unread": [], "unlisted": []}, 0, [], [], []
     for r in rows:
         reds = r.get("red") or reds
         for sha in r.get("lifted") or []:
             if sha not in lifted:
                 lifted.append(sha)
+        for rec in r.get("ciBack") or []:
+            if rec not in backs:
+                backs.append(rec)
         counts[r["state"]] = counts.get(r["state"], 0) + 1
         preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
@@ -1712,6 +1808,8 @@ def status_line(rows, when=None):
         line += " | red master " + ",".join(f"#{n}" for n in reds)
     for sha in lifted:
         line += f" | hold lifted: fix landed {sha} (CI verdict pending)"
+    for rec in backs:
+        line += " | " + ci_red_phrase(rec.get("sha") or "", rec.get("run") or "", rec.get("job") or "")
     for s in order:
         if counts.get(s):
             line += f" | {counts[s]} {s}" + (f" ({','.join(named[s])})" if s in named else "")

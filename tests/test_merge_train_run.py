@@ -411,6 +411,125 @@ def test_release_on_landed_lifts_the_hold_on_the_next_cycle_once_the_hotfix_gate
     assert f"{sha} hotfix/m1: fix #{red}" in subjects
 
 
+def _ci_gh(fx, runs):
+    """A `gh` that prints `runs` for `run list` and fails anything else. Returns the saved PATH."""
+    bindir = fx.root / "bin"
+    bindir.mkdir(exist_ok=True)
+    (fx.state / "ci-runs.json").write_text(json.dumps(runs))
+    (bindir / "gh").write_text(
+        "#!/bin/bash\n"
+        "if [ \"$1\" = run ] && [ \"$2\" = list ]; then cat \"$FX_STATE/ci-runs.json\"; exit 0; fi\n"
+        "echo \"unexpected gh $*\" >&2; exit 1\n")
+    os.chmod(bindir / "gh", 0o755)
+    saved = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(bindir) + os.pathsep + saved
+    return saved
+
+
+def _lifted_red(fx, *, close_on_green=None, body=""):
+    """One cycle lands the hotfix and leaves the ordinary READY held, then lifted on the next plan (#428)."""
+    fx.train["redMaster"] = {"label": "P0", "titlePrefix": "Red master:"}
+    hold = {"releaseOn": "landed"}
+    if close_on_green is not None:
+        hold["closeOnGreenCi"] = close_on_green
+    fx.train["redHold"] = hold
+    fx.write_config()
+    r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", "Red master: tests/x.test.ts fails at abcdef12",
+           "--body", body, "--label", "P0", "--label", "bug", cwd=fx.work)
+    red = json.loads(r.stdout)["number"]
+    ordinary = fx.member(0)
+    fx.member(1, labels=("hotfix",), message=f"hotfix/m1: fix #{red}")
+    code, _ = R.Cycle(fx.rc(), log=lambda m: None).run()
+    assert code == 0 and fx.on_master(1) and not fx.on_master(0) and fx.state_of(red) == "OPEN"
+    return red, ordinary
+
+
+def _tick(fx, runs):
+    saved = _ci_gh(fx, runs)
+    logs = []
+    try:
+        verdict = R.Daemon(fx.rc(), log=logs.append, interval=0, once=True, sleep=lambda s: None).tick()
+    finally:
+        os.environ["PATH"] = saved
+    return verdict, logs
+
+
+def test_no_ci_verdict_yet_leaves_the_lifted_hold_up_and_the_ordinary_member_lands(fx):
+    """#429: a run still in progress is not a verdict. The lift stands and the daemon plans the queue."""
+    red, ordinary = _lifted_red(fx)
+    verdict, logs = _tick(fx, [{"databaseId": 42, "conclusion": "", "name": "CI", "status": "in_progress", "headBranch": "master"}])
+    assert verdict == "cycle:0:planned"
+    assert fx.on_master(0) and fx.state_of(ordinary) == "CLOSED" and fx.state_of(red) == "OPEN"
+    assert any("CI verdict pending" in ln for ln in logs)
+    assert not any(ln.startswith("hold back:") for ln in logs)
+
+
+def test_a_red_ci_verdict_on_the_lifted_tip_puts_the_hold_back(fx):
+    """#429: a red run on the fix tip (the red names no job, so every run counts) re-holds the queue."""
+    red, ordinary = _lifted_red(fx)
+    runs = [{"databaseId": 42, "conclusion": "failure", "name": "CI", "status": "completed", "headBranch": "master"}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle"
+    assert not fx.on_master(0) and fx.state_of(ordinary) == "OPEN" and fx.state_of(red) == "OPEN"
+    assert any(ln.startswith("hold back: CI red on ") and "(run 42)" in ln for ln in logs)
+    rows = T.plan_queue(fx.rc().cfg)
+    assert rows and {r["issue"]: r["state"] for r in rows}[ordinary] == "held"
+    assert "hold back: CI red on " in T.status_line(rows, when="W") and "(run 42)" in T.status_line(rows, when="W")
+
+
+def test_a_red_ci_on_a_different_job_does_not_put_the_hold_back(fx):
+    """The red names `unit`. A red `lint` with `unit` green is not that job, so the lift stands (#429)."""
+    red, ordinary = _lifted_red(fx, body="ci-job: unit\n")
+    runs = [{"databaseId": 9, "conclusion": "failure", "name": "CI", "status": "completed", "headBranch": "master",
+             "jobs": [{"name": "lint", "status": "completed", "conclusion": "failure"},
+                      {"name": "unit", "status": "completed", "conclusion": "success"}]}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "cycle:0:planned"
+    assert fx.on_master(0) and fx.state_of(red) == "OPEN"
+    assert not any(ln.startswith("hold back:") for ln in logs)
+    assert any("stays open (closeOnGreenCi false)" in ln for ln in logs)
+
+
+def test_a_red_ci_on_the_job_the_red_named_puts_the_hold_back(fx):
+    red, ordinary = _lifted_red(fx, body="ci-job: unit\n")
+    runs = [{"databaseId": 11, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master",
+             "jobs": [{"name": "lint", "status": "completed", "conclusion": "success"},
+                      {"name": "unit", "status": "completed", "conclusion": "failure"}]}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle" and not fx.on_master(0) and fx.state_of(red) == "OPEN"
+    assert any("(run 11, job `unit`)" in ln for ln in logs)
+    assert "job `unit`" in T.status_line(T.plan_queue(fx.rc().cfg), when="W")
+
+
+def test_a_green_ci_verdict_leaves_the_tracking_issue_open_by_default(fx):
+    red, ordinary = _lifted_red(fx)
+    runs = [{"databaseId": 77, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master"}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "cycle:0:planned"
+    assert fx.on_master(0) and fx.state_of(red) == "OPEN"
+    assert "run 77" not in fx.comments(red)
+    assert any("stays open (closeOnGreenCi false)" in ln for ln in logs)
+
+
+def test_a_green_ci_verdict_closes_the_tracking_issue_when_close_on_green_ci_is_set(fx):
+    red, ordinary = _lifted_red(fx, close_on_green=True)
+    runs = [{"databaseId": 77, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master"}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "cycle:0:planned"
+    assert fx.state_of(red) == "CLOSED" and "run 77" in fx.comments(red) and "`CI`" in fx.comments(red)
+    assert any(f"closed #{red}" in ln for ln in logs)
+
+
+def test_close_on_green_ci_must_be_a_bool(fx):
+    fx.train["redHold"] = {"releaseOn": "landed", "closeOnGreenCi": "yes"}
+    fx.write_config()
+    with pytest.raises(SystemExit, match="closeOnGreenCi"):
+        T.load_config(fx.work)
+    fx.train["redHold"] = {"releaseOn": "landed"}
+    fx.write_config()
+    assert T.load_config(fx.work).close_on_green_ci is False
+
+
 def test_a_retest_that_proves_every_failing_file_red_on_the_base_is_a_red_base_whatever_the_gate_concluded(fx):
     """#7130 (train 253): the gate compared the two runs' named failures, found its own summary lines unequal (a wall
     time), called the red the change's and did not print the RED-BASE line; the per-file retest had said the file

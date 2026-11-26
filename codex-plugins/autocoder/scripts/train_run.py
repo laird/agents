@@ -565,7 +565,9 @@ class Cycle:
         # judge is logged by the planner (the `plan:` lines) and kept in the plan record.
         rows = T.plan_queue(c, expected=launchable, log=lambda line: self.log(f"plan: {line}"))
         for sha in _lifted_shas(rows):
-            self.log(f"hold lifted: fix landed {sha} (CI verdict pending)")
+            line = _lift_pending_line(c, sha)
+            if line:
+                self.log(line)
         self.compare_launchable(rows, launchable)
         self.note_readys(rows)
         self.tell_queue_verdicts(rows)
@@ -1139,6 +1141,123 @@ class FaultError(Exception):
 
 
 # ── the daemon: launch a cycle whenever the queue has a launchable item ──────────────────
+def _lift_pending_line(cfg, sha) -> str:
+    """The #428 lift line, unless the CI watch has already judged this sha (then the watch's own line stands)."""
+    rec = T.ci_watch_read(cfg).get(sha)
+    if isinstance(rec, dict) and rec.get("conclusion"):
+        return ""
+    return f"hold lifted: fix landed {sha} (CI verdict pending)"
+
+
+def _runs_from_gh(payload):
+    try:
+        data = json.loads(payload or "[]")
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict):
+        data = data.get("workflow_runs") or data.get("jobs") or []
+    return data if isinstance(data, list) else None
+
+
+def _gh(repo, args, timeout=30):
+    """One `gh` invocation. (stdout, None) or (None, error). A missing `gh` is 'no gh', not a failure of the tip."""
+    try:
+        r = subprocess.run(["gh", *args], cwd=str(repo), capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return None, "no gh"
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1][:300]
+    return r.stdout, None
+
+
+def _run_jobs(repo, run):
+    """Jobs of one run: the list payload's `jobs` when it carries them, else `gh run view`."""
+    if isinstance(run.get("jobs"), list):
+        return run["jobs"], None
+    run_id = run.get("databaseId") or run.get("id")
+    if not run_id:
+        return [], None
+    out, err = _gh(repo, ["run", "view", str(run_id), "--json", "jobs"])
+    if err:
+        return None, err
+    jobs = _runs_from_gh(out)
+    if jobs is None:
+        return None, "unreadable jobs JSON"
+    return jobs, None
+
+
+def _on_branch(run, integration):
+    branch = run.get("headBranch") or run.get("head_branch")
+    return not (integration and branch and branch != integration)
+
+
+def query_ci(repo, integration, sha, job="") -> dict | None:
+    """The CI verdict of `sha` on `integration`, or None when there is no verdict yet (no runs, still
+    running, `gh` missing, or the forge could not be read). A named `job` judges only that job — the one
+    the red issue named — so a different red job does not put the hold back (#429).
+
+    Returns {conclusion, run_id, run_name, job}. `conclusion` is `success` or a member of
+    `RED_CI_CONCLUSIONS`. Cancelled-only runs are not a verdict."""
+    # `jobs` is not a `run list` field (gh rejects the query). A named job is read with `run view`,
+    # unless the payload already carries `jobs` (a fixture).
+    out, err = _gh(repo, ["run", "list", "--commit", sha, "--branch", integration, "--limit", "100",
+                          "--json", "databaseId,conclusion,name,status,headBranch"])
+    if err or out is None:
+        return None
+    runs = _runs_from_gh(out)
+    if runs is None:
+        return None
+    runs = [r for r in runs if isinstance(r, dict) and _on_branch(r, integration)]
+    if not runs:
+        return None
+    if job:
+        return _judge_named_job(repo, runs, job)
+    if any((r.get("status") or "") != "completed" for r in runs):
+        return None
+    red = [r for r in runs if (r.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
+    if red:
+        return _ci_record(red[0], red[0].get("conclusion"), job="")
+    green = [r for r in runs if (r.get("conclusion") or "") == "success"]
+    if green:
+        return _ci_record(green[-1], "success", job="")
+    return None
+
+
+def _ci_record(run, conclusion, job):
+    return {"conclusion": conclusion, "run_id": str(run.get("databaseId") or run.get("id") or ""),
+            "run_name": str(run.get("name") or ""), "job": job or ""}
+
+
+def _judge_named_job(repo, runs, job):
+    pending = False
+    matched = []
+    for run in runs:
+        jobs, err = _run_jobs(repo, run)
+        if err:
+            return None
+        found = [j for j in (jobs or []) if isinstance(j, dict) and j.get("name") == job]
+        if not found:
+            continue
+        for j in found:
+            if (j.get("status") or "") != "completed":
+                pending = True
+            else:
+                matched.append((run, j))
+    if pending or not matched:
+        return None
+    reds = [(run, j) for run, j in matched if (j.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
+    if reds:
+        run, j = reds[0]
+        return _ci_record(run, j.get("conclusion"), job)
+    greens = [(run, j) for run, j in matched if (j.get("conclusion") or "") == "success"]
+    if greens:
+        run, j = greens[-1]
+        return _ci_record(run, "success", job)
+    return None
+
+
 def lease_free(state: State) -> bool:
     """True when no train holds the state dir's lease right now (a probe: taken and released at once)."""
     lease = Lease(state)
@@ -1293,6 +1412,55 @@ class Daemon:
     def _record(self, verdict, launchable, note=""):
         _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
 
+    def watch_lifted_ci(self, rows) -> bool:
+        """Ask CI about tips this tick lifted (#429). A red verdict is recorded so the next plan puts the
+        hold back; a green one closes the tracking issue only when `closeOnGreenCi` is true. No verdict
+        (still running, no runs, no `gh`) changes nothing and the lift stands. Already-judged shas are
+        not asked again. Returns True when the queue should be planned again."""
+        shas = _lifted_shas(rows)
+        if self.cfg.red_hold != "landed" or not shas:
+            return False
+        try:
+            return self._watch_lifted_ci(shas)
+        except Exception as e:  # a watch that throws must not skip the train; the lift stands
+            self.log(f"CI watch failed ({type(e).__name__}: {str(e)[:200]}); the hold stays lifted")
+            return False
+
+    def _watch_lifted_ci(self, shas) -> bool:
+        reds = T.red_master_open(self.cfg)
+        landed = {n: sha for n, sha in T.landed_fix_map(self.cfg, reds).items() if sha in shas}
+        if not landed:
+            return False
+        state = T.ci_watch_read(self.cfg)
+        changed = False
+        for issue, sha in landed.items():
+            prev = state.get(sha) if isinstance(state.get(sha), dict) else {}
+            if prev.get("conclusion") in ("success", *T.RED_CI_CONCLUSIONS):
+                continue
+            full = json.loads(T.tracker(self.cfg, "issue_get", str(issue)).stdout)
+            text = "\n".join([str(full.get("title") or ""), str(full.get("body") or "")])
+            job = T.named_ci_job(text)
+            verdict = query_ci(self.cfg.repo, self.cfg.integration, sha, job)
+            if not verdict:
+                continue
+            if verdict["conclusion"] == "success" and self.cfg.close_on_green_ci:
+                run = verdict["run_id"]
+                name = f" `{verdict['run_name']}`" if verdict.get("run_name") else ""
+                job_bit = f", job `{verdict['job']}`" if verdict.get("job") else ""
+                body = f"CI is green on `{self.cfg.integration}` at `{sha}` (run {run}{name}{job_bit})."
+                if not Reporter(self.rc, self.state, self.log).say(issue, body, close=True):
+                    continue  # the close is queued; leave the sha unjudged so the next tick retries it
+                self.log(f"CI green on {sha} (run {run}); closed #{issue}")
+            elif verdict["conclusion"] == "success":
+                self.log(f"CI green on {sha} (run {verdict['run_id']}); #{issue} stays open (closeOnGreenCi false)")
+            else:
+                self.log(T.ci_red_phrase(sha, verdict["run_id"], verdict.get("job") or job))
+            state[sha] = {**verdict, "issue": issue}
+            changed = True
+        if changed:
+            T.ci_watch_write(self.cfg, state)
+        return changed
+
     def tick(self):
         """One decision. Returns `stopped`, `paused`, `train-live`, `idle`, `error`, `cycle:<exit code>` or
         `cycle:<exit code>:planned` (the cycle took members; the next tick follows at once)."""
@@ -1321,6 +1489,8 @@ class Daemon:
             return "error"
         try:
             rows = T.plan_queue(c)
+            if self.watch_lifted_ci(rows):
+                rows = T.plan_queue(c)   # a red CI puts the hold back; a green close drops the red (#429)
         except RuntimeError as e:
             self.log(f"the queue could not be read ({e}); next tick in {self.interval}s")
             self._record("error", [], str(e)[:200])
@@ -1330,7 +1500,9 @@ class Daemon:
         if not launchable:
             # A lift with nothing else launchable is still told: the hold ended (#428). A cycle logs its own.
             for sha in _lifted_shas(rows):
-                self.log(f"hold lifted: fix landed {sha} (CI verdict pending)")
+                line = _lift_pending_line(c, sha)
+                if line:
+                    self.log(line)
             # #7179: the status says what holds the queue, and the log says it once per change.
             note = f"{len(held)} held: red master " + ",".join(f"#{n}" for n in (held[0].get("red") or [])) if held else ""
             if note and note != getattr(self, "held_said", ""):
