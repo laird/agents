@@ -376,18 +376,30 @@ if [ -f "${SCRIPT_DIR}/touches-fns.sh" ]; then
 fi
 
 # Exit 0 when this worker holds the earliest live claim comment on issue $1.
+# The issue JSON goes in a file, not the environment. A long comment thread
+# plus the ambient environment exceeds ARG_MAX, and the exec dies after the
+# claim comment is already posted (#423). Exit 2: the check did not run.
+_claim_json_file() {
+  local f
+  f=$(mktemp "${TMPDIR:-/tmp}/autocoder-claim-json.XXXXXX") || return 1
+  printf '%s' "$1" > "$f" || { rm -f "$f"; return 1; }
+  printf '%s\n' "$f"
+}
+
 claim_comment_wins() {
-  local n="$1" now_ms issue_json
+  local n="$1" now_ms issue_json json_file rc
   now_ms="$(python3 -c 'import time; print(int(time.time() * 1000))')"
   issue_comment "$n" --body "🔒 claim $WORKER_ID $now_ms $OWNER_EXTRA" 2>/dev/null || return 0
   CLAIM_MS="$now_ms"   # recorded with the claim, so a resume can prove it is still ours (#182)
   issue_json="$(issue_get "$n" 2>/dev/null)" || return 0
-  ISSUE_JSON="$issue_json" ME="$WORKER_ID" NOW_MS="$now_ms" \
-    WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" EXCLUDE="${CLAIM_EXCLUDE:-}" python3 - <<'PY'
+  json_file=$(_claim_json_file "$issue_json") || return 2
+  # A lost race exits 1. Under set -e that must not abort before the file is removed.
+  rc=0
+  ME="$WORKER_ID" NOW_MS="$now_ms" \
+    WINDOW_MS="$((CLAIM_WINDOW_S * 1000))" EXCLUDE="${CLAIM_EXCLUDE:-}" \
+    ISSUE_JSON_FILE="$json_file" python3 - <<'PY' && rc=0 || rc=$?
 import json, os, re, sys
 
-# Claims being taken over (#203): "<ms> <id> ..." lines. They are abandoned, so
-# they cannot win the race against the takers.
 excluded = set()
 for line in os.environ.get("EXCLUDE", "").splitlines():
     f = line.split()
@@ -395,23 +407,24 @@ for line in os.environ.get("EXCLUDE", "").splitlines():
         excluded.add((int(f[0]), f[1]))
 
 try:
-    comments = json.loads(os.environ["ISSUE_JSON"]).get("comments") or []
-except ValueError:
+    with open(os.environ["ISSUE_JSON_FILE"]) as fh:
+        comments = json.loads(fh.read()).get("comments") or []
+except (OSError, ValueError):
     sys.exit(0)
 now = int(os.environ["NOW_MS"])
 oldest = now - int(os.environ["WINDOW_MS"])
 claims = []
 for c in comments:
-    # A release (🔓, #204 and /fix's explicit release) ends every claim before it.
     if (c.get("body") or "").lstrip().startswith("🔓"):
         claims = []
         continue
-    # Old markers end after the epoch-ms; new ones add owner fields (#202).
     m = re.match(r"\s*🔒 claim (\S+) (\d+)(?: start=\d+)?(?: wt=[^\n]*)?\s*$", c.get("body") or "")
     if m and int(m.group(2)) >= oldest and (int(m.group(2)), m.group(1)) not in excluded:
         claims.append((int(m.group(2)), m.group(1)))
 sys.exit(0 if not claims or min(claims) == (now, os.environ["ME"]) else 1)
 PY
+  rm -f "$json_file"
+  return "$rc"
 }
 
 # ── Release a claim the gate cannot hand off (#204) ─────────────────────
@@ -429,8 +442,13 @@ PY
 
 # own_claim_is_live <issue-json> → exit 0 when releasing cannot strip a winner.
 own_claim_is_live() {
-  ISSUE_JSON="$1" ME="$WORKER_ID" FRESH="$PENDING_FRESH" EXCLUDE="$PENDING_EXCLUDE" \
-    OLDEST_MS="$((GATE_START_MS - CLAIM_WINDOW_S * 1000))" python3 - <<'PY'
+  local json_file rc
+  json_file=$(_claim_json_file "$1") || return 1
+  # A non-zero check must not abort under set -e before the file is removed.
+  rc=0
+  ME="$WORKER_ID" FRESH="$PENDING_FRESH" EXCLUDE="$PENDING_EXCLUDE" \
+    ISSUE_JSON_FILE="$json_file" \
+    OLDEST_MS="$((GATE_START_MS - CLAIM_WINDOW_S * 1000))" python3 - <<'PY' && rc=0 || rc=$?
 import json, os, re, sys
 
 excluded = set()
@@ -439,8 +457,9 @@ for line in os.environ.get("EXCLUDE", "").splitlines():
     if len(f) >= 2 and f[0].isdigit():
         excluded.add((int(f[0]), f[1]))
 try:
-    comments = json.loads(os.environ["ISSUE_JSON"]).get("comments") or []
-except ValueError:
+    with open(os.environ["ISSUE_JSON_FILE"]) as fh:
+        comments = json.loads(fh.read()).get("comments") or []
+except (OSError, ValueError):
     sys.exit(1)
 oldest = int(os.environ["OLDEST_MS"])
 claims = []
@@ -456,6 +475,8 @@ if not claims:
     sys.exit(0 if os.environ["FRESH"] == "1" else 1)
 sys.exit(0 if min(claims)[1] == os.environ["ME"] else 1)
 PY
+  rm -f "$json_file"
+  return "$rc"
 }
 
 # release_pending_claim <exit-status> — called from the EXIT trap.
@@ -515,7 +536,17 @@ take_over_abandoned() {
   abandoned="$(claims_abandoned "$json" "$n")" || return 1
   # From here our claim marker may be on the issue: release it if the gate fails (#204).
   PENDING_CLAIM="$n"; PENDING_FRESH=0; PENDING_EXCLUDE="$abandoned"
-  CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || { PENDING_CLAIM=""; return 1; }
+  race_rc=0
+  CLAIM_EXCLUDE="$abandoned" claim_comment_wins "$n" || race_rc=$?
+  if [ "$race_rc" -eq 1 ]; then
+    # A lost race moves on WITHOUT releasing: the label is the winner's now.
+    PENDING_CLAIM=""
+    return 1
+  elif [ "$race_rc" -ne 0 ]; then
+    echo "fix-loop-gate: claim race check on #${n} failed (status ${race_rc}); releasing the claim" >&2
+    release_pending_claim "$race_rc"
+    return 1
+  fi
   issue_claim "$n" 2>/dev/null || true   # a released rival may have dropped the label (#204)
   list="$(printf '%s\n' "$abandoned" | sed -E 's/^[0-9]+ ([^ ]+) (.*)$/- `\1`: \2/')"
   issue_comment "$n" --body "♻️ **Taking over an abandoned claim**
@@ -573,7 +604,19 @@ dispatch_take() {
   issue_claim "$n" 2>/dev/null || { echo "fix-loop-gate: dispatched #${n} could not be claimed; dropping the dispatch" >&2; dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"; return 1; }
   PENDING_CLAIM="$n"; PENDING_FRESH=1; PENDING_EXCLUDE=""
   if [ "$ISSUE_SOURCE" != file ]; then
-    claim_comment_wins "$n" || { PENDING_CLAIM=""; echo "fix-loop-gate: dispatched #${n} lost its claim race; dropping the dispatch" >&2; dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"; return 1; }
+    race_rc=0
+    claim_comment_wins "$n" || race_rc=$?
+    if [ "$race_rc" -eq 1 ]; then
+      PENDING_CLAIM=""
+      echo "fix-loop-gate: dispatched #${n} lost its claim race; dropping the dispatch" >&2
+      dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+      return 1
+    elif [ "$race_rc" -ne 0 ]; then
+      echo "fix-loop-gate: claim race check on #${n} failed (status ${race_rc}); releasing the claim" >&2
+      release_pending_claim "$race_rc"
+      dispatch_remove "$DISPATCH_DIR" "$DISPATCH_OWN"
+      return 1
+    fi
     issue_claim "$n" 2>/dev/null || true
   fi
   session=""
@@ -619,8 +662,19 @@ while read -r PHASE ISSUE_NUM PRIORITY KIND <&3; do
     # Ours until the work plan is written; the EXIT trap releases it if we fail first.
     PENDING_CLAIM="$ISSUE_NUM"; PENDING_FRESH=1; PENDING_EXCLUDE=""
     if [ "$ISSUE_SOURCE" != file ]; then
-      # A lost race moves on WITHOUT releasing: the label is the winner's now.
-      claim_comment_wins "$ISSUE_NUM" || { PENDING_CLAIM=""; continue; }
+      # A lost race (1) moves on WITHOUT releasing: the label is the winner's now.
+      # Any other status means the check did not run. Release, or the claim
+      # comment just posted keeps the issue locked (#423).
+      race_rc=0
+      claim_comment_wins "$ISSUE_NUM" || race_rc=$?
+      if [ "$race_rc" -eq 1 ]; then
+        PENDING_CLAIM=""
+        continue
+      elif [ "$race_rc" -ne 0 ]; then
+        echo "fix-loop-gate: claim race check on #${ISSUE_NUM} failed (status ${race_rc}); releasing the claim" >&2
+        release_pending_claim "$race_rc"
+        continue
+      fi
       # An earlier claimer that failed and released (#204) may have removed the
       # shared label after our label-add: make sure the issue we won is labelled.
       issue_claim "$ISSUE_NUM" 2>/dev/null || true

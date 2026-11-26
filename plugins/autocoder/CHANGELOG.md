@@ -64,6 +64,12 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Fixed
 
+- The fix-loop gate's claim race check no longer puts the issue JSON in the
+  environment (#423). A long comment thread exceeded ARG_MAX, the check died
+  after the claim comment was posted, and the gate treated that crash as a
+  lost race, so the `working` label stayed. The JSON is read from a file. A
+  check that does not run releases the claim; a lost race still does not.
+
 - The merge train's landing proof no longer reports a member as not landed when
   a co-member's edit of the same source file conflicts on re-merge and a
   driver-owned path also differs (#377). The adjacent-edit proof already
