@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.71.0] - 2026-11-26
+
 ### Added
 
 - `quota-failover.sh --ensure` and `worker-auth-watchdog.sh --ensure` share `scheduler-ensure.sh`: one scheduler per job (crontab, a systemd user timer with a `loginctl enable-linger` note, or a macOS LaunchAgent). Re-running does not add a second one, and `--loop` refuses when one is already installed. The idle sentinel uses the same host line and linger hint; its units still run the version-independent shim.
@@ -43,6 +45,19 @@ once (Version Management in `docs/maintaining.md`).
   older rows and readers are unaffected), and `landing-report.py` prints a `host
   load` column per batch and the per-stage maxima, so host overload is separable from
   slow code.
+- The merge queue owns the dependency-bot pass (`merge-train.py depbot`,
+  `train_depbot.py`; the daemon's tick runs it when `train.depbot` is set).
+  Every open PR by a configured bot author (`authors`, default
+  `["dependabot[bot]"]`) gets a tracking issue (found again by the hidden
+  `<!-- depbot-pr <n> -->` marker or its title) with a READY the planner
+  accepts without a hand (`stack: `<bot branch>` carries #<issue>`, the tip,
+  `flag: none`), first in priority (a marked `first` row, or a label); a moved
+  tip gets a new READY, a PR the bot replaced supersedes its older issue, a
+  landed tracking issue closes its PR naming the landed sha before the branch
+  is deleted. The status line carries `depbot: N open, oldest M passes` or
+  `depbot: unknown (pr list failed)`, never a silent zero. The planner now
+  reads a branch whose last segment ends in a version (`...-4.17.21`) as a
+  branch, not a file.
 
 ## [4.70.0] - 2026-11-26
 
@@ -57,20 +72,6 @@ once (Version Management in `docs/maintaining.md`).
   keyed by loop id: `tick-error-streak`, `tick-slow`, `tick-noop-only` and
   `tick-missing`. They cite the new rules B14 to B17 in `BEHAVIOR.md`. The
   week page's loop block counts their findings.
-
-- The merge queue owns the dependency-bot pass (`merge-train.py depbot`,
-  `train_depbot.py`; the daemon's tick runs it when `train.depbot` is set).
-  Every open PR by a configured bot author (`authors`, default
-  `["dependabot[bot]"]`) gets a tracking issue (found again by the hidden
-  `<!-- depbot-pr <n> -->` marker or its title) with a READY the planner
-  accepts without a hand (`stack: `<bot branch>` carries #<issue>`, the tip,
-  `flag: none`), first in priority (a marked `first` row, or a label); a moved
-  tip gets a new READY, a PR the bot replaced supersedes its older issue, a
-  landed tracking issue closes its PR naming the landed sha before the branch
-  is deleted. The status line carries `depbot: N open, oldest M passes` or
-  `depbot: unknown (pr list failed)`, never a silent zero. The planner now
-  reads a branch whose last segment ends in a version (`...-4.17.21`) as a
-  branch, not a file.
 
 - Quota failover (`quota-failover.sh`). When a worker or the manager pane shows
   that agent's usage limit (Claude's weekly-limit dialog and banner, Grok's
