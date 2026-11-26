@@ -40,11 +40,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import train_lib as T  # noqa: E402
-import train_depbot as D  # noqa: E402
 
 
 def _ints(s):
     return [int(x) for x in (s or "").replace(",", " ").split()]
+
+
+def _depbot():
+    """train_depbot.py, imported only where a subcommand needs it: `carried` and `gates` run from a launcher's
+    directory that holds merge-train.py and train_lib.py alone (merge-launch.sh's contract), and must not die
+    on the pass's module being absent there."""
+    import train_depbot as D
+    return D
 
 
 def _ledger_ready(cfg, issue, ts):
@@ -113,6 +120,7 @@ def main(argv=None):
             T.note_readys(cfg, rows, lambda issue, ts: _ledger_ready(cfg, issue, ts))
             if a.status_line:
                 line = T.status_line(rows)
+                D = _depbot()
                 if D.settings(cfg).enabled:   # the pass's own segment, from its last record: a listing never reads PRs
                     line += " | " + D.status_segment(D.load_record(cfg))
                 print(line)
@@ -132,6 +140,7 @@ def main(argv=None):
             done = T.reopen_if_newer_ready(cfg, a.issue, a.member_branch, a.landed, a.launched)
             print("reopened" if done else "not reopened")
         elif a.cmd == "depbot":
+            D = _depbot()
             st = D.settings(cfg)
             if not st.enabled:
                 print("merge-train: the dependency-bot pass is off (no `train.depbot` object, or `enabled: false`)", file=sys.stderr)
