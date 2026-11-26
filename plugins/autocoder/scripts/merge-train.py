@@ -19,6 +19,13 @@
   gates                                       the live gates on this host (what the queue's `in-lane` reads):
                                               `<issue> <pid> <pidfile> <log>` (TSV) per live pidfile under
                                               `gateDirs`; never fetches
+  depbot  [--status-line]                     the dependency-bot pass (train_depbot.py; `train.depbot` in the config):
+                                              every open PR by a configured bot author gets a tracking issue with a
+                                              READY the planner accepts (the `stack:` line) first in priority; a
+                                              moved tip a new READY; a replaced PR supersedes its older issue. One
+                                              TSV row per PR (`pr head tip issue action note`), the status segment
+                                              last (`depbot: N open, oldest M passes`); exit 1 when the PR listing
+                                              failed (`depbot: unknown (pr list failed)`), 4 when the pass is off
 
 Common: --repo DIR (default: the current directory), --config FILE (default: the main worktree's
 .autocoder.json, key `train`), --no-fetch. Configuration and the overrides file are documented in
@@ -37,6 +44,14 @@ import train_lib as T  # noqa: E402
 
 def _ints(s):
     return [int(x) for x in (s or "").replace(",", " ").split()]
+
+
+def _depbot():
+    """train_depbot.py, imported only where a subcommand needs it: `carried` and `gates` run from a launcher's
+    directory that holds merge-train.py and train_lib.py alone (merge-launch.sh's contract), and must not die
+    on the pass's module being absent there."""
+    import train_depbot as D
+    return D
 
 
 def _ledger_ready(cfg, issue, ts):
@@ -76,6 +91,8 @@ def main(argv=None):
     c = sub.add_parser("carried")
     c.add_argument("--branch", required=True)
     sub.add_parser("gates")
+    b = sub.add_parser("depbot")
+    b.add_argument("--status-line", action="store_true")
     a = ap.parse_args(argv)
 
     cfg = T.load_config(a.repo, a.config)
@@ -102,7 +119,11 @@ def main(argv=None):
             # `ts`), whichever reader sees it first: this listing or a cycle. Best effort, never a failure.
             T.note_readys(cfg, rows, lambda issue, ts: _ledger_ready(cfg, issue, ts))
             if a.status_line:
-                print(T.status_line(rows))
+                line = T.status_line(rows)
+                D = _depbot()
+                if D.settings(cfg).enabled:   # the pass's own segment, from its last record: a listing never reads PRs
+                    line += " | " + D.status_segment(D.load_record(cfg))
+                print(line)
             for x in rows:
                 print("\t".join(str(x[k]) for k in ("order", "state", "issue", "branch", "tip", "rank", "created", "note", "basis")))
         elif a.cmd == "plan":
@@ -118,6 +139,22 @@ def main(argv=None):
         elif a.cmd == "reopen":
             done = T.reopen_if_newer_ready(cfg, a.issue, a.member_branch, a.landed, a.launched)
             print("reopened" if done else "not reopened")
+        elif a.cmd == "depbot":
+            D = _depbot()
+            st = D.settings(cfg)
+            if not st.enabled:
+                print("merge-train: the dependency-bot pass is off (no `train.depbot` object, or `enabled: false`)", file=sys.stderr)
+                return 4
+            ps = D.Pass(cfg, st).run()
+            ps.save()
+            if not a.status_line:
+                for r in ps.rows:
+                    print("\t".join(str(r[k]) for k in ("pr", "head", "tip", "issue", "action", "note")))
+                for c in ps.closed:
+                    print("\t".join(["-", "-", "-", str(c["issue"]), "closed", c["why"]]))
+            print(D.status_segment(ps.record()))
+            if ps.error:
+                return 1
     except RuntimeError as e:
         print(f"merge-train: {e}", file=sys.stderr)
         return 3

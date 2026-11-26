@@ -133,6 +133,13 @@ def test_branch_candidates_keeps_branch_shapes_only():
     assert T.branch_candidates(body) == ["feature/x-1", "fix/y"]
 
 
+def test_branch_candidates_reads_a_version_suffix_as_a_branch_not_a_file():
+    """A dependency-update bot names its branch after the version (`...-4.17.21`): an all-digit tail after the last
+    dot is no file extension, where `docs/x.md`, `a/b.py` and `data/x.tar.gz` still are files."""
+    body = "READY `dependabot/npm_and_yarn/lodash-4.17.21`, `dependabot/pip/app/requests-2.32`, `a/b.py`, `data/x.tar.gz`, `tools/v2.0`"
+    assert T.branch_candidates(body) == ["dependabot/npm_and_yarn/lodash-4.17.21", "dependabot/pip/app/requests-2.32", "tools/v2.0"]
+
+
 def test_ready_comments_reads_blockquote_comments_of_the_file_backend():
     issue = {"body": "spec text\n\n> **2026-11-21 02:00** READY on `a/b`\n> second line\n> **2026-11-21 03:30** another",
              "comments": []}

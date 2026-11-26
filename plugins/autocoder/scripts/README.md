@@ -716,6 +716,7 @@ merge-train.py ...                                           plan  [--size N] [-
 merge-train.py ...                                           reopen --issue N --member-branch B --landed SHA [--launched TS]
 merge-train.py ...                                           carried --branch B
 merge-train.py ...                                           gates
+merge-train.py ...                                           depbot [--status-line]
 ```
 
 **READY pickup** goes through the issue-source abstraction (`issue_list`, `issue_get`), so every
@@ -842,6 +843,46 @@ newest READY names a branch that landing did not carry; it prints `reopened` or 
 read by the queue's rules: a comment that only mentions READY is none, and a branch that does not belong to the
 issue never reopens it (the FYI above left the landed issue closed once this held).
 
+**The dependency-bot pass** (`depbot`; `train_depbot.py`; the daemon runs it from its tick). A dependency-update
+bot (Dependabot, Renovate) opens pull requests, not issues, and its branch names carry no issue number, so without
+this pass a bot PR is nobody's item: measured on one project, five bot PRs waited six days, and once a project
+script filed tracking issues by hand their READYs lacked the `stack:` line, so three of them read `foreign-branch`
+for six hours until a person re-posted the READY (the policy there is that a bot PR lands the same day). With a
+`train.depbot` object in the config, every pass reads the open PRs by the configured bot authors (`gh pr list`,
+filtered by author login; `authors` default `["dependabot[bot]"]`, written as `app/dependabot`, `dependabot[bot]`
+or `dependabot`) and, per PR:
+
+- finds its TRACKING ISSUE by the hidden marker `<!-- depbot-pr <n> -->` in the body (the tracker's `--state all`
+  listing, newest 500), or a title `<titlePrefix> #<n>` (`titlePrefix` default `Dependency update PR`, for issues
+  made by hand); none open and none closed for this very PR: it FILES one (the markers, the PR link, the bot's
+  summary, the configured `labels`: default the queue's `readyLabels` plus the first `anyLabels` label; the ready
+  labels are always on it) and posts the READY the planner accepts WITHOUT a hand: `[depbot] READY: `<bot branch>`
+  @ <tip>` first, then `stack: `<bot branch>` carries #<issue>` and `flag: none`. The test pins that text against
+  the planner's own parser (`pick_ready`, `plan_queue` under `branchOwnership: issue`), so the two cannot drift;
+- puts it FIRST in priority: `priority: "first"` (the default) keeps a marked `first <issue> # depbot PR #<n>` row
+  in the overrides file (hand rows are never touched; the rows are synced to the open tracking issues every pass);
+  any other value is a label added to the issue (`"P0"`);
+- when the bot moved the branch's tip (a force-push, a recreate on the same branch) it posts a new READY naming the
+  new tip, so `readyTip: named` takes it (`ready`); a READY naming a worker's own fixing branch stands
+  (`worker-branch`: the worker's word supersedes the bot's); a bot branch this clone has not fetched yet is
+  `no-branch` until the next pass;
+- when the bot replaced the PR by another (a new number, the same package key: ecosystem, directory and package or
+  group, `package_key`, kept in `<!-- depbot-key ... -->`), the older open tracking issue is SUPERSEDED: closed with
+  a comment naming the new PR; an open tracking issue whose PR is gone is closed with what became of the PR
+  (merged, or closed without landing); a closed tracking issue for a PR still open is `closed-tracking` (the bumps
+  landed another way, or the PR needs closing by hand) and nothing is filed twice.
+
+When a train lands a tracking issue, the close-out (README-merge-train-run.md step 5) closes its PR with a comment
+naming the landed sha before the member branch is deleted, so the PR reads closed by the train. `depbot` prints one
+TSV row per PR (`pr head tip issue action note`, actions `filed`, `ready`, `tracked`, `worker-branch`, `no-branch`,
+`closed-tracking`, `error`) plus a `closed` row per tracking issue it closed, and the status segment last:
+`depbot: N open, oldest M passes (#pr->#issue action, ...)` (a pass is `everySeconds`, default 900; the age is the
+oldest open PR's), `depbot: 0 open`, or `depbot: unknown (pr list failed)` when the PR listing died, never a silent
+zero (exit 1; a transport error is retried like a tracker call first). `queue --status-line` appends the last pass's
+segment from its record (`depbot.json` in the state dir; `depbot: not run yet` before the first); a listing never
+reads PRs itself. `AUTOCODER_DEPBOT_GH` names the `gh` command (a test hands in a fake). The pass is off without the
+object or with `enabled: false`.
+
 **Configuration**: the `train` object of the main worktree's `.autocoder.json` (environment:
 `AUTOCODER_TRAIN_SIZE`, `_STATE`, `_SCRATCH`, `_REMOTE`, `_INTEGRATION`, `_GATE_DIRS`):
 
@@ -855,6 +896,8 @@ issue never reopens it (the FYI above left the landed issue closed once this hel
              "seedDirs": ["app/node_modules"], "seedMarker": ".package-lock.json",
              "regeneratedMergeDrivers": ["regenerate", "keep-ours"], "regeneratedAdvice": "Change the source and regenerate.",
              "gateDirs": ["/tmp", "~/.local/state/autocoder/merge"],
+             "depbot": { "enabled": true, "authors": ["dependabot[bot]"], "labels": ["ready-for-review", "host:linux-a"],
+                         "priority": "first", "everySeconds": 900, "titlePrefix": "Dependency update PR", "limit": 100 },
              "hooks": { "prepareScratch": "make toolchain", "mergeFault": "./classify-merge.sh", "redBase": "./file-red-integration.sh" } } }
 ```
 
@@ -885,7 +928,7 @@ retested file failing on the base alone; #7130), with the train, the base, the f
 project's red-integration issue; it cannot return a member. The other hooks (`preflight`, `regenerate`,
 `attribute`, `landed`) are in README-merge-train-run.md.
 
-Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend); `tests/test_merge_launch_train_carries.sh` (the launcher's refusal).
+Tests: `tests/test_merge_train.py` (a real git fixture repo and the file backend); `tests/test_merge_launch_train_carries.sh` (the launcher's refusal); `tests/test_merge_train_depbot.py` (the dependency-bot pass over a fake `gh`).
 
 ### Enqueue from a host that does not gate (`enqueue.sh`)
 

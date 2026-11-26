@@ -20,6 +20,20 @@ once (Version Management in `docs/maintaining.md`).
   `tick-missing`. They cite the new rules B14 to B17 in `BEHAVIOR.md`. The
   week page's loop block counts their findings.
 
+- The merge queue owns the dependency-bot pass (`merge-train.py depbot`,
+  `train_depbot.py`; the daemon's tick runs it when `train.depbot` is set).
+  Every open PR by a configured bot author (`authors`, default
+  `["dependabot[bot]"]`) gets a tracking issue (found again by the hidden
+  `<!-- depbot-pr <n> -->` marker or its title) with a READY the planner
+  accepts without a hand (`stack: `<bot branch>` carries #<issue>`, the tip,
+  `flag: none`), first in priority (a marked `first` row, or a label); a moved
+  tip gets a new READY, a PR the bot replaced supersedes its older issue, a
+  landed tracking issue closes its PR naming the landed sha before the branch
+  is deleted. The status line carries `depbot: N open, oldest M passes` or
+  `depbot: unknown (pr list failed)`, never a silent zero. The planner now
+  reads a branch whose last segment ends in a version (`...-4.17.21`) as a
+  branch, not a file.
+
 - Quota failover (`quota-failover.sh`). When a worker or the manager pane shows
   that agent's usage limit (Claude's weekly-limit dialog and banner, Grok's
   team credit message, Codex's usage-limit text, and the same class of message
