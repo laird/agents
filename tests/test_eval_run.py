@@ -122,7 +122,7 @@ def test_a_comparison_stamps_manifest_grader_and_settings(tmp_path, env):
     assert row["grader"] == mod.grader_id(mod.AUTHOR.PLUGIN_ROOT / "BEHAVIOR.md") == row["settings"]["grader"]
     assert len(row["manifest"]) == 16 and len(row["grader"]) == 16
     assert row["settings"]["worker"] == worker and row["settings"]["repeat"] == 1
-    assert row["settings"]["timeout"] == 30.0
+    assert row["settings"]["timeout"] == 30
     other = run_json(env, "--worker", worker, "--case", "case-a", "--comparison", "cmp-1", "--timeout", "30")
     assert other["rows"][0]["grader"] == row["grader"]
     assert other["rows"][0]["manifest"] != row["manifest"]
@@ -130,6 +130,26 @@ def test_a_comparison_stamps_manifest_grader_and_settings(tmp_path, env):
     refused = run(env, "--worker", blank, "--case", "case-b", "--comparison", "  ")
     assert refused.returncode == 2 and "non-empty" in refused.stderr
     assert not (tmp_path / "blank.ran").exists()
+
+
+def test_the_manifest_covers_task_seed_and_setup(tmp_path, env):
+    spec = importlib.util.spec_from_file_location("eval_run_manifest", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    case_dir = Path(env["AUTOCODER_EVAL_CASES"]) / "dev" / "case-a"
+    selected = [("dev", case_dir)]
+    first = mod.manifest_id(selected)
+    task = case_dir / "task.md"
+    task.write_text(task.read_text() + "extra\n")
+    changed_task = mod.manifest_id(selected)
+    assert changed_task != first
+    seed = case_dir / "seed" / "README.md"
+    seed.write_text(seed.read_text() + "x")
+    changed_seed = mod.manifest_id(selected)
+    assert changed_seed != changed_task
+    setup = case_dir / "setup.sh"
+    setup.write_text(setup.read_text() + "\n# marker\n")
+    assert mod.manifest_id(selected) != changed_seed
 
 
 def test_the_worker_sees_the_seed_the_setup_commit_and_the_issue(tmp_path, env):

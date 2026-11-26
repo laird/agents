@@ -74,8 +74,12 @@ once (Version Management in `docs/maintaining.md`).
   timeout). `eval-decide.py --comparison` tallies only those rows. It returns
   inconclusive when the settings disagree or a case's repeat counts differ, and
   rows from another comparison that reuse the same harness sha no longer move
-  the verdict. `/propose-fix` mints one id and keeps it across a refine; a new
-  repeat count starts a new id so the old baseline is not pooled in.
+  the verdict. A missing side stays "fewer than N runs". A second batch past
+  the planned repeat count is inconclusive instead of being pooled. The
+  manifest covers the task, seed and setup, not only `case.json`.
+  `/propose-fix` keeps one id across a refine and re-runs only the candidate
+  sha; a new repeat count or case set starts a new id with the worktree
+  checked out at the baseline sha.
 
 ## [4.70.0] - 2026-11-26
 

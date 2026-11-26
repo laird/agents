@@ -152,8 +152,20 @@ def decide(before: dict, after: dict, mean_b: float | None, mean_a: float | None
     return "accept", f"dev {fmt(dev_b, dev_a)}, heldout {fmt(ho_b, ho_a)}"
 
 
+def _canon(value):
+    """Ints and whole floats compare equal: argparse leaves the default timeout as an int and a passed one as a float."""
+    if isinstance(value, dict):
+        return {k: _canon(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_canon(v) for v in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _norm(value) -> str:
-    return json.dumps(value, sort_keys=True) if isinstance(value, dict) else str(value)
+    canon = _canon(value)
+    return json.dumps(canon, sort_keys=True) if isinstance(canon, dict) else str(canon)
 
 
 def uniform(rows: list[dict], key: str):
@@ -190,16 +202,54 @@ def alignment_problem(rows: list[dict], before_sha: str, after_sha: str, compari
     if comparison is None and not any(isinstance(row.get("settings"), dict) for row in rows):
         return None
     for split in SPLITS:
-        for side, sha in (("before", before_sha), ("after", after_sha)):
-            _value, ok = uniform(belonging(rows, sha, comparison, split), "settings")
+        before_rows = belonging(rows, before_sha, comparison, split)
+        after_rows = belonging(rows, after_sha, comparison, split)
+        # A side with no rows is a missing case. decide() names it; it is not a settings mismatch.
+        if not before_rows or not after_rows:
+            continue
+        for side, side_rows in (("before", before_rows), ("after", after_rows)):
+            _value, ok = uniform(side_rows, "settings")
             if not ok:
                 return f"{side} {split} rows disagree on settings"
-        before, _ = uniform(belonging(rows, before_sha, comparison, split), "settings")
-        after, _ = uniform(belonging(rows, after_sha, comparison, split), "settings")
+        before, _ = uniform(before_rows, "settings")
+        after, _ = uniform(after_rows, "settings")
         if before is None and after is None:
             continue
         if before is None or after is None or _norm(before) != _norm(after):
             return f"different {split} settings between before and after"
+    return None
+
+
+def planned_repeat(settings) -> int | None:
+    if not isinstance(settings, dict):
+        return None
+    value = settings.get("repeat")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    return int(value)
+
+
+def plan_problem(rows: list[dict], before_sha: str, after_sha: str, comparison: str | None,
+                 before: dict, after: dict) -> str | None:
+    """Inconclusive when a side's runs do not match the repeat count its settings record.
+
+    A second batch under the same comparison id pools into the rate. Counts that differ
+    between the two sides are left to decide(), which names them as unmatched repeats.
+    """
+    tallies = {"before": before, "after": after}
+    shas = {"before": before_sha, "after": after_sha}
+    for split in SPLITS:
+        for side in ("before", "after"):
+            settings, ok = uniform(belonging(rows, shas[side], comparison, split), "settings")
+            planned = planned_repeat(settings) if ok else None
+            if planned is None:
+                continue
+            bad = [f"{case} ({pair[1]} vs planned {planned})"
+                   for case, pair in sorted(tallies[side][split].items()) if pair[1] != planned]
+            if bad:
+                return f"{split} case(s) whose runs do not match the planned repeats {side}: {', '.join(bad)}"
     return None
 
 
@@ -244,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
         decision, reason = "inconclusive", problem
     else:
         decision, reason = decide(before, after, calls["before"], calls["after"], args.min_runs)
+        if decision != "inconclusive":
+            planned = plan_problem(rows, args.before, args.after, args.comparison, before, after)
+            if planned:
+                decision, reason = "inconclusive", planned
     row = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "finding": args.finding, "comparison": args.comparison,

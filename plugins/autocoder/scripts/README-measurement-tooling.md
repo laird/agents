@@ -535,7 +535,7 @@ repeat:
    `${AUTOCODER_EVAL_RESULTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}`):
    `{ts, case, split, backend, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
    harness: {sha}, root}`. With `--comparison ID` the row also carries `comparison`, `manifest`
-   (sha256[:16] of the selected `split/name` plus each `case.json`), `grader` (sha256[:16] of
+   (sha256[:16] of the selected `split/name`, `case.json`, `task.md`, `setup.sh` and `seed/`), `grader` (sha256[:16] of
    `--spec`) and `settings` (`manifest`, `grader`, `worker`, `repeat`, `timeout`). An empty id is
    an error. Omit the flag and those keys stay absent, so older ledgers keep their shape. `failed`
    lists `outcome`, `max_gates`, `max_tool_calls`, `classifiers_silent:<id>`,
@@ -551,9 +551,13 @@ exit code is 0 whatever the verdicts.
 of the plugin checkout (the harness) with no held-out cases, one change for the finding, the dev
 cases run before and after, then the runner scores the held-out cases on both commits and
 `eval-decide.py` gives the verdict. One comparison id is minted for that proposal and passed to
-every `eval-run.py` and to `eval-decide.py`. A refine keeps the id (the new after sha drops the
-replaced rows). Raising the repeat count mints a new id and re-runs the baseline, because the
-old baseline rows share the harness sha. The worker under test loads the proposal with
+every `eval-run.py` and to `eval-decide.py`. A refine keeps the id and re-runs only the candidate
+sha: the baseline rows stay, and running that sha again would make the held-out repeat counts
+differ. A new repeat count, case set, grader, worker, or timeout mints a new id. The baseline
+run checks the worktree out at the baseline sha first (the run is labeled with that sha but
+executes whatever the worktree has checked out), then the candidate is measured, with no second
+harness edit. The manifest covers `case.json`, `task.md`, `setup.sh` and `seed/`. A second batch
+under the same id, past the planned repeat count, is inconclusive rather than pooled into the rate. The worker under test loads the proposal with
 `claude --plugin-dir`, so the installed plugin never changes during a proposal.
 
 ### `eval-decide.py`
@@ -572,7 +576,7 @@ alone, and rows that carry no `settings` stay comparable with each other.
 
 | Decision | When | Exit |
 |---|---|---|
-| `inconclusive <reason>` | a split has no case on either sha; a case has fewer than `--min-runs` (default 2) runs on either sha; the two sides' `settings` differ (or one side's rows disagree among themselves); or a case's repeat counts differ once both sides meet `--min-runs` | 3 |
+| `inconclusive <reason>` | a split has no case on either sha; a case has fewer than `--min-runs` (default 2) runs on either sha (a missing side, including zero rows, stays this reason); the two sides' `settings` differ, or one side's rows disagree among themselves; a case's repeat counts differ once both sides meet `--min-runs`; or a side has more runs than the `repeat` its settings record | 3 |
 | `accept` | the dev pass rate rose and the held-out pass rate did not fall (and rose, when it was below 1); or both pass rates are unchanged and the mean `tool_calls` fell | 0 |
 | `reject <reason>` | anything else | 1 |
 

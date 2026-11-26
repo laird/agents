@@ -254,8 +254,11 @@ def run_case(split: str, case_dir: Path, repeat: int, args, sha: str | None) -> 
         row["comparison"] = args.comparison
         row["manifest"] = args.manifest
         row["grader"] = args.grader
+        timeout = float(args.timeout) if isinstance(args.timeout, (int, float)) and not isinstance(args.timeout, bool) else args.timeout
+        if isinstance(timeout, float) and timeout.is_integer():
+            timeout = int(timeout)
         row["settings"] = {"manifest": args.manifest, "grader": args.grader, "worker": args.worker,
-                           "repeat": args.repeat, "timeout": args.timeout}
+                           "repeat": args.repeat, "timeout": timeout}
     return row
 
 
@@ -269,9 +272,22 @@ def fingerprint(parts: list[bytes]) -> str:
 
 
 def manifest_id(selected: list[tuple[str, Path]]) -> str:
+    """Fingerprint of the case inputs a run actually uses, not case.json alone.
+
+    task.md is the issue body, setup.sh is the second actor, and seed/ is the repo.
+    A comparison whose manifest ignores those can accept a different task.
+    """
     parts = []
     for split, case_dir in sorted(selected, key=lambda item: (item[0], item[1].name)):
-        parts.append(f"{split}/{case_dir.name}\n".encode() + (case_dir / "case.json").read_bytes())
+        parts.append(f"{split}/{case_dir.name}\n".encode())
+        for name in ("case.json", "task.md", "setup.sh"):
+            path = case_dir / name
+            if path.is_file():
+                parts.append(f"{name}\n".encode() + path.read_bytes())
+        seed = case_dir / "seed"
+        if seed.is_dir():
+            for path in sorted(p for p in seed.rglob("*") if p.is_file()):
+                parts.append(f"{path.relative_to(case_dir).as_posix()}\n".encode() + path.read_bytes())
     return fingerprint(parts)
 
 

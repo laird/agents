@@ -141,14 +141,16 @@ def matched(comparison="cmp-a", dev_before=(1, 2), dev_after=(2, 2), ho_before=(
 
 
 def test_rows_from_another_comparison_do_not_move_the_verdict(tmp_path):
-    # Same harness shas, a later run whose dev rate falls. Counted, it rejects; scoped, it is ignored.
+    # Same harness shas, a later run. Scoped, it is ignored and the verdict accepts.
+    # Counted, the pooled rows no longer match the planned repeat, so they cannot accept.
     poison = stamp(runs(BEFORE, "dev", "dev-1", 2, 2), "cmp-b", DEV) + stamp(runs(AFTER, "dev", "dev-1", 0, 2), "cmp-b", DEV)
     poison += stamp(runs(BEFORE, "heldout", "ho-1", 2, 2), "cmp-b", HELD) + stamp(runs(AFTER, "heldout", "ho-1", 0, 2), "cmp-b", HELD)
     rows = matched() + poison
     scoped = decide(tmp_path, rows, "--comparison", "cmp-a")
     assert (scoped.returncode, scoped.stdout.strip()) == (0, "accept")
     mixed = decide(tmp_path, rows)
-    assert mixed.returncode == 1 and mixed.stdout.startswith("reject dev pass rate did not rise")
+    assert mixed.returncode == 3
+    assert "dev-1 (4 vs planned 2)" in mixed.stdout
     recorded = decisions(tmp_path)[0]
     assert recorded["comparison"] == "cmp-a"
     assert recorded["manifest"] == {"before": {"dev": "mani-dev", "heldout": "mani-ho"},
@@ -176,6 +178,29 @@ def test_different_settings_are_inconclusive(tmp_path):
     verdict = decide(tmp_path, rows, "--comparison", "cmp-a")
     assert verdict.returncode == 3
     assert "different dev settings" in verdict.stdout
+
+
+def test_a_missing_stamped_side_is_fewer_runs_not_different_settings(tmp_path):
+    rows = [r for r in matched() if not (r["split"] == "heldout" and r["harness"]["sha"] == AFTER)]
+    verdict = decide(tmp_path, rows, "--comparison", "cmp-a")
+    assert verdict.returncode == 3
+    assert verdict.stdout.strip().startswith("inconclusive heldout case(s) with fewer than 2 runs after: ho-1")
+
+
+def test_a_second_batch_past_the_planned_repeat_is_not_pooled(tmp_path):
+    verdict = decide(tmp_path, matched() + matched(), "--comparison", "cmp-a")
+    assert verdict.returncode == 3
+    assert verdict.stdout.strip().startswith(
+        "inconclusive dev case(s) whose runs do not match the planned repeats before: dev-1 (4 vs planned 2)")
+
+
+def test_a_whole_float_timeout_matches_an_int(tmp_path):
+    rows = matched()
+    for row in rows:
+        if row["harness"]["sha"] == AFTER:
+            row["settings"] = {**row["settings"], "timeout": 60.0}
+    verdict = decide(tmp_path, rows, "--comparison", "cmp-a")
+    assert (verdict.returncode, verdict.stdout.strip()) == (0, "accept")
 
 
 def test_untagged_rows_stay_comparable_beside_stamped_rows_for_other_shas(tmp_path):

@@ -130,6 +130,11 @@ done
 git -C "$WT" checkout -q "fix/${FINDING%%:*}-${STAMP}"
 ```
 
+The first pass runs held-out on both shas. A later pass must not run `$BEFORE` again: those rows
+stay in the comparison, and a second run makes the held-out counts `2*REPEAT` against the
+candidate's `REPEAT`, which is inconclusive. On a refine, run only the `$AFTER` commands above
+(dev, then held-out).
+
 A held-out run's kept roots hold the failing traces; do not open them. If a dev case's kept root
 is needed to understand a failure, that one is yours to read.
 
@@ -146,19 +151,24 @@ VERDICT=$?
   person names, since the plugin ships to every repository.
 - **reject (exit 1):** run the analyst on the dev runs' traces (`analyze-traces.py --traces
   <kept root>/traces.jsonl` for each kept dev root) and read what the fixed harness did instead.
-  You may refine the change ONCE: amend in `$WT`, take the new sha as `AFTER`, and repeat step 5
-  and this step, keeping the same `CMP`. A second reject ends the proposal: leave the branch
-  unpushed, and record the decision rows (both are in `eval-decisions.jsonl`) in your summary so
-  the next attempt starts from them.
-- **inconclusive (exit 3):** the runs were too few, a split had no case, the two sides disagree
-  on settings (manifest, grader, worker, planned repeats, timeout), or a case's repeat counts do
-  not match. Say which, and do not treat it as a pass.
-  - A missing case: author it, then measure again.
-  - Too few runs, or you are raising `REPEAT`: mint a new `CMP` and repeat from step 3. The old
-    baseline rows share the harness sha, so the same `CMP` would pool them with the new repeats
-    and the settings would disagree.
-  - A refine (step 5 again after an amend, same `REPEAT`): keep the same `CMP`. The new after sha
-    no longer matches the rows you are replacing, and the baseline rows stay in the comparison.
+  You may refine the change ONCE: amend in `$WT`, take the new sha as `AFTER`, keep the same
+  `CMP`, and repeat only the `$AFTER` measurements in step 5 (dev, then held-out) and this step.
+  Do not run held-out on `$BEFORE` again, and do not return to step 4. A second reject ends the
+  proposal: leave the branch unpushed, and record the decision rows (both are in
+  `eval-decisions.jsonl`) in your summary so the next attempt starts from them.
+- **inconclusive (exit 3):** say the reason, and do not treat it as a pass.
+  - `no <split> case was run`: that split has no rows. Author a case if none exists, then run
+    that split on both shas with the same `CMP`. Do not re-run the split that already matched.
+  - `fewer than N runs`: one side did not run a case the other side ran. A count of 0 is this
+    reason. Re-run that side with the same cases and the same `CMP`. Do not add or drop a case.
+  - The case set, grader, worker, timeout, or `REPEAT` must change: mint a new `CMP`. Check out
+    `$BEFORE` in `$WT`, run step 3, check out the feature branch, then run step 5 and step 6.
+    Do not return to step 4. Step 3 labels rows with `$BEFORE` but runs whatever `$WT` has
+    checked out, so a baseline measured on the candidate tree is not a baseline. The old rows
+    share the harness sha, so the same `CMP` would pool them and the settings would disagree.
+  - A refine after an amend, same `REPEAT` and same cases: keep the same `CMP` and re-run only
+    the `$AFTER` rows. The new after sha drops the replaced candidate rows. The baseline rows
+    stay; do not append them again.
 
 ### 7. Report and clean up
 
