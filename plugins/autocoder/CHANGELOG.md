@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.70.0] - 2026-11-26
+
 ### Added
 
 - Operational loops' ticks (#422). A fifth ledger, `ticks.jsonl`
@@ -60,13 +62,6 @@ once (Version Management in `docs/maintaining.md`).
   `/manager-resume --non-interactive`. Herdr registers the pane with
   `herdr agent start --kind grok`.
 
-- Grok CLI installs this repo's Claude Code marketplace. `/fix-loop` and
-  `/monitor-loop` schedule with `scheduler_create` on Grok (its `/loop`), and
-  `/stop-loop` deletes those jobs. Script lookup also searches
-  `~/.grok/installed-plugins`. Claude Code's Stop hook stays
-  `settings.json` only: `hooks/hooks.json` is not shipped, because Claude
-  would load it beside the existing hook.
-
 ### Fixed
 
 - The merge train's landing proof no longer reports a member as not landed when
@@ -79,6 +74,17 @@ once (Version Management in `docs/maintaining.md`).
   so a missing line in that file still refuses the proof. A member whose added
   source line is absent stays open, and the close-out names that file and the
   first missing line.
+
+## [4.69.0] - 2026-11-26
+
+### Added
+
+- Grok CLI installs this repo's Claude Code marketplace. `/fix-loop` and
+  `/monitor-loop` schedule with `scheduler_create` on Grok (its `/loop`), and
+  `/stop-loop` deletes those jobs. Script lookup also searches
+  `~/.grok/installed-plugins`. Claude Code's Stop hook stays
+  `settings.json` only: `hooks/hooks.json` is not shipped, because Claude
+  would load it beside the existing hook.
 
 ## [4.68.0] - 2026-11-25
 
