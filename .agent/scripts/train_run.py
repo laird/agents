@@ -899,15 +899,21 @@ class Cycle:
     # ----- a red: attribute, then re-gate the remaining members, else bisect -----
     def named_members(self, base, members, text):
         """Members whose diff touches a path the failure text names. A path every member touches (a lockfile)
-        names nobody. The project's `attribute` hook, when set, decides instead: it gets the text on stdin
-        and the members as `issue<TAB>tip` rows in AUTOCODER_TRAIN_MEMBERS, and prints one issue per line."""
+        names nobody. The project's `attribute` hook, when set, is asked first: it gets the text on stdin
+        and the members as `issue<TAB>tip` rows in AUTOCODER_TRAIN_MEMBERS, and prints one issue per line;
+        when it names nobody the path scan of the text decides, so a hook only ever adds attributions."""
         hook = self.rc.hooks.get("attribute")
         if hook:
             rows = "\n".join(f"{m['issue']}\t{m['tip']}" for m in members)
             r = subprocess.run(["bash", "-c", hook], input=text, capture_output=True, text=True, cwd=str(self.cfg.repo),
                                env={**os.environ, "AUTOCODER_TRAIN_MEMBERS": rows, "AUTOCODER_TRAIN_BASE": base})
             named = set(r.stdout.split()) if r.returncode == 0 else set()
-            return [m for m in members if m["issue"] in named]
+            hits = [m for m in members if m["issue"] in named]
+            if hits:
+                return hits
+            # The hook named nobody: fall through to the path scan below rather than bisect at once. A
+            # walker test names the offending file in its assertion, never in its own path, so a hook
+            # that maps test files to their sources misses it while the text itself names the member.
         tokens = {t.lstrip("./") for t in PATH_TOKEN_RE.findall(text)}
         hits = []
         for m in members:

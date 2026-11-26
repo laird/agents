@@ -459,6 +459,13 @@ def test_a_path_every_member_touches_names_nobody(fx, tmp_path):
     base = T.git(fx.work, "rev-parse", "origin/master").stdout.strip()
     assert cyc.named_members(base, members, "::error::tests: files/m1.txt differs") == [members[1]]
     assert cyc.named_members(base, members, "::error::x: README.md and files/m0.txt files/m1.txt files/m2.txt") == []
+    # an attribute hook that names nobody does not stop the path scan: the text still names a member (#391)
+    cyc.rc.hooks["attribute"] = "cat >/dev/null; exit 0"
+    assert cyc.named_members(base, members, "AssertionError: files/m1.txt: expected a to equal b") == [members[1]]
+    # a hook that names a member is believed as before
+    cyc.rc.hooks["attribute"] = "cat >/dev/null; echo " + members[0]["issue"]
+    assert cyc.named_members(base, members, "::error::tests: files/m1.txt differs") == [members[0]]
+    del cyc.rc.hooks["attribute"]
 
 
 # ── member accounting survives a failed tracker call ────────────────────────────────────
