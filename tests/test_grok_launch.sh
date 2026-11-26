@@ -26,26 +26,28 @@ chmod +x "$TMP/bin/herdr"
 # ── launch resolution ────────────────────────────────────────────────────────
 RESOLVE=$(bash -c 'source "$1"; resolve_worker_launch grok "$2" herdr >/dev/null; printf "%s|%s|%s|%s|%s|%s" "$AGENT_LAUNCH_CMD" "$WORKER_CMD" "$MANAGER_LAUNCH_CMD" "$MANAGER_CMD" "$WORKER_COMMAND_MODE" "$MANAGER_COMMAND_MODE"' _ "$SCRIPTS/worker-launch-lib.sh" "$ROOT")
 case "$RESOLVE" in
-  "grok --trust|/fix-loop|grok --trust|/monitor-loop|agent-input|agent-input")
-    ok "resolve_worker_launch grok: --trust and bare slash commands" ;;
+  "grok --trust --always-approve|/fix-loop|grok --trust --always-approve|/monitor-loop|agent-input|agent-input")
+    ok "resolve_worker_launch grok: --trust, --always-approve, bare slash commands" ;;
   *) bad "resolve_worker_launch grok: $RESOLVE" ;;
 esac
 case "$RESOLVE" in
-  *always-approve*|*--yolo*|*dangerously-skip-permissions*|*bypassPermissions*)
-    bad "grok launch includes a tool-permission bypass flag" ;;
-  *) ok "grok launch does not bypass tool-permission prompts" ;;
+  *--yolo*|*dangerously-skip-permissions*|*bypassPermissions*)
+    bad "grok launch uses a flag other than --always-approve" ;;
+  *--always-approve*)
+    ok "grok launch auto-approves with --always-approve" ;;
+  *) bad "grok launch is missing --always-approve: $RESOLVE" ;;
 esac
 
 # ── herdr registers --kind grok and forwards --trust ─────────────────────────
 CAPTURE="$TMP/herdr-argv"
 : > "$CAPTURE"
 HERDR_ARGV_CAPTURE="$CAPTURE" PATH="$TMP/bin:$PATH" "$BASH_BIN" -c \
-  'source "$1"; source "$2"; launch_herdr_agent wt1-proj grok w1:p1 "grok --trust" >/dev/null' \
+  'source "$1"; source "$2"; launch_herdr_agent wt1-proj grok w1:p1 "grok --trust --always-approve" >/dev/null' \
   _ "$SCRIPTS/mux-send-lib.sh" "$SCRIPTS/worker-launch-lib.sh"
 got=$(cat "$CAPTURE")
 case "$got" in
-  *"agent start wt1-proj --kind grok --pane w1:p1 -- --trust"*)
-    ok "herdr agent start --kind grok forwards --trust" ;;
+  *"agent start wt1-proj --kind grok --pane w1:p1 -- --trust --always-approve"*)
+    ok "herdr agent start --kind grok forwards --trust and --always-approve" ;;
   *) bad "herdr registration was: $got" ;;
 esac
 
@@ -109,11 +111,11 @@ then ok "ctl accepts --agent grok"
 else bad "ctl rejected grok: $CTL_OUT"
 fi
 
-# ── docs name the folder-trust exception and the refusal ─────────────────────
+# ── docs name folder trust, tool auto-approve, and the credit refusal ───────
 for f in "$ROOT/docs/GROK.md" "$ROOT/plugins/autocoder/README.md" "$ROOT/plugins/autocoder/CHANGELOG.md"; do
-  grep -Fq -- "--trust" "$f" && grep -Fq -- "--always-approve" "$f" \
-    && ok "$(basename "$f") documents --trust and the bypass flags that are not passed" \
-    || bad "$f does not document the folder-trust exception"
+  grep -Fq -- "--trust" "$f" && grep -Fq -- "--always-approve" "$f" && grep -Fq -- "Add funds" "$f" \
+    && ok "$(basename "$f") documents --trust, --always-approve, and not buying credits" \
+    || bad "$f does not document trust, always-approve, and the credit refusal"
 done
 
 TOTAL=$((PASS + FAIL))

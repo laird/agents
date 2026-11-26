@@ -704,6 +704,28 @@ at most once per 10 minutes). It costs zero tokens; install it once per host:
 "${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/worker-auth-watchdog.sh" --dry-run   # what a tick would do
 ```
 
+### Step 4e: Agent usage-limit failover
+
+When a pane has hit that agent's usage limit, restart it on another agent.
+This is mechanical, and it has to keep working after the manager's own model
+is blocked, so the shell watchdog does it. `quota-failover.sh` reads herdr,
+tmux, and cmux pane text (herdr `agent_status=blocked` misses the banner),
+skips GitHub API and GraphQL rate-limit lines, and switches through
+`restart-worker.sh`. The branch, uncommitted files, and `working` claim stay.
+The manager is restarted at most once and then sent
+`/manager-resume --non-interactive` and `/monitor-loop` (with the `autocoder:`
+prefix on Claude). Install it once per repo; the idle sentinel also runs a tick:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/quota-failover.sh" --ensure
+"${CLAUDE_PLUGIN_ROOT:-plugins/autocoder}/scripts/quota-failover.sh" --dry-run
+```
+
+Preference is `claude`, `codex`, `grok`, `gemini`, `droid`, `pi` unless
+`AUTOCODER_AGENT_PREFERENCE` or `.autocoder.json` `agentPreference` says
+otherwise. An agent that is not installed or fails its auth probe is skipped.
+Do not answer the limit dialog, and do not choose "Add funds".
+
 ### Step 5: Dispatch Work to Idle Workers
 
 Find unblocked claimable issues sorted by priority (the `--state open`

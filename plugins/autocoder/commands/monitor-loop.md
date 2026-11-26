@@ -154,6 +154,25 @@ if [ -n "$REGISTER_SH" ]; then
 fi
 ```
 
+### Ensure quota failover
+
+The monitor loop dies when this manager's own agent hits its usage limit, so
+install the shell watchdog before the first check. It is idempotent, and the
+idle sentinel also runs `quota-failover.sh` each tick.
+
+```bash
+QUOTA_SH=$(
+  for d in "$(pwd)/.agent/scripts" \
+           "$(pwd)/plugins/autocoder/scripts" \
+           "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
+    if [ -f "$d/quota-failover.sh" ]; then echo "$d/quota-failover.sh"; exit 0; fi
+  done
+)
+if [ -n "$QUOTA_SH" ]; then
+  bash "$QUOTA_SH" --ensure || echo "⚠️  quota-failover.sh --ensure failed; the sentinel tick still runs it" >&2
+fi
+```
+
 ### Detect /loop availability and choose mode
 
 **Check whether the `CronCreate` tool is available** (it appears in the available deferred tools list when Claude Code supports the `/loop` command).

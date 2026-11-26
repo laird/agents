@@ -85,7 +85,7 @@ The binary is started as an interactive TUI, the same shape as Gemini, so
 herdr can list the pane:
 
 ```bash
-grok --trust
+grok --trust --always-approve
 ```
 
 Then the launcher types a bare command. `grok inspect` lists this plugin's
@@ -102,27 +102,28 @@ Claude is still `/autocoder:fix` and `/autocoder:fix-loop`. `worktree-issue.sh`,
 the idle sentinel, and `reboot-recover.sh` already switch on
 `AUTOCODER_AGENT`: anything other than `claude` gets the bare names.
 
-### Folder trust, and nothing else
+### Folder trust and tool approval
 
-Launchers do not type an answer into a consent or folder-trust dialog
-(`send_agent_prompt` returns 3 and leaves the pane alone). Grok is the
-exception for **folder trust only**, and the exception is the flag, not a
-keystroke. [docs.x.ai hooks](https://docs.x.ai/build/features/hooks) says
-project hooks require trust, granted with `/hooks-trust` or by launching with
-`--trust`. The decision is stored in `~/.grok/trusted_folders.toml` and covers
-project hooks, project MCP, and LSP.
+Launchers do not type an answer into a dialog (`send_agent_prompt` returns 3
+and leaves the pane alone). Two flags do the agreeing instead.
 
-Tool-permission prompts are not auto-answered. The launch command does not
-include `--always-approve`, `--yolo`, or `--dangerously-skip-permissions`
-(aliases documented on the [CLI reference](https://docs.x.ai/build/cli/reference)
-and [headless](https://docs.x.ai/build/cli/headless-scripting) pages). The
-user's own `[ui] permission_mode` in `~/.grok/config.toml` applies. A dialog
-that still shows is left for a person.
+[docs.x.ai hooks](https://docs.x.ai/build/features/hooks) says project hooks
+require trust, granted with `/hooks-trust` or by launching with `--trust`.
+The decision is stored in `~/.grok/trusted_folders.toml` and covers project
+hooks, project MCP, and LSP.
+
+`--always-approve` accepts tool-permission prompts so a swarm pane does not
+stall. `--yolo` is not the flag this launcher passes. A usage-limit dialog is
+not a tool prompt: the quota watchdog restarts the pane, and "Add funds" is
+never chosen.
 
 ### Fail a pane over
 
-When Claude Code is out of quota, restart that pane's worktree on Grok. The
-worktree, branch, and `working` claim stay:
+`quota-failover.sh` does this for whichever agent is out of usage, not only
+Claude and not only onto Grok. It reads the pane, skips platforms that are
+exhausted or not authenticated, and restarts the same worktree through
+`restart-worker.sh`. Preference defaults to `claude`, `codex`, `grok`, then
+the others. The manual form is the same restart, with the agent named:
 
 ```bash
 restart-worker.sh --worktree /path/to/repo-wt-2 --mux herdr --agent grok
@@ -135,7 +136,8 @@ start-parallel-agents.sh 3 --mux herdr --agent grok
 ```
 
 Auto-detect still prefers `claude`, then `gemini`, `codex`, `droid`, `pi`,
-and only then `grok`. Pass `--agent grok` to fail over.
+and only then `grok`. The quota watchdog uses its own preference list
+(`AUTOCODER_AGENT_PREFERENCE` or `.autocoder.json` `agentPreference`).
 
 ### What was not verified here
 

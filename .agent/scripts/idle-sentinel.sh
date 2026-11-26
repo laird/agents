@@ -1699,6 +1699,29 @@ observe_tick() {
   TICK_RESULT="wedge-killed"
 }
 
+# Quota failover is a shell watchdog (quota-failover.sh). A manager blocked on
+# its own usage limit never reaches the monitor loop, so the sentinel tick runs
+# the switch. A hold file means this tick already replaced the manager; waking
+# another one would leave two managers for the repo.
+quota_failover_tick() {
+  [ -f "$SCRIPT_DIR/quota-failover.sh" ] || return 0
+  if [ "${DRY_RUN:-false}" = true ]; then
+    "$SCRIPT_DIR/quota-failover.sh" --dry-run --quiet --repo "$PROJECT_ROOT" || true
+  else
+    "$SCRIPT_DIR/quota-failover.sh" --once --quiet --repo "$PROJECT_ROOT" \
+      || log_event "QUOTA failover tick failed"
+  fi
+}
+
+quota_manager_hold_fresh() {
+  local f="$PROJECT_ROOT/.autocoder/quota-manager-hold" ts now
+  [ -f "$f" ] || return 1
+  ts=$(tr -cd '0-9' < "$f" 2>/dev/null || true)
+  [ -n "$ts" ] || return 1
+  now=$(date +%s)
+  [ $(( now - ts )) -lt 180 ]
+}
+
 # ── the tick ────────────────────────────────────────────────────────────────
 
 TICK_RESULT=""
@@ -1726,7 +1749,11 @@ run_tick() {
   self_check_tools || tick_errors=$((tick_errors + 1))
   pin_gh_token || tick_errors=$((tick_errors + 1))
 
+  # Shell path: still runs when the manager model is blocked on a usage limit.
+  quota_failover_tick || true
+
   if manager_alive; then
+    rm -f "$PROJECT_ROOT/.autocoder/quota-manager-hold"
     if [ -f "$STEPDOWN_FILE" ]; then
       # #15: the manager announced step-down but its TUI process lingers
       # (an argv-spawned agent has no reliable self-exit). Treat the marker
@@ -1766,6 +1793,15 @@ run_tick() {
     PREDICATE_SUMMARY="skipped ($TICK_ERROR_DETAIL)"
     WAKE_REASON=""
     WAKE_ISSUES=""
+  fi
+
+  if quota_manager_hold_fresh; then
+    # The quota watchdog just replaced the manager. Spawning here as well
+    # would leave two managers. The next tick sees the new one and observes.
+    TICK_RESULT="quota-manager-switch"
+    state_merge "{\"consecutive_errors\": 0, \"last_tick_at\": \"$(now_iso)\", \"last_tick_result\": \"$TICK_RESULT\"}"
+    log_event "TICK result=$TICK_RESULT — manager was switched off a usage limit; not spawning a second one"
+    return 0
   fi
 
   if [ -n "$WAKE_REASON" ]; then

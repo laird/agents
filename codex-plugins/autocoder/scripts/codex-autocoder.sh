@@ -41,14 +41,14 @@ MERGE_TO_INTEGRATION="$AGENTS_ROOT/plugins/autocoder/scripts/merge-to-integratio
 COMMAND="$1"
 shift
 
-# Flags for `codex exec` (#286). Nothing here bypasses approvals or the sandbox.
-# codex exec is headless: it cannot ask for approval, and its default sandbox is
-# read-only, so a fix pass could not edit the repo. The default asks for the
-# workspace-write sandbox (edits inside the repo, still sandboxed), which is what
-# the old --full-auto meant; current codex rejects --full-auto outright.
+# Flags for `codex exec` (#286). codex exec is headless: its default sandbox is
+# read-only, so a fix pass could not edit the repo, and it cannot show an
+# approval dialog. The default is the workspace-write sandbox plus
+# --ask-for-approval never (approval-never). That pair is what --full-auto used
+# to mean; current codex rejects --full-auto outright.
 # AUTOCODER_CODEX_FLAGS replaces the default (split on whitespace, no globbing);
 # set it to "" to let ~/.codex/config.toml decide.
-CODEX_FLAGS_DEFAULT="--sandbox workspace-write"
+CODEX_FLAGS_DEFAULT="--sandbox workspace-write --ask-for-approval never"
 read -r -a CODEX_FLAGS <<< "${AUTOCODER_CODEX_FLAGS-$CODEX_FLAGS_DEFAULT}"
 
 build_fix_prompt() {
@@ -76,7 +76,7 @@ build_fix_prompt() {
     "- Use existing repo scripts where appropriate, especially plugins/autocoder/scripts/regression-test.sh and scripts/append-to-history.sh." \
     "- If you make code changes, run the most relevant tests you can without weakening repo standards." \
     "- If you make code changes, create a git commit with a concise message after tests pass." \
-    "- To land the work, run: bash '$MERGE_TO_INTEGRATION' --feature feature/issue-N --issue N --integration main --test-cmd '<the repo regression test command>' (use enhancement/issue-N-auto for enhancements)." \
+    "- To land the work, run: bash '$MERGE_TO_INTEGRATION' --feature feature/issue-N --issue N --integration main --test-cmd '<the repo regression test command>' (use enhancement/issue-N-auto for enhancements). Do not open a pull request." \
     "- That helper is worktree-safe: it merges origin/main into your feature branch, re-runs tests on the combined tree, and pushes to origin/main with retry. Do NOT merge into or push the per-worktree branch (main-wt-N) — that strands work off main." \
     "- Log significant work with scripts/append-to-history.sh." \
     "- Stop after one actionable unit of work and summarize the outcome." \

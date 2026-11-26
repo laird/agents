@@ -60,7 +60,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Flags from the shared lib (#283): only what the user configured.
+# Flags from the shared lib. Unset AUTOCODER_CLAUDE_PERMISSION_MODE defaults to
+# bypassPermissions so a headless worker does not stop on a tool prompt.
 # shellcheck source=worker-launch-lib.sh
 source "$SCRIPT_DIR/worker-launch-lib.sh"
 AUTOCODER_WORKER_MODEL="$WORKER_MODEL"

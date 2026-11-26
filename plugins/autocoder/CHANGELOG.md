@@ -8,12 +8,44 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- Quota failover (`quota-failover.sh`). When a worker or the manager pane shows
+  that agent's usage limit (Claude's weekly-limit dialog and banner, Grok's
+  team credit message, Codex's usage-limit text, and the same class of message
+  for Gemini, Droid, and Pi), the watchdog restarts that pane on the next
+  installed, authenticated agent. The order is `claude`, `codex`, `grok`, then
+  `gemini`, `droid`, `pi`, so Claude, Codex, and Grok can replace each other,
+  and one swarm may run a different agent in each pane. Overridable with
+  `AUTOCODER_AGENT_PREFERENCE` or `.autocoder.json` `agentPreference`. The
+  reset time on the pane is remembered; after it passes, an idle pane returns
+  to the preferred agent. The switch uses `restart-worker.sh` (same worktree,
+  branch, and `working` claim; the worktree is not reset). Claude and Grok
+  resume with `/fix N` or `/fix-loop` (`/autocoder:…` on Claude) and the
+  manager runs `manager-resume` then `monitor-loop`. Codex resumes with its
+  `/goal` (or the shell loop) under `--ask-for-approval never`. The idle
+  sentinel runs the tick, and `--ensure` installs a
+  cron entry so a manager blocked on its own limit still gets switched. GitHub
+  API and GraphQL rate-limit text is not treated as an agent quota hit. The
+  restarted agent is launched with that agent's auto-approve flag. "Add funds"
+  is never chosen.
+
+- Swarm launches auto-approve tool permissions, by flag, so a pane does not
+  sit on an approval prompt. Grok is `grok --trust --always-approve`. Claude
+  is `claude --permission-mode bypassPermissions` (not
+  `--dangerously-skip-permissions`, which opens a "No, exit" consent dialog).
+  Codex is `codex --ask-for-approval never` on the interactive launch and on
+  `codex exec` (current Codex rejects `--full-auto`). Gemini is
+  `gemini --sandbox=false -y`. Droid's exec loop stays `droid exec --auto high`.
+  Finished swarm work is validated and merged through `merge-launch.sh` /
+  `merge-to-integration.sh`. Workers are not told to open a pull request. A
+  high-risk diff and an open revert-breaker issue are the two landing stops
+  that still open one.
+
 - `--agent grok` (and `AUTOCODER_AGENT=grok`) starts a Grok CLI worker or manager
   in the same worktree and issue as the other agents. The launch command is
-  `grok --trust`: that flag is the folder-trust exception (it records
-  `~/.grok/trusted_folders.toml`). The launcher still does not type an answer
-  into a consent or permission dialog, and it does not pass `--always-approve`,
-  `--yolo`, or `--dangerously-skip-permissions`. Commands are the bare names
+  `grok --trust --always-approve`: `--trust` records
+  `~/.grok/trusted_folders.toml`, and `--always-approve` accepts tool calls.
+  The launcher does not type an answer into a dialog, and it does not pass
+  `--yolo` or `--dangerously-skip-permissions`. Commands are the bare names
   Grok lists: `/fix N`, `/fix-loop`, `/monitor-loop`, and
   `/manager-resume --non-interactive`. Herdr registers the pane with
   `herdr agent start --kind grok`.

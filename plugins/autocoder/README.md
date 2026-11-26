@@ -682,17 +682,28 @@ join-parallel --mux cmux
 
 | Framework | Launch Command | Slash Commands |
 |-----------|---------------|----------------|
-| **Claude Code** | `claude code --dangerously-skip-permissions .` | `/autocoder:fix-loop`, `/autocoder:review-blocked` |
-| **Gemini CLI** | `gemini --sandbox=false` | `/fix-loop`, `/monitor-loop`, `/review-blocked` |
-| **Codex CLI** | `codex` | Codex goal loop or shell-loop fallback |
-| **Droid** | shell-loop wrapper | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
-| **Grok CLI** | `grok --trust` | `/fix-loop`, `/monitor-loop`, `/fix N`, `/manager-resume --non-interactive` |
+| **Claude Code** | `claude --permission-mode bypassPermissions` | `/autocoder:fix-loop`, `/autocoder:review-blocked` |
+| **Gemini CLI** | `gemini --sandbox=false -y` | `/fix-loop`, `/monitor-loop`, `/review-blocked` |
+| **Codex CLI** | `codex --ask-for-approval never` | Codex goal loop or shell-loop fallback |
+| **Droid** | shell-loop wrapper (`droid exec --auto high`) | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
+| **Grok CLI** | `grok --trust --always-approve` | `/fix-loop`, `/monitor-loop`, `/fix N`, `/manager-resume --non-interactive` |
 
 Auto-detection prefers a *running* cmux, then a *running* herdr, then tmux — except when launched from inside a herdr pane (`HERDR_ENV=1`), where herdr wins. A merely installed cmux or herdr with no live server never captures the swarm. Agents are then checked in order. Override with `--mux` and `--agent`.
 
 **Consent and trust dialogs.** An agent started in a folder it has not seen may first ask whether to trust the folder, and `claude --dangerously-skip-permissions` asks for consent (its default is "No, exit"). The launch scripts (`start-parallel`, `add-worker`, `restart-worker`, `start-workers`) check the pane before typing the first prompt and again before pressing Enter, reading only its last `AUTOCODER_CONSENT_TAIL_LINES` (default 12) non-blank lines, where an open dialog's choices are drawn, so dialog wording quoted higher up does not count. If a dialog is showing they print a warning on stderr and send nothing, so the dialog waits for you; answer it in the pane, then send the prompt (or run `start-workers.sh <N>`). Only `start-workers` records the held-back worker (as `failed` in the manifest); the others report it on stderr and carry on. Outside herdr the claude manager gets its prompt in argv and types nothing. Set `AUTOCODER_CONSENT_PATTERN` (an extended regex) if an agent words its dialog differently; `autocoder-ctl start` and `add-worker` add their own `AUTOCODER_CTL_TRUST_PATTERN` and `AUTOCODER_CTL_CONSENT_PATTERN` to it, so a prompt they report is one the launcher left unanswered.
 
-**Grok folder trust is the exception.** A Grok worker or manager is started as `grok --trust`. That flag records the worktree in `~/.grok/trusted_folders.toml` (project hooks, MCP, and LSP) so the launcher does not have to type "yes" into Grok's folder-trust dialog. It does not auto-approve tool calls: `--always-approve`, `--yolo`, and `--dangerously-skip-permissions` are not passed, and a permission dialog that still appears is left unanswered like every other agent's. See `docs/GROK.md`.
+**Tool permissions are auto-approved, by flag.** A swarm pane is started so it does not sit on a tool-permission prompt: Grok is `grok --trust --always-approve` (`--trust` records the worktree in `~/.grok/trusted_folders.toml`; `--always-approve` accepts tool calls). Claude is `claude --permission-mode bypassPermissions`. Codex is `codex --ask-for-approval never` (current Codex rejects `--full-auto`). Gemini is `gemini --sandbox=false -y`. Droid's shell loop uses `droid exec --auto high`. Pi has no permission prompt. The launcher still does not type an answer into a dialog. `--dangerously-skip-permissions` is not passed, because that flag opens a consent dialog whose default is "No, exit". A usage-limit dialog is not answered, and "Add funds" is never chosen. See `docs/GROK.md`.
+
+**Landing is a merge, after the tests.** A swarm worker runs the repo's regression suite and lands through `merge-launch.sh` / `merge-to-integration.sh` onto the integration branch (`master` in this repo). It does not run `gh pr create`. Two safety stops still open a pull request instead of merging: a high-risk diff (`landing-mode.sh`) and an open revert-breaker issue. Those are the only pull-request writers on the landing path.
+
+**Quota failover.** `quota-failover.sh` watches worker and manager panes on herdr, tmux, and cmux. When the pane text says that agent is out of usage (Claude's weekly-limit dialog or the "Usage limit reached" banner, Grok's team credit message, Codex's usage-limit text, and the daily-quota text for Gemini, Droid, and Pi), it restarts the pane on the next agent that is installed and authenticated. Preference defaults to `claude`, `codex`, `grok`, then `gemini`, `droid`, and `pi`, so Claude, Codex, and Grok can take over for each other. Panes in one swarm may run different agents at the same time. Set `AUTOCODER_AGENT_PREFERENCE` (comma-separated) or `.autocoder.json` `agentPreference` to change it. A reset time shown on the pane is stored; once it has passed, an idle pane moves back. A GitHub API or GraphQL rate-limit line in the scrollback does not count. The worker switch is `restart-worker.sh --worktree … --mux … --agent …`, which keeps the branch, uncommitted files, and the `working` claim and does not `git reset`. The new agent is sent `/fix N` when the branch names an issue, otherwise `/fix-loop` (`/autocoder:…` on Claude). The manager is restarted once per repo and sent `/manager-resume --non-interactive`, then `/monitor-loop`. The idle sentinel runs a tick every poll. Install the cron watchdog once so a manager that is itself out of usage still gets switched:
+
+```bash
+plugins/autocoder/scripts/quota-failover.sh --ensure
+plugins/autocoder/scripts/quota-failover.sh --dry-run
+```
+
+Each switch is appended to `.autocoder/quota-failover.log`, commented on the issue when one is known, and raised as a herdr notification. The restarted agent is launched with that agent's auto-approve flag. "Add funds" is never selected.
 
 ### How It Works
 
@@ -735,7 +746,7 @@ start-parallel [num_workers] [options]
 |--------|--------|---------|
 | `num_workers` | number | Worker count. Defaults to `3`. |
 | `--mux` | `tmux`, `cmux`, `herdr` | Terminal multiplexer. Auto-detects when omitted. |
-| `--agent` | `claude`, `gemini`, `codex`, `droid`, `pi`, `grok` | Agent framework. Auto-detects when omitted. Grok is last, so a failover is `--agent grok`. |
+| `--agent` | `claude`, `gemini`, `codex`, `droid`, `pi`, `grok` | Agent framework. Auto-detects when omitted. Quota failover walks `claude`, `codex`, `grok`, then the others. |
 | `--issue-source` | `file`, `github` | Issue backend for this swarm run. |
 | `--issue-dir` | path | File issue directory when using `--issue-source file`. |
 | `--paused`, `--no-start` | flag | Create the swarm but do not start workers pulling issues. |

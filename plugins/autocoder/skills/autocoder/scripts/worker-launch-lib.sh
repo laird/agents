@@ -84,17 +84,17 @@ worker_marker_export() {
 }
 
 # claude_launch_argv <role>: set CLAUDE_LAUNCH_ARGV to the flags a claude launch
-# gets (#283). Nothing is forced: with no configuration the agent runs as plain
-# `claude` and the user's own Claude Code settings decide permissions (defaultMode,
-# auto mode, allowlists) and the model. A forced --dangerously-skip-permissions
-# opened the bypass consent dialog on every spawn, and an unattended spawn (reboot
-# recovery, the sentinel) sat at it with nobody to answer.
+# gets (#283). A swarm pane must not sit on a tool-permission prompt, so the
+# default mode is bypassPermissions (Claude's skip-permissions mode). That is
+# --permission-mode, not --dangerously-skip-permissions: the latter opens a
+# consent dialog whose default is "No, exit", and an unattended pane stalls
+# there. Set AUTOCODER_CLAUDE_PERMISSION_MODE to another mode name to override,
+# or to empty to pass no permission flag.
 #   AUTOCODER_CLAUDE_PERMISSION_MODE  e.g. auto | acceptEdits | bypassPermissions
-#                                     -> --permission-mode <mode> (opt-in only)
 #   AUTOCODER_WORKER_MODEL / WORKER_MODEL    worker --model (none by default)
 #   AUTOCODER_MANAGER_MODEL / MANAGER_MODEL  manager --model (none by default)
-# A headless worker (`claude -p`) cannot answer a permission prompt: with no mode
-# here, its tools are allowed only as far as the user's settings allow them.
+# A headless worker (`claude -p`) cannot answer a permission prompt. The same
+# default mode is exported into its pane, so its tools are not left at a prompt.
 # Values must be plain words (letters, digits, . _ - and [ ] for e.g. opus[1m]);
 # anything else is refused with a warning.
 claude_launch_argv() {
@@ -104,7 +104,12 @@ claude_launch_argv() {
     manager) model="${AUTOCODER_MANAGER_MODEL:-${MANAGER_MODEL:-}}" ;;
     *)       model="${AUTOCODER_WORKER_MODEL:-${WORKER_MODEL:-}}" ;;
   esac
-  mode="${AUTOCODER_CLAUDE_PERMISSION_MODE:-}"
+  # Unset means the swarm default. An empty value means "pass no mode".
+  if [ -z "${AUTOCODER_CLAUDE_PERMISSION_MODE+x}" ]; then
+    mode="bypassPermissions"
+  else
+    mode="${AUTOCODER_CLAUDE_PERMISSION_MODE}"
+  fi
   if [ -n "$mode" ]; then
     case "$mode" in
       *[!A-Za-z]*) echo "worker-launch-lib: ignoring AUTOCODER_CLAUDE_PERMISSION_MODE='$mode' (expected a mode name such as auto)" >&2 ;;
@@ -195,11 +200,13 @@ resolve_worker_launch() {
     gemini)
       # Workers: interactive Gemini session running /fix-loop (matches .agent/workflows/).
       # Manager: interactive Gemini session for coordination (monitor-loop).
-      AGENT_LAUNCH_CMD="gemini --sandbox=false"
+      # -y is Gemini's auto-approve (the same flag the headless wrapper passes),
+      # so a swarm pane does not stop on a tool confirmation.
+      AGENT_LAUNCH_CMD="gemini --sandbox=false -y"
       WORKER_CMD="/fix-loop"
       WORKER_LAUNCH_MODE="interactive"
       WORKER_COMMAND_MODE="agent-input"
-      MANAGER_LAUNCH_CMD="gemini --sandbox=false"
+      MANAGER_LAUNCH_CMD="gemini --sandbox=false -y"
       MANAGER_CMD="/monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       MANAGER_COMMAND_MODE="agent-input"
@@ -207,12 +214,16 @@ resolve_worker_launch() {
     codex)
       local probe_script="$(_wll_script probe-codex-goals.sh "$repo_root")"
       if [ -f "$probe_script" ] && bash "$probe_script" 2>/dev/null; then
-        AGENT_LAUNCH_CMD="codex"
-        WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$repo_root/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, test, commit, push the current HEAD, close or PR according to repo rules, remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
+        # Current codex rejects --full-auto ("unexpected argument"). Approval-never
+        # is --ask-for-approval never, which is the same idea: do not stop for a
+        # tool-approval prompt. The shell-loop fallback sets the same flag on
+        # `codex exec` (CODEX_FLAGS_DEFAULT in codex-autocoder.sh).
+        AGENT_LAUNCH_CMD="codex --ask-for-approval never"
+        WORKER_CMD="/goal Work the issue queue repeatedly. For each issue N, before editing files, run: bash '$repo_root/plugins/autocoder/scripts/start-issue-work.sh' N. This helper is mandatory because it claims the issue, switches to feature/issue-N, and posts the Implementation Started marker peers use to validate the lock. If it fails, do not work that issue; choose another claimable issue. Then fix the issue, run the repo tests, commit, and land with merge-to-integration.sh so the gate merges onto the integration branch. Do not open a pull request. Remove the working label only when the issue is handed off or complete, and repeat until the queue is empty or you are paused."
         WORKER_LAUNCH_MODE="interactive"
         WORKER_COMMAND_MODE="agent-input"
         MANAGER_LAUNCH_CMD="$AGENT_LAUNCH_CMD"
-        MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, merge completed PRs, triage new issues, and repeat indefinitely."
+        MANAGER_CMD="/goal Monitor and coordinate workers: check worker status, unblock stuck agents, and confirm finished work has passed the test gate and merged to the integration branch. Do not open a pull request. Triage new issues, and repeat indefinitely."
         MANAGER_LAUNCH_MODE="interactive"
         MANAGER_COMMAND_MODE="agent-input"
       else
@@ -249,19 +260,17 @@ resolve_worker_launch() {
       # `grok inspect` lists this plugin's commands as bare names (/fix,
       # /fix-loop, /monitor-loop, /manager-resume), not /autocoder:….
       #
-      # Folder trust is the one consent this launcher grants, and it grants it
-      # with the documented `--trust` flag (docs.x.ai hooks: the decision is
-      # stored in ~/.grok/trusted_folders.toml and covers project hooks, MCP,
-      # and LSP) rather than by typing an answer into a dialog. Tool-permission
-      # prompts are not auto-answered: no --always-approve, --yolo, or
-      # --dangerously-skip-permissions. The user's own [ui] permission_mode
-      # applies. A dialog that still appears is left for a person
-      # (send_agent_prompt, #253).
-      AGENT_LAUNCH_CMD="grok --trust"
+      # Folder trust is `--trust` (docs.x.ai hooks: the decision is stored in
+      # ~/.grok/trusted_folders.toml). Tool permissions are `--always-approve`,
+      # so a swarm pane does not sit on an approval prompt. That is the flag,
+      # not a keystroke into a dialog, and not `--yolo`. A usage-limit dialog
+      # is never answered here; quota-failover.sh restarts the pane instead of
+      # choosing "Add funds".
+      AGENT_LAUNCH_CMD="grok --trust --always-approve"
       WORKER_CMD="/fix-loop"
       WORKER_LAUNCH_MODE="interactive"
       WORKER_COMMAND_MODE="agent-input"
-      MANAGER_LAUNCH_CMD="grok --trust"
+      MANAGER_LAUNCH_CMD="grok --trust --always-approve"
       MANAGER_CMD="/monitor-loop"
       MANAGER_LAUNCH_MODE="interactive"
       MANAGER_COMMAND_MODE="agent-input"

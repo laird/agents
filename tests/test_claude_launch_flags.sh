@@ -56,7 +56,8 @@ case "$START" in
   *) pass "spawn passes no model: the user's Claude Code default applies" ;;
 esac
 case "$START" in
-  *"--kind claude --pane w9:p1") pass "spawn launches plain claude (no args, no bare --)" ;;
+  *"--kind claude --pane w9:p1 -- --permission-mode bypassPermissions")
+    pass "spawn launches claude in bypassPermissions" ;;
   *) fail "unexpected launch: $START" ;;
 esac
 
@@ -68,7 +69,7 @@ esac
 
 START=$(spawn AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]')
 case "$START" in
-  *"-- --model claude-opus-5-5[1m]") pass "herdr gets a [1m] model unescaped" ;;
+  *"-- --permission-mode bypassPermissions --model claude-opus-5-5[1m]") pass "herdr gets a [1m] model unescaped" ;;
   *) fail "herdr model argv: $START" ;;
 esac
 
@@ -85,7 +86,7 @@ esac
 ARGS=$(env -u AUTOCODER_CLAUDE_PERMISSION_MODE AUTOCODER_WORKER_MODEL='claude-opus-5-5[1m]' bash -c "source '$LIB'; claude_launch_args worker")
 mkdir -p "$T/globdir" && touch "$T/globdir/claude-opus-5-51"
 OUT=$(cd "$T/globdir" && bash -c "set -- $ARGS; printf '%s|' \"\$@\"")
-[ "$OUT" = "--model|claude-opus-5-5[1m]|" ] && pass "a model with [ ] stays one literal word in a pane shell" || fail "glob/quoting: '$ARGS' -> '$OUT'"
+[ "$OUT" = "--permission-mode|bypassPermissions|--model|claude-opus-5-5[1m]|" ] && pass "a model with [ ] stays one literal word in a pane shell" || fail "glob/quoting: '$ARGS' -> '$OUT'"
 
 # The headless worker loop (tmux/cmux) builds its claude -p call the same way.
 mkdir -p "$T/loopbin"
@@ -105,11 +106,12 @@ loop_args() {
 BANNER=$(cd "$T/proj-wt-1" && env -u WORKER_MODEL -u AUTOCODER_WORKER_MODEL -u AUTOCODER_CLAUDE_PERMISSION_MODE \
   PATH="$T/loopbin:$PATH" CLAUDE_LOG=/dev/null AUTOCODER_STREAM=0 AUTOCODER_LOG_DIR="$T/logs" \
   timeout 5 bash "$SCRIPTS/claude-worker-loop.sh" --sleep 0 2>&1 | head -12)
-case "$BANNER" in *"Headless sessions cannot answer permission prompts"*) pass "worker loop warns when no permission mode is set" ;; *) fail "no headless warning: $BANNER" ;; esac
+case "$BANNER" in *"Headless sessions cannot answer permission prompts"*) fail "worker loop still warns under the bypassPermissions default: $BANNER" ;; *) pass "worker loop does not warn when bypassPermissions is the default" ;; esac
 ARGS=$(loop_args)
 case "$ARGS" in
-  "-p "*) case "$ARGS" in *dangerously*|*--model*) fail "worker loop forces flags: $ARGS" ;; *) pass "worker loop runs claude -p with no forced flags" ;; esac ;;
-  *) fail "worker loop did not run claude -p: '$ARGS'" ;;
+  "-p --permission-mode bypassPermissions "*)
+    case "$ARGS" in *dangerously*|*--model*) fail "worker loop forces a consent flag or a model: $ARGS" ;; *) pass "worker loop runs claude -p in bypassPermissions" ;; esac ;;
+  *) fail "worker loop did not run claude -p in bypassPermissions: '$ARGS'" ;;
 esac
 ARGS=$(loop_args AUTOCODER_CLAUDE_PERMISSION_MODE=acceptEdits WORKER_MODEL=claude-haiku-5-5)
 case "$ARGS" in
