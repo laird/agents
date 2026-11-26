@@ -106,6 +106,22 @@ for rel in "${FILES[@]}"; do
         got=$(run_block "$b" "$P" "$H")
         if [ "$got" = "$P/.pi/scripts" ]; then pass; else fail "$rel: pi prompt picked '${got#$P/}', want .pi/scripts"; fi ;;
     esac
+
+    # ── Case 5: a Grok install is used only when the platform cache has none ──
+    if grep -q '.grok/installed-plugins' "$b"; then
+      rm -rf "$H" "$P"; mkdir -p "$P"
+      partial "$H/.grok/installed-plugins/autocoder-aaaa1111/skills/autocoder/scripts"
+      full    "$H/.grok/installed-plugins/autocoder-aaaa1111/scripts"
+      full    "$H/.grok/installed-plugins/autocoder-bbbb2222/scripts"
+      got=$(run_block "$b" "$P" "$H")
+      want="$H/.grok/installed-plugins/autocoder-bbbb2222/scripts"
+      if [ "$got" = "$want" ]; then pass; else fail "$rel: grok install picked '${got#$H/}', want '${want#$H/}'"; fi
+
+      full "$H/$CACHE_ROOT/plugins/cache/mkt/autocoder/4.2.0/scripts"
+      got=$(run_block "$b" "$P" "$H")
+      want="$H/$CACHE_ROOT/plugins/cache/mkt/autocoder/4.2.0/scripts"
+      if [ "$got" = "$want" ]; then pass; else fail "$rel: platform cache should beat a Grok install, picked '${got#$H/}'"; fi
+    fi
   done
 done
 

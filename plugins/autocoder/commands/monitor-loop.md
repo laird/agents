@@ -96,6 +96,10 @@ the loop to watch.
 
 Uses the native CronCreate mechanism to schedule recurring `/autocoder:monitor-workers` calls. No stop hook or settings.json modification needed.
 
+**Mode 1b: Grok scheduler (when `scheduler_create` is available and CronCreate is not)**
+
+Same schedule, via `scheduler_create`. Each fire is a detached background subagent. Do not fall through to the sleep loop on Grok: that loop dies when this session ends.
+
 **Mode 2: Manual loop (fallback for older Claude Code versions)**
 
 Runs `/autocoder:monitor-workers` in a bash sleep loop, polling at the configured interval.
@@ -132,7 +136,14 @@ REGISTER_SH=$(
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
     if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
   done
+  found=$(
   find "$HOME/.claude/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+  )
+  if [ -n "$found" ]; then echo "$found"; exit 0; fi
+  # Grok installs to ~/.grok/installed-plugins/<name>-<hash>/. The hash is in
+  # the directory name, so the Claude cache glob */autocoder/* does not match.
+  find "$HOME/.grok/installed-plugins" -type f -name swarm-register.sh -path "*/autocoder-*/*" -not -path "*/skills/*" 2>/dev/null \
     | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 if [ -n "$REGISTER_SH" ]; then
@@ -171,7 +182,23 @@ This schedules `/autocoder:monitor-workers` to run every `INTERVAL_MINUTES` minu
 
 ---
 
-**If CronCreate is NOT available → Use manual loop (fallback):**
+**If `scheduler_create` is available and `CronCreate` is not (Grok) → schedule with the Grok scheduler:**
+
+Run `/autocoder:monitor-workers` once in this session, then call `scheduler_create`:
+
+| Parameter | Value |
+|---|---|
+| `interval` | `${INTERVAL_MINUTES}m`. If that would be under 60 seconds, use `1m`. |
+| `prompt` | `/autocoder:monitor-workers` exactly. Do not append multiplexer notes. |
+| `fire_immediately` | `false` (this session already ran the first check) |
+| `recurring` | `true` |
+| `durable` | `true` |
+
+Record the id the same way `/fix-loop` does, with `"kind": "monitor-loop"`. Replace any previous monitor-loop entry; leave a fix-loop entry in place. If `scheduler_list` already has a job with this prompt, `scheduler_delete` it first. Recurring Grok tasks expire after 7 days. `/stop-loop` deletes this job. Do not enter the sleep loop below.
+
+---
+
+**If neither `CronCreate` nor `scheduler_create` is available → Use manual loop (fallback):**
 
 ```bash
 echo "⚠️  /loop command not available — using manual sleep loop"

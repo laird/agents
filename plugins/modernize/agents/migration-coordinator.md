@@ -1,5 +1,6 @@
 ---
 name: migration-coordinator
+description: Strategic orchestrator for large-scale software modernization projects.
 version: 0.1
 type: agent
 ---

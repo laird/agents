@@ -128,7 +128,15 @@ SCRIPT_DIR=$(
   # <ver>/skills/autocoder/scripts is a subset that sorts after it (#142).
   # Rank by the <ver> directory alone, not the whole path: with two marketplaces
   # in the cache, a whole-path sort lets the marketplace name decide (#201).
+  found=$(
   find "$HOME/.agent/plugins/cache" -type d -name "scripts" -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | while read -r d; do if [ -f "$d/issue-fns.sh" ]; then echo "$d"; fi; done \
+    | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+  )
+  if [ -n "$found" ]; then echo "$found"; exit 0; fi
+  # Grok installs to ~/.grok/installed-plugins/<name>-<hash>/. The hash is in
+  # the directory name, so the Claude cache glob */autocoder/* does not match.
+  find "$HOME/.grok/installed-plugins" -type d -name "scripts" -path "*/autocoder-*/*" -not -path "*/skills/*" 2>/dev/null \
     | while read -r d; do if [ -f "$d/issue-fns.sh" ]; then echo "$d"; fi; done \
     | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )

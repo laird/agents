@@ -5,7 +5,8 @@ Full annotated directory tree. For a quick summary see the [README](../README.md
 ```
 agents/
 ├── .agent/                              # Antigravity agent configuration (rules, workflows)
-├── .claude-plugin/                      # Claude Code plugin configuration
+├── .claude-plugin/                      # Claude Code marketplace (Grok reads this too)
+│                                        # plugins/*/.grok-plugin/plugin.json names the Grok install
 ├── .factory/                            # Droid (Factory) configuration
 │   ├── settings.json                    # Hooks (stop hook for continuous operation)
 │   ├── skills/

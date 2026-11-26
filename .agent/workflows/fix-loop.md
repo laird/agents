@@ -104,6 +104,8 @@ export ANTIGRAVITY_DEPLOY_COMMAND="deploy.sh staging ."
 
 **Mode 1: `/loop` command (preferred, when CronCreate tool is available)**
 
+Grok, which has `scheduler_create` and no CronCreate, does not run this workflow. It runs `plugins/autocoder/commands/fix-loop.md`, which schedules with `scheduler_create`. Do not use the stop hook below when `scheduler_create` is available.
+
 1. Parses arguments and reads config from GEMINI.md
 2. Uses the `loop` skill to schedule `/fix` every `IDLE_SLEEP_MINUTES` minutes
 3. No settings.json modification needed — cleaner and more reliable
@@ -298,7 +300,14 @@ REGISTER_SH=$(
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
     if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
   done
+  found=$(
   find "$HOME/.agent/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+  )
+  if [ -n "$found" ]; then echo "$found"; exit 0; fi
+  # Grok installs to ~/.grok/installed-plugins/<name>-<hash>/. The hash is in
+  # the directory name, so the Claude cache glob */autocoder/* does not match.
+  find "$HOME/.grok/installed-plugins" -type f -name swarm-register.sh -path "*/autocoder-*/*" -not -path "*/skills/*" 2>/dev/null \
     | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 if [ -n "$REGISTER_SH" ]; then

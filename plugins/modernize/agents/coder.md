@@ -1,5 +1,6 @@
 ---
 name: coder
+description: Code implementation and migration specialist.
 version: 0.1
 type: agent
 ---

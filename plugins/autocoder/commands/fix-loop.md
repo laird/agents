@@ -111,7 +111,11 @@ export CLAUDE_CODE_DEPLOY_COMMAND="deploy.sh staging ."
 3. No settings.json modification needed — cleaner and more reliable
 4. Loop runs until manually cancelled (CronDelete)
 
-**Mode 2: Stop hook (fallback for older Claude Code versions)**
+**Mode 1b: Grok scheduler (when `scheduler_create` is available and CronCreate is not)**
+
+Grok's `/loop` is the `scheduler_create` tool. Each fire is a detached background subagent, which is what keeps the loop alive. A Stop hook is not a loop on Grok: it can continue the same turn at most 8 times, then the turn is forced to end.
+
+**Mode 2: Stop hook (fallback for older Claude Code versions, not for Grok)**
 
 1. Installs stop hook in `.claude/settings.json` (if not present)
 2. Creates state file `.claude/fix-loop.local.md`
@@ -300,7 +304,14 @@ REGISTER_SH=$(
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
     if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
   done
+  found=$(
   find "$HOME/.claude/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+  )
+  if [ -n "$found" ]; then echo "$found"; exit 0; fi
+  # Grok installs to ~/.grok/installed-plugins/<name>-<hash>/. The hash is in
+  # the directory name, so the Claude cache glob */autocoder/* does not match.
+  find "$HOME/.grok/installed-plugins" -type f -name swarm-register.sh -path "*/autocoder-*/*" -not -path "*/skills/*" 2>/dev/null \
     | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 if [ -n "$REGISTER_SH" ]; then
@@ -358,7 +369,43 @@ This schedules `${LOOP_TARGET}` (the slim pre-LLM gate, per spec §5.4; `/autoco
 
 ---
 
-**If CronCreate is NOT available → Use stop hook mode (fallback):**
+**If `scheduler_create` is available and `CronCreate` is not (Grok) → schedule with the Grok scheduler:**
+
+Do not install a Stop hook and do not create `.claude/fix-loop.local.md`. A Stop hook on Grok continues the same turn at most 8 times, and an idle `sleep` inside the hook is killed at the hook timeout (default 600 seconds). The schedule is the loop.
+
+Call `scheduler_create` with:
+
+| Parameter | Value |
+|---|---|
+| `interval` | `${IDLE_SLEEP_MINUTES}m`. If that would be under 60 seconds, use `1m`. |
+| `prompt` | `${LOOP_TARGET}` exactly (`/autocoder:gate`, or `/autocoder:dispatch` when `LOOP_MODEL_SPLIT=1`). The subagent runs that command. |
+| `fire_immediately` | `true` |
+| `recurring` | `true` |
+| `durable` | `true`, so it keeps firing after this session closes |
+
+When the tool returns an id, record it and drop any previous fix-loop id:
+
+```bash
+mkdir -p .grok
+python3 - "$JOB_ID" "$LOOP_TARGET" "${IDLE_SLEEP_MINUTES}m" << 'PY'
+import json, os, sys
+path = ".grok/autocoder-loops.json"
+data = json.load(open(path)) if os.path.exists(path) else {"jobs": []}
+data["jobs"] = [j for j in data.get("jobs", []) if j.get("kind") != "fix-loop"]
+data["jobs"].append({"kind": "fix-loop", "id": sys.argv[1], "prompt": sys.argv[2], "interval": sys.argv[3]})
+json.dump(data, open(path, "w"), indent=2)
+print("recorded", sys.argv[1])
+PY
+echo "🔄 Fix loop scheduled on Grok"
+echo "   Recurring Grok tasks expire after 7 days. Run /fix-loop again to renew."
+echo "   To stop: /stop-loop"
+```
+
+Substitute the id `scheduler_create` returned for `$JOB_ID` before running that script. One fix-loop schedule at a time: if `scheduler_list` already has a job whose prompt is this same target, `scheduler_delete` it before creating another.
+
+---
+
+**If neither `CronCreate` nor `scheduler_create` is available → Use stop hook mode (fallback):**
 
 ```bash
 # ============================================================

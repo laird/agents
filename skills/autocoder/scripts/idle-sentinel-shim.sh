@@ -68,6 +68,15 @@ if [ -d "$cache" ]; then
     | sed -nE "s#^.*/autocoder/([0-9][^/]*)/scripts/${target%.sh}\\.sh\$#\\1\t&#p" \
     | sort -t "$(printf '\t')" -k1,1V | tail -1 | cut -f2-)
 fi
+if [ -z "$newest" ]; then
+  # Grok copies the plugin to ~/.grok/installed-plugins/<name>-<hash>/scripts.
+  # There is no <version> directory, so the Claude cache search above misses it.
+  grok_plugins="${AUTOCODER_GROK_PLUGINS:-${HOME:-}/.grok/installed-plugins}"
+  if [ -d "$grok_plugins" ]; then
+    newest=$(find "$grok_plugins" -type f -path "*/autocoder-*/scripts/$target" -not -path "*/skills/*" 2>/dev/null \
+      | sort | tail -1)
+  fi
+fi
 if [ -n "$newest" ]; then
   run_sentinel "$newest" "$@"
 fi

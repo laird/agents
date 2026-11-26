@@ -71,13 +71,22 @@ REGISTER_SH=$(
            "$(pwd)/.claude-plugin/plugins/autocoder/scripts"; do
     if [ -f "$d/swarm-register.sh" ]; then echo "$d/swarm-register.sh"; exit 0; fi
   done
+  found=$(
   find "$HOME/.agent/plugins/cache" -type f -name swarm-register.sh -path "*/autocoder/*" -not -path "*/skills/*" 2>/dev/null \
+    | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
+  )
+  if [ -n "$found" ]; then echo "$found"; exit 0; fi
+  # Grok installs to ~/.grok/installed-plugins/<name>-<hash>/. The hash is in
+  # the directory name, so the Claude cache glob */autocoder/* does not match.
+  find "$HOME/.grok/installed-plugins" -type f -name swarm-register.sh -path "*/autocoder-*/*" -not -path "*/skills/*" 2>/dev/null \
     | awk -F/ '{print $(NF-2) "\t" $0}' | sort -V -t$'\t' -k1,1 | tail -1 | cut -f2-
 )
 if [ -n "$REGISTER_SH" ]; then
   bash "$REGISTER_SH" --manager || echo "⚠️  swarm-register.sh failed; continuing without updating the manifest" >&2
 fi
 ```
+
+**If `scheduler_create` is available (Grok):** do not sleep in this session. Run `/monitor-workers` once, then `scheduler_create` with `interval` `${INTERVAL_MINUTES}m` (minimum `1m`), `prompt` `/monitor-workers`, `fire_immediately` false, `recurring` true, `durable` true. Record the job the same way `plugins/autocoder/commands/monitor-loop.md` does (`kind` `monitor-loop`). `/stop-loop` deletes it. Skip the sleep loop.
 
 Start by running `/monitor-workers` immediately.
 
