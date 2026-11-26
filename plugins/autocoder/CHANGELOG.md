@@ -16,6 +16,31 @@ once (Version Management in `docs/maintaining.md`).
   green. The cycle log and the status line say `hold lifted: fix landed <sha>
   (CI verdict pending)`. A fix that is not on the tip, or whose gate was not
   green, still holds. A malformed `redHold` is refused at config load.
+- Preflight budget (`preflight-budget.sh`): a host-wide bound on preflights, as plugin
+  tooling. Slots are sized from the gate's memory cap and the host's memory (a slot
+  count override, a reserve, a per-preflight memory and a running-gates command are
+  the inputs); waiters take tickets ordered by priority then arrival, so a hotfix
+  (`hotfix/*` branch or `--priority hotfix`) takes the next free slot ahead of every
+  ordinary waiter and a later preflight never passes an earlier one; the waiting line
+  names the holders and the position. No preflight starts while the host's 1-minute
+  load average is over the core count times a factor (1.0; `off` disables it), and
+  the line says why. Claims are noclobber redirections and `flock`, never a `mkdir`
+  exit status; dead holders and tickets are reaped. `enqueue.sh --budget` (or
+  `train.enqueue.budget`) takes a slot for the rows after `merge-tree` and shows it
+  as a `budget` row; `--priority` and `--host-exclusive NAME` go with it.
+- Host-exclusive stages: `host_exclusive_lock NAME ROLE` in the same library, one
+  lock per stage name host-wide, the gate's run admitted ahead of waiting preflights.
+  The stage runner honours a manifest stage marked `"host_exclusive": true` (role
+  `AUTOCODER_HOST_EXCLUSIVE_ROLE`, default `gate`; `enqueue.sh` exports `preflight`),
+  reports the seconds waited apart from the stage's own and does not count them
+  against its `timeout_s`.
+- Host load on the ledger: the stage runner records the host's 1-minute load average
+  at every stage's start and end (`load1_start`/`load1_end` in the timings, a `load
+  a->b` column in the summary), `--stage-args` prints `--stage-load name=start:end`
+  words, `landing-timings.py batch` keeps them as `stage_load` (only when given, so
+  older rows and readers are unaffected), and `landing-report.py` prints a `host
+  load` column per batch and the per-stage maxima, so host overload is separable from
+  slow code.
 
 ## [4.70.0] - 2026-11-26
 

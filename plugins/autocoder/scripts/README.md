@@ -938,6 +938,7 @@ stops child processes, no test database) banks with `enqueue.sh --issue N` inste
 ```
 enqueue.sh --issue N [--branch B] [--repo DIR] [--remote NAME] [--integration BRANCH]
            [--preflight-cmd CMD] [--build-cmd CMD] [--test-cmd CMD] [--test-pattern REGEX]
+           [--budget | --no-budget] [--priority hotfix|ordinary] [--host-exclusive NAME]
            [--add-label L]... [--remove-label L]... [--note TEXT]... [--no-fetch] [--no-push] [--no-post] [--block-only]
 ```
 
@@ -963,8 +964,23 @@ for the tests row, `AUTOCODER_ENQUEUE_TEST_FILES`. Configuration, lowest precede
 ```json
 { "train": { "enqueue": { "preflightCmd": "scripts/preflight.sh",
                           "buildCmd": "make typecheck", "testCmd": "npm test -- {files}",
-                          "testPattern": "\\.test\\.[a-z]+$", "workingLabel": "working" } } }
+                          "testPattern": "\\.test\\.[a-z]+$", "workingLabel": "working",
+                          "budget": true, "hostExclusive": "types" } } }
 ```
+
+**The host preflight budget** (`--budget`, `train.enqueue.budget`, `AUTOCODER_ENQUEUE_BUDGET=1`; off by
+default). With it, a `budget` row after `merge-tree` takes one of the host's preflight slots from
+`preflight-budget.sh` (below) and the rows that follow run holding it; it is released before the push.
+The row's line names the slot and the wait (`slot 1/2 after 85s in line; 2 slot(s) (MemTotal 62 GiB,
+reserve 4 GiB, 1 running gate(s) x 10240 MiB cap, 10240 MiB per slot)`), and the wait lines (who holds the
+slots, this enqueue's position, a load average over the limit) are the row's log. A `hotfix/*` branch, or
+`--priority hotfix` (`AUTOCODER_ENQUEUE_PRIORITY`), goes to the front of the line. A slot that never comes
+within the bound fails the row naming the holders; nothing heavy ran and nothing was posted.
+`--host-exclusive NAME` (`train.enqueue.hostExclusive`) runs the project's preflight command under the
+host-exclusive lock NAME in the preflight role, so a gate's stage of that name is admitted first; a
+project preflight that runs the stage runner itself needs nothing more, since enqueue.sh exports
+`AUTOCODER_HOST_EXCLUSIVE_ROLE=preflight` and `AUTOCODER_SCRIPTS_DIR` to it. Cases: `tests/test_enqueue.sh`
+section 4b.
 
 **How the queue takes it.** `pick_ready` reads the block (`preflightPattern`, default the
 `=== preflight (enqueue.sh): PASS ===` header) and sets the item's `basis`: `preflight` for such a READY,
@@ -975,6 +991,65 @@ non-gating host lands through the same gate as every other.
 
 Tests: `tests/test_enqueue.sh` (every path against a fixture origin and the file backend, ending with the
 queue planning the enqueued branch) and the preflight cases of `tests/test_merge_train.py`.
+
+## Preflight budget and host-exclusive stages (`preflight-budget.sh`)
+
+Several workers on one host each run a preflight before READY, beside the gate, and nothing bounded
+them: the wait for room was a race with no order and no priority (a hotfix preflight for a red
+integration branch waited behind two ordinary preflights started after it, with every train held), and
+the bound that did exist counted memory only, so three whole-tree typechecks (two preflights and the
+batch's gate) saturated the cores and the gate's own timed out. `preflight-budget.sh` is the bound,
+generic and configurable; `enqueue.sh --budget` and the stage runner's `host_exclusive` use it, and a
+repository's own bank script can source it or call it:
+
+```
+preflight-budget.sh run [--priority hotfix|ordinary] [--branch B] [--what TEXT] -- CMD [ARG...]
+preflight-budget.sh exclusive --name NAME [--role gate|preflight] [--waited-file F] -- CMD [ARG...]
+preflight-budget.sh status
+source preflight-budget.sh; pfb_acquire [--priority P] [--branch B] [--what T]; ...; pfb_release
+source preflight-budget.sh; host_exclusive_lock NAME ROLE; ...; host_exclusive_unlock
+```
+
+- **Slots** are sized from the gate's memory cap and the host's memory: `floor((MemTotal - reserve -
+  running gates x gate cap) / per-preflight memory)`, never under 1, recomputed at every poll so a
+  waiter widens to the slots the host has once a gate ends. `AUTOCODER_PREFLIGHT_SLOTS` overrides the
+  count; `AUTOCODER_PREFLIGHT_RESERVE_GIB` (4), `AUTOCODER_PREFLIGHT_GATE_CAP_MIB` (else
+  `(MemTotal - reserve) / AUTOCODER_PREFLIGHT_GATE_CEILING` (3), floor
+  `AUTOCODER_PREFLIGHT_GATE_CAP_FLOOR_MIB` (4096)), `AUTOCODER_PREFLIGHT_SLOT_MIB` (else the gate cap)
+  and `AUTOCODER_PREFLIGHT_GATES_CMD` (a command printing how many gates run now; else 0) are the
+  inputs. The state lives under `AUTOCODER_PREFLIGHT_DIR` (default
+  `${XDG_STATE_HOME:-~/.local/state}/autocoder/preflight-budget`; a host whose workers run under several
+  accounts shares one directory).
+- **The line.** A waiter takes a ticket named by its rank then arrival, and only the oldest live ticket
+  tries the slots, so a later preflight never passes an earlier one; rank 0 is a hotfix (`--priority
+  hotfix`, `AUTOCODER_PREFLIGHT_PRIORITY=hotfix`, or a `hotfix/*` branch), which goes ahead of every
+  ordinary waiter. The waiting line names the holders (pid, started, what) and the position (`behind 2
+  waiter(s), 1 hotfix ahead`). Tickets are `set -o noclobber` redirections and slots are `flock` on an
+  open descriptor, never a `mkdir` exit status (uutils coreutils can grant it to two racers); a dead
+  holder's lock goes with its process, and dead tickets and stale holder files are swept by whoever
+  finds them.
+- **Admission on CPU.** No preflight starts while the host's 1-minute load average is over the core
+  count x `AUTOCODER_PREFLIGHT_LOAD_FACTOR` (1.0; `off` disables it), nor within
+  `AUTOCODER_PREFLIGHT_ADMISSION_GAP_S` (60) of the last admission, since the 1-minute load lags one.
+  The line says why (`host 1-minute load 41.20 over 16 cores x 1.0 = 16.00`). A hotfix obeys the rule
+  and is first when the load clears. Seams: `AUTOCODER_LOADAVG_FILE`, `AUTOCODER_HOST_CORES`,
+  `AUTOCODER_PREFLIGHT_MEMINFO_FILE`.
+- **The wait** polls every `AUTOCODER_PREFLIGHT_POLL_S` (15) seconds and is bounded by
+  `AUTOCODER_PREFLIGHT_WAIT_MAX_S` (7200, generous on purpose); past it `run` fails loudly naming the
+  holders and the reason, and runs nothing.
+- **Host-exclusive stages.** `host_exclusive_lock NAME ROLE` is one lock per stage name host-wide. The
+  gate's run (role `gate`) leaves a `.wants` marker while it waits and is admitted ahead of every
+  waiting preflight; a preflight (role `preflight`) yields while a live marker exists. The stage runner
+  takes it for a manifest stage marked `"host_exclusive": true` (role `AUTOCODER_HOST_EXCLUSIVE_ROLE`,
+  default `gate`; `enqueue.sh` exports `preflight` to a project's preflight), and a repository's own
+  script takes it for the same names. Bounded by `AUTOCODER_HOST_EXCLUSIVE_WAIT_MAX_S` (7200; exit 125
+  past it, naming the holder, a host condition rather than a verdict on the tree).
+
+Every line it prints goes to stderr with the prefix `preflight budget:`, so a caller reading the
+command's stdout reads only that. Tests: `tests/test_preflight_budget.sh` (the arithmetic, the line
+with a hotfix overtaking, CPU admission refused under a seeded load and granted when it clears, dead
+tickets and holders reaped, six racers never sharing one slot, the exclusive lock's gate precedence, the
+bounds, status).
 
 ## Parallel gate stages (#7016)
 
@@ -1026,8 +1101,21 @@ runs still count as gate paths for the scoped re-gate. Full manifest reference: 
 - **Timings.** `--timings out.json` (or `AUTOCODER_STAGE_TIMINGS_FILE`) records seconds, status and
   start offset per stage; `stage-runner.py --stage-args out.json` prints the `--stage name=secs`
   words `landing-timings-lib.sh`'s `landing_batch` takes.
+- **Host load.** Every stage records the host's 1-minute load average when it starts and ends
+  (`load1_start`, `load1_end`; `load 3.10->41.20` in the summary; `AUTOCODER_LOADAVG_FILE` is the seam),
+  and `--stage-args` adds `--stage-load name=start:end` words, which the batch row keeps as
+  `stage_load` and the landing report prints (a `host load` column per batch and the per-stage maxima),
+  so host overload is separable from slow code. A timings file from before the columns yields no such
+  word, and a row without them reads `n/a`.
+- **One at a time host-wide.** `"host_exclusive": true` runs the stage under the host-exclusive lock
+  of its name (`preflight-budget.sh`, above), shared with every other gate and preflight on the host
+  that names it: for a whole-tree typecheck or anything else that saturates the host alone. The gate's
+  run is admitted ahead of waiting preflights (`AUTOCODER_HOST_EXCLUSIVE_ROLE`, default `gate`). The
+  seconds waited are reported apart from the stage's own (`host_exclusive_wait_s`, `waited N s for the
+  host lock` in the summary) and are not counted against its `timeout_s`.
 
-Tests: `tests/test_stage_runner.py` (scripted stages) and the manifest case of
+Tests: `tests/test_stage_runner.py` (scripted stages, the load columns, two runners' host-exclusive
+stages never overlapping and the gate role admitted first) and the manifest case of
 `tests/test_merge_scoped_regate.sh`.
 
 ## Reboot recovery: `reboot-recover.sh` and `worktree-issue.sh` (#274)
