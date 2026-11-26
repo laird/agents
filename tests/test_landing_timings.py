@@ -58,6 +58,9 @@ def test_writer_rows_and_nulls_not_zeros(tmp_path):
     (["batch", "--batch", "b", "--members", "1", "--verdict", "red"], "needs --cause"),
     (["batch", "--batch", "b", "--members", ",", "--verdict", "green"], "names no change"),
     (["batch", "--batch", "b", "--members", "1", "--stage", "build"], "NAME=SECONDS"),
+    (["batch", "--batch", "b", "--members", "1", "--stage-load", "build=1.0"], "NAME=START:END"),
+    (["batch", "--batch", "b", "--members", "1", "--stage-load", "build=x:2"], "NAME=START:END"),
+    (["batch", "--batch", "b", "--members", "1", "--stage-load", "build=-1:2"], "NAME=START:END"),
     (["batch", "--batch", "b", "--members", "1", "--gate-s", "-3"], "negative"),
     (["plan", "--issue", "1", "--verdict", "maybe", "--seconds", "1"], "invalid choice"),
     (["plan", "--issue", "1", "--verdict", "train", "--seconds", "-1"], "negative"),
@@ -67,6 +70,37 @@ def test_writer_refuses_bad_input_and_writes_nothing(tmp_path, args, needle):
     r = write(log, *args)
     assert r.returncode == 2 and needle in r.stderr
     assert not log.exists()
+
+
+def test_writer_records_the_host_load_per_stage_only_when_given(tmp_path):
+    """The load columns: a row carries `stage_load` only when a --stage-load was given (older writers and readers
+    never see the key), either side may be `-` (not read, null), and the report reads a row without it as n/a."""
+    log = tmp_path / "l.jsonl"
+    assert write(log, "batch", "--batch", "b1", "--members", "7", "--stage", "build=10", "--stage", "types=20",
+                 "--stage-load", "build=3.5:41.2", "--stage-load", "types=-:12", "--verdict", "green").returncode == 0
+    assert write(log, "batch", "--batch", "b2", "--members", "8", "--stage", "build=10", "--verdict", "green").returncode == 0
+    r1, r2 = rows_of(log)
+    assert r1["stage_load"] == {"build": [3.5, 41.2], "types": [None, 12.0]}
+    assert "stage_load" not in r2
+    out = report("--log", str(log), "--since", "2020-01-01", "--batches").stdout
+    assert "| b1 | " in out and "| green | 30.0s | 41.2 | #7" not in out  # #7 never landed: open, not landed
+    assert "| b1 |" in out and "| 41.2 |" in out and "| b2 |" in out and "| n/a |" in out
+    assert "- Host 1-minute load at gate stages (max start->end over the window's batches" in out
+    assert "build 3.5->41.2" in out and "types -->12.0" in out
+    js = json.loads(report("--log", str(log), "--since", "2020-01-01", "--json").stdout)
+    assert js["batches"]["stage_load_max"] == {"build": {"start": 3.5, "end": 41.2, "n": 1}, "types": {"start": None, "end": 12.0, "n": 1}}
+    rows = {r["batch"]: r for r in js["batch_rows"]}
+    assert rows["b1"]["load_max"] == 41.2 and rows["b2"]["load_max"] is None
+
+
+def test_report_merges_the_load_of_a_gate_row_and_a_train_row_with_one_batch_id(tmp_path):
+    log = tmp_path / "l.jsonl"
+    assert write(log, "batch", "--batch", "t1", "--members", "7", "--stage", "build=10", "--stage-load", "build=1:9", "--ts", "2026-11-03T10:00:00Z").returncode == 0
+    assert write(log, "batch", "--batch", "t1", "--members", "7", "--verdict", "green", "--ts", "2026-11-03T10:01:00Z").returncode == 0
+    js = json.loads(report("--log", str(log), "--since", "2026-11-01", "--json").stdout)
+    assert js["batches"]["count"] == 1 and js["batches"]["stage_load_max"]["build"]["end"] == 9.0
+    out = report("--log", str(log), "--since", "2026-11-01").stdout
+    assert "- Host 1-minute load at gate stages" not in out or "build 1.0->9.0" in out   # the text form, when printed
 
 
 def test_writer_concurrent_appends_stay_whole_lines(tmp_path):
@@ -225,8 +259,8 @@ def test_week_report_markdown_leads_with_the_week_and_lists_every_batch(log):
     assert "- Median READY to landed: 60.0m (p90 " in out
     assert "- Planning: 3.5m over 3 candidate probes" in out
     assert "- Re-gates: 1 batches, 40.0m of gate time; by reason red:defect 1 (40.0m)" in out
-    assert "| b1 | 2026-11-02T11:00:00Z | #1 #2 | red:defect | 30.0m | - | #1 (defect) #2 (stale-base) | - | - |" in out
-    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | #1 #2 | - | - | red:defect |" in out
+    assert "| b1 | 2026-11-02T11:00:00Z | #1 #2 | red:defect | 30.0m | n/a | - | #1 (defect) #2 (stale-base) | - | - |" in out
+    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | n/a | #1 #2 | - | - | red:defect |" in out
     assert "- Re-gates by reason: red:defect: 1 (40.0m)" in out            # the general section carries it too
 
 
@@ -244,7 +278,7 @@ def test_batches_flag_lists_batches_for_any_window_and_a_member_with_no_outcome_
     p.write_text("".join(json.dumps(r) + "\n" for r in rows))
     out = report("--log", str(p), "--since", "2026-11-05", "--batches").stdout
     assert out.startswith("# Landing report\n") and "## Week in numbers" not in out
-    assert "| b4 | 2026-11-05T09:30:00Z | #4 #5 | infra:infra | 10.0m | - | - | #4 #5 | - |" in out
+    assert "| b4 | 2026-11-05T09:30:00Z | #4 #5 | infra:infra | 10.0m | n/a | - | - | #4 #5 | - |" in out
 
 
 def test_an_outcome_in_the_same_second_as_the_next_batched_row_belongs_to_the_batch_it_ends(tmp_path):
@@ -738,10 +772,10 @@ def test_week_page_rows_name_the_lag_the_reds_and_the_landings_before_their_verd
     out = report("--log", str(log), "--week", "2026-11-02", env=env).stdout
     assert "- Landing to CI verdict: p50 1.7h, p75 2.1h (n=3 of 4 landed commits; pending 1; 1 landed row carries no commit); " \
            "judged red by CI: 1 landing; landings that happened before those verdicts: 2; bounding job: Backend Tests (vitest) 2, tests 1" in out
-    assert "| b3 | 2026-11-03T10:00:00Z | #3 | green | 30.0m | #3 | - | - | - | failure 2.5h in Backend Tests (vitest) (2 landed before the verdict) |" in out
-    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | #1 #2 | - | - | - | success 1.7h in Backend Tests (vitest) |" in out
-    assert "| b6 | 2026-11-03T12:00:00Z | #6 | green | 30.0m | #6 | - | - | - | pending |" in out
-    assert "| b7 | 2026-11-03T13:00:00Z | #7 | green | 30.0m | #7 | - | - | - | - |" in out
+    assert "| b3 | 2026-11-03T10:00:00Z | #3 | green | 30.0m | n/a | #3 | - | - | - | failure 2.5h in Backend Tests (vitest) (2 landed before the verdict) |" in out
+    assert "| b2 | 2026-11-02T13:00:00Z | #1 #2 | green | 40.0m | n/a | #1 #2 | - | - | - | success 1.7h in Backend Tests (vitest) |" in out
+    assert "| b6 | 2026-11-03T12:00:00Z | #6 | green | 30.0m | n/a | #6 | - | - | - | pending |" in out
+    assert "| b7 | 2026-11-03T13:00:00Z | #7 | green | 30.0m | n/a | #7 | - | - | - | - |" in out
     assert "| CI verdict |" in out
     assert "- Landing to CI verdict: p50 1.7h, p75 2.1h, max 2.5h (n=3 of 4 landed commits" in out   # the Time section carries it too
 
@@ -987,8 +1021,8 @@ def test_a_batch_row_shows_the_landing_nearest_its_time_when_the_landed_row_name
             chs(7, "2026-11-03T14:00:00Z", SHA_B), ch(7, "2026-11-03T13:50:00Z", "batched", batch="b9"), ba("b9", "2026-11-03T14:00:00Z", [7], 600, "green")]
     env, _ = ci_env(tmp_path, runs={SHA_A: [run(1, "completed", "success", "2026-11-03T10:30:00Z")], SHA_B: [run(2, "completed", "failure", "2026-11-03T16:00:00Z")]})
     out = report("--log", str(ci_log(tmp_path, rows)), "--week", "2026-11-02", env=env).stdout
-    assert "| b1 | 2026-11-03T10:00:00Z | #7 | green | 10.0m | #7 | - | - | - | success 30.0m |" in out
-    assert "| b9 | 2026-11-03T14:00:00Z | #7 | green | 10.0m | #7 | - | - | - | failure 2.0h |" in out
+    assert "| b1 | 2026-11-03T10:00:00Z | #7 | green | 10.0m | n/a | #7 | - | - | - | success 30.0m |" in out
+    assert "| b9 | 2026-11-03T14:00:00Z | #7 | green | 10.0m | n/a | #7 | - | - | - | failure 2.0h |" in out
 
 
 def test_the_resolver_reads_past_a_fast_forwarded_commit_with_an_old_date(tmp_path):

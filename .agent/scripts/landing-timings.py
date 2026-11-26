@@ -20,11 +20,14 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
       member of one batch names the same one. The report looks the integration branch's CI verdict
       up by it; a landed row without it has no CI figure (n/a, never 0).
   batch --batch ID --members 1,2,3 [--assembly-s N] [--stage NAME=SECONDS ...]
-        [--gate-s N] [--discarded-gate-s N] [--publish-s N]
+        [--stage-load NAME=START:END ...] [--gate-s N] [--discarded-gate-s N] [--publish-s N]
         [--verdict green|red|aborted|infra] [--cause CAUSE] [--resyncs N]
         [--push-rejected N] [--ts ISO]
       gate_s defaults to the sum of the stages. discarded_gate_s is the gate time spent on
       trees a later re-sync replaced; it is waste even when the batch ends green.
+      --stage-load is the host's 1-minute load average when the stage started and ended (either
+      side `-` when not read; the stage runner's --stage-args prints both words), so the report
+      can tell host overload from slow code; a row written without it has no `stage_load` key.
   plan --issue N --verdict train|skip|drop|fault --seconds S [--batch ID] [--ts ISO]
       one candidate the train planner judged: what it decided and the seconds its probe took
       (prefilter, real merge, merge drivers). A cycle's planning time is the sum of its rows; the
@@ -48,7 +51,8 @@ Writes are one O_APPEND write() of one line, so concurrent writers do not interl
 Row schema (v1), also the contract for a project's own writers:
   {"v":1,"ts","kind":"change","issue":N,"event":E,"batch":ID|null,"cause":C|null,"repo":ID|null}
   {"v":1,"ts","kind":"batch","batch":ID,"members":[N..],"assembly_s","stages":{name:s},
-   "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected","repo":ID|null}
+   "gate_s","discarded_gate_s","publish_s","verdict","cause","resyncs","push_rejected","repo":ID|null,
+   "stage_load":{name:[start|null,end|null]}}   (stage_load only when a --stage-load was given)
   {"v":1,"ts","kind":"plan","issue":N,"verdict":V,"seconds":S,"batch":ID|null,"repo":ID|null}
   {"v":1,"ts","kind":"ci-verdict","sha":HEX,"run_id":ID|null,"conclusion":C,"verdict_ts":ISO,"job":NAME|null,
    "workflows":[..]|null,"repo":ID|null}
@@ -170,17 +174,38 @@ def batch_row(a: argparse.Namespace) -> dict:
             raise ValueError(f"--stage {item!r} must be NAME=SECONDS ({e})") from e
         if not sep:
             raise ValueError(f"--stage {item!r} must be NAME=SECONDS")
+    stage_load: dict[str, list] = {}
+    for item in a.stage_load or []:
+        name, sep, pair = item.partition("=")
+        start, sep2, end = pair.partition(":")
+        if not sep or not sep2:
+            raise ValueError(f"--stage-load {item!r} must be NAME=START:END (`-` for a side not read)")
+        try:
+            stage_load[_id(name, "--stage-load name")] = [_load(start), _load(end)]
+        except ValueError as e:
+            raise ValueError(f"--stage-load {item!r} must be NAME=START:END ({e})") from e
     members = [int(m) for m in a.members.split(",") if m.strip()]
     if not members:
         raise ValueError("--members names no change")
     gate_s = a.gate_s if a.gate_s is not None else (sum(stages.values()) if stages else None)
     if a.verdict not in (None, "green") and a.cause is None:
         raise ValueError(f"a {a.verdict} batch needs --cause")
-    return {"v": 1, "ts": _ts(a.ts), "kind": "batch", "batch": _id(a.batch, "--batch"),
-            "members": members, "assembly_s": _num(a.assembly_s, "--assembly-s"), "stages": stages,
-            "gate_s": _num(gate_s, "--gate-s"), "discarded_gate_s": _num(a.discarded_gate_s, "--discarded-gate-s"),
-            "publish_s": _num(a.publish_s, "--publish-s"), "verdict": a.verdict, "cause": a.cause,
-            "resyncs": a.resyncs, "push_rejected": a.push_rejected}
+    row = {"v": 1, "ts": _ts(a.ts), "kind": "batch", "batch": _id(a.batch, "--batch"),
+           "members": members, "assembly_s": _num(a.assembly_s, "--assembly-s"), "stages": stages,
+           "gate_s": _num(gate_s, "--gate-s"), "discarded_gate_s": _num(a.discarded_gate_s, "--discarded-gate-s"),
+           "publish_s": _num(a.publish_s, "--publish-s"), "verdict": a.verdict, "cause": a.cause,
+           "resyncs": a.resyncs, "push_rejected": a.push_rejected}
+    if stage_load:
+        row["stage_load"] = stage_load
+    return row
+
+
+def _load(value: str):
+    """One side of a --stage-load pair: a non-negative decimal, or `-` (not read) as null."""
+    value = value.strip()
+    if value in ("-", ""):
+        return None
+    return _num(float(value), "load average")
 
 
 def plan_row(a: argparse.Namespace) -> dict:
@@ -205,6 +230,7 @@ def parser() -> argparse.ArgumentParser:
     b.add_argument("--members", required=True)
     b.add_argument("--assembly-s", type=float)
     b.add_argument("--stage", action="append")
+    b.add_argument("--stage-load", action="append", help="NAME=START:END, the host 1-minute load at the stage's start and end")
     b.add_argument("--gate-s", type=float)
     b.add_argument("--discarded-gate-s", type=float)
     b.add_argument("--publish-s", type=float)
