@@ -392,7 +392,7 @@ def test_the_daemon_runs_the_pass_at_most_once_per_interval_and_logs_the_segment
     sh("git", "checkout", "-q", "master", cwd=f.work)
     store.add(7, head, T.git(f.work, "rev-parse", head).stdout.strip())   # NOT fetched into the clone yet: the daemon's pass fetches first
     logged = []
-    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self: (0, None)})())
+    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self, **kw: (0, None)})())
     assert d.loop() == 0
     rec = json.loads((f.rc().cfg.state_dir / "depbot.json").read_text())
     assert rec["error"] == "" and [r["action"] for r in rec["open"]] == ["filed"]
@@ -401,12 +401,12 @@ def test_the_daemon_runs_the_pass_at_most_once_per_interval_and_logs_the_segment
     assert T.pick_ready(f.rc().cfg, T.ready_comments(json.loads(T.tracker(f.rc().cfg, "issue_get", str(n)).stdout)), n)["branch"] == head
     lists = lambda: sum(1 for a in store.read()["log"] if a[:2] == ["pr", "list"])
     before = lists()
-    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=2, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self: (0, None)})())
+    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=2, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self, **kw: (0, None)})())
     assert d.loop() == 0 and lists() == before   # inside the interval: no second pass
     store.fail("list")
     f.train["depbot"]["everySeconds"] = 0
     f.write_config()
-    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self: (0, None)})())
+    d = R.Daemon(f.rc(), log=logged.append, interval=1, max_ticks=1, sleep=lambda s: None, cycle=lambda: type("C", (), {"run": lambda self, **kw: (0, None)})())
     assert d.loop() == 0 and lists() == before + 1
     assert any("depbot: unknown (pr list failed)" in m for m in logged)
     assert json.loads((f.rc().cfg.state_dir / "daemon.json").read_text())["verdict"] in ("idle", "cycle:0")   # the tick went on

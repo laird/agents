@@ -254,6 +254,14 @@ class State:
         elif cur.exists():
             cur.unlink()
 
+    def save_plan(self, p):
+        """The last plan's rows and skips (`plan.json`), kept across cycles: a cycle that planned nothing leaves no
+        cycle.json, and the question after a silent drop is what the plan saw."""
+        _write_json(self.dir / "plan.json", p)
+
+    def plan(self):
+        return _read_json(self.dir / "plan.json", {})
+
     def clear_cycle(self):
         self.cycle_path.unlink(missing_ok=True)
         (self.dir / "current.tsv").unlink(missing_ok=True)
@@ -470,7 +478,48 @@ class Cycle:
         self.state.save_cycle(self.record)
 
     # ----- the cycle -----
-    def run(self, size=None):
+    def plan_dropped_event(self, issue, state, reason):
+        """A `plan-dropped` row in the lifecycle ledger for a candidate the plan could not judge (its READY unread,
+        its listing lost, or launchable at the tick and not in this plan), with the state and the reason, so the trace
+        loop sees a dropped candidate as a step and can classify it. Best effort."""
+        lib = SCRIPTS / "issue-events-lib.sh"
+        if not lib.is_file():
+            return
+        env = {**os.environ, "AUTOCODER_WORKER": self.rc.swarm}
+        try:
+            subprocess.run(["bash", "-c", 'source "$1" && { [ ! -f "$2" ] || source "$2"; } && cd "$3" && issue_event plan-dropped "$4" state="$5" reason="$6"',
+                            "_", str(lib), str(SCRIPTS / "repo-id-fns.sh"), str(self.cfg.repo), str(issue), str(state), str(reason)[:300]],
+                           capture_output=True, text=True, env=env)
+        except OSError:
+            pass
+
+    def compare_launchable(self, rows, launchable):
+        """The plan's rows against the tick's launchable list: every difference is logged (launchable then and not in
+        this plan, with the row's state; in this plan and not launchable then), and every candidate the plan could
+        not judge (`unread`, `unlisted`, or launchable then and absent now) gets a `plan-dropped` ledger row. Returns
+        the dropped issues."""
+        by = {int(r["issue"]): r for r in rows}
+        dropped = []
+        if launchable is not None:
+            tick = {int(x) for x in launchable}
+            plan = {i for i, r in by.items() if r["state"] == "queue"}
+            gone, new = sorted(tick - plan), sorted(plan - tick)
+            if gone:
+                self.log("launchable at the tick but not launchable in this plan: "
+                         + " ".join(f"#{i} ({by[i]['state'] if i in by else 'missing from the listing'})" for i in gone))
+            if new:
+                self.log("launchable in this plan but not at the tick: " + " ".join(f"#{i} ({by[i]['note'][:80]})" for i in new))
+            for i in gone:
+                r = by.get(i)
+                self.plan_dropped_event(i, r["state"] if r else "missing", r["note"] if r else "not in the plan's listing and no row")
+                dropped.append(i)
+        for i, r in by.items():
+            if r["state"] in ("unread", "unlisted") and i not in dropped:
+                self.plan_dropped_event(i, r["state"], r["note"])
+                dropped.append(i)
+        return dropped
+
+    def run(self, size=None, launchable=None):
         """Returns (exit_code, summary lines). 0 = a cycle ran (landed or returned or empty); 1 = refused;
         2 = a planner or scratch fault (nobody blamed); 3 = a tracker or environment error."""
         lease = Lease(self.state)
@@ -480,7 +529,7 @@ class Cycle:
             return 1, []
         self.publisher("batch-begin", "--pid", str(os.getpid()))
         try:
-            return self._run_locked(size)
+            return self._run_locked(size, launchable)
         finally:
             self.publisher("batch-end", "--force")
             # The fast lane rides behind the batch: an entry enqueued while this cycle was live waited for
@@ -489,7 +538,7 @@ class Cycle:
             self.drain_lane()
             lease.release()
 
-    def _run_locked(self, size):
+    def _run_locked(self, size, launchable=None):
         c = self.cfg
         f = T.git(c.repo, "fetch", c.remote, "-q")
         if f.returncode != 0:
@@ -511,9 +560,13 @@ class Cycle:
         if f.returncode != 0:
             self.log(f"ABORT: git fetch {c.remote} failed in {c.repo} before the plan: {f.stderr.strip()}")
             return 3, []
-        rows = T.plan_queue(c)
+        # `launchable` is the tick's list (the daemon passes it): the plan lists again, so every item listed then
+        # and missing now gets an `unlisted` row, and the differences are logged; each row the plan could not
+        # judge is logged by the planner (the `plan:` lines) and kept in the plan record.
+        rows = T.plan_queue(c, expected=launchable, log=lambda line: self.log(f"plan: {line}"))
         for sha in _lifted_shas(rows):
             self.log(f"hold lifted: fix landed {sha} (CI verdict pending)")
+        self.compare_launchable(rows, launchable)
         self.note_readys(rows)
         self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
@@ -521,6 +574,13 @@ class Cycle:
         # regeneration runs once, on the assembled tree (assemble -> regenerate).
         out, fault = T.plan_train(c, rows, limit, on_candidate=lambda i, k, s: self.timing("plan", "--issue", i, "--verdict", k, "--seconds", f"{s:.1f}"))
         plan_s = int(time.time() - t_plan)
+        # Every skip row of the plan is kept (the plan record beside cycle.json, and the cycle's own record when
+        # there is one) and written to the log: the next silent drop names its path in one line.
+        skips = [dict(zip(("issue", "branch", "reason"), ln.split("\t", 3)[1:])) for ln in out if ln.startswith("skip\t")]
+        for sk in skips:
+            self.log(f"plan skip: #{sk['issue']} {sk['branch']}: {sk['reason']}")
+        self.state.save_plan({"ts": now_iso(), "limit": limit, "launchable_at_tick": [int(x) for x in launchable] if launchable is not None else None,
+                              "rows": [{k: r.get(k) for k in ("issue", "state", "branch", "tip", "note")} for r in rows], "skips": skips})
         for ln in out:
             if ln.startswith("drop\t"):
                 _, issue, branch, tip, reason = ln.split("\t", 4)
@@ -537,7 +597,7 @@ class Cycle:
         if not members:
             self.log(f"no clean READY branch to train (planning took {plan_s}s)")
             return 0, []
-        self.record = {"started": now_iso(), "limit": limit, "members": members, "sets": []}
+        self.record = {"started": now_iso(), "limit": limit, "members": members, "sets": [], "skips": skips}
         self.state.save_cycle(self.record)
         # One `launched` row per member at the moment a cycle took it: the report's READY-to-launch gap
         # (the time a READY waited for someone, or the daemon, to launch a train) reads from it.
@@ -1291,7 +1351,7 @@ class Daemon:
         self.log(f"{len(launchable)} launchable item(s): {' '.join(ages)}; launching a cycle")
         self._record("launching", [int(r["issue"]) for r in launchable])
         cyc = self.cycle()
-        code, _ = cyc.run()
+        code, _ = cyc.run(launchable=[int(r["issue"]) for r in launchable])
         planned = bool(getattr(cyc, "record", None))
         self._record(f"cycle:{code}", [int(r["issue"]) for r in launchable], "planned" if planned else "nothing planned")
         return f"cycle:{code}" + (":planned" if planned else "")
