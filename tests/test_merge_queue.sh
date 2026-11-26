@@ -44,8 +44,10 @@ setup() {
   done
 }
 # The gate records start/end and whether it inherited the queue's fd 8.
-gate() { printf 'date +%%s.%%N > %q; [ -e /proc/$$/fd/8 ] && echo leaked > %q; sleep 2; date +%%s.%%N > %q' \
-  "$TMP/$1.start" "$TMP/$1.fd8" "$TMP/$1.end"; }
+# The start stamp is written once (a strict-mode re-sync re-gates, and the second run must not
+# move the first gate's start); the end stamp is the last run's.
+gate() { printf '[ -e %q ] || date +%%s.%%N > %q; [ -e /proc/$$/fd/8 ] && echo leaked > %q; sleep 2; date +%%s.%%N > %q' \
+  "$TMP/$1.start" "$TMP/$1.start" "$TMP/$1.fd8" "$TMP/$1.end"; }
 run_pair() {
   (cd "$TMP/w1" && bash "$MTI" --feature feature/a --issue 301 --integration master --test-cmd "$(gate w1)" > "$TMP/w1.log" 2>&1) &
   (cd "$TMP/w2" && bash "$MTI" --feature feature/b --issue 302 --integration master --test-cmd "$(gate w2)" > "$TMP/w2.log" 2>&1) &
@@ -73,6 +75,27 @@ setup; AUTOCODER_MERGE_QUEUE=0 run_pair
 for w in w1 w2; do grep -q "merged into 'master'" "$TMP/$w.log" && ok "queue off: $w merged" || bad "queue off: $w did not merge: $(cat "$TMP/$w.log")"; done
 grep -q "rejected" "$TMP/w1.log" "$TMP/w2.log" && ok "queue off: the pair raced (a push was rejected and re-synced)" || bad "queue off: no race, so the queued run proved nothing"
 grep -q "Landing queue off" "$TMP/w1.log" && ok "queue off is logged" || bad "queue off not logged"
+
+# ── push window only: the gates overlap, the pushes do not, the second re-syncs once ──
+setup; AUTOCODER_MERGE_QUEUE=push run_pair
+for w in w1 w2; do grep -q "merged into 'master'" "$TMP/$w.log" && ok "push window: $w merged" || bad "push window: $w did not merge: $(cat "$TMP/$w.log")"; done
+git -C "$TMP/origin.git" show master:a.txt >/dev/null 2>&1 && git -C "$TMP/origin.git" show master:b.txt >/dev/null 2>&1 \
+  && ok "push window: both changes are on origin/master" || bad "push window: origin/master is missing a change"
+[ -z "$(git -C "$TMP/origin.git" rev-list --merges master)" ] && ok "push window: master stays linear" || bad "push window: merge commits on master"
+grep -q "Landing queue: push window only" "$TMP/w1.log" && ok "push window: the mode is logged" || bad "push window: mode not logged"
+if [ "$(cat "$TMP/w1.start")" \< "$(cat "$TMP/w2.start")" ]; then FIRST_END=$(cat "$TMP/w1.end"); SECOND_START=$(cat "$TMP/w2.start")
+else FIRST_END=$(cat "$TMP/w2.end"); SECOND_START=$(cat "$TMP/w1.start"); fi
+python3 -c "import sys; sys.exit(0 if float('$SECOND_START') < float('$FIRST_END') else 1)" \
+  && ok "push window: the gates ran side by side" || bad "push window: the second gate waited for the first (the whole-job lock was held)"
+RESYNCS=$(grep -h "re-syncing (attempt" "$TMP/w1.log" "$TMP/w2.log" | wc -l | tr -d ' ')
+[ "$RESYNCS" -eq 1 ] && ok "push window: exactly one push was rejected and re-synced (the second job, once, under the lock)" || bad "push window: ${RESYNCS} re-syncs: $(grep -h "re-syncing (attempt" "$TMP"/w*.log)"
+grep -q "re-syncing (attempt 2/5)" "$TMP/w1.log" "$TMP/w2.log" && bad "push window: a job needed a second re-sync (the pushes raced under the lock)" || ok "push window: no job re-synced twice"
+grep -q "Disjoint re-sync\|re-gating the merged tree" "$TMP/w1.log" "$TMP/w2.log" && ok "push window: the second job re-synced onto the first's landing" || bad "push window: no re-sync logged: $(grep -h "re-sync\|Re-sync" "$TMP"/w*.log)"
+ls "$TMP"/*.fd8 >/dev/null 2>&1 && bad "push window: a gate inherited the queue lock's fd 8" || ok "push window: gates do not inherit the queue lock"
+ls "$AUTOCODER_TMP"/autocoder-land-*.holder >/dev/null 2>&1 && bad "push window: a holder file outlived its job" || ok "push window: holder file removed on release"
+[ "$(AUTOCODER_MERGE_QUEUE=push bash -c 'source '"$SCRIPT_DIR"'/repo-id-fns.sh; source '"$SCRIPT_DIR"'/merge-queue-fns.sh; merge_queue_mode')" = push ] \
+  && [ "$(AUTOCODER_MERGE_QUEUE=bogus bash -c 'source '"$SCRIPT_DIR"'/repo-id-fns.sh; source '"$SCRIPT_DIR"'/merge-queue-fns.sh; merge_queue_mode' 2>/dev/null)" = whole ] \
+  && ok "merge_queue_mode reads push, and an unknown value is the whole-job default" || bad "merge_queue_mode misread a value"
 
 # ── a stuck holder: the job gives up waiting and lands unqueued ─────────────
 setup

@@ -37,7 +37,15 @@
 # mktemp + mv so a symlink planted at its predictable name is replaced, not followed.
 #
 # SETTINGS (environment):
-#   AUTOCODER_MERGE_QUEUE       1 (default) queue landings; 0 lands immediately, as before
+#   AUTOCODER_MERGE_QUEUE       1 (default) queue landings for the WHOLE job: the lock is taken
+#                               before the first fetch and held until the push is verified, so
+#                               jobs on one host gate one after the other.
+#                               push: the PUSH WINDOW only. Jobs gate side by side and queue for
+#                               the push; the second to push is rejected once, re-syncs onto the
+#                               first's landing under the lock and pushes. For a priority job
+#                               (a hotfix) that must not wait a whole gate behind an ordinary
+#                               one, and for a host whose push is already serialized by a lease.
+#                               0 lands immediately, as before (no queue at all).
 #   AUTOCODER_MERGE_QUEUE_WAIT  seconds to wait for the lock (default 7200; 0 = forever).
 #                               On timeout the job lands unqueued and says so: a stuck
 #                               holder must not strand every later merge on the host.
@@ -67,10 +75,21 @@ _merge_queue_holder_name() {
 
 # merge_queue_acquire <dir> <integration-branch> <issue>: waits for this host's landing
 # lock on the branch. Always returns 0; when it could not queue it says why and carries on.
+# merge_queue_mode: whole (default), push, or off, from AUTOCODER_MERGE_QUEUE; an unknown
+# value is the default, said once.
+merge_queue_mode() {
+  case "${AUTOCODER_MERGE_QUEUE:-1}" in
+    0|off|no|false) echo off ;;
+    push|push-window) echo push ;;
+    1|whole|yes|true|'') echo whole ;;
+    *) echo "⚠️  AUTOCODER_MERGE_QUEUE=${AUTOCODER_MERGE_QUEUE}: unknown; 1 (whole job), push (push window) or 0 (off). Using the whole-job queue." >&2; echo whole ;;
+  esac
+}
+
 merge_queue_acquire() {
   local dir="$1" branch="$2" issue="$3" root key wait owner announced=0 tmp rc polls=0
   MERGE_QUEUE_HELD=0
-  if [ "${AUTOCODER_MERGE_QUEUE:-1}" = "0" ]; then
+  if [ "$(merge_queue_mode)" = off ]; then
     echo "ℹ️  Landing queue off (AUTOCODER_MERGE_QUEUE=0); landing without waiting for other jobs on this host."
     return 0
   fi

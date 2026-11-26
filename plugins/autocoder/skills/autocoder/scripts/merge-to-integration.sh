@@ -126,8 +126,11 @@
 #     (origin, integration branch) before it fetches the tip, and drops it once the push
 #     is verified. Jobs behind it sync onto the new tip only when their turn comes, so two
 #     jobs on one host never race a push or write a "push retry" re-sync commit. The wait
-#     is logged ("⏳ Queued: …"). AUTOCODER_MERGE_QUEUE=0 turns it off;
-#     AUTOCODER_MERGE_QUEUE_WAIT caps the wait (default 7200 s, then it lands unqueued).
+#     is logged ("⏳ Queued: …"). AUTOCODER_MERGE_QUEUE=push takes the lock for the push
+#     window only: jobs gate side by side and queue to push, the second re-syncing once
+#     under the lock (for a priority job, or a host whose push a lease already serializes).
+#     AUTOCODER_MERGE_QUEUE=0 turns it off; AUTOCODER_MERGE_QUEUE_WAIT caps the wait
+#     (default 7200 s, then it lands unqueued).
 #
 # LANDING BY REBASE (#221):
 #   The feature commits are rebased onto origin/<integration> and pushed as a fast-forward,
@@ -938,7 +941,16 @@ merge_worktree_prune_stale "$TMP_ROOT" "$REPO_ID" "$CALLER_DIR" "$ISSUE_NUM"
 #    push. Jobs behind us sync only once we have landed. See merge-queue-fns.sh.
 #    The worktree is created only once our turn has come (#144): a queued job holds no
 #    checkout, so N jobs waiting on one branch cost one checkout's disk, not N.
-merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
+#    AUTOCODER_MERGE_QUEUE=push takes the turn at the push window instead (step 3): this
+#    job gates beside the others and queues only to push, so a priority job never waits a
+#    whole gate behind an ordinary one; the price is one rejected push and a re-sync (and a
+#    re-gate where the files overlap) for whichever job pushes second.
+MERGE_QUEUE_MODE=$(merge_queue_mode)
+if [ "$MERGE_QUEUE_MODE" = push ]; then
+  echo "ℹ️  Landing queue: push window only (AUTOCODER_MERGE_QUEUE=push); gating beside other jobs on this host and queuing to push."
+else
+  merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
+fi
 
 # The owner file comes first, so the stale-worktree prune never sees a live job's
 # worktree without one (merge-worktree-fns.sh).
@@ -1631,6 +1643,13 @@ _note_docs_resync() {
 #    gate before the next push (and before the API fallback below, which publishes whatever
 #    HEAD is). A disjoint re-sync is pushed as-is and recorded as such.
 PUSH_VIA=""
+# The push-window queue (AUTOCODER_MERGE_QUEUE=push): take the host's turn now, for the push
+# and whatever re-sync the push needs, and drop it once the push is verified (as the
+# whole-job queue does). A job that waited here pushes onto a tip that moved, so its first
+# push is rejected and the loop below re-syncs it under the lock.
+if [ "${MERGE_QUEUE_MODE:-whole}" = push ]; then
+  merge_queue_acquire "$CALLER_DIR" "$INTEGRATION_BRANCH" "$ISSUE_NUM"
+fi
 for attempt in 1 2 3 4 5; do
   # Never publish a tree the gate did not pass. Under the `tested` basis HEAD's tree must
   # still be TESTED_TREE here: every re-sync below either re-gates or changes the basis,

@@ -63,7 +63,7 @@ auto-detected — uses `agent_status` as a BUSY fast path plus the same double-s
 By default each worker's merge job lands its own branch, and jobs on one host **queue**: one
 landing per integration branch at a time, each syncing onto the tip only when its turn comes, so
 siblings never reject each other's push (#189; `merge-queue-fns.sh`). A queued job's log says
-`⏳ Queued: issue #N …`; that is waiting, not a stall. `AUTOCODER_MERGE_QUEUE=0` turns it off.
+`⏳ Queued: issue #N …`; that is waiting, not a stall. `AUTOCODER_MERGE_QUEUE=push` queues the push window only (the job gates at once and waits only to push); `0` turns the queue off.
 
 **Merge trains** are an optional manager procedure, not shipped tooling: assemble `train/<UTC>`
 from the next 3–5 READY branches that merge clean (real merges in a scratch worktree; never
