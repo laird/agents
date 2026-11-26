@@ -1,0 +1,65 @@
+{"v":1,"ts":"2026-11-20T12:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"01","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T13:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"02","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T14:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"03","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T15:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"04","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T16:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"05","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T17:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"06","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"07","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{not json
+{"v":1,"ts":"2026-11-20T18:00:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"01","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:05:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"02","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:10:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"03","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:15:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"04","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:20:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"05","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:25:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"06","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:30:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"07","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:35:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"08","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:40:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"09","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T18:45:00Z","repo":"repo-b-5678efgh","loop":"stopped","run_id":"10","duration_s":1.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:00:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"01","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"08","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v": 1, "ts": "2026-11-20T20:00:00Z", "repo": "repo-a-1234abcd", "run_id": "x", "outcome": "ok"}
+{"v":1,"ts":"2026-11-20T19:10:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"02","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:20:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"03","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:30:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"04","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:40:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"05","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T19:50:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"06","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T20:00:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"07","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T20:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"09","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T20:10:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"08","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T20:20:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"09","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T20:30:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"10","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T21:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"10","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T21:10:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"01","duration_s":10,"outcome":"ok","observed":{"queued":0},"actions":{"dispatched":0},"error":null}
+{"v":1,"ts":"2026-11-20T21:20:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"02","duration_s":11,"outcome":"ok","observed":{"queued":1},"actions":{"dispatched":1},"error":null}
+{"v":1,"ts":"2026-11-20T21:30:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"03","duration_s":9,"outcome":"ok","observed":{"queued":2},"actions":{"dispatched":0},"error":null}
+{"v":1,"ts":"2026-11-20T21:30:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"01","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T21:40:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"04","duration_s":10,"outcome":"ok","observed":{"queued":0},"actions":{"dispatched":1},"error":null}
+{"v":1,"ts":"2026-11-20T21:40:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"02","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T21:50:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"05","duration_s":12,"outcome":"error","observed":{"queued":1},"actions":{"dispatched":0},"error":"upstream 502"}
+{"v":1,"ts":"2026-11-20T21:50:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"03","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:00:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"06","duration_s":10,"outcome":"error","observed":{"queued":2},"actions":{"dispatched":1},"error":"upstream 502"}
+{"v":1,"ts":"2026-11-20T22:00:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"01","duration_s":5.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:00:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"04","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"11","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:10:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"07","duration_s":45,"outcome":"ok","observed":{"queued":0},"actions":{"dispatched":0},"error":null}
+{"v":1,"ts":"2026-11-20T22:10:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"02","duration_s":5.0,"outcome":"error","observed":{},"actions":{},"error":"lock held"}
+{"v":1,"ts":"2026-11-20T22:10:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"05","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:20:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"08","duration_s":10,"outcome":"ok","observed":{"queued":1},"actions":{"dispatched":1},"error":null}
+{"v":1,"ts":"2026-11-20T22:20:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"03","duration_s":null,"outcome":"timeout","observed":{},"actions":{},"error":"killed after 300s"}
+{"v":1,"ts":"2026-11-20T22:20:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"06","duration_s":60.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:30:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"09","duration_s":11,"outcome":"ok","observed":{"queued":2},"actions":{"dispatched":0},"error":null}
+{"v":1,"ts":"2026-11-20T22:30:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"04","duration_s":5.0,"outcome":"error","observed":{},"actions":{},"error":"lock held"}
+{"v":1,"ts":"2026-11-20T22:30:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"07","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:30:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"11","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:40:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"10","duration_s":9,"outcome":"ok","observed":{"queued":0},"actions":{"dispatched":1},"error":null}
+{"v":1,"ts":"2026-11-20T22:40:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"05","duration_s":5.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:40:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"08","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:40:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"12","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:50:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"11","duration_s":10,"outcome":"ok","observed":{"queued":1},"actions":{"dispatched":0},"error":null}
+{"v":1,"ts":"2026-11-20T22:50:00Z","repo":"repo-a-1234abcd","loop":"streaky","run_id":"06","duration_s":5.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:50:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"09","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T22:50:00Z","repo":"repo-a-1234abcd","loop":"lapsed","run_id":"13","duration_s":2.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T23:00:00Z","repo":"repo-a-1234abcd","loop":"healthy","run_id":"12","duration_s":10,"outcome":"ok","observed":{"queued":2},"actions":{"dispatched":1},"error":null}
+{"v":1,"ts":"2026-11-20T23:00:00Z","repo":"repo-a-1234abcd","loop":"slow","run_id":"10","duration_s":10.0,"outcome":"ok","observed":{},"actions":{},"error":null}
+{"v":1,"ts":"2026-11-20T23:00:00Z","repo":"repo-a-1234abcd","loop":"idle","run_id":"12","duration_s":1.0,"outcome":"noop","observed":{"queued":0},"actions":{},"error":null}

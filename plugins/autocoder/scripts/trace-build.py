@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""trace-build.py: one trace per issue attempt, compiled from the ledgers the plugin writes (#395).
+"""trace-build.py: one trace per issue attempt and per loop tick, compiled from the plugin's ledgers (#395, #422).
 
 WHY THIS EXISTS:
   An attempt's story is spread over four ledgers and a transcript: issue-events.jsonl (the
@@ -9,6 +9,14 @@ WHY THIS EXISTS:
   attempts could not be named. This joins them, read-only, into the trace schema of
   docs/specs/2026-11-25-failure-traces-design.md; analyze-traces.py reads the result.
 
+TICKS: ticks.jsonl (tick-log.py, tick-fns.sh) holds one line per run of an operational loop. Each
+  line is a trace of its own, `kind: "tick"`, joined to nothing: trace id
+  `<repo>:tick:<loop>:<run_id>`, the loop id as `worker`, `ended` the start plus `duration_s`
+  (null when that is null), the run's outcome, and `tick: {duration_s, observed, actions, error}`.
+  The attempt keys a tick lacks are null or empty. Attempt traces carry `kind: "attempt"`. A line
+  with no parseable `ts`, no `loop`, no `run_id` or an outcome other than ok, noop, error or timeout
+  is malformed. --repo-id, --since and --until apply to ticks by `repo` and `ts`.
+
 ATTEMPTS: one worker's claim of one (repo, issue), up to the next attempt's claim. issue_claim
   writes `claimed` and the worker's readback writes it again seconds later, so a `claimed` opens
   an attempt only when none is open, the open one has ended (a landed, escalated or released
@@ -17,7 +25,7 @@ ATTEMPTS: one worker's claim of one (repo, issue), up to the next attempt's clai
   claim race: fix-loop-gate.sh moves on after a lost race and writes nothing more.
   Events before any claim (a rotated ledger, an older writer) open an implicit attempt with
   worker and branch null. A trace never mixes repositories. gate.jsonl names no repository, so
-  a tick joins by issue number and time alone.
+  a gate tick joins by issue number and time alone.
 
 TERMINALS: the merge train lands most work, recording it only as a landing-timings `landed`
   change row, so that row is a terminal `landed` step like the lifecycle one; `ready`,
@@ -75,7 +83,9 @@ LEDGERS = {  # name: (environment override, file name beside the other ledgers)
     "merge-events": ("AUTOCODER_MERGE_EVENTS", "merge-events.jsonl"),
     "landing-timings": ("AUTOCODER_LANDING_TIMINGS", "landing-timings.jsonl"),
     "gate-log": (None, "gate.jsonl"),
+    "ticks": ("AUTOCODER_TICKS", "ticks.jsonl"),
 }
+TICK_OUTCOMES = ("ok", "noop", "error", "timeout")
 
 
 def state_path(env_var: str | None, name: str) -> Path:
@@ -160,8 +170,8 @@ def with_repo(landing_rows: list[dict], other_rows: list[dict]) -> list[dict]:
             else {**row, "repo": next(iter(repos[row["issue"]]))} for row in landing_rows]
 
 
-def index_ticks(rows: list[dict]) -> dict[int, list[Timed]]:
-    """Ticks by the issue their `claimed` names ("12", "#12" or "issue#12")."""
+def index_gate_ticks(rows: list[dict]) -> dict[int, list[Timed]]:
+    """gate.jsonl ticks by the issue their `claimed` names ("12", "#12" or "issue#12")."""
     out: dict[int, list[Timed]] = defaultdict(list)
     for row in rows:
         m = re.search(r"\d+", str(row.get("claimed") or ""))
@@ -171,8 +181,8 @@ def index_ticks(rows: list[dict]) -> dict[int, list[Timed]]:
     return out
 
 
-def tick_for(ticks: list[Timed], started: datetime) -> dict | None:
-    """The tick written within the ten minutes before the attempt started, the latest if several."""
+def gate_tick_for(ticks: list[Timed], started: datetime) -> dict | None:
+    """The gate tick written within the ten minutes before the attempt started, the latest if several."""
     near = [p for p in ticks if started - TICK_LEAD <= p[0] <= started]
     if not near:
         return None
@@ -403,13 +413,14 @@ def review_of(issue: int, comments_dir: Path | None) -> dict | None:
     return {k: rv[k] for k in ("status", "rounds", "verdict", "findings", "resolutions")}
 
 
-def trace_of(a: Attempt, ticks: list[Timed], comments_dir: Path | None) -> dict:
+def trace_of(a: Attempt, gate_ticks: list[Timed], comments_dir: Path | None) -> dict:
     steps = steps_of(a)
     gates = gates_of(a.events, a.merges)
     session = session_of(a.transcript) if a.transcript else None
     outcome, ended = outcome_of(steps, gates, a, session)
     return {
         "v": 1,
+        "kind": "attempt",
         "trace_id": f"{a.repo}:{a.issue}:{a.n}",
         "repo": a.repo, "issue": a.issue, "attempt": a.n,
         "worker": (a.claim or {}).get("worker"), "branch": (a.claim or {}).get("branch"),
@@ -421,7 +432,36 @@ def trace_of(a: Attempt, ticks: list[Timed], comments_dir: Path | None) -> dict:
                      for _, row in a.landings if row.get("event") == "returned"],
         "session": session,
         "review": review_of(a.issue, comments_dir),
-        "tick": tick_for(ticks, a.start),
+        "tick": gate_tick_for(gate_ticks, a.start),
+    }
+
+
+def iso_utc(t: datetime) -> str:
+    return t.astimezone(UTC).isoformat(timespec="milliseconds" if t.microsecond else "seconds").replace("+00:00", "Z")
+
+
+def tick_trace(row: dict) -> dict | None:
+    """One loop run's trace, or None for a malformed ticks.jsonl row."""
+    started, loop, run_id, outcome = parse_ts(row.get("ts")), row.get("loop"), row.get("run_id"), row.get("outcome")
+    if started is None or not isinstance(loop, str) or not loop or run_id in (None, "") or outcome not in TICK_OUTCOMES:
+        return None
+    duration = row.get("duration_s")
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration < 0:
+        duration = None
+    observed, actions, error = row.get("observed"), row.get("actions"), row.get("error")
+    return {
+        "v": 1,
+        "kind": "tick",
+        "trace_id": f"{row.get('repo')}:tick:{loop}:{run_id}",
+        "repo": row.get("repo"), "issue": None, "attempt": None, "loop": loop,
+        "worker": loop, "branch": None,
+        "started": row["ts"], "ended": None if duration is None else iso_utc(started + timedelta(seconds=duration)),
+        "next_attempt": None,
+        "outcome": outcome,
+        "steps": [], "gates": [], "returned": [], "session": None, "review": None,
+        "tick": {"duration_s": duration, "observed": observed if isinstance(observed, dict) else {},
+                 "actions": actions if isinstance(actions, dict) else {},
+                 "error": error if isinstance(error, str) else None},
     }
 
 
@@ -433,7 +473,7 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
     merges = index(ledgers["merge-events"], lambda r: r.get("event") == "attempt", repo_id)
     landings = index(with_repo(ledgers["landing-timings"], ledgers["issue-events"] + ledgers["merge-events"]),
                      lambda r: r.get("kind") == "change", repo_id)
-    ticks = index_ticks(ledgers["gate-log"])
+    gate_ticks = index_gate_ticks(ledgers["gate-log"])
 
     attempts: list[Attempt] = []
     for key in sorted(set(events) | set(merges) | set(landings), key=lambda k: (k[0] or "", k[1])):
@@ -442,8 +482,13 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
     for issue, paths in index_transcripts(log_dir).items():
         assign_transcripts([a for a in attempts if a.issue == issue], paths, slack)
 
-    return [trace_of(a, ticks.get(a.issue, []), comments_dir) for a in attempts
-            if (since is None or a.start >= since) and (until is None or a.start < until)]
+    def in_window(t: datetime) -> bool:
+        return (since is None or t >= since) and (until is None or t < until)
+
+    ticks = sorted((t for t in map(tick_trace, ledgers["ticks"]) if t is not None
+                    and (not repo_id or t["repo"] == repo_id) and in_window(parse_ts(t["started"]))),
+                   key=lambda t: (t["repo"] or "", t["loop"], parse_ts(t["started"]), t["trace_id"]))
+    return [trace_of(a, gate_ticks.get(a.issue, []), comments_dir) for a in attempts if in_window(a.start)] + ticks
 
 
 def autocoder_config(directory) -> dict:
@@ -481,15 +526,15 @@ def write_traces(traces: list[dict], out: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Compile one trace per issue attempt from the autocoder ledgers.")
+    p = argparse.ArgumentParser(description="Compile one trace per issue attempt and per loop tick from the autocoder ledgers.")
     for name, (env_var, file_name) in LEDGERS.items():
         p.add_argument(f"--{name}", type=Path, default=state_path(env_var, file_name))
     p.add_argument("--log-dir", type=Path, default=Path(METRICS.LOG_DIR), help="worker transcripts")
     p.add_argument("--comments-dir", type=Path,
                    help="<issue>.json documents as issue_get prints them; without it, review is null")
     p.add_argument("--out", default=str(state_path("AUTOCODER_TRACES", "traces.jsonl")), help="`-` for stdout")
-    p.add_argument("--since", type=parse_bound, help="keep attempts started at or after (YYYY-MM-DD or ISO)")
-    p.add_argument("--until", type=parse_bound, help="keep attempts started before (YYYY-MM-DD or ISO)")
+    p.add_argument("--since", type=parse_bound, help="keep attempts and ticks started at or after (YYYY-MM-DD or ISO)")
+    p.add_argument("--until", type=parse_bound, help="keep attempts and ticks started before (YYYY-MM-DD or ISO)")
     p.add_argument("--repo-id", help="only this repository (default: every repository)")
     p.add_argument("--slack", type=float, default=60.0, help="transcript join slack in minutes")
     p.add_argument("--repo", default=os.getcwd(),
@@ -501,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     ledgers, malformed = {}, {}
     for name in LEDGERS:
         ledgers[name], malformed[name] = read_ledger(getattr(args, name.replace("-", "_")))
+    malformed["ticks"] += sum(tick_trace(row) is None for row in ledgers["ticks"])
     skipped = [f"{name} {count}" for name, count in malformed.items() if count]
     if skipped:
         print("trace-build: skipped malformed lines: " + ", ".join(skipped), file=sys.stderr)

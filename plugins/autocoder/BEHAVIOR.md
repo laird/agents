@@ -40,3 +40,7 @@ qualifier such as `(MANDATORY)` or `(#7134)` is dropped from it.
 | B11 | An attempt that opens a session ends in a gate, an escalation or an explicit release | `fix.md` CRITICAL: Release the 'working' Label Only on a Terminal Outcome | session ended, no gate, no escalation, no release |
 | B12 | Work is decomposed rather than attempted when it is too large for one attempt | `fix.md` Ultra-Complex Issues - Decompose into Sub-Tasks | judge |
 | B13 | A claim that is refused or abandoned is released visibly: the release comment that ends the claim window is posted in the same step as the label removal | `fix.md` Explicit release | released within two minutes of the claim, with no READY and no gate |
+| B14 | An operational loop that fails is repaired, not left to fail run after run | `tick-fns.sh` records each run of an operational loop | three or more consecutive error or timeout ticks of one loop |
+| B15 | An operational loop's run takes about as long as its usual run | same | a tick that took more than five times its loop's median duration, over at least ten timed ticks |
+| B16 | An operational loop that keeps running has an effect; one that finds nothing to do for a day is rescheduled or stopped | same | at least ten ticks of one loop in the corpus's last day, every one a noop |
+| B17 | An operational loop keeps its cadence | same | a silence after a tick longer than five times its loop's median gap, over at least ten ticks; the silence after the last tick runs to the corpus's end |

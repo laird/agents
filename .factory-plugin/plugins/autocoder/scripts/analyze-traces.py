@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""analyze-traces.py: recurring failure classes in a corpus of traces, against BEHAVIOR.md (#395).
+"""analyze-traces.py: recurring failure classes in a corpus of traces, against BEHAVIOR.md (#395, #422).
 
 WHY THIS EXISTS:
   trace-build.py writes one trace per issue attempt. One trace is an anecdote; a failure that
@@ -8,6 +8,13 @@ WHY THIS EXISTS:
   surface it points at, and prints the findings in priority order: severity (count times the
   classifier's weight), then count. tests/test_behavior_spec.py imports `classifiers()` to keep
   the registry and the spec in step, so this module must import without side effects.
+
+TICKS: a trace of `kind: "tick"` is one run of an operational loop (#422). Attempt classifiers never
+  see one. A tick classifier sees one loop at a time, all of one repository's ticks of one loop id
+  in start order, because its signal (a streak, a median, a cadence) exists only across runs; it
+  returns evidence by trace id and its findings are keyed by loop id. "The corpus's end" is the
+  latest tick start in it. A tick finding's share is of the ticks, an attempt finding's of the
+  attempts. The judge reads attempts only.
 
 JUDGE (off by default): --judge CMD runs CMD once per trace no classifier matched (every trace
   with --judge-all), with the judge prompt, then BEHAVIOR.md, then the trace's JSON on stdin. CMD
@@ -18,7 +25,7 @@ JUDGE (off by default): --judge CMD runs CMD once per trace no classifier matche
 USAGE
   analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE] [--tool-error-share F]
                     [--judge CMD [--judge-all] [--spec PATH] [--judge-prompt PATH]]
-  --since/--until keep traces whose attempt started in [since, until).
+  --since/--until keep traces (attempts and ticks) that started in [since, until).
 """
 
 from __future__ import annotations
@@ -27,9 +34,10 @@ import argparse
 import json
 import os
 import subprocess
+import statistics
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Mapping, NamedTuple
@@ -40,6 +48,12 @@ MIN_TOOL_CALLS = 10
 EXAMPLES = 3
 JUDGE_TIMEOUT_S = 600
 BOUNCE_S = 120
+TICK_STREAK = 3
+TICK_MIN = 10
+TICK_SLOW_FACTOR = 5
+TICK_GAP_FACTOR = 5
+TICK_NOOP_WINDOW = timedelta(hours=24)
+TICK_FAILED = ("error", "timeout")
 
 FIX_MD = "commands/fix.md § "
 LANDING = FIX_MD + "Landing the Work"
@@ -60,6 +74,31 @@ class Classifier(NamedTuple):
     group: Callable[[dict], tuple] = ungrouped
     weight: float = 1.0
     key_rules: Mapping[str, tuple[str, ...]] = MappingProxyType({})  # group key -> the rules its finding cites
+    kind: str = "attempt"  # "tick": match takes a Loop and returns {trace id: evidence}
+
+
+class Loop(NamedTuple):
+    """One repository's ticks of one loop id, in start order, and the corpus's end."""
+    id: str
+    starts: list[datetime]
+    ticks: list[dict]
+    end: datetime
+
+
+def loops_of(ticks: list[dict]) -> list[Loop]:
+    timed: dict[tuple, list[tuple]] = defaultdict(list)
+    for t in ticks:
+        started = parse_ts(t.get("started"))
+        if started is not None:
+            timed[(t.get("repo") or "", t.get("loop") or "")].append((started, t["trace_id"], t))
+    if not timed:
+        return []
+    end = max(started for rows in timed.values() for started, _, _ in rows)
+    loops = []
+    for (_, loop_id), rows in sorted(timed.items()):
+        rows.sort(key=lambda r: r[:2])
+        loops.append(Loop(loop_id, [r[0] for r in rows], [r[2] for r in rows], end))
+    return loops
 
 
 def steps_of_kind(trace: dict, kind: str) -> list[dict]:
@@ -161,6 +200,67 @@ def tool_errors(share: float) -> Callable[[dict], dict | None]:
     return match
 
 
+def tick_duration(trace: dict) -> float | None:
+    return (trace.get("tick") or {}).get("duration_s")
+
+
+def tick_error_streak(loop: Loop) -> dict[str, dict]:
+    """Every tick in a run of TICK_STREAK or more consecutive error or timeout outcomes."""
+    out, run = {}, []
+    for t in loop.ticks + [None]:
+        if t is not None and t.get("outcome") in TICK_FAILED:
+            run.append(t)
+            continue
+        if len(run) >= TICK_STREAK:
+            out.update({r["trace_id"]: {"loop": loop.id, "streak": len(run), "since": run[0]["started"],
+                                        "outcome": r["outcome"], "error": (r.get("tick") or {}).get("error")}
+                        for r in run})
+        run = []
+    return out
+
+
+def tick_slow(loop: Loop) -> dict[str, dict]:
+    """A tick that took more than TICK_SLOW_FACTOR times its loop's median, over TICK_MIN timed ticks."""
+    timed = [(t, d) for t in loop.ticks if (d := tick_duration(t)) is not None]
+    if len(timed) < TICK_MIN:
+        return {}
+    median = statistics.median(d for _, d in timed)
+    if median <= 0:
+        return {}
+    return {t["trace_id"]: {"loop": loop.id, "duration_s": d, "median_s": median}
+            for t, d in timed if d > TICK_SLOW_FACTOR * median}
+
+
+def tick_noop_only(loop: Loop) -> dict[str, dict]:
+    """The latest tick of a loop whose TICK_MIN or more ticks in the corpus's last day were all noops:
+    one idle loop is one finding however often it ticks."""
+    recent = [t for started, t in zip(loop.starts, loop.ticks) if started >= loop.end - TICK_NOOP_WINDOW]
+    if len(recent) < TICK_MIN or any(t.get("outcome") != "noop" for t in recent):
+        return {}
+    return {recent[-1]["trace_id"]: {"loop": loop.id, "noop_ticks": len(recent), "since": recent[0]["started"]}}
+
+
+def tick_missing(loop: Loop) -> dict[str, dict]:
+    """The tick before a silence longer than TICK_GAP_FACTOR times its loop's median gap, over TICK_MIN
+    ticks. The silence after the last tick runs to the corpus's end; `resumed` is then null."""
+    if len(loop.starts) < TICK_MIN:
+        return {}
+    median = statistics.median((b - a).total_seconds() for a, b in zip(loop.starts, loop.starts[1:]))
+    if median <= 0:
+        return {}
+    out = {}
+    for i, t in enumerate(loop.ticks):
+        resumed = loop.ticks[i + 1]["started"] if i + 1 < len(loop.ticks) else None
+        gap = ((loop.starts[i + 1] if resumed else loop.end) - loop.starts[i]).total_seconds()
+        if gap > TICK_GAP_FACTOR * median:
+            out[t["trace_id"]] = {"loop": loop.id, "gap_s": int(gap), "median_gap_s": int(median), "resumed": resumed}
+    return out
+
+
+def by_loop(evidence: dict) -> tuple:
+    return (evidence["loop"],)
+
+
 def classifiers(tool_error_share: float = DEFAULT_TOOL_ERROR_SHARE) -> tuple[Classifier, ...]:
     return (
         Classifier("gate-red-suite", ("B01",), "gate", gate_red_suite, lambda ev: tuple(ev["tests_failed"])),
@@ -178,24 +278,34 @@ def classifiers(tool_error_share: float = DEFAULT_TOOL_ERROR_SHARE) -> tuple[Cla
         Classifier("red-base", ("B09",), "integration branch", red_base),
         Classifier("tool-errors", ("B10",), "tool", tool_errors(tool_error_share), lambda ev: (ev["tool"],)),
         Classifier("session-without-gate", ("B11",), RELEASE, session_without_gate),
+        Classifier("tick-error-streak", ("B14",), "loop", tick_error_streak, by_loop, kind="tick"),
+        Classifier("tick-slow", ("B15",), "loop", tick_slow, by_loop, kind="tick"),
+        Classifier("tick-noop-only", ("B16",), "loop", tick_noop_only, by_loop, kind="tick"),
+        Classifier("tick-missing", ("B17",), "loop", tick_missing, by_loop, kind="tick"),
     )
 
 
 def classify(traces: list[dict], registry: tuple[Classifier, ...]) -> tuple[dict, set]:
-    """(hits by (classifier id, key), ids of the traces some classifier matched)."""
+    """(hits by (classifier id, key), ids of the traces some classifier matched). Attempt classifiers
+    see attempts one at a time; tick classifiers see ticks one loop at a time."""
     hits: dict[tuple, dict] = {}
     matched: set[str] = set()
-    for trace in traces:
-        for c in registry:
-            evidence = c.match(trace)
+    attempts = [t for t in traces if t.get("kind") != "tick"]
+    loops = loops_of([t for t in traces if t.get("kind") == "tick"])
+    for c in registry:
+        if c.kind == "tick":
+            found = [pair for loop in loops for pair in c.match(loop).items()]
+        else:
+            found = [(t["trace_id"], c.match(t)) for t in attempts]
+        for trace_id, evidence in found:
             if evidence is None:
                 continue
-            matched.add(trace["trace_id"])
+            matched.add(trace_id)
             for key in c.group(evidence):
                 hit = hits.setdefault((c.id, key), {"classifier": c, "traces": [], "evidence": []})
-                hit["traces"].append(trace["trace_id"])
+                hit["traces"].append(trace_id)
                 if len(hit["evidence"]) < EXAMPLES:
-                    hit["evidence"].append({"trace_id": trace["trace_id"], **evidence})
+                    hit["evidence"].append({"trace_id": trace_id, **evidence})
     return hits, matched
 
 
@@ -228,23 +338,24 @@ def run_judge(traces: list[dict], cmd: str, preamble: str) -> tuple[list[dict], 
     return judged, errors
 
 
-def group_findings(hits: dict, judged: list[dict], corpus: int, judge_prompt: str | None) -> list[dict]:
-    """Findings in priority order: severity, count, deterministic before judged, then id and key."""
+def group_findings(hits: dict, judged: list[dict], sizes: dict[str, int], judge_prompt: str | None) -> list[dict]:
+    """Findings in priority order: severity, count, deterministic before judged, then id and key.
+    `sizes` counts the corpus's traces by kind; a share is of the finding's kind."""
     findings = []
     for (cid, key), hit in hits.items():
         c, count = hit["classifier"], len(hit["traces"])
-        findings.append({"id": cid, "key": key,
+        findings.append({"id": cid, "key": key, "kind": c.kind,
                          "rules": list(c.key_rules.get(key, ()) if c.key_rules else c.rules),
                          "surface": c.surface, "count": count, "traces": hit["traces"],
-                         "share": round(count / corpus, 3), "evidence": hit["evidence"],
+                         "share": round(count / sizes[c.kind], 3), "evidence": hit["evidence"],
                          "severity": count * c.weight, "judged": False})
     by_rule: dict[str, list[dict]] = defaultdict(list)
     for item in judged:
         by_rule[item["rule"]].append(item)
     for rule, items in by_rule.items():
         ids = list(dict.fromkeys(i["trace_id"] for i in items))
-        findings.append({"id": "judged", "key": rule, "rules": [rule], "surface": None,
-                         "count": len(ids), "traces": ids, "share": round(len(ids) / corpus, 3),
+        findings.append({"id": "judged", "key": rule, "kind": "attempt", "rules": [rule], "surface": None,
+                         "count": len(ids), "traces": ids, "share": round(len(ids) / sizes["attempt"], 3),
                          "evidence": items[:EXAMPLES], "severity": float(len(ids)), "judged": True,
                          "judge_prompt": judge_prompt})
     findings.sort(key=lambda f: (-f["severity"], -f["count"], f["judged"], f["id"], f["key"] or ""))
@@ -263,7 +374,7 @@ def markdown(report: dict) -> str:
         lines += [f"## {f['id']}" + (f": {f['key']}" if f["key"] is not None else ""), "",
                   f"- Rules: {', '.join(f['rules']) or 'none'}",
                   f"- Surface: {f['surface'] or 'none (judged)'}",
-                  f"- Count: {f['count']} ({f['share']:.0%} of the corpus)"]
+                  f"- Count: {f['count']} ({f['share']:.0%} of the {f['kind']}s)"]
         if f["judged"]:
             lines.append(f"- Judge prompt: {f['judge_prompt']}")
         lines += [f"- `{e['trace_id']}`: {json.dumps({k: v for k, v in e.items() if k != 'trace_id'})}"
@@ -273,6 +384,7 @@ def markdown(report: dict) -> str:
         lines += ["No findings." if report["corpus"] else "No traces in the corpus.", ""]
     lines += ["## Corpus", "",
               f"- Traces: {report['corpus']}",
+              *([f"- Ticks among them: {report['ticks']}"] if report["ticks"] else []),
               f"- Window: {window_text(report['window'])}",
               f"- Matched by no classifier: {report['unmatched']}"]
     if report["judge"] is not None:
@@ -340,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
 
     traces = [t for t in read_traces(args.traces) if in_window(t)]
     hits, matched = classify(traces, classifiers(args.tool_error_share))
+    ticks = sum(t.get("kind") == "tick" for t in traces)
 
     judged, judge = [], None
     if args.judge:
@@ -347,17 +460,19 @@ def main(argv: list[str] | None = None) -> int:
             preamble = args.judge_prompt.read_text() + "\n\n" + args.spec.read_text() + "\n\n"
         except OSError as e:
             p.error(f"--judge needs the judge prompt and the spec (--judge-prompt, --spec): {e}")
-        to_judge = traces if args.judge_all else [t for t in traces if t["trace_id"] not in matched]
+        to_judge = [t for t in traces if t.get("kind") != "tick" and (args.judge_all or t["trace_id"] not in matched)]
         judged, errors = run_judge(to_judge, args.judge, preamble)
         judge = {"prompt": args.judge_prompt.name, "traces": len(to_judge), "errors": errors}
 
     report = {
         "corpus": len(traces),
+        "ticks": ticks,
         "window": {"since": args.since.isoformat() if args.since else None,
                    "until": args.until.isoformat() if args.until else None},
         "unmatched": len(traces) - len(matched),
         "judge": judge,
-        "findings": group_findings(hits, judged, len(traces), judge and judge["prompt"]),
+        "findings": group_findings(hits, judged, {"attempt": len(traces) - ticks, "tick": ticks},
+                                   judge and judge["prompt"]),
     }
     print(json.dumps(report, indent=2) if args.json else markdown(report))
     return 0

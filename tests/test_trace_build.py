@@ -1,4 +1,4 @@
-"""trace-build.py: one trace per issue attempt, from fixture ledgers and transcripts (#395)."""
+"""trace-build.py: one trace per issue attempt and per loop tick, from fixture ledgers and transcripts (#395, #422)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ FIXTURE_ARGS = LEDGER_ARGS + ["--train-gate-issue", str(GATE_ISSUE)]
 def run(tmp_path, *args, ledgers=FIXTURE_ARGS, env=None):
     # TZ=UTC: a transcript name's HHMMSS is local time, and the fixtures are written in UTC.
     # cwd: the default --repo, kept off this checkout so its .autocoder.json never names a gate issue.
-    e = {k: v for k, v in os.environ.items() if k != "AUTOCODER_TRACES"}
+    e = {k: v for k, v in os.environ.items() if k not in ("AUTOCODER_TRACES", "AUTOCODER_TICKS")}
     e.update({"XDG_STATE_HOME": str(tmp_path / "state"), "TZ": "UTC", **(env or {})})
     return subprocess.run([sys.executable, str(SCRIPT), *ledgers, *args], capture_output=True, text=True, env=e,
                           cwd=tmp_path)
@@ -329,3 +329,93 @@ def test_default_out_is_beside_the_ledgers_and_overridable(tmp_path):
     override = tmp_path / "elsewhere.jsonl"
     run(tmp_path, "--log-dir", str(tmp_path), env={"AUTOCODER_TRACES": str(override)})
     assert override.exists()
+
+
+# ── ticks (#422) ─────────────────────────────────────────────────────────────
+TICK_ARGS = ["--ticks", str(FIXTURES / "ticks.jsonl")]
+# loop: (repository, ticks); ticks.jsonl also holds a line that is not JSON and one with no loop.
+TICK_LOOPS = {"healthy": (REPO_A, 12), "streaky": (REPO_A, 6), "slow": (REPO_A, 10), "lapsed": (REPO_A, 13),
+              "idle": (REPO_A, 12), "stopped": (REPO_B, 10)}
+
+
+def ticks_of(traces):
+    return {tid: t for tid, t in traces.items() if t["kind"] == "tick"}
+
+
+@pytest.fixture(scope="module")
+def with_ticks(tmp_path_factory):
+    return build(tmp_path_factory.mktemp("ticks"), ledgers=FIXTURE_ARGS + TICK_ARGS)
+
+
+def test_attempt_traces_are_unchanged_beside_ticks(traces, with_ticks):
+    assert {tid: t for tid, t in with_ticks.items() if t["kind"] == "attempt"} == traces
+    assert {t["kind"] for t in traces.values()} == {"attempt"}
+
+
+def test_one_trace_per_tick_line(with_ticks):
+    ticks = ticks_of(with_ticks)
+    loops = {}
+    for t in ticks.values():
+        loops.setdefault(t["loop"], (t["repo"], []))[1].append(t)
+    assert {loop: (repo, len(rows)) for loop, (repo, rows) in loops.items()} == TICK_LOOPS
+    lines = []
+    for line in (FIXTURES / "ticks.jsonl").read_text().splitlines():
+        try:
+            lines.append(json.loads(line))
+        except ValueError:
+            continue
+    assert set(ticks) == {f"{r['repo']}:tick:{r['loop']}:{r['run_id']}" for r in lines if r.get("loop")}
+
+
+def test_tick_trace_shape(with_ticks):
+    assert with_ticks[f"{REPO_A}:tick:healthy:05"] == {
+        "v": 1, "kind": "tick", "trace_id": f"{REPO_A}:tick:healthy:05", "repo": REPO_A, "issue": None,
+        "attempt": None, "loop": "healthy", "worker": "healthy", "branch": None,
+        "started": "2026-11-20T21:50:00Z", "ended": "2026-11-20T21:50:12Z", "next_attempt": None,
+        "outcome": "error", "steps": [], "gates": [], "returned": [], "session": None, "review": None,
+        "tick": {"duration_s": 12, "observed": {"queued": 1}, "actions": {"dispatched": 0}, "error": "upstream 502"}}
+
+
+def test_tick_without_a_duration_has_no_end(with_ticks):
+    t = with_ticks[f"{REPO_A}:tick:streaky:03"]
+    assert (t["outcome"], t["ended"], t["tick"]["duration_s"], t["tick"]["error"]) == \
+        ("timeout", None, None, "killed after 300s")
+
+
+def test_tick_end_keeps_fractional_seconds(tmp_path):
+    ticks = tmp_path / "ticks.jsonl"
+    ticks.write_text(json.dumps({"v": 1, "ts": "2026-11-20T10:00:00Z", "repo": REPO_A, "loop": "l", "run_id": 7,
+                                 "duration_s": 1.25, "outcome": "ok"}) + "\n")
+    r = run(tmp_path, "--out", "-", ledgers=["--ticks", str(ticks)] + [x for n in ("issue-events", "merge-events",
+            "landing-timings", "gate-log") for x in (f"--{n}", str(tmp_path / "none"))])
+    t = json.loads(r.stdout)
+    assert (t["trace_id"], t["ended"], t["tick"]) == (
+        f"{REPO_A}:tick:l:7", "2026-11-20T10:00:01.250Z", {"duration_s": 1.25, "observed": {}, "actions": {}, "error": None})
+
+
+def test_malformed_tick_lines_counted(tmp_path):
+    r = run(tmp_path, "--log-dir", str(tmp_path), "--out", "-", ledgers=FIXTURE_ARGS + TICK_ARGS)
+    assert "ticks 2" in next(line for line in r.stderr.splitlines() if "malformed" in line)
+
+
+def test_repo_id_keeps_one_repositorys_ticks(tmp_path):
+    traces = build(tmp_path, "--repo-id", REPO_B, ledgers=FIXTURE_ARGS + TICK_ARGS)
+    assert {t["loop"] for t in ticks_of(traces).values()} == {"stopped"}
+    assert len(ticks_of(traces)) == 10 and f"{REPO_B}:100:1" in traces
+
+
+def test_since_and_until_filter_ticks_by_start(tmp_path):
+    traces = build(tmp_path, "--since", "2026-11-20T22:40:00Z", "--until", "2026-11-20T22:50:00Z",
+                   ledgers=FIXTURE_ARGS + TICK_ARGS)
+    assert sorted(ticks_of(traces)) == [f"{REPO_A}:tick:{loop}:{n}" for loop, n in
+                                        (("healthy", "10"), ("lapsed", "12"), ("slow", "08"), ("streaky", "05"))]
+
+
+def test_default_ticks_ledger_is_beside_the_others_and_overridable(tmp_path):
+    state = tmp_path / "state" / "autocoder"
+    state.mkdir(parents=True)
+    shutil.copy(FIXTURES / "ticks.jsonl", state / "ticks.jsonl")
+    assert len(ticks_of(build(tmp_path))) == 63
+    assert ticks_of(build(tmp_path, ledgers=FIXTURE_ARGS + ["--ticks", str(tmp_path / "none")])) == {}
+    r = run(tmp_path, "--out", "-", env={"AUTOCODER_TICKS": str(tmp_path / "none")})
+    assert '"kind":"tick"' not in r.stdout

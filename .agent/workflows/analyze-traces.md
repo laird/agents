@@ -70,6 +70,11 @@ Each trace's steps include the landing-timings rows: `ready` (the worker's hand-
 `launched`, `batched`, `returned` and `landed`. A train landing appears only there, and it counts
 as the attempt's landing.
 
+Each line of the loop-ticks ledger is a trace of its own, `kind: "tick"`: one run of an
+operational loop that recorded itself with `tick-fns.sh` or `tick-log.py`. The four `tick-*`
+classifiers read them a loop at a time (an error streak, a slow run, a day of noops, a lapsed
+cadence) and key their findings by loop id. No ledger means no tick traces and no tick findings.
+
 The traces go to the default path beside the ledgers,
 `${AUTOCODER_TRACES:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/traces.jsonl}`, never into
 the working tree. A rerun rewrites the whole file. A line on stderr counts any malformed ledger
@@ -133,6 +138,7 @@ The builder reads the ledgers at the paths their writers use; each has a flag to
 | Merge attempts | `${AUTOCODER_MERGE_EVENTS:-$XDG_STATE_HOME/autocoder/merge-events.jsonl}` | `--merge-events` |
 | Landing timings | `${AUTOCODER_LANDING_TIMINGS:-$XDG_STATE_HOME/autocoder/landing-timings.jsonl}` | `--landing-timings` |
 | Gate ticks | `$XDG_STATE_HOME/autocoder/gate.jsonl` | `--gate-log` |
+| Loop ticks | `${AUTOCODER_TICKS:-$XDG_STATE_HOME/autocoder/ticks.jsonl}` | `--ticks` |
 | Worker transcripts | `${AUTOCODER_LOG_DIR:-/tmp/autocoder-logs}` | `--log-dir` |
 
 `$XDG_STATE_HOME` defaults to `~/.local/state`. Schema, joins and outcome rules:
