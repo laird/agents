@@ -508,7 +508,7 @@ bound, and a `TODO` left in `task.md` or `issue.title`.
 
 ```
 eval-run.py [--cases DIR] [--split dev|heldout|all] [--case ID ...] [--worker CMD] [--repeat N]
-            [--timeout S] [--results PATH] [--keep] [--json] [--spec PATH]
+            [--timeout S] [--comparison ID] [--results PATH] [--keep] [--json] [--spec PATH]
 ```
 
 `--split` defaults to `dev`, or to `all` when `--case` names the cases. Every selected case is
@@ -534,11 +534,15 @@ repeat:
 5. One row is appended to `--results` (default
    `${AUTOCODER_EVAL_RESULTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}`):
    `{ts, case, split, backend, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
-   harness: {sha}, root}`. `failed` lists `outcome`, `max_gates`, `max_tool_calls`,
-   `classifiers_silent:<id>`, `steps_present:<kind>`, `steps_absent:<kind>`, `timeout`, `setup`
-   (the sandbox or `setup.sh` failed) or `trace` (no attempt was recorded). `worker` is the
-   command template. `harness.sha` is `AUTOCODER_HARNESS_SHA`, else the script directory's git
-   HEAD, else null. A passing run's root is deleted unless `--keep`, and its `root` is then null.
+   harness: {sha}, root}`. With `--comparison ID` the row also carries `comparison`, `manifest`
+   (sha256[:16] of the selected `split/name` plus each `case.json`), `grader` (sha256[:16] of
+   `--spec`) and `settings` (`manifest`, `grader`, `worker`, `repeat`, `timeout`). An empty id is
+   an error. Omit the flag and those keys stay absent, so older ledgers keep their shape. `failed`
+   lists `outcome`, `max_gates`, `max_tool_calls`, `classifiers_silent:<id>`,
+   `steps_present:<kind>`, `steps_absent:<kind>`, `timeout`, `setup` (the sandbox or `setup.sh`
+   failed) or `trace` (no attempt was recorded). `worker` is the command template. `harness.sha`
+   is `AUTOCODER_HARNESS_SHA`, else the script directory's git HEAD, else null. A passing run's
+   root is deleted unless `--keep`, and its `root` is then null.
 
 The run prints one line per case (passes out of repeats, failed checks with counts), one line per
 split, and the root kept for each failing run. `--json` prints `{"rows", "cases", "splits"}`. The
@@ -546,29 +550,40 @@ exit code is 0 whatever the verdicts.
 `/propose-fix <finding> [harness] [repeats]` is the agent's step between the two: in a worktree
 of the plugin checkout (the harness) with no held-out cases, one change for the finding, the dev
 cases run before and after, then the runner scores the held-out cases on both commits and
-`eval-decide.py` gives the verdict. The worker under test loads the proposal with
+`eval-decide.py` gives the verdict. One comparison id is minted for that proposal and passed to
+every `eval-run.py` and to `eval-decide.py`. A refine keeps the id (the new after sha drops the
+replaced rows). Raising the repeat count mints a new id and re-runs the baseline, because the
+old baseline rows share the harness sha. The worker under test loads the proposal with
 `claude --plugin-dir`, so the installed plugin never changes during a proposal.
 
 ### `eval-decide.py`
 
 ```
-eval-decide.py --finding F --before SHA --after SHA [--results PATH] [--decisions PATH]
-               [--min-runs N] [--json]
+eval-decide.py --finding F --before SHA --after SHA [--comparison ID] [--results PATH]
+               [--decisions PATH] [--min-runs N] [--json]
 ```
 
 Decides whether to keep one harness change. It reads the eval result rows of the two harness shas
 (`harness.sha`; a sha given matches a row whose sha starts with it) from `--results` (default
 `${AUTOCODER_EVAL_RESULTS:-$XDG_STATE_HOME/autocoder/eval-results.jsonl}`) and compares the pass
-rates per split:
+rates per split. `--comparison ID` tallies only rows stamped with that id; the same sha from
+another comparison, or from a row with no id, is ignored. Without the flag the split stays by sha
+alone, and rows that carry no `settings` stay comparable with each other.
 
 | Decision | When | Exit |
 |---|---|---|
-| `inconclusive <reason>` | a split has no case on either sha, or a case has fewer than `--min-runs` (default 2) runs on either sha | 3 |
+| `inconclusive <reason>` | a split has no case on either sha; a case has fewer than `--min-runs` (default 2) runs on either sha; the two sides' `settings` differ (or one side's rows disagree among themselves); or a case's repeat counts differ once both sides meet `--min-runs` | 3 |
 | `accept` | the dev pass rate rose and the held-out pass rate did not fall (and rose, when it was below 1); or both pass rates are unchanged and the mean `tool_calls` fell | 0 |
 | `reject <reason>` | anything else | 1 |
 
+A case present on one sha only still reports `fewer than N runs`, because its other side has 0.
+Settings are compared per split (dev against dev, held-out against held-out), so the two splits
+may name different case manifests.
+
 Each call appends one row to `--decisions` (default
 `${AUTOCODER_EVAL_DECISIONS:-$XDG_STATE_HOME/autocoder/eval-decisions.jsonl}`) in a single append:
-`{ts, finding, before, after, dev: {before: [passes, runs], after: [...]}, heldout: {...},
-tool_calls: {before, after}, decision, accepted, reason}`. `--json` prints that row in place of the
-verdict line. The week page counts these rows.
+`{ts, finding, comparison, before, after, dev: {before: [passes, runs], after: [...]}, heldout: {...},
+manifest: {before: {dev, heldout}, after: {...}}, grader: {before, after}, worker: {before, after},
+settings: {before: {dev, heldout}, after: {...}}, repeats: {before: {dev: {case: n}, heldout: {...}}, after: {...}},
+tool_calls: {before, after}, decision, accepted, reason}`. Fields the rows did not carry are null.
+`--json` prints that row in place of the verdict line. The week page counts these rows.

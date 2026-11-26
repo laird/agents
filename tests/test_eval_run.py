@@ -108,6 +108,30 @@ def test_passing_worker_passes_and_writes_result_rows(tmp_path, env):
     assert not (tmp_path / "outer-issue-events.jsonl").exists()
 
 
+def test_a_comparison_stamps_manifest_grader_and_settings(tmp_path, env):
+    worker = fake(tmp_path, "lands-cmp", LANDS)
+    report = run_json(env, "--worker", worker, "--case", "case-b", "--comparison", "cmp-1", "--timeout", "30")
+    row = report["rows"][0]
+    assert set(row) == ROW_KEYS | {"comparison", "manifest", "grader", "settings"}
+    spec = importlib.util.spec_from_file_location("eval_run_stamp", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    selected = [("dev", Path(env["AUTOCODER_EVAL_CASES"]) / "dev" / "case-b")]
+    assert row["comparison"] == "cmp-1"
+    assert row["manifest"] == mod.manifest_id(selected) == row["settings"]["manifest"]
+    assert row["grader"] == mod.grader_id(mod.AUTHOR.PLUGIN_ROOT / "BEHAVIOR.md") == row["settings"]["grader"]
+    assert len(row["manifest"]) == 16 and len(row["grader"]) == 16
+    assert row["settings"]["worker"] == worker and row["settings"]["repeat"] == 1
+    assert row["settings"]["timeout"] == 30.0
+    other = run_json(env, "--worker", worker, "--case", "case-a", "--comparison", "cmp-1", "--timeout", "30")
+    assert other["rows"][0]["grader"] == row["grader"]
+    assert other["rows"][0]["manifest"] != row["manifest"]
+    blank = fake(tmp_path, "blank", LANDS)
+    refused = run(env, "--worker", blank, "--case", "case-b", "--comparison", "  ")
+    assert refused.returncode == 2 and "non-empty" in refused.stderr
+    assert not (tmp_path / "blank.ran").exists()
+
+
 def test_the_worker_sees_the_seed_the_setup_commit_and_the_issue(tmp_path, env):
     rows = run_json(env, "--worker", fake(tmp_path, "lands", LANDS), "--case", "case-a", "--keep")["rows"]
     root = Path(rows[0]["root"])

@@ -75,8 +75,15 @@ def test_the_decision_row_is_appended_with_the_tallies_per_split(tmp_path):
     assert decide(tmp_path, rows, "--min-runs", "3").returncode == 3
     first, second = decisions(tmp_path)
     assert {k: v for k, v in first.items() if k != "ts"} == {
-        "finding": "gate-red-suite:tests/test_x.sh", "before": BEFORE, "after": AFTER,
+        "finding": "gate-red-suite:tests/test_x.sh", "comparison": None,
+        "before": BEFORE, "after": AFTER,
         "dev": {"before": [1, 2], "after": [2, 2]}, "heldout": {"before": [1, 2], "after": [2, 2]},
+        "manifest": {"before": {"dev": None, "heldout": None}, "after": {"dev": None, "heldout": None}},
+        "grader": {"before": None, "after": None},
+        "worker": {"before": "fake", "after": "fake"},
+        "settings": {"before": {"dev": None, "heldout": None}, "after": {"dev": None, "heldout": None}},
+        "repeats": {"before": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}},
+                    "after": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}}},
         "tool_calls": {"before": 30.0, "after": 20.0},
         "decision": "accept", "accepted": True, "reason": "dev 1/2 -> 2/2, heldout 1/2 -> 2/2"}
     assert first["ts"].endswith("Z")
@@ -105,6 +112,78 @@ def test_the_decisions_path_follows_the_environment(tmp_path):
                        env={**os.environ, "XDG_STATE_HOME": str(tmp_path / "state"), "AUTOCODER_EVAL_DECISIONS": str(target)})
     assert r.returncode == 0 and len(target.read_text().splitlines()) == 1
     assert not (tmp_path / "state" / "autocoder" / "eval-decisions.jsonl").exists()
+
+
+def stamp(rows, comparison, settings):
+    stamped = []
+    for row in rows:
+        copied = dict(row)
+        copied["comparison"] = comparison
+        copied["manifest"] = settings["manifest"]
+        copied["grader"] = settings["grader"]
+        copied["worker"] = settings["worker"]
+        copied["settings"] = dict(settings)
+        stamped.append(copied)
+    return stamped
+
+
+DEV = {"manifest": "mani-dev", "grader": "grade-1", "worker": "fake", "repeat": 2, "timeout": 60}
+HELD = {**DEV, "manifest": "mani-ho"}
+
+
+def matched(comparison="cmp-a", dev_before=(1, 2), dev_after=(2, 2), ho_before=(1, 2), ho_after=(2, 2)):
+    """One comparison's rows: dev and held-out each carry their own manifest."""
+    dev = (stamp(runs(BEFORE, "dev", "dev-1", *dev_before), comparison, DEV)
+           + stamp(runs(AFTER, "dev", "dev-1", *dev_after), comparison, DEV))
+    held = (stamp(runs(BEFORE, "heldout", "ho-1", *ho_before), comparison, HELD)
+            + stamp(runs(AFTER, "heldout", "ho-1", *ho_after), comparison, HELD))
+    return dev + held
+
+
+def test_rows_from_another_comparison_do_not_move_the_verdict(tmp_path):
+    # Same harness shas, a later run whose dev rate falls. Counted, it rejects; scoped, it is ignored.
+    poison = stamp(runs(BEFORE, "dev", "dev-1", 2, 2), "cmp-b", DEV) + stamp(runs(AFTER, "dev", "dev-1", 0, 2), "cmp-b", DEV)
+    poison += stamp(runs(BEFORE, "heldout", "ho-1", 2, 2), "cmp-b", HELD) + stamp(runs(AFTER, "heldout", "ho-1", 0, 2), "cmp-b", HELD)
+    rows = matched() + poison
+    scoped = decide(tmp_path, rows, "--comparison", "cmp-a")
+    assert (scoped.returncode, scoped.stdout.strip()) == (0, "accept")
+    mixed = decide(tmp_path, rows)
+    assert mixed.returncode == 1 and mixed.stdout.startswith("reject dev pass rate did not rise")
+    recorded = decisions(tmp_path)[0]
+    assert recorded["comparison"] == "cmp-a"
+    assert recorded["manifest"] == {"before": {"dev": "mani-dev", "heldout": "mani-ho"},
+                                    "after": {"dev": "mani-dev", "heldout": "mani-ho"}}
+    assert recorded["grader"] == {"before": "grade-1", "after": "grade-1"}
+    assert recorded["worker"] == {"before": "fake", "after": "fake"}
+    assert recorded["settings"]["before"]["dev"]["repeat"] == 2
+    assert recorded["repeats"] == {"before": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}},
+                                   "after": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}}}
+
+
+def test_unmatched_repeats_are_inconclusive(tmp_path):
+    rows = matched(dev_after=(3, 3), ho_after=(3, 3))
+    verdict = decide(tmp_path, rows, "--comparison", "cmp-a")
+    assert verdict.returncode == 3
+    assert verdict.stdout.strip().startswith("inconclusive dev case(s) with unmatched repeats: dev-1 (2 vs 3)")
+
+
+def test_different_settings_are_inconclusive(tmp_path):
+    rows = matched()
+    for row in rows:
+        if row["harness"]["sha"] == AFTER:
+            row["settings"] = {**row["settings"], "worker": "other-model"}
+            row["grader"] = "grade-2"
+    verdict = decide(tmp_path, rows, "--comparison", "cmp-a")
+    assert verdict.returncode == 3
+    assert "different dev settings" in verdict.stdout
+
+
+def test_untagged_rows_stay_comparable_beside_stamped_rows_for_other_shas(tmp_path):
+    other = "dddd4444"
+    stamped = (stamp(runs(other, "dev", "dev-9", 0, 2), "cmp-z", DEV)
+               + stamp(runs(other, "heldout", "ho-9", 0, 2), "cmp-z", HELD))
+    verdict = decide(tmp_path, baseline() + stamped)
+    assert (verdict.returncode, verdict.stdout.strip()) == (0, "accept")
 
 
 def test_a_missing_results_file_is_inconclusive_not_an_error(tmp_path):

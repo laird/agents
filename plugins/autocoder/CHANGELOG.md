@@ -66,6 +66,17 @@ once (Version Management in `docs/maintaining.md`).
   too long", the script failed toward "none", and the gate claimed new work
   over a bounce that stayed `working` (#432).
 
+### Fixed
+
+- Self-improvement decisions stay inside one comparison (#434). `eval-run.py
+  --comparison` stamps the id, the case-manifest and grader fingerprints, and
+  the settings both sides must share (manifest, grader, worker, repeats,
+  timeout). `eval-decide.py --comparison` tallies only those rows. It returns
+  inconclusive when the settings disagree or a case's repeat counts differ, and
+  rows from another comparison that reuse the same harness sha no longer move
+  the verdict. `/propose-fix` mints one id and keeps it across a refine; a new
+  repeat count starts a new id so the old baseline is not pooled in.
+
 ## [4.70.0] - 2026-11-26
 
 ### Added

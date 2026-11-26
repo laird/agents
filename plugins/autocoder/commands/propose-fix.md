@@ -72,6 +72,7 @@ command file section, a script, a prompt) in `$HARNESS`.
 
 ```bash
 STAMP=$(date +%Y%m%d-%H%M%S)
+CMP=$(python3 -c 'import uuid; print(uuid.uuid4())')
 WT="${TMPDIR:-/tmp}/propose-${STAMP}"
 git -C "$HARNESS" worktree add -q "$WT" -b "fix/${FINDING%%:*}-${STAMP}" HEAD
 BEFORE=$(git -C "$WT" rev-parse HEAD)
@@ -87,7 +88,7 @@ reports counts only.
 ```bash
 AUTOCODER_HARNESS_SHA="$BEFORE" python3 "$SCRIPT_DIR/eval-run.py" \
   --cases "$CASES" --split dev --case $(echo "$DEV_CASES" | awk '{print $1}') \
-  --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC"
+  --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --comparison "$CMP"
 ```
 
 Each run is one headless fix session and costs what one costs. Record the summary line. If
@@ -117,13 +118,13 @@ make the one the evidence supports most and let the verdict decide.
 ```bash
 AUTOCODER_HARNESS_SHA="$AFTER" python3 "$SCRIPT_DIR/eval-run.py" \
   --cases "$CASES" --split dev --case $(echo "$DEV_CASES" | awk '{print $1}') \
-  --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC"
+  --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --comparison "$CMP"
 
 # The held-out cases: the runner reads them, you read the counts.
 for SHA in "$BEFORE" "$AFTER"; do
   git -C "$WT" checkout -q "$SHA"
   AUTOCODER_HARNESS_SHA="$SHA" python3 "$SCRIPT_DIR/eval-run.py" \
-    --cases "$CASES" --split heldout --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --json \
+    --cases "$CASES" --split heldout --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --comparison "$CMP" --json \
     | jq -c 'del(.rows) + {sha: "'"$SHA"'"}'
 done
 git -C "$WT" checkout -q "fix/${FINDING%%:*}-${STAMP}"
@@ -135,7 +136,7 @@ is needed to understand a failure, that one is yours to read.
 ### 6. The verdict
 
 ```bash
-python3 "$SCRIPT_DIR/eval-decide.py" --finding "$FINDING" --before "$BEFORE" --after "$AFTER" --min-runs "$REPEAT"
+python3 "$SCRIPT_DIR/eval-decide.py" --finding "$FINDING" --before "$BEFORE" --after "$AFTER" --min-runs "$REPEAT" --comparison "$CMP"
 VERDICT=$?
 ```
 
@@ -146,11 +147,18 @@ VERDICT=$?
 - **reject (exit 1):** run the analyst on the dev runs' traces (`analyze-traces.py --traces
   <kept root>/traces.jsonl` for each kept dev root) and read what the fixed harness did instead.
   You may refine the change ONCE: amend in `$WT`, take the new sha as `AFTER`, and repeat step 5
-  and this step. A second reject ends the proposal: leave the branch unpushed, and record the
-  decision rows (both are in `eval-decisions.jsonl`) in your summary so the next attempt starts
-  from them.
-- **inconclusive (exit 3):** the runs were too few or a split had no case. Say which, and either
-  raise `REPEAT` and repeat step 5, or author the missing case; do not treat it as a pass.
+  and this step, keeping the same `CMP`. A second reject ends the proposal: leave the branch
+  unpushed, and record the decision rows (both are in `eval-decisions.jsonl`) in your summary so
+  the next attempt starts from them.
+- **inconclusive (exit 3):** the runs were too few, a split had no case, the two sides disagree
+  on settings (manifest, grader, worker, planned repeats, timeout), or a case's repeat counts do
+  not match. Say which, and do not treat it as a pass.
+  - A missing case: author it, then measure again.
+  - Too few runs, or you are raising `REPEAT`: mint a new `CMP` and repeat from step 3. The old
+    baseline rows share the harness sha, so the same `CMP` would pool them with the new repeats
+    and the settings would disagree.
+  - A refine (step 5 again after an amend, same `REPEAT`): keep the same `CMP`. The new after sha
+    no longer matches the rows you are replacing, and the baseline rows stay in the comparison.
 
 ### 7. Report and clean up
 

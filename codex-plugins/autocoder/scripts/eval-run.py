@@ -29,18 +29,21 @@ BACKENDS: case.json's `backend` is `file` (the default) or `fake-github`. The fi
 
 RESULTS: one JSON line per run appended to --results (default ${AUTOCODER_EVAL_RESULTS:-
   ${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}). harness.sha is
-  AUTOCODER_HARNESS_SHA, else this script directory's git HEAD, else null. Exit 0 whatever the
+  AUTOCODER_HARNESS_SHA, else this script directory's git HEAD, else null. With --comparison the
+  row also carries that id plus the case-manifest fingerprint, the grader fingerprint (the --spec
+  file) and the settings both sides of the comparison must share (#434). Exit 0 whatever the
   verdicts; 2 for a malformed or unknown case, before any worker runs.
 
 USAGE
   eval-run.py [--cases DIR] [--split dev|heldout|all] [--case ID ...] [--worker CMD] [--repeat N]
-              [--timeout S] [--results PATH] [--keep] [--json] [--spec PATH]
+              [--timeout S] [--comparison ID] [--results PATH] [--keep] [--json] [--spec PATH]
   --split defaults to dev, or to all when --case names the cases.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -242,14 +245,40 @@ def run_case(split: str, case_dir: Path, repeat: int, args, sha: str | None) -> 
     passed = not failed
     if passed and not args.keep:
         shutil.rmtree(root, ignore_errors=True)
-    return {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "case": case["id"], "split": split,
-            "backend": backend, "repeat": repeat, "pass": passed, "failed": failed, "outcome": (trace or {}).get("outcome"),
-            "gates": len(trace["gates"]) if trace else None, "tool_calls": tool_calls(trace) if trace else None,
-            "duration_s": round(time.monotonic() - began, 1), "worker": args.worker, "harness": {"sha": sha},
-            "root": str(root) if root.exists() else None}
+    row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "case": case["id"], "split": split,
+           "backend": backend, "repeat": repeat, "pass": passed, "failed": failed, "outcome": (trace or {}).get("outcome"),
+           "gates": len(trace["gates"]) if trace else None, "tool_calls": tool_calls(trace) if trace else None,
+           "duration_s": round(time.monotonic() - began, 1), "worker": args.worker, "harness": {"sha": sha},
+           "root": str(root) if root.exists() else None}
+    if args.comparison:
+        row["comparison"] = args.comparison
+        row["manifest"] = args.manifest
+        row["grader"] = args.grader
+        row["settings"] = {"manifest": args.manifest, "grader": args.grader, "worker": args.worker,
+                           "repeat": args.repeat, "timeout": args.timeout}
+    return row
 
 
 # ── Selection, summary and the CLI ───────────────────────────────────────────
+def fingerprint(parts: list[bytes]) -> str:
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part)
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def manifest_id(selected: list[tuple[str, Path]]) -> str:
+    parts = []
+    for split, case_dir in sorted(selected, key=lambda item: (item[0], item[1].name)):
+        parts.append(f"{split}/{case_dir.name}\n".encode() + (case_dir / "case.json").read_bytes())
+    return fingerprint(parts)
+
+
+def grader_id(spec: Path) -> str:
+    return hashlib.sha256(spec.read_bytes()).hexdigest()[:16]
+
+
 def harness_sha() -> str | None:
     if os.environ.get("AUTOCODER_HARNESS_SHA"):
         return os.environ["AUTOCODER_HARNESS_SHA"]
@@ -312,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--worker", default=DEFAULT_WORKER, metavar="CMD", help="{issue}, {repo} and {root} are substituted")
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds per worker run")
+    p.add_argument("--comparison", default=None, help="id shared by every run of one baseline/candidate comparison")
     p.add_argument("--results", type=Path, default=None)
     p.add_argument("--keep", action="store_true", help="keep every sandbox, not only failing ones")
     p.add_argument("--json", action="store_true")
@@ -330,6 +360,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(bad), file=sys.stderr)
         return 2
 
+    if args.comparison is not None and not str(args.comparison).strip():
+        p.error("--comparison must be a non-empty id")
+    args.manifest = manifest_id(selected) if args.comparison else None
+    args.grader = grader_id(args.spec) if args.comparison else None
     sha, results = harness_sha(), args.results or default_results()
     results.parent.mkdir(parents=True, exist_ok=True)
     rows = []
