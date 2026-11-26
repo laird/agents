@@ -579,6 +579,9 @@ for _d in "${_dirs[@]}"; do
   done
 done
 SCHEDPATH="$T/bin:$SAFEBIN"
+# GitHub Actions sets XDG_CONFIG_HOME outside $HOME. Units follow that
+# variable, so the scratch home must own it or later cases see a leftover timer.
+export XDG_CONFIG_HOME="$T/home/.config"
 # A cron daemon is "running", so a systemd user manager is not chosen.
 cat > "$T/bin/pgrep" <<'STUB'
 #!/bin/bash
@@ -629,7 +632,7 @@ chmod +x "$T/bin/systemctl" "$T/bin/loginctl"
 OUT=$(SYSD="$T/sysd" FAKE_LINGER=no SYSTEMCTL_DOWN=0 PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
 assert_contains "systemd ensure names the timer" "installed systemd user timer" "$OUT"
 assert_contains "systemd ensure notes linger" "loginctl enable-linger" "$OUT"
-UNIT=$(find "$HOME/.config/systemd/user" -name 'autocoder-quota-failover-*.timer' 2>/dev/null | head -1)
+UNIT=$(find "$XDG_CONFIG_HOME/systemd/user" -name 'autocoder-quota-failover-*.timer' 2>/dev/null | head -1)
 [ -n "$UNIT" ] && ok "systemd timer file written" || bad "systemd timer file written"
 grep -q 'OnUnitInactiveSec=120s' "$UNIT" && ok "quota timer is every 2 minutes" || bad "timer interval: $(cat "$UNIT" 2>/dev/null)"
 OUT=$(SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
@@ -653,7 +656,7 @@ EOF
 chmod +x "$T/bin/uname" "$T/bin/launchctl"
 : > "$CRONTAB_FILE"
 echo "0 3 * * * existing-job" > "$CRONTAB_FILE"
-rm -rf "$HOME/.config/systemd" "$HOME/Library"
+rm -rf "$XDG_CONFIG_HOME/systemd" "$HOME/Library"
 OUT=$(FAKE_UNAME=Darwin FAKE_CROND=yes SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1)
 assert_contains "launchd ensure names the agent" "installed launchd agent" "$OUT"
 PLIST=$(find "$HOME/Library/LaunchAgents" -name 'com.autocoder.quota-failover.*.plist' 2>/dev/null | head -1)
@@ -664,7 +667,7 @@ grep -q 'autocoder-quota-failover:' "$CRONTAB_FILE" \
 
 # Nothing available.
 rm -f "$T/bin/crontab" "$T/bin/launchctl"
-rm -rf "$HOME/Library" "$HOME/.config/systemd"
+rm -rf "$HOME/Library" "$XDG_CONFIG_HOME/systemd"
 OUT=$(FAKE_UNAME= SYSTEMCTL_DOWN=1 SYSD="$T/sysd" PATH="$SCHEDPATH" bash "$SCRIPT" --ensure --repo "$REPO" 2>&1); RC=$?
 [ "$RC" -ne 0 ] && ok "no scheduler exits non-zero" || bad "no scheduler exits non-zero — rc $RC: $OUT"
 assert_contains "no scheduler names --loop" "--loop" "$OUT"
