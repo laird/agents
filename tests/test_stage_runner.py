@@ -275,6 +275,13 @@ def test_stage_args_reads_a_timings_file_from_before_the_load_columns(tmp_path):
 
 
 # ── host-exclusive stages: one at a time host-wide, the gate ahead of a preflight ──────────────
+def wait_until(cond, timeout=20.0):
+    t0 = time.monotonic()
+    while not cond():
+        assert time.monotonic() - t0 < timeout, "condition not met in time"
+        time.sleep(0.05)
+
+
 def budget_env(tmp_path, role=None):
     env = {"AUTOCODER_PREFLIGHT_DIR": str(tmp_path / "budget"), "AUTOCODER_HOST_EXCLUSIVE_POLL_S": "0.1",
            "AUTOCODER_HOST_EXCLUSIVE_WAIT_MAX_S": "30", "AUTOCODER_LOADAVG_FILE": str(tmp_path / "no-loadavg")}
@@ -319,9 +326,11 @@ def test_gate_role_is_admitted_ahead_of_a_waiting_preflight(tmp_path):
     order = tmp_path / "order"
     lib = RUNNER.parent / "preflight-budget.sh"
     env = budget_env(tmp_path)
+    go_file, lock_dir = tmp_path / "go", tmp_path / "budget" / "exclusive"
     holder = subprocess.Popen(["bash", str(lib), "exclusive", "--name", "types", "--role", "preflight", "--",
-                               "sh", "-c", f"echo holder >> {order}; sleep 1.5"], env={**os.environ, **env})
-    time.sleep(0.3)
+                               "sh", "-c", f"echo holder >> {order}; until [ -e {go_file} ]; do sleep 0.05; done"],
+                              env={**os.environ, **env})
+    wait_until(lambda: (lock_dir / "types.lock.holder").exists())
     out = {}
 
     def go(tag, role):
@@ -330,7 +339,9 @@ def test_gate_role_is_admitted_ahead_of_a_waiting_preflight(tmp_path):
 
     tp = threading.Thread(target=go, args=("preflight", "preflight"))
     tg = threading.Thread(target=go, args=("gate", "gate"))
-    tp.start(); time.sleep(0.4); tg.start(); tp.join(); tg.join(); holder.wait()
+    tp.start(); time.sleep(1.0)   # the preflight is in line first (its wait is not observable from outside the run dir)
+    tg.start(); wait_until(lambda: list(lock_dir.glob("types.lock.wants.*")))   # the gate's marker is
+    go_file.touch(); tp.join(); tg.join(); holder.wait()
     assert order.read_text().split() == ["holder", "gate", "preflight"]
     assert "the gate wants it next" in out["preflight"].stdout   # the preflight's stage tail carries the helper's line
 
@@ -338,11 +349,16 @@ def test_gate_role_is_admitted_ahead_of_a_waiting_preflight(tmp_path):
 def test_host_exclusive_wait_is_not_counted_against_the_stage_timeout(tmp_path):
     lib = RUNNER.parent / "preflight-budget.sh"
     env = budget_env(tmp_path)
-    holder = subprocess.Popen(["bash", str(lib), "exclusive", "--name", "types", "--role", "preflight", "--", "sleep", "1.5"],
-                              env={**os.environ, **env})
-    time.sleep(0.3)
-    p = run(tmp_path, [st("types", "sleep 0.2", host_exclusive=True, timeout_s=1)], expect_rc=0, env=env)
-    holder.wait()
+    go_file, lock_dir = tmp_path / "go", tmp_path / "budget" / "exclusive"
+    holder = subprocess.Popen(["bash", str(lib), "exclusive", "--name", "types", "--role", "preflight", "--",
+                               "sh", "-c", f"until [ -e {go_file} ]; do sleep 0.05; done"], env={**os.environ, **env})
+    wait_until(lambda: (lock_dir / "types.lock.holder").exists())
+    res = {}
+    t = threading.Thread(target=lambda: res.update(p=run(tmp_path, [st("types", "sleep 0.2", host_exclusive=True, timeout_s=1)],
+                                                         expect_rc=0, env=env)))
+    t.start(); wait_until(lambda: list(lock_dir.glob("types.lock.wants.*"))); time.sleep(1.3)   # held past the stage's timeout
+    go_file.touch(); t.join(); holder.wait()
+    p = res["p"]
     assert p.timings["stages"]["types"]["host_exclusive_wait_s"] >= 1
     assert "exceeded its 1 s timeout" not in p.stdout
 

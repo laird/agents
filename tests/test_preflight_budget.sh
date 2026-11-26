@@ -24,6 +24,11 @@ export AUTOCODER_PREFLIGHT_DIR="$TMP/budget" AUTOCODER_PREFLIGHT_POLL_S=0.1 AUTO
 unset AUTOCODER_PREFLIGHT_SLOTS AUTOCODER_PREFLIGHT_PRIORITY AUTOCODER_PREFLIGHT_GATES_CMD AUTOCODER_LOADAVG_FILE AUTOCODER_HOST_CORES
 run() { bash "$LIB" "$@"; }
 reset() { rm -rf "$AUTOCODER_PREFLIGHT_DIR"; }
+# Sequencing is by condition, never by a fixed sleep (the suite runs under load): a holder holds until its
+# go-file appears (`hold FILE`), and `wait_for EXPR` polls up to 20 s for the next waiter's ticket or marker.
+hold() { printf 'until [ -e "%s" ]; do sleep 0.05; done' "$1"; }
+wait_for() { local i=0; until eval "$1"; do sleep 0.05; i=$((i + 1)); [ "$i" -lt 400 ] || { bad "wait_for timed out: $1"; return 1; }; done; }
+tickets() { find "$AUTOCODER_PREFLIGHT_DIR/queue" -name '*.ticket' 2>/dev/null | wc -l; }
 
 # ── 1. the arithmetic (pure, sourced) ────────────────────────────────────────────────────────
 # the subshell's counters are its own: re-count from its output
@@ -79,11 +84,15 @@ eq "an unknown command is usage (2)" 2 "$RC"
 # ── 3. the line: arrival order, and a hotfix overtakes every ordinary waiter ─────────────────
 reset
 ORDER="$TMP/order"; : > "$ORDER"
-run run --what A -- sh -c "echo A-start >> '$ORDER'; sleep 1.5; echo A-end >> '$ORDER'" 2>"$TMP/A.err" &
-sleep 0.3; run run --what B --branch feature/b -- sh -c "echo B >> '$ORDER'" 2>"$TMP/B.err" &
-sleep 0.3; run run --what C --branch feature/c -- sh -c "echo C >> '$ORDER'" 2>"$TMP/C.err" &
-sleep 0.3; run run --what D --branch hotfix/9 -- sh -c "echo D >> '$ORDER'" 2>"$TMP/D.err" &
-wait
+run run --what A -- sh -c "echo A-start >> '$ORDER'; $(hold "$TMP/go3"); echo A-end >> '$ORDER'" 2>"$TMP/A.err" &
+wait_for '[ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]'
+run run --what B --branch feature/b -- sh -c "echo B >> '$ORDER'" 2>"$TMP/B.err" &
+wait_for '[ "$(tickets)" -ge 1 ]'
+run run --what C --branch feature/c -- sh -c "echo C >> '$ORDER'" 2>"$TMP/C.err" &
+wait_for '[ "$(tickets)" -ge 2 ]'
+run run --what D --branch hotfix/9 -- sh -c "echo D >> '$ORDER'" 2>"$TMP/D.err" &
+wait_for '[ "$(tickets)" -ge 3 ]'; wait_for 'grep -q "1 hotfix ahead" "$TMP/B.err"'
+touch "$TMP/go3"; wait
 eq "line: the holder ends, the hotfix goes next, then arrival order" "A-start A-end D B C" "$(tr '\n' ' ' <"$ORDER" | sed 's/ $//')"
 B=$(cat "$TMP/B.err"); D=$(cat "$TMP/D.err")
 has "line: the wait names the holder (pid, started, what)" 'holders: slot 0: pid=[0-9]+ token=[^ ]+ started=20[0-9-]+T[0-9:]+Z priority=ordinary what=A' "$B"
@@ -114,8 +123,10 @@ has "cpu: then ran" '^RAN-WHEN-CLEAR$' "$out"
 # a hotfix and an ordinary waiter both held by load: the hotfix is first when it clears
 printf '41.20 30.00 20.00 2/900 1\n' > "$LA"; : > "$ORDER"
 run run --what O -- sh -c "echo O >> '$ORDER'" 2>/dev/null &
-sleep 0.3; run run --priority hotfix --what H -- sh -c "echo H >> '$ORDER'" 2>/dev/null &
-sleep 0.4; printf '2.00 10.00 20.00 1/900 1\n' > "$LA"
+wait_for '[ "$(tickets)" -ge 1 ]'
+run run --priority hotfix --what H -- sh -c "echo H >> '$ORDER'" 2>/dev/null &
+wait_for '[ "$(tickets)" -ge 2 ]'
+printf '2.00 10.00 20.00 1/900 1\n' > "$LA"
 wait
 eq "cpu: when the load clears the hotfix is first" "H O" "$(tr '\n' ' ' <"$ORDER" | sed 's/ $//')"
 out=$(AUTOCODER_PREFLIGHT_LOAD_FACTOR=3.0 bash -c 'printf "41.20 1 1 1/1 1\n" > "$1"; bash "$2" run -- echo factor-raised' _ "$LA" "$LIB" 2>&1)
@@ -178,33 +189,41 @@ has "claims: a ticket is a noclobber redirection" 'set -o noclobber' "$(cat "$LI
 
 # ── 7. the wait bound names the holder; the slot count widens while waiting ──────────────────
 reset
-run run --what long -- sleep 2 2>/dev/null &
-sleep 0.3
+run run --what long -- sh -c "$(hold "$TMP/go7")" 2>/dev/null &
+wait_for '[ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]'
 out=$(AUTOCODER_PREFLIGHT_WAIT_MAX_S=1 run run -- echo MUST-NOT-RUN 2>&1); RC=$?
+touch "$TMP/go7"
 eq "bound: past it the run fails (1)" 1 "$RC"
 hasnt "bound: nothing ran" 'MUST-NOT-RUN' "$out"
 has "bound: the failure names the holder" 'no slot after [0-9]+s \(AUTOCODER_PREFLIGHT_WAIT_MAX_S=1\): all 1 slot\(s\) held, 0 waiting ahead \(0 hotfix\); holders: slot 0: pid=[0-9]+ .*what=long' "$out"
 wait
 reset; printf 'MemTotal:       67108864 kB\n' > "$TMP/meminfo"
 GATES="$TMP/gates"; echo 2 > "$GATES"
-( sleep 0.5; echo 0 > "$GATES" ) &
 # two gates leave one slot, held; when the gates end the count widens to three and the waiter takes slot 2
 ( unset AUTOCODER_PREFLIGHT_SLOTS; export AUTOCODER_PREFLIGHT_MEMINFO_FILE="$TMP/meminfo" AUTOCODER_PREFLIGHT_GATES_CMD="cat '$GATES'"
-  bash "$LIB" run --what first -- sleep 2 2>/dev/null &
-  sleep 0.2
-  bash "$LIB" run --what widened -- echo widened 2>&1
-  wait ) > "$TMP/widen.out"
+  bash "$LIB" run --what first -- sh -c "$(hold "$TMP/go7b")" 2>/dev/null &
+  wait_for '[ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]'
+  bash "$LIB" run --what widened -- echo widened > "$TMP/widen.waiter" 2>&1 &
+  wait_for 'grep -q "all 1 slot(s) held" "$TMP/widen.waiter"'
+  echo 0 > "$GATES"
+  wait_for 'grep -q "^widened$" "$TMP/widen.waiter"'
+  touch "$TMP/go7b"; wait; cat "$TMP/widen.waiter" ) > "$TMP/widen.out"
 has "widen: the waiter saw the budget move when the gates ended" 'the host budget moved while waiting \(1 -> 3 slot\(s\): 0 running gate\(s\) now\)' "$(cat "$TMP/widen.out")"
 has "widen: and took a slot the host now had" 'preflight budget: slot [23]/3 after [0-9]+s in line' "$(cat "$TMP/widen.out")"
 has "widen: ran" '^widened$' "$(cat "$TMP/widen.out")"
 
 # ── 8. the host-exclusive lock: one at a time; the gate ahead of a waiting preflight ─────────
-reset; : > "$ORDER"
-run exclusive --name types --role preflight --what P1 -- sh -c "echo P1-start >> '$ORDER'; sleep 1.5; echo P1-end >> '$ORDER'" 2>"$TMP/P1.err" &
-sleep 0.3; run exclusive --name types --role preflight --what W -- sh -c "echo W >> '$ORDER'" 2>"$TMP/W.err" &
-sleep 0.3; run exclusive --name types --role gate --what G --waited-file "$TMP/G.waited" -- sh -c "echo G >> '$ORDER'" 2>"$TMP/G.err" &
-sleep 0.3; run exclusive --name other --role preflight --what X -- sh -c "echo X >> '$ORDER'" 2>/dev/null &
-wait
+reset; : > "$ORDER"; EXD="$AUTOCODER_PREFLIGHT_DIR/exclusive"
+run exclusive --name types --role preflight --what P1 -- sh -c "echo P1-start >> '$ORDER'; $(hold "$TMP/go8"); echo P1-end >> '$ORDER'" 2>"$TMP/P1.err" &
+wait_for '[ -e "$EXD/types.lock.holder" ]'
+run exclusive --name types --role preflight --what W -- sh -c "echo W >> '$ORDER'" 2>"$TMP/W.err" &
+wait_for 'grep -q "waiting for the host-exclusive lock" "$TMP/W.err"'
+run exclusive --name types --role gate --what G --waited-file "$TMP/G.waited" -- sh -c "echo G >> '$ORDER'" 2>"$TMP/G.err" &
+wait_for 'ls "$EXD"/types.lock.wants.* >/dev/null 2>&1'; wait_for 'grep -q "the gate wants it next" "$TMP/W.err"'
+run exclusive --name other --role preflight --what X -- sh -c "echo X >> '$ORDER'" 2>/dev/null &
+wait_for 'grep -q "^X$" "$ORDER"'
+sleep 1   # the gate's reported wait is whole seconds; give it one
+touch "$TMP/go8"; wait
 has "exclusive: another name is not held up (X ran while P1 held types)" '^X$' "$(head -2 "$ORDER")"
 seq_types=$(grep -v '^X$' "$ORDER" | tr '\n' ' ' | sed 's/ $//')
 eq "exclusive: the types lock's order is holder, gate, preflight" "P1-start P1-end G W" "$seq_types"
@@ -215,15 +234,15 @@ has "exclusive: the gate says who holds it" 'types: waiting for the host-exclusi
 has "exclusive: the gate reports its wait" 'types: the host-exclusive lock is ours after [0-9]+s' "$G"
 waited=$(cat "$TMP/G.waited"); [[ "$waited" =~ ^[0-9]+$ ]] && [ "$waited" -ge 1 ] && ok "exclusive: the waited file holds the seconds ($waited)" || bad "exclusive: waited file '$waited'"
 eq "exclusive: no wants marker or holder left" 0 "$(find "$AUTOCODER_PREFLIGHT_DIR/exclusive" -name '*.wants.*' -o -name '*.holder' | wc -l)"
-run exclusive --name types --role preflight --what held -- sleep 2 2>/dev/null &
-sleep 0.3
+run exclusive --name types --role preflight --what held -- sh -c "$(hold "$TMP/go8b")" 2>/dev/null &
+wait_for '[ -e "$EXD/types.lock.holder" ]'
 out=$(AUTOCODER_HOST_EXCLUSIVE_WAIT_MAX_S=1 run exclusive --name types --role gate -- echo MUST-NOT-RUN 2>&1); RC=$?
 eq "exclusive: past the bound 125, a host condition" 125 "$RC"
 hasnt "exclusive: nothing ran" 'MUST-NOT-RUN' "$out"
 has "exclusive: the refusal names the holder" 'types: the host-exclusive lock did not come in [0-9]+s \(AUTOCODER_HOST_EXCLUSIVE_WAIT_MAX_S=1\): pid=[0-9]+ .*what=held' "$out"
 st=$(run status 2>&1)
 has "status: the exclusive lock and its holder" '^exclusive types: pid=[0-9]+ token=[^ ]+ role=preflight since=.* what=held$' "$st"
-wait
+touch "$TMP/go8b"; wait
 out=$(run exclusive --name 'bad name' --role gate -- true 2>&1); RC=$?
 eq "exclusive: a bad name is usage (2)" 2 "$RC"
 out=$(run exclusive --name ok --role owner -- true 2>&1); RC=$?
@@ -237,11 +256,14 @@ has "exclusive: and to gate without it" 'role=gate' "$out"
 
 # ── 9. status: the slots, the holders, the waiters in order ──────────────────────────────────
 reset
-run run --what holder -- sleep 1.5 2>/dev/null &
-sleep 0.3; run run --what waiter1 -- true 2>/dev/null &
-sleep 0.2; run run --priority hotfix --what waiter2 -- true 2>/dev/null &
-sleep 0.2
+run run --what holder -- sh -c "$(hold "$TMP/go9")" 2>/dev/null &
+wait_for '[ -e "$AUTOCODER_PREFLIGHT_DIR/slots/slot-0.holder" ]'
+run run --what waiter1 -- true 2>/dev/null &
+wait_for '[ "$(tickets)" -ge 1 ]'
+run run --priority hotfix --what waiter2 -- true 2>/dev/null &
+wait_for '[ "$(tickets)" -ge 2 ]'
 st=$(run status 2>&1)
+touch "$TMP/go9"
 has "status: the budget line" '^preflight budget: 1 slot\(s\) \(AUTOCODER_PREFLIGHT_SLOTS' "$st"
 has "status: held count" '^held: 1$' "$st"
 has "status: the holder" '^  slot 0: pid=[0-9]+ token=[^ ]+ started=.* priority=ordinary what=holder$' "$st"
