@@ -152,6 +152,34 @@ def test_the_manifest_covers_task_seed_and_setup(tmp_path, env):
     assert mod.manifest_id(selected) != changed_seed
 
 
+def _eval_run():
+    spec = importlib.util.spec_from_file_location("eval_run_manifest", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fingerprint_parts_do_not_collide_and_seed_links_and_modes_count(tmp_path, env):
+    mod = _eval_run()
+    assert mod.fingerprint([b"AAA\0seed/b.txt\nBBB"]) != mod.fingerprint([b"AAA", b"seed/b.txt\nBBB"])
+    case_dir = Path(env["AUTOCODER_EVAL_CASES"]) / "dev" / "case-b"
+    seed = case_dir / "seed"
+    (seed / "real").mkdir()
+    (seed / "real" / "lib.py").write_text("one\n")
+    (seed / "other").mkdir()
+    (seed / "other" / "lib.py").write_text("two\n")
+    (seed / "vendor").symlink_to("real", target_is_directory=True)
+    selected = [("dev", case_dir)]
+    first = mod.manifest_id(selected)
+    (seed / "vendor").unlink()
+    (seed / "vendor").symlink_to("other", target_is_directory=True)
+    retargeted = mod.manifest_id(selected)
+    assert retargeted != first
+    run = seed / "real" / "lib.py"
+    run.chmod(0o755)
+    assert mod.manifest_id(selected) != retargeted
+
+
 def test_the_worker_sees_the_seed_the_setup_commit_and_the_issue(tmp_path, env):
     rows = run_json(env, "--worker", fake(tmp_path, "lands", LANDS), "--case", "case-a", "--keep")["rows"]
     root = Path(rows[0]["root"])

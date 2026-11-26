@@ -264,30 +264,68 @@ def run_case(split: str, case_dir: Path, repeat: int, args, sha: str | None) -> 
 
 # ── Selection, summary and the CLI ───────────────────────────────────────────
 def fingerprint(parts: list[bytes]) -> str:
+    """Length-prefix each part. A raw separator inside a file must not collide with the next part."""
     digest = hashlib.sha256()
     for part in parts:
+        digest.update(len(part).to_bytes(8, "big"))
         digest.update(part)
-        digest.update(b"\0")
     return digest.hexdigest()[:16]
+
+
+def _file_part(rel: str, path: Path) -> bytes:
+    """Path, mode, symlink target, and bytes. The sandbox copies followed content and its mode."""
+    followed = path.stat() if path.exists() else None
+    mode = f"{followed.st_mode & 0o777:o}" if followed is not None else "0"
+    link = f" -> {os.readlink(path)}" if path.is_symlink() else ""
+    body = path.read_bytes() if path.is_file() else b""
+    return f"{rel} {mode}{link}\n".encode() + body
+
+
+def _seed_parts(case_dir: Path) -> list[bytes]:
+    seed = case_dir / "seed"
+    if not seed.is_dir():
+        return []
+    parts = []
+    seen: set[tuple[int, int]] = set()
+    for dirpath, dirnames, filenames in os.walk(seed, followlinks=True):
+        current = Path(dirpath)
+        try:
+            st = current.stat()
+        except OSError:
+            dirnames.clear()
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            dirnames.clear()
+            continue
+        seen.add(key)
+        rel_dir = current.relative_to(case_dir).as_posix()
+        for name in dirnames:
+            link = current / name
+            if link.is_symlink():
+                parts.append(f"link {rel_dir}/{name} -> {os.readlink(link)}\n".encode())
+        for name in sorted(filenames):
+            path = current / name
+            if path.is_file() or path.is_symlink():
+                parts.append(_file_part(path.relative_to(case_dir).as_posix(), path))
+    return parts
 
 
 def manifest_id(selected: list[tuple[str, Path]]) -> str:
     """Fingerprint of the case inputs a run actually uses, not case.json alone.
 
-    task.md is the issue body, setup.sh is the second actor, and seed/ is the repo.
-    A comparison whose manifest ignores those can accept a different task.
+    task.md is the issue body, setup.sh is the second actor, and seed/ is the repo,
+    including followed symlinks, link targets, and file modes. A comparison whose
+    manifest ignores those can accept a different task.
     """
     parts = []
     for split, case_dir in sorted(selected, key=lambda item: (item[0], item[1].name)):
         parts.append(f"{split}/{case_dir.name}\n".encode())
         for name in ("case.json", "task.md", "setup.sh"):
             path = case_dir / name
-            if path.is_file():
-                parts.append(f"{name}\n".encode() + path.read_bytes())
-        seed = case_dir / "seed"
-        if seed.is_dir():
-            for path in sorted(p for p in seed.rglob("*") if p.is_file()):
-                parts.append(f"{path.relative_to(case_dir).as_posix()}\n".encode() + path.read_bytes())
+            if path.is_file() or path.is_symlink():
+                parts.append(_file_part(name, path))
+        parts.extend(_seed_parts(case_dir))
     return fingerprint(parts)
 
 

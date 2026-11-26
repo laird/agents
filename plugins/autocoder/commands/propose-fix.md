@@ -86,6 +86,7 @@ reports counts only.
 ### 3. Baseline: the dev cases on the harness as it is
 
 ```bash
+git -C "$WT" checkout -q "$BEFORE"
 AUTOCODER_HARNESS_SHA="$BEFORE" python3 "$SCRIPT_DIR/eval-run.py" \
   --cases "$CASES" --split dev --case $(echo "$DEV_CASES" | awk '{print $1}') \
   --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --comparison "$CMP"
@@ -116,6 +117,7 @@ make the one the evidence supports most and let the verdict decide.
 ### 5. Measure: dev again, then the held-out cases, both shas
 
 ```bash
+git -C "$WT" checkout -q "$AFTER"
 AUTOCODER_HARNESS_SHA="$AFTER" python3 "$SCRIPT_DIR/eval-run.py" \
   --cases "$CASES" --split dev --case $(echo "$DEV_CASES" | awk '{print $1}') \
   --repeat "$REPEAT" --worker "$WORKER" --spec "$SPEC" --comparison "$CMP"
@@ -130,10 +132,11 @@ done
 git -C "$WT" checkout -q "fix/${FINDING%%:*}-${STAMP}"
 ```
 
-The first pass runs held-out on both shas. A later pass must not run `$BEFORE` again: those rows
-stay in the comparison, and a second run makes the held-out counts `2*REPEAT` against the
-candidate's `REPEAT`, which is inconclusive. On a refine, run only the `$AFTER` commands above
-(dev, then held-out).
+The first pass, and any pass under a new `CMP`, runs held-out on both shas. A same-id refine
+must not run `$BEFORE` again: those rows stay in the comparison, and a second run makes the
+held-out counts `2*REPEAT` against the candidate's `REPEAT`, which is inconclusive. On that
+refine, run only the `$AFTER` commands above (dev, then held-out). The dev commands check the
+sha out first. The label alone is not the tree: the worker loads `--plugin-dir $WT`.
 
 A held-out run's kept roots hold the failing traces; do not open them. If a dev case's kept root
 is needed to understand a failure, that one is yours to read.
@@ -152,22 +155,27 @@ VERDICT=$?
 - **reject (exit 1):** run the analyst on the dev runs' traces (`analyze-traces.py --traces
   <kept root>/traces.jsonl` for each kept dev root) and read what the fixed harness did instead.
   You may refine the change ONCE: amend in `$WT`, take the new sha as `AFTER`, keep the same
-  `CMP`, and repeat only the `$AFTER` measurements in step 5 (dev, then held-out) and this step.
-  Do not run held-out on `$BEFORE` again, and do not return to step 4. A second reject ends the
+  `CMP`, and repeat only the `$AFTER` measurements in step 5 (the dev command, which checks
+  `$AFTER` out, then held-out for `$AFTER` only) and this step. Do not run `$BEFORE` again, and
+  do not return to step 4. A second reject ends the
   proposal: leave the branch unpushed, and record the decision rows (both are in
   `eval-decisions.jsonl`) in your summary so the next attempt starts from them.
 - **inconclusive (exit 3):** say the reason, and do not treat it as a pass.
   - `no <split> case was run`: that split has no rows. Author a case if none exists, then run
-    that split on both shas with the same `CMP`. Do not re-run the split that already matched.
+    that split on both shas with the same `CMP`, using the step 3 command for dev `$BEFORE` and
+    the step 5 dev command for dev `$AFTER` (each checks its sha out). For held-out, run the loop
+    on both shas. Do not re-run the split that already matched.
   - `fewer than N runs`: one side did not run a case the other side ran. A count of 0 is this
-    reason. Re-run that side with the same cases and the same `CMP`. Do not add or drop a case.
-  - The case set, grader, worker, timeout, or `REPEAT` must change: mint a new `CMP`. Check out
-    `$BEFORE` in `$WT`, run step 3, check out the feature branch, then run step 5 and step 6.
-    Do not return to step 4. Step 3 labels rows with `$BEFORE` but runs whatever `$WT` has
-    checked out, so a baseline measured on the candidate tree is not a baseline. The old rows
-    share the harness sha, so the same `CMP` would pool them and the settings would disagree.
+    reason. Re-run that side with the same cases and the same `CMP`. Check `$WT` out at that
+    side's sha first: reuse the step 3 command for `$BEFORE` and the step 5 dev command for
+    `$AFTER`. For held-out, run only that sha's iteration of the loop. Do not add or drop a case.
+  - The case set, grader, worker, timeout, or `REPEAT` must change: mint a new `CMP`, then run
+    step 3 (it checks `$BEFORE` out), check out the feature branch, and run step 5 as a first
+    pass over both shas, then step 6. Do not return to step 4. The "do not run `$BEFORE` again"
+    rule does not apply to a new id. The old rows share the harness sha, so the same `CMP` would
+    pool them and the settings would disagree.
   - A refine after an amend, same `REPEAT` and same cases: keep the same `CMP` and re-run only
-    the `$AFTER` rows. The new after sha drops the replaced candidate rows. The baseline rows
+    the `$AFTER` commands. The new after sha drops the replaced candidate rows. The baseline rows
     stay; do not append them again.
 
 ### 7. Report and clean up

@@ -535,7 +535,8 @@ repeat:
    `${AUTOCODER_EVAL_RESULTS:-${XDG_STATE_HOME:-$HOME/.local/state}/autocoder/eval-results.jsonl}`):
    `{ts, case, split, backend, repeat, pass, failed, outcome, gates, tool_calls, duration_s, worker,
    harness: {sha}, root}`. With `--comparison ID` the row also carries `comparison`, `manifest`
-   (sha256[:16] of the selected `split/name`, `case.json`, `task.md`, `setup.sh` and `seed/`), `grader` (sha256[:16] of
+   (sha256[:16] of the selected `split/name`, `case.json`, `task.md`, `setup.sh` and `seed/`,
+   including followed symlinks, link targets and file modes; each frame is length-prefixed), `grader` (sha256[:16] of
    `--spec`) and `settings` (`manifest`, `grader`, `worker`, `repeat`, `timeout`). An empty id is
    an error. Omit the flag and those keys stay absent, so older ledgers keep their shape. `failed`
    lists `outcome`, `max_gates`, `max_tool_calls`, `classifiers_silent:<id>`,

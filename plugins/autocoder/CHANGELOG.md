@@ -76,7 +76,9 @@ once (Version Management in `docs/maintaining.md`).
   rows from another comparison that reuse the same harness sha no longer move
   the verdict. A missing side stays "fewer than N runs". A second batch past
   the planned repeat count is inconclusive instead of being pooled. The
-  manifest covers the task, seed and setup, not only `case.json`.
+  manifest covers the task, seed and setup, not only `case.json`, including
+  followed symlinks, link targets and file modes. Frames are length-prefixed
+  so a file cannot impersonate the next one.
   `/propose-fix` keeps one id across a refine and re-runs only the candidate
   sha; a new repeat count or case set starts a new id with the worktree
   checked out at the baseline sha.
