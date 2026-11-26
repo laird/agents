@@ -131,6 +131,38 @@ add_issue 7 "P1"
 bash "$SCRIPT_DIR/bounce-resume.sh" find >/dev/null 2>&1; RC=$?
 assert_eq "no bounces: find exits 1" "1" "$RC"
 
+# ── 7. A comment thread past ARG_MAX still resolves the bounce (#432) ─────
+# One comment bigger than MAX_ARG_STRLEN (32 pages). Passing the issue as
+# ISSUE_JSON made python die with "Argument list too long", and the gate
+# claimed new work over the bounce. Written straight into the issue file:
+# issue_comment's --body is itself one argv, and would hit the same limit.
+reset
+bounced 5 "$ME"
+issue_bytes=$(( $(getconf PAGE_SIZE) * 32 + 4096 ))
+python3 - "$ISSUE_DIR_PATH/working/005.md" "$issue_bytes" <<'PY'
+import sys
+path, n = sys.argv[1], int(sys.argv[2])
+with open(path, "a", encoding="utf-8") as f:
+    f.write("\n> **t** " + ("y" * n) + "\n")
+PY
+ERR="$TMP/bounce-large.err"
+OUT=$(bash "$SCRIPT_DIR/bounce-resume.sh" check 5 2>"$ERR"); RC=$?
+assert_eq "large thread: check exits 0" "0" "$RC"
+assert_eq "large thread: check names the kind" "conflict" "$OUT"
+if grep -q "Argument list too long" "$ERR"; then
+  bad "large thread: check still hit argument list too long"
+else
+  ok "large thread: check did not hit argument list too long"
+fi
+OUT=$(bash "$SCRIPT_DIR/bounce-resume.sh" find 2>"$ERR"); RC=$?
+assert_eq "large thread: find exits 0" "0" "$RC"
+assert_eq "large thread: find names #5" "5 conflict" "$OUT"
+if grep -q "Argument list too long" "$ERR"; then
+  bad "large thread: find still hit argument list too long"
+else
+  ok "large thread: find did not hit argument list too long"
+fi
+
 echo ""
 echo "Tests: $FAIL failed, $PASS passed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

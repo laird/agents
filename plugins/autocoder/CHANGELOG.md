@@ -59,6 +59,13 @@ once (Version Management in `docs/maintaining.md`).
   reads a branch whose last segment ends in a version (`...-4.17.21`) as a
   branch, not a file.
 
+### Fixed
+
+- `bounce-resume.sh` reads the issue JSON from a file instead of the
+  environment. A long comment thread made that exec die with "Argument list
+  too long", the script failed toward "none", and the gate claimed new work
+  over a bounce that stayed `working` (#432).
+
 ## [4.70.0] - 2026-11-26
 
 ### Added

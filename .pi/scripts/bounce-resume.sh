@@ -45,12 +45,23 @@ WT=$(cd "$WT" 2>/dev/null && pwd -P) || exit 2
 source "${SCRIPT_DIR}/issue-fns.sh" 2>/dev/null || exit 2
 
 # owns <issue-json> — prints the kind when this worktree owns the newest live bounce.
+# The JSON goes in a file, not the environment. A long comment thread plus the
+# ambient environment exceeds ARG_MAX, the exec dies, and this script fails
+# toward "none" — so the gate claims new work over a bounce that stays
+# `working` (#432). Same class of bug as the claim race check (#423).
 owns() {
-  ISSUE_JSON="$1" ME="$WT" python3 - <<'PY'
+  local json_file rc
+  json_file=$(mktemp "${TMPDIR:-/tmp}/autocoder-bounce-json.XXXXXX") || return 1
+  if ! printf '%s' "$1" > "$json_file"; then
+    rm -f "$json_file"
+    return 1
+  fi
+  ISSUE_JSON_FILE="$json_file" ME="$WT" python3 - <<'PY'
 import json, os, re, sys
 try:
-    issue = json.loads(os.environ["ISSUE_JSON"])
-except ValueError:
+    with open(os.environ["ISSUE_JSON_FILE"]) as fh:
+        issue = json.load(fh)
+except (OSError, ValueError):
     sys.exit(1)
 if str(issue.get("state", "")).upper() != "OPEN":
     sys.exit(1)
@@ -82,6 +93,9 @@ if owner != os.environ["ME"]:
     sys.exit(1)
 print(kind)
 PY
+  rc=$?
+  rm -f "$json_file"
+  return "$rc"
 }
 
 if [ "$MODE" = check ]; then
