@@ -349,6 +349,27 @@ def test_landing_proof_names_how_master_carries_a_branch(fx):
     assert T.landing_proof(cfg, "origin/feature/squashed") == ""          # its work is no longer all there
 
 
+def test_landing_proof_reads_an_adjacent_append_conflict_as_landed(fx):
+    """Two members appended a section at the same place of one page; the batch merged them cleanly and
+    landed as one squash commit. Each member's re-merge onto the landed commit now conflicts with the
+    other's lines right there. Every line each member added is in master, so the proof says `lines`;
+    a member whose added line is missing from master still proves nothing."""
+    cfg = fx.cfg()
+    fx.commit_on("master", {"notes.md": "# Notes\n\n## 23. Earlier\n\n- old row\n"})
+    fx.branch("feature/a", {"notes.md": "# Notes\n\n## 23. Earlier\n\n- old row\n\n## 24. From A\n\n- a row\n"})
+    fx.branch("feature/b", {"notes.md": "# Notes\n\n## 23. Earlier\n\n- old row\n\n## 24. From B\n\n- b row\n"})
+    # the batch's own merge resolved the two appends side by side and landed once
+    fx.commit_on("master", {"notes.md": "# Notes\n\n## 23. Earlier\n\n- old row\n\n## 24. From A\n\n- a row\n\n## 24. From B\n\n- b row\n"},
+                 "squash of the batch")   # both headings kept as written (the numbering clash is the page's, not the proof's)
+    pa = T.landing_proof(cfg, "origin/feature/a")
+    pb = T.landing_proof(cfg, "origin/feature/b")
+    assert pa.startswith("lines (") and "notes.md" in pa, pa
+    assert pb.startswith("lines (") and "notes.md" in pb, pb
+    # a branch whose appended line never reached master is not landed, conflict or not
+    fx.branch("feature/c", {"notes.md": "# Notes\n\n## 23. Earlier\n\n- old row\n\n## 24. From C\n\n- c row\n"})
+    assert T.landing_proof(cfg, "origin/feature/c") == ""
+
+
 KEYED_ROW_DRIVER = """\
 import sys
 # A keyed-row merge driver over a file of one row per line (%O %A %B): the result is the rows either side
