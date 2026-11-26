@@ -8,6 +8,16 @@ once (Version Management in `docs/maintaining.md`).
 
 ### Added
 
+- Operational loops' ticks (#422). A fifth ledger, `ticks.jsonl`
+  (`AUTOCODER_TICKS`), takes one line per run of any loop that records
+  itself: a shell loop calls `tick_start` and `tick_end` from `tick-fns.sh`,
+  and a Python loop runs `tick-log.py`. `trace-build.py --ticks` turns each
+  line into a trace of `kind: "tick"`, and attempt traces now carry
+  `kind: "attempt"`. `analyze-traces.py` gains four tick classifiers, each
+  keyed by loop id: `tick-error-streak`, `tick-slow`, `tick-noop-only` and
+  `tick-missing`. They cite the new rules B14 to B17 in `BEHAVIOR.md`. The
+  week page's loop block counts their findings.
+
 - Quota failover (`quota-failover.sh`). When a worker or the manager pane shows
   that agent's usage limit (Claude's weekly-limit dialog and banner, Grok's
   team credit message, Codex's usage-limit text, and the same class of message
