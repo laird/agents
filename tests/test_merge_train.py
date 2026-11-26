@@ -260,7 +260,9 @@ def test_queue_requires_every_ready_label_and_a_ready_comment(fx):
     cfg = T.load_config(fx.work, fx.root / "c.json")
     assert T.plan_queue(cfg) == []
     quiet = fx.issue("labelled but never said READY")
-    assert quiet not in {r["issue"] for r in T.plan_queue(fx.cfg())}
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg())}
+    assert rows[quiet]["state"] == "unread" and rows[quiet]["branch"] == "-"   # a row, never launchable: a labelled item is never passed over silently
+    assert quiet not in {r["issue"] for r in rows.values() if r["state"] == "queue"}
 
 
 def test_queue_any_labels_takes_an_item_carrying_at_least_one_of_them(fx):
@@ -1706,3 +1708,133 @@ def test_red_hold_refuses_a_malformed_value_and_accepts_the_two_release_values(t
     del base["train"]["redHold"]
     (fx.work / ".autocoder.json").write_text(json.dumps(base))
     assert T.load_config(fx.work).red_hold == "closed"
+
+
+# ── every labelled item gets a row: unread, no-ready, unlisted; a dying read is retried ────────────────────
+def fake_fns(tmp_path, message, fail_times=1):
+    """An issue-fns stand-in whose issue_get fails <fail_times> times with <message> on stderr, then answers."""
+    fns = tmp_path / "fns.sh"
+    count = tmp_path / "count"
+    fns.write_text(f"""issue_get() {{
+  n=$(cat {count} 2>/dev/null || echo 0); echo $((n + 1)) > {count}
+  if [ "$n" -lt {fail_times} ]; then printf '%s\\n' "$FNS_MESSAGE" >&2; exit 1; fi
+  echo '{{"number": 1, "state": "OPEN", "labels": [], "comments": [{{"body": "READY on `feature/x`"}}]}}'
+}}
+""")
+    os.environ["FNS_MESSAGE"] = message
+    return fns, count
+
+
+@pytest.mark.parametrize("message", [
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.5:443: i/o timeout',
+    'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+    'Post "https://api.github.com/graphql": read tcp 10.1.2.3:51234->140.82.112.5:443: read: connection reset by peer',
+    'Post "https://api.github.com/graphql": EOF',
+    'error connecting to api.github.com',
+    'graphql: request timed out after 30s',
+])
+def test_tracker_retries_each_graphql_transport_form_instead_of_reading_it_as_empty(fx, tmp_path, monkeypatch, capsys, message):
+    fns, count = fake_fns(tmp_path, message)
+    monkeypatch.setattr(T, "ISSUE_FNS", fns)
+    paused = []
+    r = T.tracker(fx.cfg(), "issue_get", "1", sleep=paused.append)
+    assert r.returncode == 0 and json.loads(r.stdout)["comments"][0]["body"].startswith("READY")
+    assert paused == [T.TRACKER_RETRY_PAUSES[0]] and count.read_text().strip() == "2"
+    assert "died in transport (attempt 1 of 4)" in capsys.readouterr().err
+
+
+def test_tracker_does_not_retry_a_trackers_own_answer(fx, tmp_path, monkeypatch):
+    fns, count = fake_fns(tmp_path, "GraphQL: Could not resolve to an Issue with the number of 1. (repository.issue)")
+    monkeypatch.setattr(T, "ISSUE_FNS", fns)
+    with pytest.raises(RuntimeError, match="exited 1"):
+        T.tracker(fx.cfg(), "issue_get", "1", sleep=lambda s: None)
+    assert count.read_text().strip() == "1"
+
+
+def short_read(real, issue):
+    def fake(cfg, *args, **kw):
+        if args[0] == "issue_get" and str(args[1]) == str(issue):
+            body = json.loads(real(cfg, *args, **kw).stdout)
+            body["comments"], body["body"] = [], ""
+            return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+        return real(cfg, *args, **kw)
+    return fake
+
+
+def dead_read(real, issue, message, rc=1):
+    def fake(cfg, *args, **kw):
+        if args[0] == "issue_get" and str(args[1]) == str(issue):
+            return subprocess.CompletedProcess(args, rc, "", message)
+        return real(cfg, *args, **kw)
+    return fake
+
+
+def test_a_short_read_is_an_unread_row_with_the_count_and_exit_and_the_rest_is_planned(fx, monkeypatch):
+    fx.branch("feature/a", {"a.txt": "a\n"}); fx.branch("feature/b", {"b.txt": "b\n"})
+    a, b = fx.ready("a", "feature/a"), fx.ready("b", "feature/b")
+    monkeypatch.setattr(T, "tracker", short_read(T.tracker, a))
+    lines = []
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg(), log=lines.append)}
+    assert rows[a]["state"] == "unread" and rows[a]["branch"] == "-"
+    assert rows[a]["note"] == "the READY could not be read: issue_get exited 0 with 0 comment(s) read; not planned this cycle, read again next cycle"
+    assert rows[b]["state"] == "queue"
+    assert lines == [f"#{a}: unread: issue_get exit 0, 0 comment(s) read; not planned this cycle"]
+    out, fault = T.plan_train(fx.cfg(), list(rows.values()))
+    assert fault is None
+    assert [ln.split("\t")[:2] for ln in out] == [["skip", str(a)], ["train", str(b)]]
+    assert out[0].startswith(f"skip\t{a}\t-\tunread: the READY could not be read")
+    assert f"1 unread (#{a})" in T.status_line(list(rows.values()), when="W")
+
+
+def test_a_read_that_still_fails_after_the_retries_is_an_unread_row_and_the_plan_goes_on(fx, monkeypatch):
+    fx.branch("feature/a", {"a.txt": "a\n"}); fx.branch("feature/b", {"b.txt": "b\n"})
+    a, b = fx.ready("a", "feature/a"), fx.ready("b", "feature/b")
+    msg = 'Post "https://api.github.com/graphql": dial tcp 140.82.112.5:443: i/o timeout'
+    monkeypatch.setattr(T, "tracker", dead_read(T.tracker, a, msg))
+    lines = []
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg(), log=lines.append)}
+    assert rows[a]["state"] == "unread" and rows[b]["state"] == "queue"
+    assert rows[a]["note"].startswith("the READY could not be read: issue_get exited 1 with 0 comment(s) read (Post \"https://api.github.com/graphql\": dial tcp")
+    assert lines[0].startswith(f"#{a}: unread: issue_get exit 1, 0 comment(s) read: Post")
+
+
+def test_a_complete_read_with_comments_and_no_ready_is_no_ready_not_unread(fx, monkeypatch):
+    fx.branch("feature/a", {"a.txt": "a\n"})
+    plain = fx.issue("plain")
+    fx.comment(plain, "looks fine to me, nothing to add")
+    mention = fx.issue("mention")
+    fx.comment(mention, "Status note, nothing to bank yet.\nFor the record, the sibling issue said READY yesterday.")
+    lines = []
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg(), log=lines.append)}
+    assert rows[plain]["state"] == "no-ready"
+    assert rows[plain]["note"] == "labelled ready-for-review but no comment says READY (1 comment(s) read, issue_get exit 0): not an item until a READY is posted"
+    assert rows[mention]["state"] == "no-ready" and rows[mention]["note"] == T.NO_READY_NOTE
+    assert sorted(lines) == sorted([f"#{plain}: no-ready: issue_get exit 0, 1 comment(s) read, none says READY",
+                                    f"#{mention}: no-ready: issue_get exit 0, 1 comment(s) read, none says READY"])
+    out, fault = T.plan_train(fx.cfg(), list(rows.values()))
+    assert fault is None and sorted(ln.split("\t")[1] for ln in out) == sorted([str(plain), str(mention)]) and all(ln.startswith("skip\t") for ln in out)
+
+
+def test_an_expected_item_the_listing_does_not_return_gets_an_unlisted_row(fx):
+    fx.branch("feature/a", {"a.txt": "a\n"})
+    a = fx.ready("a", "feature/a")
+    gone = fx.issue("gone", labels=())           # exists, carries no queue label: the plan's listing does not return it
+    lines = []
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg(), expected=[a, gone, 4242], log=lines.append)}
+    assert rows[a]["state"] == "queue"
+    assert rows[gone]["state"] == "unlisted" and rows[4242]["state"] == "unlisted"
+    assert rows[gone]["note"] == ("launchable at the tick that launched this cycle but absent from the plan's own listing (1 item(s) listed now, "
+                                  "3 launchable then): a listing lost in transport or a label change; not planned this cycle, listed again next")
+    assert rows[gone]["order"] > rows[a]["order"] and rows[gone]["branch"] == "-"
+    assert lines == [f"#{gone}: unlisted: launchable at the tick, absent from the plan's listing (1 listed now, 3 launchable then)",
+                     "#4242: unlisted: launchable at the tick, absent from the plan's listing (1 listed now, 3 launchable then)"]
+    assert f"2 unlisted (#{gone},#4242)" in T.status_line(list(rows.values()), when="W")
+    assert T.plan_queue(fx.cfg(), expected=[a]) == [r for r in T.plan_queue(fx.cfg()) if True]   # nothing missing: no extra row
+
+
+def test_a_row_for_every_labelled_item_whatever_its_read(fx, monkeypatch):
+    fx.branch("feature/a", {"a.txt": "a\n"})
+    a = fx.ready("a", "feature/a")
+    silent = fx.issue("silent")                    # labelled, no comment at all: unread (a short read and no comments look alike)
+    rows = {r["issue"]: r for r in T.plan_queue(fx.cfg())}
+    assert set(rows) == {a, silent} and rows[silent]["state"] == "unread"
