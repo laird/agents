@@ -344,6 +344,13 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
                 least one path no driver owns. Every hunk of tip's own sources is in ref, and a driver-owned
                 file's re-merge is the driver's artefact, not evidence that the member is missing (#377). The
                 ignored paths are named so the close-out can be audited.
+    `lines (re-merge conflicts only where another landing edited beside this one: <paths>[; ignored driver-owned: <paths>])`
+                the re-merge conflicts in paths no driver owns and, once driver-owned paths are set aside,
+                differs from ref nowhere else. Each remaining path was modified on both sides since the merge
+                base, and every non-blank line tip added to it is in ref at least as many times (#394). A
+                driver-owned path beside that conflict (the regenerated page in the same landing, #377) is
+                not evidence the member is missing; the close-out names it. A reorder, a pure removal, or an
+                added line missing from ref is not this: `landing_gap` names that file and the first missing line.
     `rows`      merging tip into ref changes nothing but the ORDER of lines inside files a merge driver
                 owns. A keyed-row driver writes the merged rows in an order it derives from the three
                 sides (the ancestor's rows first, then each side's additions), so a landing that went
@@ -381,52 +388,60 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
     if ignored:
         shown = ", ".join(ignored[:5]) + (f" and {len(ignored) - 5} more" if len(ignored) > 5 else "")
         return f"drivers (ignored driver-owned: {shown})"
-    adjacent = lines_present_in_conflicted_paths(cfg, ref, tip, ref_tree, merged_tree, conflicted)
+    adjacent, owned_ignored = lines_present_in_conflicted_paths(cfg, ref, tip, ref_tree, merged_tree, conflicted)
     if adjacent:
         shown = ", ".join(adjacent[:5]) + (f" and {len(adjacent) - 5} more" if len(adjacent) > 5 else "")
-        return f"lines (re-merge conflicts only where another landing edited beside this one: {shown})"
+        extra = ""
+        if owned_ignored:
+            ig = ", ".join(owned_ignored[:5]) + (f" and {len(owned_ignored) - 5} more" if len(owned_ignored) > 5 else "")
+            extra = f"; ignored driver-owned: {ig}"
+        return f"lines (re-merge conflicts only where another landing edited beside this one: {shown}{extra})"
     return ""
 
 
-def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tree, conflicted) -> list:
-    """The paths whose re-merge conflict is an ADJACENT edit, not missing work: the re-merge of <tip> into
-    <ref> conflicts in them and differs from <ref> nowhere else, each is a modification on both sides since
-    their merge base, and every line <tip> ADDED to it (against the merge base) is in <ref>'s copy at least
-    as many times. Two members of one batch that appended at the same place of one file (two sections at the
-    end of a page) land cleanly in the batch's own merge, but each member's re-merge onto the landed commit
-    then conflicts with the other's lines right there, which read as the member missing from the landing.
-    The empty list means the conflict is not of that kind (or a path differs outside the conflicted ones),
-    so the caller keeps its verdict."""
+def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tree, conflicted):
+    """The plain paths whose re-merge conflict is an ADJACENT edit, not missing work, and the driver-owned
+    paths set aside to judge them.
+
+    Returns `(plain, ignored)`. `plain` is empty unless the re-merge of <tip> into <ref> conflicts in those
+    paths and, once paths a custom merge driver owns are set aside, differs from <ref> nowhere else. Each
+    plain path is a modification on both sides since their merge base, and every non-blank line <tip> ADDED
+    to it (against the merge base) is in <ref>'s copy at least as many times. `ignored` is the driver-owned
+    paths that conflicted or differed (a regenerated page, a re-stamped line): their re-merge is the driver's
+    artefact, not evidence the member is missing (#377). Two members of one batch that appended at the same
+    place of one file land cleanly in the batch's own merge, but each member's re-merge onto the landed
+    commit then conflicts with the other's lines right there (#394); a driver-owned difference beside that
+    conflict used to hide the member. `([], [])` means the conflict is not of that kind, so the caller keeps
+    its verdict."""
     if not conflicted:
-        return []
+        return [], []
     status = git(cfg.repo, "diff", "--name-status", "--no-renames", "-z", ref_tree, merged_tree).stdout.split("\0")
     pairs = [(status[i], status[i + 1]) for i in range(0, len(status) - 1, 2)]
     differing = {p for _, p in pairs}
-    if not differing <= set(conflicted):
-        return []
+    involved = sorted(set(conflicted) | differing)
+    drivers = merge_driver_attrs(cfg, ref, involved)
+    owned = lambda p: drivers.get(p, "") not in BUILTIN_MERGE_DRIVERS
+    ignored = [p for p in involved if owned(p)]
+    conflicted = {p for p in conflicted if not owned(p)}
+    differing = {p for p in differing if not owned(p)}
+    if not conflicted or not differing <= conflicted:
+        return [], []
     base = git(cfg.repo, "merge-base", ref, tip).stdout.strip()
     if not base:
-        return []
+        return [], []
     for p in sorted(conflicted):
         tip_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{tip}:{p}")
         ref_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{ref}:{p}")
         base_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{base}:{p}")
         if tip_blob.returncode or ref_blob.returncode or base_blob.returncode:
-            return []   # an addition, deletion or rename: not an adjacent edit
-        base_counts = _line_counts(cfg, f"{base}:{p}")
+            return [], []   # an addition, deletion or rename: not an adjacent edit
+        base_counts, added_lines = _net_added_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
         ref_counts = _line_counts(cfg, f"{ref}:{p}")
         if ref_counts == base_counts:
-            return []   # ref did not touch the file: nothing edited beside this branch, so the conflict is its own
-        added = _line_counts(cfg, f"{tip}:{p}")
-        for line, n in base_counts.items():
-            added[line] = added.get(line, 0) - n
-        added_lines = {line: n for line, n in added.items() if n > 0 and line.strip()}
-        if not added_lines:
-            return []   # a reorder or a pure removal: no line to find in ref, so nothing is proven here
-        for line, n in added_lines.items():
-            if ref_counts.get(line, 0) < n:
-                return []   # a line this branch added is not in ref: work really is missing
-    return sorted(conflicted)
+            return [], []   # ref did not touch the file: nothing edited beside this branch, so the conflict is its own
+        if not added_lines or _first_short_added(cfg, f"{tip}:{p}", ref_counts, added_lines) is not None:
+            return [], []   # a reorder, a pure removal, or a line this branch added that is not in ref
+    return sorted(conflicted), ignored
 
 
 # merge drivers git implements itself; none of them reorders lines, so a line-order difference in a path
@@ -497,6 +512,62 @@ def _line_counts(cfg: Config, spec):
     for ln in blob.splitlines(keepends=True):
         counts[ln] = counts.get(ln, 0) + 1
     return counts
+
+
+def _net_added_lines(cfg: Config, base_spec, tip_spec):
+    """(<base line counts>, {line: how many more <tip> has than <base>}) for non-blank lines only.
+    A reorder or a pure removal has no entry: nothing there can show the work landed."""
+    base_counts = _line_counts(cfg, base_spec)
+    added = _line_counts(cfg, tip_spec)
+    for line, n in base_counts.items():
+        added[line] = added.get(line, 0) - n
+    return base_counts, {line: n for line, n in added.items() if n > 0 and line.strip()}
+
+
+def _first_short_added(cfg: Config, tip_spec, ref_counts, added_lines):
+    """The first non-blank line of <tip_spec>, in file order, that <tip> added and <ref_counts> holds
+    fewer times than were added; None when every such line is there."""
+    blob = subprocess.run(["git", "-C", str(cfg.repo), "cat-file", "-p", tip_spec], capture_output=True).stdout
+    seen = set()
+    for line in blob.splitlines(keepends=True):
+        if line not in added_lines or line in seen:
+            continue
+        seen.add(line)
+        if ref_counts.get(line, 0) < added_lines[line]:
+            return line
+    return None
+
+
+def _show_added_line(line) -> str:
+    text = line.decode("utf-8", "replace") if isinstance(line, bytes) else line
+    text = text.rstrip("\r\n")
+    return text if len(text) <= 120 else text[:117] + "..."
+
+
+def landing_gap(cfg: Config, tip, ref=None) -> str:
+    """The first non-blank line <tip> added, outside driver-owned paths, that <ref> does not hold as many
+    times, as `path: line`. '' when there is no such line (the miss is a reorder, a pure removal, a missing
+    blob, or only a driver-owned file). The close-out prints this for a member the landing proof refused."""
+    ref = ref or cfg.ref
+    base = git(cfg.repo, "merge-base", ref, tip).stdout.strip()
+    if not base:
+        return ""
+    paths = [p for p in git(cfg.repo, "diff", "--name-only", "--no-renames", "-z", base, tip).stdout.split("\0") if p]
+    if not paths:
+        return ""
+    drivers = merge_driver_attrs(cfg, ref, paths)
+    for p in sorted(paths):
+        if drivers.get(p, "") not in BUILTIN_MERGE_DRIVERS:
+            continue
+        if any(git(cfg.repo, "rev-parse", "-q", "--verify", f"{side}:{p}").returncode for side in (base, tip, ref)):
+            continue
+        _, added_lines = _net_added_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
+        if not added_lines:
+            continue
+        short = _first_short_added(cfg, f"{tip}:{p}", _line_counts(cfg, f"{ref}:{p}"), added_lines)
+        if short is not None:
+            return f"{p}: {_show_added_line(short)}"
+    return ""
 
 
 def regenerate_only(cfg: Config, ref, base=None):

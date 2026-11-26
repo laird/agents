@@ -982,9 +982,14 @@ class Cycle:
                 continue
             self._close_out(m, landed, train, proofs[m["issue"]])
         if unlanded:
-            self.log(f"{train}: the gate says landed but {', '.join('#' + m['issue'] for m in unlanded)} is not in {c.ref}: not closed, left in the queue")
+            named = []
+            for m in unlanded:
+                gap = T.landing_gap(c, m["tip"], landed)
+                named.append(f"#{m['issue']}" + (f" ({gap})" if gap else ""))
+            missing = ", ".join(named)
+            self.log(f"{train}: the gate says landed but {missing} is not in {c.ref}: not closed, left in the queue")
             self._set_status(unlanded, "requeued", "not found in the integration branch after the gate; nothing closed")
-            self.say.report(f"{train}: landed `{landed[:10]}` but {', '.join('#' + m['issue'] for m in unlanded)} is not in the integration branch; nothing closed for them.")
+            self.say.report(f"{train}: landed `{landed[:10]}` but {missing} is not in the integration branch; nothing closed for them.")
         else:
             self.say.report(f"{train}: landed `{landed[:10]}`: {' '.join('#' + m['issue'] for m in members)}")
         T.git(c.repo, "push", "-q", c.remote, "--delete", train)

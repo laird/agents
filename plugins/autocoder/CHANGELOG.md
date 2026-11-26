@@ -25,6 +25,17 @@ once (Version Management in `docs/maintaining.md`).
   `settings.json` only: `hooks/hooks.json` is not shipped, because Claude
   would load it beside the existing hook.
 
+### Fixed
+
+- The merge train's landing proof no longer reports a member as not landed when
+  a co-member's edit of the same source file conflicts on re-merge and a
+  driver-owned path also differs (#377). The adjacent-edit proof already
+  accepted the source conflict on its own. Driver-owned paths (a regenerated
+  file, a page whose stamp a driver rewrites) are now set aside before that
+  check, and the close-out names them (`ignored driver-owned: ...`). A member
+  whose added source line is absent stays open, and the close-out names that
+  file and the first missing line.
+
 ## [4.68.0] - 2026-11-25
 
 ### Added

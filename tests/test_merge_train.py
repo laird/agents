@@ -546,6 +546,45 @@ def test_landing_proof_never_proves_a_member_that_changes_only_driver_owned_path
     assert T.landing_proof(fx.cfg(), "origin/feature/stamp-only") == ""
 
 
+def test_landing_proof_ignores_a_driver_owned_page_beside_a_co_member_edit(tmp_path):
+    """#377, comment 10: two members edit one source, and one also changes a page a custom driver re-stamps.
+    The landing holds both source additions and a different stamp. Re-merging the first member conflicts in
+    the source (the other member's lines sit beside its own) and in the page. The source's added line is in
+    the landed tree, so the member landed; the page is driver-owned and named, not evidence it is missing.
+    A member whose added source line never landed is not proven, and the gap names that file and line."""
+    fx = Fixture(tmp_path)
+    drv = tmp_path / "stamp.sh"
+    drv.write_text(STAMP_CONFLICT_DRIVER)
+    drv.chmod(0o755)
+    sh("git", "config", "merge.stamp.driver", f"{drv} %O %A %B", cwd=fx.work)
+    attrs = (fx.work / ".gitattributes").read_text()
+    fx.commit_on("master", {".gitattributes": attrs + "docs/page.md merge=stamp\n",
+                            "src.ts": "export const a = 1;\n",
+                            "docs/page.md": "Verified against sources: v1\n"}, "a stamped page")
+    fx.branch("feature/a", {"src.ts": "export const a = 1;\nexport const b = 2;\n"})
+    fx.commit_on("feature/a", {"docs/page.md": "Verified against sources: v2 (the branch's stamp)\n"}, "re-stamp on the branch")
+    fx.branch("feature/b", {"src.ts": "export const a = 1;\nexport const c = 3;\n"})
+    fx.commit_on("master", {"src.ts": "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n",
+                            "docs/page.md": "Verified against sources: v2 (re-stamped at the landing)\n"},
+                 "train landed both sources and re-stamped the page")
+    r = sh("git", "merge-tree", "--write-tree", "--no-messages", "origin/master", "origin/feature/a", cwd=fx.work, check=False)
+    assert r.returncode == 1 and "src.ts" in r.stdout and "docs/page.md" in r.stdout
+    proof = T.landing_proof(fx.cfg(), "origin/feature/a")
+    assert proof.startswith("lines ("), proof
+    assert "src.ts" in proof and "docs/page.md" in proof, proof
+    assert "ignored driver-owned: docs/page.md" in proof, proof
+    assert T.landing_proof(fx.cfg(), "origin/feature/b").startswith("lines (")
+    n = fx.ready("a", "feature/a")
+    q = fx.queue()
+    assert q[n]["state"] == "on-master" and "docs/page.md" in q[n]["note"] and "src.ts" in q[n]["note"]
+    fx.branch("feature/c", {"src.ts": "export const a = 1;\nexport const d = 4;\n"})
+    fx.commit_on("feature/c", {"docs/page.md": "Verified against sources: v9 (never landed)\n"}, "stamp that did not land")
+    assert T.landing_proof(fx.cfg(), "origin/feature/c") == ""
+    gap = T.landing_gap(fx.cfg(), "origin/feature/c")
+    assert gap.startswith("src.ts:"), gap
+    assert "export const d = 4;" in gap, gap
+
+
 def test_queue_reads_a_squash_landed_branch_as_on_master_and_a_planner_never_retakes_it(fx):
     fx.branch("feature/sq", {"s.txt": "1\n"})
     fx.commit_on("feature/sq", {"t.txt": "1\n"})
