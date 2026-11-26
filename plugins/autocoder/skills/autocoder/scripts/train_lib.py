@@ -381,7 +381,52 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
     if ignored:
         shown = ", ".join(ignored[:5]) + (f" and {len(ignored) - 5} more" if len(ignored) > 5 else "")
         return f"drivers (ignored driver-owned: {shown})"
+    adjacent = lines_present_in_conflicted_paths(cfg, ref, tip, ref_tree, merged_tree, conflicted)
+    if adjacent:
+        shown = ", ".join(adjacent[:5]) + (f" and {len(adjacent) - 5} more" if len(adjacent) > 5 else "")
+        return f"lines (re-merge conflicts only where another landing edited beside this one: {shown})"
     return ""
+
+
+def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tree, conflicted) -> list:
+    """The paths whose re-merge conflict is an ADJACENT edit, not missing work: the re-merge of <tip> into
+    <ref> conflicts in them and differs from <ref> nowhere else, each is a modification on both sides since
+    their merge base, and every line <tip> ADDED to it (against the merge base) is in <ref>'s copy at least
+    as many times. Two members of one batch that appended at the same place of one file (two sections at the
+    end of a page) land cleanly in the batch's own merge, but each member's re-merge onto the landed commit
+    then conflicts with the other's lines right there, which read as the member missing from the landing.
+    The empty list means the conflict is not of that kind (or a path differs outside the conflicted ones),
+    so the caller keeps its verdict."""
+    if not conflicted:
+        return []
+    status = git(cfg.repo, "diff", "--name-status", "--no-renames", "-z", ref_tree, merged_tree).stdout.split("\0")
+    pairs = [(status[i], status[i + 1]) for i in range(0, len(status) - 1, 2)]
+    differing = {p for _, p in pairs}
+    if not differing <= set(conflicted):
+        return []
+    base = git(cfg.repo, "merge-base", ref, tip).stdout.strip()
+    if not base:
+        return []
+    for p in sorted(conflicted):
+        tip_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{tip}:{p}")
+        ref_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{ref}:{p}")
+        base_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{base}:{p}")
+        if tip_blob.returncode or ref_blob.returncode or base_blob.returncode:
+            return []   # an addition, deletion or rename: not an adjacent edit
+        base_counts = _line_counts(cfg, f"{base}:{p}")
+        ref_counts = _line_counts(cfg, f"{ref}:{p}")
+        if ref_counts == base_counts:
+            return []   # ref did not touch the file: nothing edited beside this branch, so the conflict is its own
+        added = _line_counts(cfg, f"{tip}:{p}")
+        for line, n in base_counts.items():
+            added[line] = added.get(line, 0) - n
+        added_lines = {line: n for line, n in added.items() if n > 0 and line.strip()}
+        if not added_lines:
+            return []   # a reorder or a pure removal: no line to find in ref, so nothing is proven here
+        for line, n in added_lines.items():
+            if ref_counts.get(line, 0) < n:
+                return []   # a line this branch added is not in ref: work really is missing
+    return sorted(conflicted)
 
 
 # merge drivers git implements itself; none of them reorders lines, so a line-order difference in a path
