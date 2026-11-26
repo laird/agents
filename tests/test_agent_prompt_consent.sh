@@ -270,7 +270,7 @@ for screen in \
 done
 # The prompt is on screen for the check before Enter, so no prompt a launcher
 # sends may itself match the pattern: it would withhold its own Enter.
-for agent in claude gemini codex pi droid; do
+for agent in claude gemini codex pi droid grok; do
   for mux in tmux herdr; do
     out=$( (source "$LIB"; source "$ROOT/plugins/autocoder/scripts/worker-launch-lib.sh"
             resolve_worker_launch "$agent" "$ROOT" "$mux" >/dev/null 2>&1 \

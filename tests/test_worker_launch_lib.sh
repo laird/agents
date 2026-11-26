@@ -127,4 +127,23 @@ assert_eq "$WORKER_LAUNCH_MODE" "shell" "Droid uses shell fallback"
 assert_eq "$WORKER_COMMAND_MODE" "shell" "Droid command mode"
 assert_eq "$MANAGER_LAUNCH_MODE" "shell" "Droid manager launch mode"
 
+# Grok is an interactive TUI with bare slash commands. Folder trust is the
+# --trust flag; tool-permission bypass flags are not passed.
+resolve_worker_launch grok "$REPO" herdr
+assert_eq "$AGENT_LAUNCH_CMD" "grok --trust" "Grok worker launch is grok --trust"
+assert_eq "$MANAGER_LAUNCH_CMD" "grok --trust" "Grok manager launch is grok --trust"
+assert_eq "$WORKER_CMD" "/fix-loop" "Grok worker command is bare /fix-loop"
+assert_eq "$MANAGER_CMD" "/monitor-loop" "Grok manager command is bare /monitor-loop"
+assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Grok workers are an interactive TUI"
+assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Grok workers take a typed slash command"
+assert_eq "$MANAGER_LAUNCH_MODE" "interactive" "Grok manager is an interactive TUI"
+assert_eq "$MANAGER_COMMAND_MODE" "agent-input" "Grok manager takes a typed slash command"
+case "$AGENT_LAUNCH_CMD$MANAGER_LAUNCH_CMD" in
+  *always-approve*|*--yolo*|*dangerously-skip-permissions*|*bypassPermissions*)
+    echo "FAIL: Grok launch auto-approves tool permissions" >&2
+    exit 1 ;;
+esac
+resolve_worker_launch grok "$REPO" tmux
+assert_eq "$WORKER_CMD" "/fix-loop" "Grok tmux worker command stays /fix-loop"
+
 echo "ok worker-launch-lib"

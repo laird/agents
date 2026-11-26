@@ -243,6 +243,29 @@ resolve_worker_launch() {
       MANAGER_CMD="bash '$(_wll_script droid-manage-workers-loop.sh "$repo_root")'"
       MANAGER_LAUNCH_MODE="shell"
       ;;
+    grok)
+      # Interactive Grok TUI, same shape as Gemini: herdr registers it with
+      # `herdr agent start --kind grok`, then the slash command is typed in.
+      # `grok inspect` lists this plugin's commands as bare names (/fix,
+      # /fix-loop, /monitor-loop, /manager-resume), not /autocoder:….
+      #
+      # Folder trust is the one consent this launcher grants, and it grants it
+      # with the documented `--trust` flag (docs.x.ai hooks: the decision is
+      # stored in ~/.grok/trusted_folders.toml and covers project hooks, MCP,
+      # and LSP) rather than by typing an answer into a dialog. Tool-permission
+      # prompts are not auto-answered: no --always-approve, --yolo, or
+      # --dangerously-skip-permissions. The user's own [ui] permission_mode
+      # applies. A dialog that still appears is left for a person
+      # (send_agent_prompt, #253).
+      AGENT_LAUNCH_CMD="grok --trust"
+      WORKER_CMD="/fix-loop"
+      WORKER_LAUNCH_MODE="interactive"
+      WORKER_COMMAND_MODE="agent-input"
+      MANAGER_LAUNCH_CMD="grok --trust"
+      MANAGER_CMD="/monitor-loop"
+      MANAGER_LAUNCH_MODE="interactive"
+      MANAGER_COMMAND_MODE="agent-input"
+      ;;
     *)
       echo "❌ Unknown agent: $agent" >&2
       return 1

@@ -25,7 +25,7 @@ REMOVE_WORKTREE=false
 WORKERS=()
 
 usage() {
-  echo "Usage: remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--remove-worktree]"
+  echo "Usage: remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--session SESSION] [--remove-worktree]"
   echo ""
   echo "Stops the selected worker panes/workspaces and removes them from the swarm manifest."
   echo "Worktrees are preserved unless --remove-worktree is passed."
@@ -73,7 +73,7 @@ if [ -z "$SESSION" ] && [ -z "$AGENT" ]; then
 fi
 
 if [ -z "$AGENT" ] && [ -z "$SESSION" ]; then
-  for a in claude gemini codex droid; do
+  for a in claude gemini codex droid grok; do
     command -v "$a" >/dev/null 2>&1 && { AGENT="$a"; break; }
   done
   AGENT="${AGENT:-claude}"

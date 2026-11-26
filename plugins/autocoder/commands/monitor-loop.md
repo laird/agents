@@ -70,6 +70,9 @@ the loop to watch.
   2. Pick **distinct** issues — never route the same issue to two workers.
   3. Add the `working` label **before** dispatching, so the assignment is durable.
   4. Dispatch exactly one `/autocoder:fix <N>` (or the codex wrapper) per idle worker.
+     On Grok the same commands are the bare names `grok inspect` lists
+     (`/fix <N>`, `/fix-loop`, `/monitor-loop`, `/manager-resume`). Send those
+     wherever this file writes `/autocoder:…`.
 
   Because no worker ever selects its own issue, manager routing structurally
   eliminates the worker-vs-worker claim races that the best-effort self-claim path

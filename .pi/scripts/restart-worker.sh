@@ -11,7 +11,7 @@
 # worker-health.sh flags a worker as UNHEALTHY (stalled AND high memory).
 #
 # Usage:
-#   restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid]
+#   restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok]
 #
 # Examples:
 #   restart-worker.sh --worktree /Users/me/src/agents-wt-2
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --agent)    AGENT="$2";    shift 2 ;;
     --worktree) WORKTREE="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid]"
+      echo "Usage: restart-worker.sh --worktree <path> [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok]"
       exit 0
       ;;
     *)
@@ -70,7 +70,7 @@ fi
 
 # ── Auto-detect agent framework ──────────────────────────────────────────────
 if [ -z "$AGENT" ]; then
-  for a in claude gemini codex droid; do
+  for a in claude gemini codex droid grok; do
     command -v "$a" &>/dev/null && { AGENT="$a"; break; }
   done
   [ -z "$AGENT" ] && { echo "❌ No agent framework found" >&2; exit 1; }

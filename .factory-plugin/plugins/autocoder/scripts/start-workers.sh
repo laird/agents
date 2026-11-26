@@ -30,7 +30,7 @@ YES=false
 
 if [ "$CMD_NAME" = "start-worker" ]; then
   if [ $# -lt 1 ] || [[ "$1" == --* ]]; then
-    echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]" >&2
+    echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--session SESSION] [--yes]" >&2
     exit 2
   fi
   WORKER_NUMBER="$1"
@@ -45,9 +45,9 @@ while [[ $# -gt 0 ]]; do
     --yes) YES=true; shift ;;
     -h|--help)
       if [ "$CMD_NAME" = "start-worker" ]; then
-        echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
+        echo "Usage: start-worker WORKER_NUMBER [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--session SESSION] [--yes]"
       else
-        echo "Usage: start-workers [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid] [--session SESSION] [--yes]"
+        echo "Usage: start-workers [--mux tmux|cmux|herdr] [--agent claude|gemini|codex|droid|grok] [--session SESSION] [--yes]"
       fi
       exit 0
       ;;
@@ -76,7 +76,7 @@ if [ -z "$SESSION" ] && [ -z "$AGENT" ]; then
 fi
 
 if [ -z "$AGENT" ] && [ -z "$SESSION" ]; then
-  for a in claude gemini codex droid; do
+  for a in claude gemini codex droid grok; do
     command -v "$a" >/dev/null 2>&1 && { AGENT="$a"; break; }
   done
   AGENT="${AGENT:-claude}"

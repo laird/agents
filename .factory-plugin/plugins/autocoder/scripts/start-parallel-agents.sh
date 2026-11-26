@@ -1,12 +1,12 @@
 #!/bin/bash
 # Start parallel AI agents using a terminal multiplexer and git worktrees
-# Supports the tmux, cmux, and herdr multiplexers, and Claude, Gemini, and Codex agent frameworks
+# Supports the tmux, cmux, and herdr multiplexers, and Claude, Gemini, Codex, Droid, Pi, and Grok agent frameworks
 #
 # Usage: start-parallel-agents.sh [num_agents] [options]
 #
 # Options:
 #   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
-#   --agent claude|gemini|codex|droid|pi  Agent framework to use (default: auto-detect)
+#   --agent claude|gemini|codex|droid|pi|grok  Agent framework to use (default: auto-detect)
 #   --issue-source file|github|jira|ado  Issue backend for this swarm run
 #   --issue-dir PATH       File issue directory when --issue-source file
 #   --route self|manager   Issue-routing mode (default: self). In manager mode
@@ -29,6 +29,7 @@
 #   start-parallel-agents.sh 3 --mux herdr --agent claude
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 3 --mux herdr --agent grok
 #   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused
 #   start-parallel-agents.sh 5 --mux tmux --agent claude --route manager
 #   start-parallel-agents.sh 2 --no-worktrees
@@ -121,7 +122,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
-      echo "  --agent claude|gemini|codex|droid|pi  Agent framework (default: auto-detect)"
+      echo "  --agent claude|gemini|codex|droid|pi|grok  Agent framework (default: auto-detect)"
       echo "  --issue-source file|github|jira|ado  Issue backend for this swarm run"
       echo "  --issue-dir PATH       File issue directory when --issue-source file"
       echo "  --route self|manager   Issue-routing mode (default: self). In manager mode"
@@ -143,6 +144,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 3 --mux herdr --agent claude"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 3 --mux herdr --agent grok"
       echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github --paused"
       echo "  start-parallel-agents.sh 5 --mux tmux --agent claude --route manager"
       echo "  start-parallel-agents.sh --manager-only --mux tmux --agent claude"
@@ -273,6 +275,8 @@ if [ -z "$AGENT" ]; then
     AGENT="droid"
   elif command -v pi &> /dev/null; then
     AGENT="pi"
+  elif command -v grok &> /dev/null; then
+    AGENT="grok"
   else
     echo "❌ Error: No agent framework found" >&2
     echo "" >&2
@@ -281,6 +285,7 @@ if [ -z "$AGENT" ]; then
     echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
     echo "  Codex CLI:   codex" >&2
     echo "  Droid CLI:   https://docs.factory.ai/" >&2
+    echo "  Grok CLI:    https://docs.x.ai/build/cli" >&2
     echo "" >&2
     exit 1
   fi
@@ -322,8 +327,15 @@ case "$AGENT" in
       exit 1
     fi
     ;;
+  grok)
+    if ! command -v grok &> /dev/null; then
+      echo "❌ Error: grok command is not installed" >&2
+      echo "   Install the Grok CLI: https://docs.x.ai/build/cli" >&2
+      exit 1
+    fi
+    ;;
   *)
-    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', 'droid', or 'pi'" >&2
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', 'droid', 'pi', or 'grok'" >&2
     exit 1
     ;;
 esac

@@ -15,7 +15,7 @@
 #               (<session>:<N>) or AUTOCODER_MANAGER (<session>), else the
 #               manifest that already lists this worktree, else the only one
 #   --pid       the agent's pid; default: the nearest ancestor that is an
-#               agent CLI (claude, codex, gemini, droid, pi, node), else $PPID
+#               agent CLI (claude, codex, gemini, droid, pi, grok, node), else $PPID
 #   --state     worker state to record (default: started for a new entry;
 #               an existing entry keeps its state unless this is given)
 #
@@ -135,7 +135,7 @@ agent_ancestor_pid() {
     [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || break
     comm=$(ps -o comm= -p "$pid" 2>/dev/null | sed 's/^ *//; s/ *$//')
     case "${comm##*/}" in
-      claude|codex|gemini|droid|pi|node|claude-*) echo "$pid"; return 0 ;;
+      claude|codex|gemini|droid|pi|grok|node|claude-*) echo "$pid"; return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
   done
@@ -167,7 +167,7 @@ agent_at_or_under() {
       do { grew=0
         for (i=1; i<=n; i++) if (!(pid[i] in want) && (ppid[i] in want)) { want[pid[i]]=1; grew=1 }
       } while (grew)
-      for (i=1; i<=n; i++) if (pid[i] in want && comm[i] ~ /^(claude|codex|gemini|droid|pi|node|claude-.*)$/) { found=1 }
+      for (i=1; i<=n; i++) if (pid[i] in want && comm[i] ~ /^(claude|codex|gemini|droid|pi|grok|node|claude-.*)$/) { found=1 }
       exit !found
     }'
 }

@@ -686,10 +686,13 @@ join-parallel --mux cmux
 | **Gemini CLI** | `gemini --sandbox=false` | `/fix-loop`, `/monitor-loop`, `/review-blocked` |
 | **Codex CLI** | `codex` | Codex goal loop or shell-loop fallback |
 | **Droid** | shell-loop wrapper | `scripts/droid-fix-loop.sh`, `scripts/droid-manage-workers-loop.sh` |
+| **Grok CLI** | `grok --trust` | `/fix-loop`, `/monitor-loop`, `/fix N`, `/manager-resume --non-interactive` |
 
 Auto-detection prefers a *running* cmux, then a *running* herdr, then tmux — except when launched from inside a herdr pane (`HERDR_ENV=1`), where herdr wins. A merely installed cmux or herdr with no live server never captures the swarm. Agents are then checked in order. Override with `--mux` and `--agent`.
 
 **Consent and trust dialogs.** An agent started in a folder it has not seen may first ask whether to trust the folder, and `claude --dangerously-skip-permissions` asks for consent (its default is "No, exit"). The launch scripts (`start-parallel`, `add-worker`, `restart-worker`, `start-workers`) check the pane before typing the first prompt and again before pressing Enter, reading only its last `AUTOCODER_CONSENT_TAIL_LINES` (default 12) non-blank lines, where an open dialog's choices are drawn, so dialog wording quoted higher up does not count. If a dialog is showing they print a warning on stderr and send nothing, so the dialog waits for you; answer it in the pane, then send the prompt (or run `start-workers.sh <N>`). Only `start-workers` records the held-back worker (as `failed` in the manifest); the others report it on stderr and carry on. Outside herdr the claude manager gets its prompt in argv and types nothing. Set `AUTOCODER_CONSENT_PATTERN` (an extended regex) if an agent words its dialog differently; `autocoder-ctl start` and `add-worker` add their own `AUTOCODER_CTL_TRUST_PATTERN` and `AUTOCODER_CTL_CONSENT_PATTERN` to it, so a prompt they report is one the launcher left unanswered.
+
+**Grok folder trust is the exception.** A Grok worker or manager is started as `grok --trust`. That flag records the worktree in `~/.grok/trusted_folders.toml` (project hooks, MCP, and LSP) so the launcher does not have to type "yes" into Grok's folder-trust dialog. It does not auto-approve tool calls: `--always-approve`, `--yolo`, and `--dangerously-skip-permissions` are not passed, and a permission dialog that still appears is left unanswered like every other agent's. See `docs/GROK.md`.
 
 ### How It Works
 
@@ -732,7 +735,7 @@ start-parallel [num_workers] [options]
 |--------|--------|---------|
 | `num_workers` | number | Worker count. Defaults to `3`. |
 | `--mux` | `tmux`, `cmux`, `herdr` | Terminal multiplexer. Auto-detects when omitted. |
-| `--agent` | `claude`, `gemini`, `codex`, `droid` | Agent framework. Auto-detects when omitted. |
+| `--agent` | `claude`, `gemini`, `codex`, `droid`, `pi`, `grok` | Agent framework. Auto-detects when omitted. Grok is last, so a failover is `--agent grok`. |
 | `--issue-source` | `file`, `github` | Issue backend for this swarm run. |
 | `--issue-dir` | path | File issue directory when using `--issue-source file`. |
 | `--paused`, `--no-start` | flag | Create the swarm but do not start workers pulling issues. |
@@ -754,6 +757,9 @@ start-parallel 5 --mux tmux --agent codex --issue-source github --paused
 
 # Droid workers without git worktrees
 start-parallel 3 --mux cmux --agent droid --no-worktrees
+
+# Fail a swarm over to Grok (same worktrees and issue tracker)
+start-parallel 3 --mux herdr --agent grok
 ```
 
 Paused swarms create the manager session and worker panes/workspaces, but do not start `/fix-loop` or the equivalent shell fallback. The manager pane prints readiness guidance so you can review issues first, then use `add-worker` to start an idle worker or add new running capacity later:
@@ -769,9 +775,9 @@ These are the key commands for managing the parallel agent lifecycle:
 
 | Command | Purpose | Usage |
 |---------|---------|-------|
-| `start-parallel` | **Start** parallel agent system | `[num_workers] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused] [--no-worktrees]` |
-| `add-worker` | **Add and start** one or more workers | `[count] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--no-worktrees]` |
-| `remove-worker` | **Stop** one or more workers | `WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
+| `start-parallel` | **Start** parallel agent system | `[num_workers] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|pi\|grok] [--issue-source file\|github] [--issue-dir PATH] [--paused] [--no-worktrees]` |
+| `add-worker` | **Add and start** one or more workers | `[count] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|grok] [--no-worktrees]` |
+| `remove-worker` | **Stop** one or more workers | `WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|grok] [--remove-worktree]` |
 | `join-parallel` | **Join** (rejoin) existing session | `[--mux tmux\|cmux\|herdr] [session_name]` |
 | `end-parallel` | **End** session and clean up worktrees | `[session_name] [--keep-worktrees]` |
 | `stop-parallel` | **Stop** all agent sessions (no cleanup) | `[--mux tmux\|cmux\|herdr]` |
@@ -785,6 +791,7 @@ start-parallel 3 --mux tmux --agent claude
 start-parallel 4 --mux cmux --agent gemini
 start-parallel 3 --mux tmux --agent codex
 start-parallel 3 --mux cmux --agent droid
+start-parallel 3 --mux herdr --agent grok
 start-parallel 3 --no-worktrees
 start-parallel 5 --mux tmux --agent codex --issue-source github --paused
 add-worker --agent codex
@@ -869,9 +876,9 @@ The plugin includes utility scripts in `scripts/` directory for automating commo
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `start-parallel` | Launch multi-agent session (tmux/cmux) | `start-parallel [num_workers] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--issue-source file\|github] [--issue-dir PATH] [--paused]` |
-| `add-worker` | Add and start one or more workers | `add-worker [count] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid]` |
-| `remove-worker` | Stop one or more workers | `remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux] [--agent claude\|gemini\|codex\|droid] [--remove-worktree]` |
+| `start-parallel` | Launch multi-agent session (tmux/cmux/herdr) | `start-parallel [num_workers] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|pi\|grok] [--issue-source file\|github] [--issue-dir PATH] [--paused]` |
+| `add-worker` | Add and start one or more workers | `add-worker [count] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|grok]` |
+| `remove-worker` | Stop one or more workers | `remove-worker WORKER_NUMBER [WORKER_NUMBER ...] [--mux tmux\|cmux\|herdr] [--agent claude\|gemini\|codex\|droid\|grok] [--remove-worktree]` |
 | `join-parallel` | Rejoin existing session (tmux/cmux) | `join-parallel [--mux tmux\|cmux] [session_name]` |
 | `end-parallel` | End session and clean up worktrees | `end-parallel [session_name] [--keep-worktrees]` |
 | `stop-parallel` | Stop all agent sessions (tmux/cmux) | `stop-parallel [--mux tmux\|cmux]` |

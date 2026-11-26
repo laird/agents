@@ -155,6 +155,12 @@ if [ "$MUX" = "tmux" ]; then
       SESSION_NAME="gemini-${PROJECT_NAME}"
     elif tmux has-session -t "codex-${PROJECT_NAME}" 2>/dev/null; then
       SESSION_NAME="codex-${PROJECT_NAME}"
+    elif tmux has-session -t "droid-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="droid-${PROJECT_NAME}"
+    elif tmux has-session -t "pi-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="pi-${PROJECT_NAME}"
+    elif tmux has-session -t "grok-${PROJECT_NAME}" 2>/dev/null; then
+      SESSION_NAME="grok-${PROJECT_NAME}"
     else
       SESSION_NAME="claude-${PROJECT_NAME}"
     fi
@@ -166,7 +172,7 @@ if [ "$MUX" = "tmux" ]; then
     echo ""
 
     # List available agent sessions
-    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini|codex)-" || true)
+    AGENT_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E "^(claude|gemini|codex|droid|pi|grok)-" || true)
 
     if [ -n "$AGENT_SESSIONS" ]; then
       echo "📋 Available agent sessions (tmux):"

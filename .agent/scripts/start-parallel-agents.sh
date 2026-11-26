@@ -6,7 +6,7 @@
 #
 # Options:
 #   --mux tmux|cmux|herdr  Terminal multiplexer to use (default: auto-detect)
-#   --agent claude|gemini|codex|droid  Agent framework to use (default: auto-detect)
+#   --agent claude|gemini|codex|droid|grok  Agent framework to use (default: auto-detect)
 #   --manager-only         Zero workers: create only the manager pane and the
 #                          swarm manifest, and dispatch NOTHING to the manager
 #                          (the caller — e.g. the idle sentinel — owns the
@@ -22,6 +22,7 @@
 #   start-parallel-agents.sh 3 --mux herdr --agent claude
 #   start-parallel-agents.sh 3 --mux tmux --agent codex
 #   start-parallel-agents.sh 3 --mux tmux --agent droid
+#   start-parallel-agents.sh 3 --mux herdr --agent grok
 #   start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github
 #   start-parallel-agents.sh 2 --no-worktrees
 
@@ -89,7 +90,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --mux tmux|cmux|herdr  Terminal multiplexer (default: auto-detect)"
-      echo "  --agent claude|gemini|codex|droid  Agent framework (default: auto-detect)"
+      echo "  --agent claude|gemini|codex|droid|grok  Agent framework (default: auto-detect)"
       echo "  --manager-only         Zero workers: create only the manager pane and the"
       echo "                         swarm manifest, and dispatch NOTHING to the manager"
       echo "                         (the caller — e.g. the idle sentinel — owns the"
@@ -104,6 +105,7 @@ while [[ $# -gt 0 ]]; do
       echo "  start-parallel-agents.sh 3 --mux herdr --agent claude"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent codex"
       echo "  start-parallel-agents.sh 3 --mux tmux --agent droid"
+      echo "  start-parallel-agents.sh 3 --mux herdr --agent grok"
       echo "  start-parallel-agents.sh 5 --mux tmux --agent codex --issue-source github"
       exit 0
       ;;
@@ -170,6 +172,8 @@ if [ -z "$AGENT" ]; then
     AGENT="codex"
   elif command -v droid &> /dev/null; then
     AGENT="droid"
+  elif command -v grok &> /dev/null; then
+    AGENT="grok"
   else
     echo "❌ Error: No agent framework found" >&2
     echo "" >&2
@@ -178,6 +182,7 @@ if [ -z "$AGENT" ]; then
     echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
     echo "  Codex CLI:   codex" >&2
     echo "  Droid CLI:   https://docs.factory.ai/" >&2
+    echo "  Grok CLI:    https://docs.x.ai/build/cli" >&2
     echo "" >&2
     exit 1
   fi
@@ -224,8 +229,20 @@ case "$AGENT" in
     WORKER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-fix-loop.sh'"
     MANAGER_CMD="bash '$AGENTS_REPO_ROOT/scripts/droid-manage-workers-loop.sh'"
     ;;
+  grok)
+    # Same shape as Gemini: interactive TUI, bare slash commands. --trust is
+    # the folder-trust exception (docs.x.ai); tool prompts are not auto-approved.
+    if ! command -v grok &> /dev/null; then
+      echo "❌ Error: grok command is not installed" >&2
+      echo "   Install the Grok CLI: https://docs.x.ai/build/cli" >&2
+      exit 1
+    fi
+    AGENT_LAUNCH_CMD="grok --trust"
+    WORKER_CMD="/fix-loop"
+    MANAGER_CMD="/monitor-loop"
+    ;;
   *)
-    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', or 'droid'" >&2
+    echo "❌ Error: Unknown agent framework '$AGENT'. Use 'claude', 'gemini', 'codex', 'droid', or 'grok'" >&2
     exit 1
     ;;
 esac
