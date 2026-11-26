@@ -1,365 +1,162 @@
 # Agent Protocols
 
-A multi-platform repository of production-validated protocols, specialized agents, skills, and automation frameworks for systematic AI-assisted software development.
+A multi-platform set of protocols, specialized agents, skills, and scripts for AI-assisted software work. It ships two complementary plugins:
 
-## Overview
+1. **Modernize** — assess → plan → execute → improve, with six specialized agents
+2. **Autocoder** — autonomous issue resolution against GitHub, Jira, Azure DevOps, or a file-backed tracker, with testing and quality automation
 
-This marketplace contains **2 plugins** with complementary capabilities:
+The same ideas started as .NET framework-migration tooling and are now aimed at any language. The repo is primarily maintained for personal use. It is tested on Linux, macOS, and WSL. Native Windows is not supported.
 
-1. **Modernize** - Complete modernization workflow (assess → plan → execute → improve) with 6 specialized agents
-2. **Autocoder** - Autonomous issue resolution — GitHub, Jira, Azure DevOps, or file-backed trackers — with intelligent testing and quality automation
+## Start here
 
-Both plugins feature **continuous improvement** through retrospective analysis and are **universally applicable** to any software project. The repo also ships platform-neutral skills, including **improve** (`skills/improve/`) — a validation & refinement loop for stabilizing platforms through repeated live end-to-end runs. Originally created for .NET framework migrations, these tools work with any language or platform.
-
-## Start Here
-
-Pick your platform:
+Pick your platform and follow that install section.
 
 | I'm using… | Go to |
-|------------|-------|
-| **Claude Code** | [Claude Code install](#claude-code) |
+|---|---|
+| **Claude Code** (primary, most complete) | [Claude Code](#claude-code) |
+| **OpenAI Codex CLI** | [Codex](#codex) |
+| **Droid (Factory)** | [Droid (Factory)](#droid-factory) |
+| **Gemini CLI** or **Antigravity** | [Antigravity and Gemini CLI](#antigravity-and-gemini-cli) |
 | **Grok** | [Grok](docs/GROK.md) |
-| **Gemini CLI / Antigravity** | [Antigravity Support](#antigravity-support) |
-| **OpenAI Codex CLI** | [Codex Support](#codex-support) |
-| **Droid (Factory)** | [Droid (Factory) Support](#droid-factory-support) |
+| **Pi** | [Directory guide](#directory-guide) and `scripts/pi-*.sh`; see [pi.dev](https://pi.dev) |
+| **OpenCode** | [docs/OPENCODE.md](docs/OPENCODE.md) |
 
-Not sure? **Claude Code** is the primary platform — it has the most complete feature set and documentation.
+Swarm runbooks: [Claude](docs/swarm-quickstart-claude.md), [Gemini](docs/swarm-quickstart-gemini.md), [Codex](docs/swarm-quickstart-codex.md), [Droid](docs/swarm-quickstart-droid.md). Remote swarms: [docs/remote-swarm.md](docs/remote-swarm.md).
 
----
-
-## ⚠️ Compatibility Notice
-
-**These plugins are primarily developed for personal use.** While they should work on Linux, macOS, and WSL (Windows Subsystem for Linux), there are no guarantees they will work in all environments. Use at your own risk.
-
-**Tested Platforms:**
-- ✅ Linux
-- ✅ macOS
-- ✅ WSL (Windows Subsystem for Linux)
-- ❌ Windows (native) - Not supported
-
----
-
-## Directory Guide
-
-This repository supports multiple agentic platforms. Please refer to the corresponding directory and documentation for your platform:
+## Directory guide
 
 | Platform | Directory | Documentation |
-|----------|-----------|---------------|
-| **Claude Code** | `.claude-plugin/` and `plugins/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
+|---|---|---|
+| Claude Code | `.claude-plugin/` and `plugins/` | [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) |
+| Antigravity | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
+| Gemini CLI skill extensions | `skills/` (each skill has `gemini-extension.json` and `GEMINI.md`) | [skills/autocoder/README.md](skills/autocoder/README.md), [skills/modernize/README.md](skills/modernize/README.md) |
+| Codex | `.agents/plugins/`, `codex-plugins/`, `skills/`, `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
+| Droid (Factory) | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
 | **Grok** | the Claude marketplace, plus `plugins/*/.grok-plugin/plugin.json` | [docs/GROK.md](docs/GROK.md) |
-| **Antigravity** | `.agent/` | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
-| **Pi** | `.pi/` with `skills/`, `prompts/` (slash commands) and `scripts/` | [pi.dev](https://pi.dev) |
-| **Gemini CLI skill extensions** | `skills/` with per-skill `gemini-extension.json` and `GEMINI.md` | [skills/autocoder/README.md](skills/autocoder/README.md), [skills/modernize/README.md](skills/modernize/README.md) |
-| **Codex** | `.agents/plugins/`, `codex-plugins/`, `skills/`, and `scripts/` | [docs/CODEX.md](docs/CODEX.md) |
-| **OpenCode** | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
-| **Droid (Factory)** | `.factory/` and `.factory-plugin/` | [docs/DROID.md](docs/DROID.md) |
-| **Improve skill** (all platforms) | `skills/improve/` | [skills/improve/SKILL.md](skills/improve/SKILL.md) |
-
-Each platform has its own directory structure and installation method. See the platform-specific documentation for details.
-
----
-
-## Codex Support
-
-Codex support is additive and does not replace the Claude Code or Antigravity / Gemini implementations.
-
-#### Add Marketplace
-
-```bash
-/plugin add marketplace https://github.com/laird/agents
-```
-
-### Codex Skills
-
-- `skills/autocoder/` - Codex-native entrypoint for autonomous GitHub issue workflows
-- `skills/modernize/` - Codex-native entrypoint for modernization workflows
-
-### Gemini CLI Skill Packaging
-
-- `skills/autocoder/` - shared skill content plus `gemini-extension.json` and `GEMINI.md`
-- `skills/modernize/` - shared skill content plus `gemini-extension.json` and `GEMINI.md`
-
-### Codex Runtime Scripts
-
-```bash
-# Install Codex skills, aliases, and parallel-agent commands
-bash scripts/install-codex.sh /path/to/target-repo
-
-# Run one autocoder pass
-bash scripts/codex-autocoder.sh fix
-
-# Run the continuous fix loop
-bash scripts/codex-fix-loop.sh
-
-# Run the manager monitor loop
-bash scripts/codex-monitor-loop.sh 15
-
-# Stop running loops
-bash scripts/codex-stop-loop.sh all
-
-# Start a Codex swarm (defaults to tmux; pass `cmux` to override)
-bash scripts/start-parallel-codex.sh 3
-```
-
-If you want shell aliases for Codex swarm startup, source [codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) from your shell config. That gives you `startct`, `startcc`, `joinct`, and `joincc`.
-
-See [docs/CODEX.md](docs/CODEX.md) for details.
-
----
-
-## Droid (Factory) Support
-
-Droid support is additive and does not replace the Claude Code, Antigravity / Gemini, or Codex implementations.
-
-### Droid Skills
-
-- `.factory/skills/autocoder/` - Droid-native entrypoint for autonomous GitHub issue workflows
-- `.factory/skills/modernize/` - Droid-native entrypoint for modernization workflows
-
-### Droid Custom Droids (Subagents)
-
-Six specialist subagents in `.factory/droids/`: `architect`, `coder`, `documentation`, `migration-coordinator`, `security`, `tester`.
-
-### Droid Runtime Scripts
-
-```bash
-# Install Droid skills, droids, aliases, and parallel-agent commands
-bash scripts/install-droid.sh /path/to/target-repo
-
-# Run one autocoder pass
-bash scripts/droid-autocoder.sh fix
-
-# Run the continuous fix loop
-bash scripts/droid-fix-loop.sh
-
-# Run the manager monitor loop
-bash scripts/droid-monitor-loop.sh 15
-
-# Stop running loops
-bash scripts/droid-stop-loop.sh all
-
-# Start a tmux-based Droid swarm
-bash scripts/droid-start-parallel.sh tmux 3
-```
-
-If you want shell aliases for Droid swarm startup, source [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) from your shell config. That gives you `startdt`, `startdc`, `joindt`, and `joindc`.
-
-See [docs/DROID.md](docs/DROID.md) for details.
-
----
-
-## Swarm Quickstart Guides
-
-Platform-specific install and run guides for each supported agent:
-
-| Platform | Quickstart |
-|----------|-----------|
-| Claude Code | [docs/swarm-quickstart-claude.md](docs/swarm-quickstart-claude.md) |
-| Gemini CLI (Antigravity) | [docs/swarm-quickstart-gemini.md](docs/swarm-quickstart-gemini.md) |
-| OpenAI Codex CLI | [docs/swarm-quickstart-codex.md](docs/swarm-quickstart-codex.md) |
-| Droid (Factory) | [docs/swarm-quickstart-droid.md](docs/swarm-quickstart-droid.md) |
-
-To manage a swarm from another machine (a laptop, a uConsole) over Tailscale, see [docs/remote-swarm.md](docs/remote-swarm.md): `remote-swarm-setup`, then `swarm` or `join-parallel --remote <host>`.
-
-Tools that read a running swarm's state (`.autocoder/swarm/<session>.json`) should follow [docs/swarm-manifest.md](docs/swarm-manifest.md): the fields, the lock, the worker and manager markers, and what a reader may rely on.
-
----
-
-## Shell Aliases — All Combinations
-
-Source the alias files for the platforms you use. Each provides `start` and `join` aliases for both tmux and cmux.
-
-| Agent | tmux | cmux | Alias file |
-|-------|------|------|------------|
-| Claude Code | `startclt` | `startclc` | [claude-shell-aliases.sh](scripts/claude-shell-aliases.sh) |
-| Codex | `startct` | `startcc` | [codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) |
-| Gemini (Antigravity) | `startgt` | `startgc` | [gemini-shell-aliases.sh](scripts/gemini-shell-aliases.sh) |
-| Droid (Factory) | `startdt` | `startdc` | [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) |
-
-Install all aliases in one step (auto-detects which agent CLIs are installed):
-
-```bash
-bash /path/to/agents/scripts/install-shell-aliases.sh        # auto-detect
-bash /path/to/agents/scripts/install-shell-aliases.sh --all  # all agents
-source ~/.zshrc  # or ~/.bashrc
-```
-
-Or install via `/autocoder:install` in Claude Code.
-
-All aliases call `start-parallel` with the appropriate `--agent` and `--mux` flags. Example — start 3 Claude workers in tmux:
-
-```bash
-# Add to ~/.zshrc or ~/.bashrc:
-source /path/to/agents/scripts/claude-shell-aliases.sh
-
-# Then:
-startclt 3   # 1 manager + 3 Claude workers in tmux
-startclc 3   # 1 manager + 3 Claude workers in cmux
-startct 3    # 1 manager + 3 Codex workers in tmux
-startgt 3    # 1 manager + 3 Gemini workers in tmux
-startdt 3    # 1 manager + 3 Droid workers in tmux
-```
-
----
+| Pi | `.pi/` (`prompts/`, `skills/`) and `scripts/pi-*.sh` | [pi.dev](https://pi.dev) |
+| OpenCode | `agents/` | [docs/OPENCODE.md](docs/OPENCODE.md) |
+| Improve skill (all platforms) | `skills/improve/` | [skills/improve/SKILL.md](skills/improve/SKILL.md) |
 
 ## Installation
 
 ### Claude Code
 
-#### Add Marketplace
+The current Claude Code command is `/plugin marketplace add`, not `/plugin add marketplace`. Official docs: [Install plugins](https://code.claude.com/docs/en/plugins/install).
 
-```bash
-/plugin add marketplace https://github.com/laird/agents
+In a Claude Code session:
+
+```text
+/plugin marketplace add laird/agents
+/plugin install modernize@plugin-marketplace
+/plugin install autocoder@plugin-marketplace
 ```
 
-#### Install Plugins
-
-**Install modernize plugin** (software modernization workflows):
+`plugin-marketplace` is the `name` in `.claude-plugin/marketplace.json`. From a shell (Claude Code 2.1+):
 
 ```bash
-/plugin install modernize
+claude plugin marketplace add laird/agents
+claude plugin install modernize@plugin-marketplace
+claude plugin install autocoder@plugin-marketplace
 ```
 
-**Install autocoder plugin** (autonomous GitHub issue resolution):
+After install, slash commands include:
 
-```bash
-/plugin install autocoder
-```
+- **modernize:** `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
+- **autocoder:** `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
 
-**Install both plugins**:
+Optional companions (not required):
 
-```bash
-/plugin install modernize autocoder
-```
-
-After installation, commands will be available as slash commands in Claude Code:
-
-- **modernize**: `/assess`, `/plan`, `/modernize`, `/retro`, `/retro-apply`, `/modernize-help`
-- **autocoder**: `/fix`, `/fix-loop`, `/stop-loop`, `/monitor-workers`, `/list-proposals`, `/approve-proposal`, `/list-needs-design`, `/list-needs-feedback`, `/brainstorm-issue`, `/full-regression-test`, `/improve-test-coverage`, `/review-blocked`, `/install`, `/autocoder-help`
-
-**Get help anytime:**
-```bash
-/modernize-help    # Overview of modernization workflow
-/autocoder-help    # Overview of autonomous coding workflow
-```
-
-### Optional Companion Plugins
-
-Autocoder and modernize work fine without these. Install them when you hit the scenarios below.
-
-| Plugin | Install when… |
-|--------|--------------|
-| **superpowers** | You encounter complex multi-file issues and want systematic debugging, planning, and verification skills |
-| **quint** | You need structured human-in-the-loop decisions for ultra-complex or irreversible changes |
-| **pstack** | You want regression-test bug fixes, multi-model adversarial code review, blast-radius checks, and diff/prose cleanup. It outranks Compound Engineering and superpowers for the roles it covers |
-
-```bash
-/plugin install superpowers   # optional: structured problem-solving
-/plugin install quint         # optional: human-guided decisions
-/plugin marketplace add michael-denyer/pstack-claude   # optional: pstack skills
+```text
+/plugin install superpowers
+/plugin install quint
+/plugin marketplace add michael-denyer/pstack-claude
 /plugin install pstack@pstack-claude
 ```
 
-When installed, `/fix` invokes them automatically for the right issue types. When absent, the workflow uses direct problem-solving instead — no configuration needed either way.
+When those are present, `/fix` can invoke them. When they are not, the workflow still runs. pstack install for other CLIs is in [docs/PSTACK.md](docs/PSTACK.md).
 
-Inside `/fix`, `/fix-loop`, and `/modernize`, the command protocol stays in charge. pstack's session-start hook routes multi-file work to `pstack:poteto-mode`, but these commands override it (on worker hosts, set `session hook: off`; see [docs/PSTACK.md](docs/PSTACK.md)), and they never enter pstack orchestrators (`poteto-mode`, `architect`, `figure-it-out`, `swarm`, `arena`, `babysit`, `make-pr-easy-to-review`). Those skills run their own playbooks and would bypass the issue-claim sequence and the configured Merge Mode.
-For pstack install steps on Codex, Droid, Antigravity, Gemini CLI, and pi, see [docs/PSTACK.md](docs/PSTACK.md).
+### Codex
+
+```bash
+bash scripts/install-codex.sh /path/to/target-repo
+
+# One autocoder pass, then a continuous loop and a manager monitor
+bash scripts/codex-autocoder.sh fix
+bash scripts/codex-fix-loop.sh
+bash scripts/codex-monitor-loop.sh 15
+
+# Swarm (tmux by default; pass cmux to override)
+bash scripts/start-parallel-codex.sh 3
+```
+
+There is no `scripts/codex-stop-loop.sh`. While a loop is running, stop it by creating the stop file it watches (each loop deletes that file on startup). Paths are relative to the git toplevel:
+
+```bash
+touch .codex/loops/fix-loop.stop       # ends scripts/codex-fix-loop.sh
+touch .codex/loops/monitor-loop.stop   # ends scripts/codex-monitor-loop.sh
+```
+
+The fix loop checks during its sleep. The monitor loop checks at the start of the next interval, so a stop file created during `sleep` waits out the current interval. Ctrl-C stops a loop in the foreground.
+
+Codex-oriented skills live in `skills/autocoder/` and `skills/modernize/`. Shell aliases: source [scripts/codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) for `startct`, `startcc`, `joinct`, and `joincc`.
+
+A `/plugin add marketplace …` command does not apply to the Codex CLI; that was Claude Code syntax (and the old form of it).
 
 ### Droid (Factory)
 
-#### Add Marketplace
-
 ```bash
 droid plugin marketplace add https://github.com/laird/agents
-```
-
-#### Install Plugins
-
-```bash
 droid plugin install modernize@plugin-marketplace
 droid plugin install autocoder@plugin-marketplace
-```
 
-#### Standalone Installer
-
-```bash
+# Or copy assets into a target repo
 bash scripts/install-droid.sh /path/to/target-repo
+
+bash scripts/droid-autocoder.sh fix
+bash scripts/droid-fix-loop.sh
+bash scripts/droid-monitor-loop.sh 15
+bash scripts/droid-start-parallel.sh tmux 3
 ```
 
-After installation, the same slash commands are available in Droid. See [docs/DROID.md](docs/DROID.md) and [docs/DROID-INSTALL.md](docs/DROID-INSTALL.md) for details.
+There is no `scripts/droid-stop-loop.sh`. `scripts/droid-fix-loop.sh` and `scripts/droid-monitor-loop.sh` repeat until the process exits, so stop them with Ctrl-C or by killing the process. Install and command reference: [docs/DROID.md](docs/DROID.md) and [docs/DROID-INSTALL.md](docs/DROID-INSTALL.md). Aliases: [scripts/droid-shell-aliases.sh](scripts/droid-shell-aliases.sh).
 
----
+### Antigravity and Gemini CLI
 
-## Antigravity Support
-
-This repository is **Antigravity-native**. It includes the `.agent/` directory containing all agent rules and workflows, making it compatible with the Antigravity engine out of the box.
-
-### Quick Install (One-Liner)
-
-Run this command from your project's root directory:
+The default git branch is `master`, not `main`. This one-liner failed with 404 when it pointed at `…/main/scripts/install.sh`:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laird/agents/main/scripts/install.sh | bash
+# from your project's root; needs git
+curl -sSL https://raw.githubusercontent.com/laird/agents/master/scripts/install.sh | bash
 ```
 
-This fetches only the `.agent/` directory and installs it into your project.
-
-> [!NOTE]
-> **Cross-Platform Compatibility**
->
-> - **Linux/macOS**: Works natively
-> - **Windows**: Requires [Git Bash](https://gitforwindows.org/) or WSL
-
-### Manual Installation
-
-Alternatively, copy or symlink the `.agent/` directory:
+The script sparse-clones the repository and copies `.agent/` into the current directory. With no TTY, the idle-sentinel prompt is skipped. The overwrite prompt is not skipped: if `.agent/` already exists, `read` fails and the script exits. A safer equivalent, from a directory where a checkout named `agents` should land (`git clone` uses the repository name):
 
 ```bash
-# Option 1: Copy
-cp -r /path/to/agents/.agent /your/project/
-
-# Option 2: Symlink (for development)
-ln -s /path/to/agents/.agent /your/project/.agent
+git clone https://github.com/laird/agents.git
+cp -r agents/.agent /your/project/
+# or: ln -s /path/to/agents/.agent /your/project/.agent
 ```
 
-### Available Workflows
+Gemini CLI skill packaging (not Codex-specific) is the `gemini-extension.json` and `GEMINI.md` files under `skills/autocoder/` and `skills/modernize/`.
 
-After installation, these workflows are available:
+### Shell aliases for swarms
 
-**Modernize Workflows:**
+```bash
+bash /path/to/agents/scripts/install-shell-aliases.sh        # auto-detect installed CLIs
+bash /path/to/agents/scripts/install-shell-aliases.sh --all
+source ~/.zshrc   # or ~/.bashrc
+```
 
-| Workflow | Description |
-|----------|-------------|
-| `/assess` | Evaluate modernization viability |
-| `/plan` | Create execution strategy |
-| `/modernize` | Execute multi-phase modernization |
-| `/retro` | Analyze project for improvements |
-| `/retro-apply` | Apply retrospective findings |
-| `/modernize-help` | Show modernize workflow help |
+| Agent | tmux | cmux | Alias file |
+|---|---|---|---|
+| Claude Code | `startclt` | `startclc` | [claude-shell-aliases.sh](scripts/claude-shell-aliases.sh) |
+| Codex | `startct` | `startcc` | [codex-shell-aliases.sh](scripts/codex-shell-aliases.sh) |
+| Gemini (Antigravity) | `startgt` | `startgc` | [gemini-shell-aliases.sh](scripts/gemini-shell-aliases.sh) |
+| Droid (Factory) | `startdt` | `startdc` | [droid-shell-aliases.sh](scripts/droid-shell-aliases.sh) |
 
-**Autocoder Workflows:**
+Example: `startclt 3` starts one manager and three Claude workers in tmux.
 
-| Workflow | Description |
-|----------|-------------|
-| `/fix` | Autonomous issue resolution |
-| `/fix-loop` | Continuous autonomous resolution |
-| `/stop-loop` | Stop the continuous loop |
-| `/list-proposals` | View pending AI-generated proposals |
-| `/approve-proposal` | Approve a proposal for implementation |
-| `/list-needs-design` | List issues needing design work |
-| `/list-needs-feedback` | List issues needing feedback |
-| `/brainstorm-issue` | Brainstorm design for an issue |
-| `/full-regression-test` | Run comprehensive test suite |
-| `/improve-test-coverage` | Analyze and improve test coverage |
-| `/review-blocked` | Review and unblock issues labeled by fix-loop |
-| `/monitor-workers` | Monitor workers, dispatch idle agents, deploy when done |
-| `/install` | Install all autocoder plugin components |
-| `/autocoder-help` | Show autocoder workflow help |
-
-> [!WARNING]
-> The watchdog scripts in `.agent/scripts/` are experimental. See [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) for details.
-
----
+Those `start*` aliases run `start-parallel`, which is `plugins/autocoder/scripts/start-parallel-agents.sh`. `/install`, `scripts/install-codex.sh`, and `scripts/install-droid.sh` symlink it to `~/.local/bin/start-parallel`. `scripts/install-shell-aliases.sh` only appends `source` lines.
 
 ## Plugins
 
@@ -398,8 +195,9 @@ startclt 3
 # Override models
 WORKER_MODEL=claude-sonnet-5 MANAGER_MODEL=claude-opus-5 startclt 3
 
-# Manager-routing mode (zero worker-vs-worker claim races)
-start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
+# Manager-routing mode (zero worker-vs-worker claim races).
+# `start-parallel` is the same command after /install links it onto PATH.
+bash plugins/autocoder/scripts/start-parallel-agents.sh 3 --mux tmux --agent claude --route manager
 ```
 
 **Environments (gated releases):** the swarm lands on `main` fast and `main-sentinel.sh` repairs it when it goes red. Releases do not share that risk. Declare `environments` in `.autocoder.json` (`staging` → `uat` → `prod`, each a branch on origin that your deploy reads) and `promote.sh` moves each one only to a commit with proof of a full-regression pass: the sentinel's `main-green` tip, the previous environment's tip, or a tree the gate cache recorded as passing. Being on `main` is never enough. See [docs/environments.md](docs/environments.md).
