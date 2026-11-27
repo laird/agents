@@ -395,10 +395,10 @@ def landing_proof(cfg: Config, tip, ref=None) -> str:
     `lines (re-merge conflicts only where another landing edited beside this one: <paths>[; ignored driver-owned: <paths>])`
                 the re-merge conflicts in paths no driver owns and, once driver-owned paths are set aside,
                 differs from ref nowhere else. Each remaining path was modified on both sides since the merge
-                base, and every non-blank line tip added to it is in ref at least as many times (#394). A
+                base. Ref contains the non-blank additions (#394) and reflects the net removals. A
                 driver-owned path beside that conflict (the regenerated page in the same landing, #377) is
                 not evidence the member is missing; the close-out names it. A reorder, a pure removal, or an
-                added line missing from ref is not this: `landing_gap` names that file and the first missing line.
+                added line missing from ref is not this. `landing_gap` names a missing addition or a retained removal.
     `rows`      merging tip into ref changes nothing but the ORDER of lines inside files a merge driver
                 owns. A keyed-row driver writes the merged rows in an order it derives from the three
                 sides (the ancestor's rows first, then each side's additions), so a landing that went
@@ -454,7 +454,8 @@ def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tr
     Returns `(plain, ignored)`. `plain` is empty unless the re-merge of <tip> into <ref> conflicts in those
     paths and, once paths a custom merge driver owns are set aside, differs from <ref> nowhere else. Each
     plain path is a modification on both sides since their merge base, and every non-blank line <tip> ADDED
-    to it (against the merge base) is in <ref>'s copy at least as many times. `ignored` is the driver-owned
+    to it (against the merge base) is in <ref>'s copy at least as many times. Each non-blank
+    line the tip removed occurs no more often in ref than in tip. `ignored` is the driver-owned
     paths that conflicted or differed (a regenerated page, a re-stamped line): their re-merge is the driver's
     artefact, not evidence the member is missing (#377). Two members of one batch that appended at the same
     place of one file land cleanly in the batch's own merge, but each member's re-merge onto the landed
@@ -483,12 +484,14 @@ def lines_present_in_conflicted_paths(cfg: Config, ref, tip, ref_tree, merged_tr
         base_blob = git(cfg.repo, "rev-parse", "-q", "--verify", f"{base}:{p}")
         if tip_blob.returncode or ref_blob.returncode or base_blob.returncode:
             return [], []   # an addition, deletion or rename: not an adjacent edit
-        base_counts, added_lines = _net_added_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
+        base_counts, added_lines, removed_lines = _net_changed_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
         ref_counts = _line_counts(cfg, f"{ref}:{p}")
         if ref_counts == base_counts:
             return [], []   # ref did not touch the file: nothing edited beside this branch, so the conflict is its own
         if not added_lines or _first_short_added(cfg, f"{tip}:{p}", ref_counts, added_lines) is not None:
             return [], []   # a reorder, a pure removal, or a line this branch added that is not in ref
+        if _first_retained_removal(ref_counts, removed_lines) is not None:
+            return [], []
     return sorted(conflicted), ignored
 
 
@@ -564,14 +567,19 @@ def _line_counts(cfg: Config, spec):
     return counts
 
 
-def _net_added_lines(cfg: Config, base_spec, tip_spec):
-    """(<base line counts>, {line: how many more <tip> has than <base>}) for non-blank lines only.
-    A reorder or a pure removal has no entry: nothing there can show the work landed."""
+def _net_changed_lines(cfg: Config, base_spec, tip_spec):
+    """Base counts, net additions, and maximum remaining counts for non-blank net removals."""
     base_counts = _line_counts(cfg, base_spec)
-    added = _line_counts(cfg, tip_spec)
-    for line, n in base_counts.items():
-        added[line] = added.get(line, 0) - n
-    return base_counts, {line: n for line, n in added.items() if n > 0 and line.strip()}
+    tip_counts = _line_counts(cfg, tip_spec)
+    added = {line: n - base_counts.get(line, 0) for line, n in tip_counts.items()
+             if line.strip() and n > base_counts.get(line, 0)}
+    removed = {line: tip_counts.get(line, 0) for line, n in base_counts.items()
+               if line.strip() and tip_counts.get(line, 0) < n}
+    return base_counts, added, removed
+
+
+def _first_retained_removal(ref_counts, removed_lines):
+    return next((line for line, limit in removed_lines.items() if ref_counts.get(line, 0) > limit), None)
 
 
 def _first_short_added(cfg: Config, tip_spec, ref_counts, added_lines):
@@ -595,9 +603,7 @@ def _show_added_line(line) -> str:
 
 
 def landing_gap(cfg: Config, tip, ref=None) -> str:
-    """The first non-blank line <tip> added, outside driver-owned paths, that <ref> does not hold as many
-    times, as `path: line`. '' when there is no such line (the miss is a reorder, a pure removal, a missing
-    blob, or only a driver-owned file). The close-out prints this for a member the landing proof refused."""
+    """Describe a missing addition or a retained removal in a plain path."""
     ref = ref or cfg.ref
     base = git(cfg.repo, "merge-base", ref, tip).stdout.strip()
     if not base:
@@ -611,12 +617,16 @@ def landing_gap(cfg: Config, tip, ref=None) -> str:
             continue
         if any(git(cfg.repo, "rev-parse", "-q", "--verify", f"{side}:{p}").returncode for side in (base, tip, ref)):
             continue
-        _, added_lines = _net_added_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
+        _, added_lines, removed_lines = _net_changed_lines(cfg, f"{base}:{p}", f"{tip}:{p}")
         if not added_lines:
             continue
-        short = _first_short_added(cfg, f"{tip}:{p}", _line_counts(cfg, f"{ref}:{p}"), added_lines)
+        ref_counts = _line_counts(cfg, f"{ref}:{p}")
+        short = _first_short_added(cfg, f"{tip}:{p}", ref_counts, added_lines)
         if short is not None:
             return f"{p}: {_show_added_line(short)}"
+        retained = _first_retained_removal(ref_counts, removed_lines)
+        if retained is not None:
+            return f"{p}: retained removed line {_show_added_line(retained)}"
     return ""
 
 

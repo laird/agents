@@ -820,3 +820,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The self-improvement loop can now flag three consecutive unread cycles as high priority.
 
+
+---
+
+## 2026-11-26 21:46:37 - Check removals in train landing proof (#420)
+
+**What Changed**: Check the remaining count of deleted lines before accepting adjacent edits as landed.
+
+**Why Changed**: A replacement can otherwise appear to have landed when its new line was added elsewhere.
+
+**Impact**: Train close-out keeps incomplete replacements queued and identifies a retained removed line.
+

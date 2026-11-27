@@ -1838,3 +1838,19 @@ def test_a_row_for_every_labelled_item_whatever_its_read(fx, monkeypatch):
     silent = fx.issue("silent")                    # labelled, no comment at all: unread (a short read and no comments look alike)
     rows = {r["issue"]: r for r in T.plan_queue(fx.cfg())}
     assert set(rows) == {a, silent} and rows[silent]["state"] == "unread"
+
+
+def test_adjacent_replacement_proof_checks_removed_line_counts(fx):
+    cfg = fx.cfg()
+    path = "notes.txt"
+    fx.commit_on("master", {path: "unchanged\nold label\nseparator\nold label\n"})
+    fx.branch("feature/update-label", {path: "unchanged\nnew label\nseparator\nold label\n"})
+    tip = "origin/feature/update-label"
+
+    fx.commit_on("master", {path: "unchanged\nold label\nnew label\nseparator\nold label\n"})
+    assert T.landing_proof(cfg, tip) == ""
+    assert T.landing_gap(cfg, tip) == f"{path}: retained removed line old label"
+
+    fx.commit_on("master", {path: "unchanged\nnew label\nadjacent edit\nseparator\nold label\n"})
+    assert T.landing_proof(cfg, tip).startswith("lines (")
+    assert T.landing_gap(cfg, tip) == ""
