@@ -317,10 +317,16 @@ def git(repo, *args, check=False, input=None, env=None):
 # dial usually reaches another edge: measured on one host, `api.github.com` resolved to one of six
 # addresses at a time, one of the six refused connects for a minute or so, and every call in that minute
 # failed while the other five addresses answered in milliseconds. Any other failure raises at once.
+# The forms are the HTTP client's (`gh` reports a GraphQL call that died in transport as `Post
+# "https://api.github.com/graphql": <cause>`: a dial that timed out, a TLS handshake that did not finish, a
+# connection the edge reset, a bare `EOF` when the edge closed the stream), the resolver's and the gateway's.
+# A read that dies this way is retried and never read as an empty answer.
 TRACKER_TRANSPORT_ERROR = re.compile(
     r"i/o timeout|connection reset|connection refused|TLS handshake timeout|unexpected EOF|no such host|"
-    r"network is unreachable|context deadline exceeded|HTTP (502|503|504)\b|Bad Gateway|Service Unavailable|Gateway Timeout",
-    re.I)
+    r"network is unreachable|context deadline exceeded|HTTP (502|503|504)\b|Bad Gateway|Service Unavailable|Gateway Timeout|"
+    r"\b(Post|Get|Put|Patch|Delete) \"https?://[^\"]*\": |\b(dial|read|write) tcp\b|(^|[\s:])EOF\s*$|error connecting to|"
+    r"\bgraphql:.*\b(timed? ?out|connection|EOF|reset)\b",
+    re.I | re.M)
 TRACKER_RETRY_PAUSES = (2, 8, 30)
 
 
@@ -1528,10 +1534,47 @@ def _classify_merge(cfg: Config, ov: Overrides, issue, ref, tip):
 NO_READY_NOTE = ("the word READY appears only inside a comment (an FYI, a quote, a note), never first: a READY comment says READY "
                  "on its first line after at most a swarm or worker prefix, then the branch in backticks and its tip "
                  "(`[swarm] READY: `feature/issue-N` @ <sha>`); labelled but not READY")
+# A labelled item whose read holds comments and none says READY: a true no-READY, not retried (the next READY is a new comment).
+NO_READY_COMMENTS_NOTE = "labelled {labels} but no comment says READY ({n} comment(s) read, issue_get exit 0): not an item until a READY is posted"
+# A labelled item whose READY could not be read: the read failed (a non-zero exit after the transport retries) or came back
+# short (exit 0 with no comment at all, which under transport pressure is a truncated answer, not a verdict). Read again next cycle.
+UNREAD_NOTE = "the READY could not be read: issue_get exited {rc} with {n} comment(s) read{err}; not planned this cycle, read again next cycle"
+# An item the tick that launched this cycle listed as launchable, which the plan's own listing does not return at all.
+UNLISTED_NOTE = ("launchable at the tick that launched this cycle but absent from the plan's own listing ({got} item(s) listed now, "
+                 "{want} launchable then): a listing lost in transport or a label change; not planned this cycle, listed again next")
+SKIP_ROW_STATES = ("unread", "unlisted", "no-ready")   # rows with no branch: the plan passes them over, each with its reason
 
 
-def plan_queue(cfg: Config, in_flight=(), now=None):
+def read_item(cfg: Config, issue):
+    """One item's tracker read for the plan: (comments, exit, error).
+
+    A read that failed (a non-zero exit, after tracker()'s transport retries) or whose body is not an issue is
+    (None, exit, message), never an empty answer; a read that succeeded is (ready_comments(issue), 0, "")."""
+    try:
+        r = tracker(cfg, "issue_get", str(issue), check=False)
+    except RuntimeError as e:
+        return None, -1, str(e)[:200]
+    if r.returncode != 0:
+        return None, r.returncode, (r.stderr or r.stdout).strip()[:200]
+    try:
+        data = json.loads(r.stdout)
+    except ValueError as e:
+        return None, 0, f"unreadable body ({e})"
+    if not isinstance(data, dict):
+        return None, 0, "unreadable body (not an issue object)"
+    return ready_comments(data), 0, ""
+
+
+def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
     """The ordered queue: [{order, state, issue, branch, tip, rank, created, note, basis, named, followed}].
+
+    EVERY LABELLED ITEM GETS A ROW. An item whose READY cannot be read is `unread` (the read exited non-zero
+    after the transport retries, or came back with no comment at all: a short answer under transport pressure
+    is not a verdict), with the exit code and the comment count in its note, and is read again next cycle; an
+    item whose read holds comments and none says READY is `no-ready` and is not retried. `expected` (the issue
+    numbers a daemon tick listed as launchable before it launched the cycle) adds an `unlisted` row for each
+    one the plan's own listing does not return, so a listing lost in transport names what it lost. `log(line)`
+    receives one line per such row (the daemon keeps them in its log).
 
     `basis` is `preflight` for a READY enqueue.sh posted from a host that does not gate (the batch gate is
     its first full test; a launchable one's note says so), else `ready`. `named` is the sha the READY names
@@ -1556,17 +1599,29 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
         return (ov.first_rank(it["number"]), lane, priority_rank(cfg, it["labels"]), it["createdAt"] or "", it["number"])
 
+    say = log or (lambda line: None)
+
+    def skip_row(n, issue, labels, created, state, note):
+        return {"order": n, "state": state, "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, labels),
+                "created": created or "-", "note": note, "basis": "ready", "named": "-", "followed": "", "readyAt": "",
+                "red": [red["number"] for red in holding], "lifted": lifted_shas}
+
     rows, found = [], 0
     for n, it in enumerate(sorted(items, key=key), 1):
         issue = it["number"]
-        comments = ready_comments(json.loads(tracker(cfg, "issue_get", str(issue)).stdout))
-        picked = pick_ready(cfg, comments, issue)
+        comments, rc, err = read_item(cfg, issue)
+        picked = pick_ready(cfg, comments, issue) if comments else None
         if picked is None:
-            if mentions_ready(cfg, comments):   # the word appears, but no comment SAYS READY (an FYI, a quote, a note): say so
-                rows.append({"order": n, "state": "no-ready", "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, it["labels"]),
-                             "created": it["createdAt"] or "-", "note": NO_READY_NOTE, "basis": "ready", "named": "-", "followed": "", "readyAt": "",
-                             "red": [red["number"] for red in holding], "lifted": lifted_shas})
-            continue   # labelled ready-for-review but says READY nowhere: not an item
+            if comments:   # a complete read with comments, none of them a READY: a true no-READY, never retried
+                note = NO_READY_NOTE if mentions_ready(cfg, comments) else \
+                    NO_READY_COMMENTS_NOTE.format(labels=", ".join(cfg.ready_labels), n=len(comments))
+                rows.append(skip_row(n, issue, it["labels"], it["createdAt"], "no-ready", note))
+                say(f"#{issue}: no-ready: issue_get exit 0, {len(comments)} comment(s) read, none says READY")
+            else:          # the read failed, or came back with no comment at all: unread, read again next cycle
+                note = UNREAD_NOTE.format(rc=rc, n=0, err=f" ({err})" if err else "")
+                rows.append(skip_row(n, issue, it["labels"], it["createdAt"], "unread", note))
+                say(f"#{issue}: unread: issue_get exit {rc}, 0 comment(s) read{(': ' + err) if err else ''}; not planned this cycle")
+            continue
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
         hold_note = red_master_hold(cfg, holding, it["labels"], picked["branch"], cfg.remote_ref(picked["branch"])) if holding and picked.get("branch") else ""
         state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates, hold_note=hold_note)
@@ -1579,6 +1634,13 @@ def plan_queue(cfg: Config, in_flight=(), now=None):
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
                      "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in holding], "lifted": lifted_shas})
+    if expected is not None:
+        want = {int(x) for x in expected}
+        listed = {it["number"] for it in items}
+        for issue in sorted(want - listed):
+            note = UNLISTED_NOTE.format(got=len(items), want=len(want))
+            rows.append(skip_row(len(rows) + 1, issue, [], None, "unlisted", note))
+            say(f"#{issue}: unlisted: launchable at the tick, absent from the plan's listing ({len(items)} listed now, {len(want)} launchable then)")
     return rows
 
 
@@ -1631,7 +1693,7 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, named, preflight, reds, lifted = {}, None, {"no-branch": [], "in-lane": [], "held": []}, 0, [], []
+    counts, nxt, named, preflight, reds, lifted = {}, None, {"no-branch": [], "in-lane": [], "held": [], "unread": [], "unlisted": []}, 0, [], []
     for r in rows:
         reds = r.get("red") or reds
         for sha in r.get("lifted") or []:
@@ -1644,7 +1706,7 @@ def status_line(rows, when=None):
         if r["state"] in named:
             named[r["state"]].append(f"#{r['issue']}")
     order = ["queue", "in-flight", "in-lane", "in-train", "launched", "hold", "held", "conflict", "generator-failed", "driver-fault",
-             "stale", "train-dropped", "tip-moved", "on-master", "regenerate-only", "unchecked", "no-branch"]
+             "stale", "train-dropped", "tip-moved", "on-master", "regenerate-only", "unchecked", "no-branch", "unread", "unlisted"]
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     if reds:
         line += " | red master " + ",".join(f"#{n}" for n in reds)

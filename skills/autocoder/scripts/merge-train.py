@@ -114,7 +114,7 @@ def main(argv=None):
             return 1
     try:
         if a.cmd == "queue":
-            rows = T.plan_queue(cfg, _ints(a.in_flight))
+            rows = T.plan_queue(cfg, _ints(a.in_flight), log=lambda line: print(f"# queue: {line}", file=sys.stderr))
             # The first sight of a READY is a `ready` row in the landing ledger (the comment's time as its
             # `ts`), whichever reader sees it first: this listing or a cycle. Best effort, never a failure.
             T.note_readys(cfg, rows, lambda issue, ts: _ledger_ready(cfg, issue, ts))
@@ -127,7 +127,7 @@ def main(argv=None):
             for x in rows:
                 print("\t".join(str(x[k]) for k in ("order", "state", "issue", "branch", "tip", "rank", "created", "note", "basis")))
         elif a.cmd == "plan":
-            rows = T.plan_queue(cfg, _ints(a.in_flight))
+            rows = T.plan_queue(cfg, _ints(a.in_flight), log=lambda line: print(f"# queue: {line}", file=sys.stderr))
             # Each candidate's probe time on stderr (a dry plan is not a cycle, so no timing row is written).
             out, fault = T.plan_train(cfg, rows, a.size, on_candidate=lambda i, k, s: print(f"# plan: #{i} {k} {s}s", file=sys.stderr))
             print("\n".join(out))

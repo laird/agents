@@ -1253,7 +1253,7 @@ def test_a_cycle_that_planned_nothing_sleeps_before_the_next_tick(fx):
     class Nothing:
         record = {}
 
-        def run(self, size=None):
+        def run(self, size=None, launchable=None):
             return 0, []
     d = R.Daemon(fx.rc(), log=lambda m: None, interval=9, max_ticks=2, sleep=slept.append, cycle=Nothing)
     assert d.loop() == 0
@@ -1279,7 +1279,7 @@ def test_the_daemon_survives_a_tick_that_raises_and_ticks_again(fx):
         def __init__(self, *a, **k):
             pass
 
-        def run(self, size=None):
+        def run(self, size=None, launchable=None):
             runs.append(1)
             raise RuntimeError("tracker call `issue_list --state working` exited 3: Post https://api/graphql: i/o timeout")
 
@@ -1308,3 +1308,92 @@ def test_the_cli_runs_a_daemon_tick_and_reports_pauses_stops_and_status(fx):
     assert "stop requested" in r.stdout
     r = sh(sys.executable, str(CLI), "status", cwd=cwd)
     assert "daemon: not running; stop requested; last tick" in r.stdout
+
+
+# ── a plan never drops a labelled item silently (every item has a row, the tick's list is compared, a ledger event) ──
+def short_read_for(real, issue):
+    """A tracker whose `issue_get` of <issue> comes back short: exit 0 and no comment, the shape a read under transport
+    pressure can take; every other call is the real tracker's."""
+    def fake(cfg, *args, **kw):
+        if args[0] == "issue_get" and str(args[1]) == str(issue):
+            r = real(cfg, *args, **kw)
+            body = json.loads(r.stdout)
+            body["comments"], body["body"] = [], ""
+            return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+        return real(cfg, *args, **kw)
+    return fake
+
+
+def events_of(kind):
+    """The lifecycle ledger's rows of one event kind."""
+    p = Path(os.environ["AUTOCODER_ISSUE_EVENTS"])
+    rows = [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()] if p.exists() else []
+    return [e for e in rows if e.get("event") == kind]
+
+
+def test_a_cycle_gives_a_short_read_an_unread_row_logs_the_ticks_differences_and_writes_plan_dropped_events(fx, monkeypatch):
+    issues = fx.members(3)
+    monkeypatch.setattr(T, "tracker", short_read_for(T.tracker, issues[0]))
+    logged = []
+    cyc = R.Cycle(fx.rc(), log=logged.append)
+    code, _ = cyc.run(launchable=[*issues, 9999])        # the tick listed the three and one the listing no longer returns
+    assert code == 0 and len(fx.gates()) == 1
+    assert [fx.on_master(i) for i in range(3)] == [False, True, True]   # the two readable members landed; the unread one waits
+    assert any(f"plan: #{issues[0]}: unread: issue_get exit 0, 0 comment(s) read; not planned this cycle" in m for m in logged), logged
+    assert any("plan: #9999: unlisted: launchable at the tick, absent from the plan's listing (3 listed now, 4 launchable then)" in m for m in logged), logged
+    assert any(m.startswith("launchable at the tick but not launchable in this plan: ") and f"#{issues[0]} (unread)" in m and "#9999 (unlisted)" in m for m in logged), logged
+    assert any(f"plan skip: #{issues[0]} -: unread: the READY could not be read: issue_get exited 0 with 0 comment(s) read; not planned this cycle" in m for m in logged), logged
+    assert any("plan skip: #9999 -: unlisted: launchable at the tick" in m for m in logged), logged
+    plan = R.State(fx.rc()).plan()
+    assert plan["launchable_at_tick"] == [*issues, 9999] and {s["issue"] for s in plan["skips"]} == {str(issues[0]), "9999"}
+    assert {r["issue"]: r["state"] for r in plan["rows"]}[issues[0]] == "unread" and {r["issue"]: r["state"] for r in plan["rows"]}[9999] == "unlisted"
+    dropped = {e["issue"]: e["detail"] for e in events_of("plan-dropped")}
+    assert dropped[issues[0]]["state"] == "unread" and "issue_get exited 0 with 0 comment(s) read" in dropped[issues[0]]["reason"]
+    assert dropped[9999]["state"] == "unlisted" and "absent from the plan's own listing" in dropped[9999]["reason"]
+    assert set(dropped) == {issues[0], 9999}                        # the planned members are not dropped candidates
+
+
+def test_an_unread_item_is_planned_by_the_next_cycle_once_its_read_is_whole(fx, monkeypatch):
+    issues = fx.members(2)
+    real = T.tracker
+    monkeypatch.setattr(T, "tracker", short_read_for(real, issues[1]))
+    code, _ = fx.run()
+    assert code == 0 and fx.on_master(0) and not fx.on_master(1)
+    monkeypatch.setattr(T, "tracker", real)
+    code, _ = fx.run()
+    assert code == 0 and fx.on_master(1)
+
+
+def test_a_cycle_run_without_a_tick_list_compares_nothing_and_still_records_an_unread_row(fx, monkeypatch):
+    issues = fx.members(2)
+    monkeypatch.setattr(T, "tracker", short_read_for(T.tracker, issues[0]))
+    logged = []
+    code, _ = R.Cycle(fx.rc(), log=logged.append).run()
+    assert code == 0 and fx.on_master(1) and not fx.on_master(0)
+    assert not any(m.startswith("launchable at the tick") for m in logged)
+    assert [e["issue"] for e in events_of("plan-dropped")] == [issues[0]]
+    assert R.State(fx.rc()).plan()["launchable_at_tick"] is None
+
+
+def test_a_plan_that_admits_an_item_the_tick_did_not_list_says_so(fx):
+    issues = fx.members(2)
+    logged = []
+    code, _ = R.Cycle(fx.rc(), log=logged.append).run(launchable=[issues[0]])
+    assert code == 0
+    assert any(m.startswith("launchable in this plan but not at the tick: ") and f"#{issues[1]}" in m for m in logged), logged
+    assert events_of("plan-dropped") == []
+
+
+def test_the_daemon_hands_its_launchable_list_to_the_cycle(fx):
+    issues = fx.members(2)
+    seen = []
+
+    class Watch:
+        record = {}
+
+        def run(self, size=None, launchable=None):
+            seen.append(launchable)
+            return 0, []
+    d = R.Daemon(fx.rc(), log=lambda m: None, interval=1, max_ticks=1, sleep=lambda s: None, cycle=Watch)
+    assert d.loop() == 0
+    assert seen == [sorted(issues)] or seen == [issues]
