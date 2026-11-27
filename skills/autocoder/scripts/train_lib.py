@@ -1383,16 +1383,20 @@ CI_JOB_RE = re.compile(r"(?m)^[ \t]*ci-job:[ \t]*(\S+)[ \t]*$")
 CI_JOB_TICK_RE = re.compile(r"job `([^`]+)`")
 
 
-def named_ci_job(text) -> str:
-    """The CI job a red issue names, or "".
+def named_ci_jobs(text) -> list:
+    """The CI jobs a red issue names, or [] (then every run on the tip counts).
 
-    A `ci-job: <name>` line wins. Otherwise the first ``job `<name>``` (the shape ci-watch.sh writes).
-    A red that names none is judged on every run of the fix tip."""
+    A `ci-job: <name>` line is that one job. Otherwise every ``job `<name>``` (ci-watch.sh writes one
+    per failed job). A later red job must not be ignored because an earlier one went green (#429)."""
     m = CI_JOB_RE.search(text or "")
     if m:
-        return m.group(1)
-    m = CI_JOB_TICK_RE.search(text or "")
-    return m.group(1).strip() if m else ""
+        return [m.group(1)]
+    out = []
+    for found in CI_JOB_TICK_RE.finditer(text or ""):
+        name = found.group(1).strip()
+        if name and name not in out:
+            out.append(name)
+    return out
 
 
 def ci_watch_path(cfg: Config) -> Path:
@@ -1400,7 +1404,10 @@ def ci_watch_path(cfg: Config) -> Path:
 
 
 def ci_watch_read(cfg: Config) -> dict:
-    """The daemon's CI watch (`{sha: {conclusion, run_id, run_name, job, issue}}`), or {}."""
+    """The daemon's CI watch (`{sha: {conclusion, run_id, run_name, job, issues}}`), or {}.
+
+    `conclusion` is set when the tip is red, or when every open red that commit lifted has a success
+    record. `issues` maps each of those reds to its own record, so one close cannot hide a sibling."""
     try:
         data = json.loads(ci_watch_path(cfg).read_text())
     except (OSError, ValueError):
@@ -1459,6 +1466,21 @@ def red_fixes_landed(cfg: Config, reds: list) -> dict:
     (a green closes the issue only when `closeOnGreenCi` is true, which removes the red entirely)."""
     red_ci = _ci_red_shas(cfg)
     return {n: sha for n, sha in landed_fix_map(cfg, reds).items() if sha not in red_ci}
+
+
+def ci_green_notes(cfg: Config, lifted: dict) -> list:
+    """Status-line records for lifts whose CI watch already recorded success. The pending phrase would
+    be a lie once the verdict is in and `closeOnGreenCi` left the issue open."""
+    watch = ci_watch_read(cfg)
+    out, seen = [], set()
+    for sha in lifted.values():
+        if sha in seen:
+            continue
+        rec = watch.get(sha)
+        if isinstance(rec, dict) and rec.get("conclusion") == "success":
+            seen.add(sha)
+            out.append({"sha": sha, "run": str(rec.get("run_id") or "")})
+    return out
 
 
 def ci_hold_backs(cfg: Config, landed: dict) -> list:
@@ -1686,6 +1708,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
     holding = [red for red in reds if red["number"] not in lifted]
     lifted_shas = [lifted[red["number"]] for red in reds if red["number"] in lifted]
     ci_backs = ci_hold_backs(cfg, landed)
+    ci_greens = ci_green_notes(cfg, lifted)
 
     def key(it):
         lane = 0 if any(lb in cfg.lane_labels for lb in it["labels"]) else 1
@@ -1696,7 +1719,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
     def skip_row(n, issue, labels, created, state, note):
         return {"order": n, "state": state, "issue": issue, "branch": "-", "tip": "-", "rank": priority_rank(cfg, labels),
                 "created": created or "-", "note": note, "basis": "ready", "named": "-", "followed": "", "readyAt": "",
-                "red": [red["number"] for red in holding], "lifted": lifted_shas, "ciBack": ci_backs}
+                "red": [red["number"] for red in holding], "lifted": lifted_shas, "ciBack": ci_backs, "ciGreen": ci_greens}
 
     rows, found = [], 0
     for n, it in enumerate(sorted(items, key=key), 1):
@@ -1716,6 +1739,12 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
             continue
         skip = bool(cfg.classify_limit) and found >= cfg.classify_limit
         hold_note = red_master_hold(cfg, holding, it["labels"], picked["branch"], cfg.remote_ref(picked["branch"])) if holding and picked.get("branch") else ""
+        backed = {b.get("issue") for b in ci_backs}
+        if hold_note and holding and all(red["number"] in backed for red in holding):
+            # The fix is already on the tip; the landed-release sentence would say it is still waiting to land.
+            hold_note = hold_note.replace(
+                "until its fix is on the integration tip with a green gate",
+                "until CI on that landed tip is green")
         state, tip, note, (named_kind, named_text) = classify(cfg, ov, issue, picked, in_flight, skip_merge_check=skip, now=now, gates=gates, hold_note=hold_note)
         if not skip and state in ("queue", "launched"):
             found += 1
@@ -1726,7 +1755,7 @@ def plan_queue(cfg: Config, in_flight=(), now=None, expected=None, log=None):
                      "named": (picked.get("named") or "-"),
                      "followed": named_text if named_kind == "taken" and state in ("queue", "launched") else "",
                      "readyAt": ledger_ts(picked.get("createdAt")) or "", "red": [red["number"] for red in holding],
-                     "lifted": lifted_shas, "ciBack": ci_backs})
+                     "lifted": lifted_shas, "ciBack": ci_backs, "ciGreen": ci_greens})
     if expected is not None:
         want = {int(x) for x in expected}
         listed = {it["number"] for it in items}
@@ -1786,7 +1815,7 @@ def repo_id(cfg: Config):
 
 def status_line(rows, when=None):
     when = when or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    counts, nxt, named, preflight, reds, lifted, backs = {}, None, {"no-branch": [], "in-lane": [], "held": [], "unread": [], "unlisted": []}, 0, [], [], []
+    counts, nxt, named, preflight, reds, lifted, backs, greens = {}, None, {"no-branch": [], "in-lane": [], "held": [], "unread": [], "unlisted": []}, 0, [], [], [], []
     for r in rows:
         reds = r.get("red") or reds
         for sha in r.get("lifted") or []:
@@ -1795,6 +1824,9 @@ def status_line(rows, when=None):
         for rec in r.get("ciBack") or []:
             if rec not in backs:
                 backs.append(rec)
+        for rec in r.get("ciGreen") or []:
+            if rec not in greens:
+                greens.append(rec)
         counts[r["state"]] = counts.get(r["state"], 0) + 1
         preflight += 1 if r.get("basis") == "preflight" else 0
         if r["state"] == "queue" and not nxt:
@@ -1806,8 +1838,14 @@ def status_line(rows, when=None):
     line = f"{when} merge-train: {len(rows)} ready | next {nxt or 'none'}"
     if reds:
         line += " | red master " + ",".join(f"#{n}" for n in reds)
+    green_by_sha = {rec.get("sha"): rec for rec in greens}
     for sha in lifted:
-        line += f" | hold lifted: fix landed {sha} (CI verdict pending)"
+        rec = green_by_sha.get(sha)
+        if rec:
+            run = f", run {rec['run']}" if rec.get("run") else ""
+            line += f" | hold lifted: fix landed {sha} (CI green{run})"
+        else:
+            line += f" | hold lifted: fix landed {sha} (CI verdict pending)"
     for rec in backs:
         line += " | " + ci_red_phrase(rec.get("sha") or "", rec.get("run") or "", rec.get("job") or "")
     for s in order:

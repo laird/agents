@@ -1193,13 +1193,23 @@ def _on_branch(run, integration):
     return not (integration and branch and branch != integration)
 
 
-def query_ci(repo, integration, sha, job="") -> dict | None:
+def _clean_ci_label(value) -> str:
+    """Workflow and job names are chosen by whoever can edit the workflow file. Strip what would leave
+    a code span, mention someone, or add a new line, the same way ci-watch.sh does, before a comment."""
+    return re.sub(r"[`@\[\]<>\r\n\t]", " ", str(value or ""))[:100].strip()
+
+
+def query_ci(repo, integration, sha, jobs=()) -> dict | None:
     """The CI verdict of `sha` on `integration`, or None when there is no verdict yet (no runs, still
-    running, `gh` missing, or the forge could not be read). A named `job` judges only that job — the one
-    the red issue named — so a different red job does not put the hold back (#429).
+    running, `gh` missing, or the forge could not be read). `jobs` (the ones the red named) judges only
+    those jobs, so a different red job does not put the hold back (#429).
+
+    A completed red wins even when another run is still in progress: waiting out that run would leave
+    the queue launching onto a tip CI has already failed. Green requires every named job (or, when none
+    are named, every run) to have finished successfully.
 
     Returns {conclusion, run_id, run_name, job}. `conclusion` is `success` or a member of
-    `RED_CI_CONCLUSIONS`. Cancelled-only runs are not a verdict."""
+    `RED_CI_CONCLUSIONS`. Cancelled-only runs are not a verdict. `run_name` and `job` are cleaned."""
     # `jobs` is not a `run list` field (gh rejects the query). A named job is read with `run view`,
     # unless the payload already carries `jobs` (a fixture).
     out, err = _gh(repo, ["run", "list", "--commit", sha, "--branch", integration, "--limit", "100",
@@ -1212,16 +1222,27 @@ def query_ci(repo, integration, sha, job="") -> dict | None:
     runs = [r for r in runs if isinstance(r, dict) and _on_branch(r, integration)]
     if not runs:
         return None
-    if job:
-        return _judge_named_job(repo, runs, job)
+    if jobs:
+        verdict = _judge_named_jobs(repo, runs, list(jobs))
+    else:
+        verdict = _judge_runs(runs)
+    if not verdict:
+        return None
+    verdict["run_name"] = _clean_ci_label(verdict.get("run_name"))
+    verdict["job"] = _clean_ci_label(verdict.get("job"))
+    return verdict
+
+
+def _judge_runs(runs):
+    """Commit-level verdict. A completed red is a verdict even if a sibling run has not finished."""
+    red = [r for r in runs if (r.get("status") or "") == "completed" and (r.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
+    if red:
+        return _ci_record(red[0], red[0].get("conclusion"), "")
     if any((r.get("status") or "") != "completed" for r in runs):
         return None
-    red = [r for r in runs if (r.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
-    if red:
-        return _ci_record(red[0], red[0].get("conclusion"), job="")
     green = [r for r in runs if (r.get("conclusion") or "") == "success"]
-    if green:
-        return _ci_record(green[-1], "success", job="")
+    if green and len(green) == len(runs):
+        return _ci_record(green[-1], "success", "")
     return None
 
 
@@ -1230,32 +1251,59 @@ def _ci_record(run, conclusion, job):
             "run_name": str(run.get("name") or ""), "job": job or ""}
 
 
-def _judge_named_job(repo, runs, job):
+def _judge_named_jobs(repo, runs, wanted):
+    """Verdict over every job the red named. One completed red among them is the verdict, even when
+    another named job is still running. Green only when each named job has completed successfully."""
+    by_name = {name: [] for name in wanted}
     pending = False
-    matched = []
     for run in runs:
-        jobs, err = _run_jobs(repo, run)
+        found, err = _run_jobs(repo, run)
         if err:
             return None
-        found = [j for j in (jobs or []) if isinstance(j, dict) and j.get("name") == job]
-        if not found:
-            continue
-        for j in found:
+        for j in found or []:
+            if not isinstance(j, dict) or j.get("name") not in by_name:
+                continue
             if (j.get("status") or "") != "completed":
                 pending = True
             else:
-                matched.append((run, j))
-    if pending or not matched:
+                by_name[j["name"]].append((run, j))
+    for name, pairs in by_name.items():
+        reds = [(run, j) for run, j in pairs if (j.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
+        if reds:
+            run, _j = reds[0]
+            return _ci_record(run, reds[0][1].get("conclusion"), name)
+    if pending or any(not pairs for pairs in by_name.values()):
         return None
-    reds = [(run, j) for run, j in matched if (j.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
+    greens = []
+    for name, pairs in by_name.items():
+        ok = [(run, j) for run, j in pairs if (j.get("conclusion") or "") == "success"]
+        if not ok:
+            return None
+        greens.append((name, ok[-1][0]))
+    name, run = greens[-1]
+    # One comment names every job that had to be green, not only the last.
+    return _ci_record(run, "success", ", ".join(n for n, _r in greens))
+
+
+def _aggregate_ci_watch(per_issue, issue_ids) -> dict:
+    """One tip-level record from each red that commit lifted.
+
+    A red on any of them is the tip's verdict immediately (the hold goes back; nobody else is closed).
+    Success waits until every one of those reds has a success record, so one issue's close cannot mark
+    the sha judged while a sibling is still open (#429)."""
+    recs = []
+    for number in issue_ids:
+        rec = per_issue.get(str(number))
+        recs.append(rec if isinstance(rec, dict) and rec.get("conclusion") else None)
+    reds = [r for r in recs if r and r.get("conclusion") in T.RED_CI_CONCLUSIONS]
     if reds:
-        run, j = reds[0]
-        return _ci_record(run, j.get("conclusion"), job)
-    greens = [(run, j) for run, j in matched if (j.get("conclusion") or "") == "success"]
-    if greens:
-        run, j = greens[-1]
-        return _ci_record(run, "success", job)
-    return None
+        r = reds[0]
+    elif recs and all(r and r.get("conclusion") == "success" for r in recs):
+        r = recs[-1]
+    else:
+        return {}
+    return {"conclusion": r["conclusion"], "run_id": str(r.get("run_id") or ""),
+            "run_name": str(r.get("run_name") or ""), "job": str(r.get("job") or "")}
 
 
 def lease_free(state: State) -> bool:
@@ -1412,50 +1460,67 @@ class Daemon:
     def _record(self, verdict, launchable, note=""):
         _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
 
-    def watch_lifted_ci(self, rows) -> bool:
-        """Ask CI about tips this tick lifted (#429). A red verdict is recorded so the next plan puts the
-        hold back; a green one closes the tracking issue only when `closeOnGreenCi` is true. No verdict
-        (still running, no runs, no `gh`) changes nothing and the lift stands. Already-judged shas are
-        not asked again. Returns True when the queue should be planned again."""
-        shas = _lifted_shas(rows)
-        if self.cfg.red_hold != "landed" or not shas:
+    def watch_lifted_ci(self, _rows) -> bool:
+        """Ask CI about tips whose fix has landed (#429). A red verdict is recorded so the next plan puts the
+        hold back; a green one closes every tracking issue that commit cites, only when `closeOnGreenCi`
+        is true. No verdict (still running, no runs, no `gh`) changes nothing and the lift stands.
+        An issue already recorded is not asked again; a sibling on the same sha still is. The watch does
+        not depend on a queue row still existing: a failed close has to be retried on a later tick even
+        after the last ready item has landed. Returns True when the queue should be planned again."""
+        if self.cfg.red_hold != "landed":
             return False
         try:
-            return self._watch_lifted_ci(shas)
+            return self._watch_lifted_ci()
         except Exception as e:  # a watch that throws must not skip the train; the lift stands
             self.log(f"CI watch failed ({type(e).__name__}: {str(e)[:200]}); the hold stays lifted")
             return False
 
-    def _watch_lifted_ci(self, shas) -> bool:
+    def _watch_lifted_ci(self) -> bool:
         reds = T.red_master_open(self.cfg)
-        landed = {n: sha for n, sha in T.landed_fix_map(self.cfg, reds).items() if sha in shas}
+        landed = T.landed_fix_map(self.cfg, reds)
         if not landed:
             return False
         state = T.ci_watch_read(self.cfg)
         changed = False
+        co = {}
         for issue, sha in landed.items():
-            prev = state.get(sha) if isinstance(state.get(sha), dict) else {}
-            if prev.get("conclusion") in ("success", *T.RED_CI_CONCLUSIONS):
+            co.setdefault(sha, []).append(issue)
+        for issue, sha in landed.items():
+            rec = state.get(sha) if isinstance(state.get(sha), dict) else {}
+            # A red on this tip puts the hold back for every red that commit lifted. Closing another
+            # one, or treating the sha as judged, would drop that hold while a red it cites stays open.
+            if rec.get("conclusion") in T.RED_CI_CONCLUSIONS:
                 continue
-            full = json.loads(T.tracker(self.cfg, "issue_get", str(issue)).stdout)
-            text = "\n".join([str(full.get("title") or ""), str(full.get("body") or "")])
-            job = T.named_ci_job(text)
-            verdict = query_ci(self.cfg.repo, self.cfg.integration, sha, job)
-            if not verdict:
+            per_all = rec.get("issues") if isinstance(rec.get("issues"), dict) else {}
+            per = per_all.get(str(issue)) if isinstance(per_all.get(str(issue)), dict) else {}
+            if per.get("conclusion") == "success" and (not self.cfg.close_on_green_ci or per.get("closed")):
                 continue
+            if per.get("conclusion") == "success":
+                verdict = per   # the close did not land; retry it without asking gh again
+            else:
+                full = json.loads(T.tracker(self.cfg, "issue_get", str(issue)).stdout)
+                text = "\n".join([str(full.get("title") or ""), str(full.get("body") or "")])
+                verdict = query_ci(self.cfg.repo, self.cfg.integration, sha, T.named_ci_jobs(text))
+                if not verdict:
+                    continue
             if verdict["conclusion"] == "success" and self.cfg.close_on_green_ci:
                 run = verdict["run_id"]
                 name = f" `{verdict['run_name']}`" if verdict.get("run_name") else ""
                 job_bit = f", job `{verdict['job']}`" if verdict.get("job") else ""
                 body = f"CI is green on `{self.cfg.integration}` at `{sha}` (run {run}{name}{job_bit})."
                 if not Reporter(self.rc, self.state, self.log).say(issue, body, close=True):
-                    continue  # the close is queued; leave the sha unjudged so the next tick retries it
+                    continue  # this issue stays unjudged, so a sibling's record cannot hide the retry
                 self.log(f"CI green on {sha} (run {run}); closed #{issue}")
+                stored = {**verdict, "closed": True}
             elif verdict["conclusion"] == "success":
                 self.log(f"CI green on {sha} (run {verdict['run_id']}); #{issue} stays open (closeOnGreenCi false)")
+                stored = {**verdict, "closed": False}
             else:
-                self.log(T.ci_red_phrase(sha, verdict["run_id"], verdict.get("job") or job))
-            state[sha] = {**verdict, "issue": issue}
+                self.log(T.ci_red_phrase(sha, verdict["run_id"], verdict.get("job") or ""))
+                stored = {**verdict, "closed": False}
+            per_all = dict(per_all)
+            per_all[str(issue)] = {k: v for k, v in stored.items() if k != "issues"}
+            state[sha] = {**_aggregate_ci_watch(per_all, co[sha]), "issues": per_all}
             changed = True
         if changed:
             T.ci_watch_write(self.cfg, state)

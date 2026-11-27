@@ -13,9 +13,13 @@ once (Version Management in `docs/maintaining.md`).
   lifted (`CI verdict pending`). A red verdict on the job the red names
   (`ci-job:` or ``job `<name>```; every run on the tip when it names none)
   puts the queue back on the hold and the log and status line say
-  `hold back: CI red on <sha>`. A green verdict closes the tracking issue,
-  naming the run, only when `train.redHold.closeOnGreenCi` is true (default
-  false, so the repository's own closer still owns the issue).
+  `hold back: CI red on <sha>`. A completed red counts even while another run
+  is still in progress, and every ``job `<name>``` the red names is judged.
+  A green verdict closes every tracking issue that commit cites, naming the
+  run, only when `train.redHold.closeOnGreenCi` is true (default false, so
+  the repository's own closer still owns the issue). Once that verdict is
+  recorded the status line says `CI green` instead of `CI verdict pending`,
+  and a hold put back by a red run says it is waiting on CI on that tip.
 
 ## [4.72.0] - 2026-11-27
 

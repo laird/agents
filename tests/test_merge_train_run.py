@@ -475,6 +475,32 @@ def test_a_red_ci_verdict_on_the_lifted_tip_puts_the_hold_back(fx):
     rows = T.plan_queue(fx.rc().cfg)
     assert rows and {r["issue"]: r["state"] for r in rows}[ordinary] == "held"
     assert "hold back: CI red on " in T.status_line(rows, when="W") and "(run 42)" in T.status_line(rows, when="W")
+    held = next(r for r in rows if r["issue"] == ordinary)
+    assert "until CI on that landed tip is green" in held["note"]
+
+
+def test_a_completed_red_run_puts_the_hold_back_while_another_run_is_still_going(fx):
+    """A sibling workflow still in progress must not hide a completed red (#429)."""
+    red, ordinary = _lifted_red(fx)
+    runs = [
+        {"databaseId": 42, "conclusion": "failure", "name": "test", "status": "completed", "headBranch": "master"},
+        {"databaseId": 43, "conclusion": "", "name": "deploy", "status": "in_progress", "headBranch": "master"},
+    ]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle" and not fx.on_master(0) and fx.state_of(red) == "OPEN"
+    assert any("(run 42)" in ln and ln.startswith("hold back:") for ln in logs)
+
+
+def test_a_later_named_job_still_red_puts_the_hold_back(fx):
+    """ci-watch names every failed job. A green first job must not close the issue while a later one is red."""
+    red, ordinary = _lifted_red(fx, close_on_green=True, body="job `unit`\njob `lint`\n")
+    runs = [{"databaseId": 11, "conclusion": "failure", "name": "CI", "status": "completed", "headBranch": "master",
+             "jobs": [{"name": "unit", "status": "completed", "conclusion": "success"},
+                      {"name": "lint", "status": "completed", "conclusion": "failure"}]}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle" and not fx.on_master(0) and fx.state_of(red) == "OPEN" and fx.state_of(ordinary) == "OPEN"
+    assert any("job `lint`" in ln for ln in logs)
+    assert "run 11" not in fx.comments(red)
 
 
 def test_a_red_ci_on_a_different_job_does_not_put_the_hold_back(fx):
@@ -509,6 +535,9 @@ def test_a_green_ci_verdict_leaves_the_tracking_issue_open_by_default(fx):
     assert fx.on_master(0) and fx.state_of(red) == "OPEN"
     assert "run 77" not in fx.comments(red)
     assert any("stays open (closeOnGreenCi false)" in ln for ln in logs)
+    fx.member(2)   # a READY that arrives after the verdict: the status line must not still say pending
+    line = T.status_line(T.plan_queue(fx.rc().cfg), when="W")
+    assert "CI green, run 77" in line and "CI verdict pending" not in line
 
 
 def test_a_green_ci_verdict_closes_the_tracking_issue_when_close_on_green_ci_is_set(fx):
@@ -518,6 +547,56 @@ def test_a_green_ci_verdict_closes_the_tracking_issue_when_close_on_green_ci_is_
     assert verdict == "cycle:0:planned"
     assert fx.state_of(red) == "CLOSED" and "run 77" in fx.comments(red) and "`CI`" in fx.comments(red)
     assert any(f"closed #{red}" in ln for ln in logs)
+
+
+def _two_reds_one_hotfix(fx, *, close_on_green=True):
+    """Two open reds whose hotfix commit cites both, so they share one lifted sha."""
+    fx.train["redMaster"] = {"label": "P0", "titlePrefix": "Red master:"}
+    fx.train["redHold"] = {"releaseOn": "landed", "closeOnGreenCi": close_on_green}
+    fx.write_config()
+    reds = []
+    for name in ("a", "b"):
+        r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", f"Red master: tests/{name}.test.ts fails at abcdef12",
+               "--body", "", "--label", "P0", "--label", "bug", cwd=fx.work)
+        reds.append(json.loads(r.stdout)["number"])
+    ordinary = fx.member(0)
+    fx.member(1, labels=("hotfix",), message=f"hotfix/m1: fix #{reds[0]} #{reds[1]}")
+    code, _ = R.Cycle(fx.rc(), log=lambda m: None).run()
+    assert code == 0 and fx.on_master(1) and not fx.on_master(0)
+    assert fx.state_of(reds[0]) == "OPEN" and fx.state_of(reds[1]) == "OPEN"
+    return reds[0], reds[1], ordinary
+
+
+def test_a_green_ci_closes_every_red_the_hotfix_cites(fx):
+    """One sha, two open reds. Recording the verdict on the first must not skip the second (#429)."""
+    red_a, red_b, ordinary = _two_reds_one_hotfix(fx)
+    runs = [{"databaseId": 77, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master"}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "cycle:0:planned" and fx.on_master(0) and fx.state_of(ordinary) == "CLOSED"
+    assert fx.state_of(red_a) == "CLOSED" and fx.state_of(red_b) == "CLOSED"
+    assert "run 77" in fx.comments(red_a) and "run 77" in fx.comments(red_b)
+    assert any(f"closed #{red_a}" in ln for ln in logs) and any(f"closed #{red_b}" in ln for ln in logs)
+
+
+def test_a_failed_close_is_retried_for_the_red_a_sibling_already_recorded(fx, monkeypatch):
+    """A sibling's success record must not mark the sha judged while this red's close did not land."""
+    red_a, red_b, _ordinary = _two_reds_one_hotfix(fx)
+    real = R.Reporter.say
+
+    def flaky(self, issue, body, close=False):
+        if close and int(issue) == red_a and not getattr(flaky, "tripped", False):
+            flaky.tripped = True
+            return False
+        return real(self, issue, body, close=close)
+
+    monkeypatch.setattr(R.Reporter, "say", flaky)
+    runs = [{"databaseId": 77, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master"}]
+    _tick(fx, runs)
+    assert fx.state_of(red_a) == "OPEN" and fx.state_of(red_b) == "CLOSED"
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle"  # the ordinary member already landed; the retry is the watch, not a new cycle
+    assert fx.state_of(red_a) == "CLOSED" and "run 77" in fx.comments(red_a)
+    assert any(f"closed #{red_a}" in ln for ln in logs)
 
 
 def test_close_on_green_ci_must_be_a_bool(fx):
