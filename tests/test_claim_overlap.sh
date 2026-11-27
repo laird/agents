@@ -57,15 +57,21 @@ assert_eq "catch-all areas are dropped" "src/" \
 BIG=$(python3 -c 'import json; print(json.dumps({"body": "x" * 300000 + "\nTouches: big/"}))')
 assert_eq "a body over 128 KB is read (stdin, not env)" "big/" "$(touches_of "$BIG")"
 
-# Untrusted bodies must not hang the gate: `**` matching was exponential.
+# Bound CPU time so a descheduled matcher does not fail under merge-gate load.
+# Check the exact exit status so hitting the limit cannot count as a non-match.
+bounded_overlap_status() (
+  ulimit -t 5 || exit 2
+  areas_overlap "$1" "$2" 2>&1
+  echo $?
+)
 DEEP="$(python3 -c 'print("**/" * 400 + "zzz.rs")')"
-START=$SECONDS
-areas_overlap "$DEEP" "plugins/autocoder/scripts/fix-loop-gate.sh"
-assert_eq "a pathological ** area is decided quickly" yes "$([ $((SECONDS - START)) -lt 5 ] && echo yes)"
-WIDE="$(python3 -c 'print("/".join(["**", "a"] * 40) + "/x.rs")')"
-START=$SECONDS
-areas_overlap "$WIDE" "$WIDE"
-assert_eq "** on both sides is decided quickly" yes "$([ $((SECONDS - START)) -lt 5 ] && echo yes)"
+assert_eq "a pathological ** area does not overlap" 1 \
+  "$(bounded_overlap_status "$DEEP" "plugins/autocoder/scripts/fix-loop-gate.sh")"
+# Keep both distinct leaf names within the 32-segment cap. A non-match forces
+# the matcher to exhaust its alternatives instead of short-circuiting early.
+WIDE="$(python3 -c 'print("**/a/" * 15)')"
+assert_eq "** on both sides does not overlap distinct leaves" 1 \
+  "$(bounded_overlap_status "${WIDE}x.rs" "${WIDE}y.rs")"
 
 ov() { if areas_overlap "$1" "$2"; then echo yes; else echo no; fi; }
 assert_eq "a catch-all overlaps nothing"             no  "$(ov '**' src/a.rs)"

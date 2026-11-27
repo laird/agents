@@ -781,3 +781,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: Workers keep working during their merge; a lost push race rarely costs a second gate; main may be briefly red but <branch>-green and env/* never are. Shell suite: 50 files green. Bumped autocoder to 4.32.0, marketplaces 3.53.0 (4.31.0 is taken by the in-flight pstack branch).
 
+
+---
+
+## 2026-11-26 20:53:54 - Stabilize claim overlap tests (#442)
+
+**What Changed**: Bound pathological overlap checks by CPU time and verify their exit status.
+
+**Why Changed**: Wall-clock checks can fail when the matcher is delayed by scheduling during a merge gate.
+
+**Impact**: The tests still detect excessive matcher work and reject incorrect overlap results.
+
