@@ -5,6 +5,7 @@ The citation grammar tested here is the one BEHAVIOR.md's "Citations" section de
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 from pathlib import Path
@@ -107,6 +108,11 @@ def test_classifier_surfaces_resolve():
             continue
         if c.surface.startswith("scripts/"):
             assert (PLUGIN / c.surface).is_file(), c.surface
+            continue
+        script, sep, function = c.surface.partition(":")
+        if sep and script.endswith(".py"):
+            nodes = ast.parse((PLUGIN / "scripts" / script).read_text()).body
+            assert any(isinstance(node, ast.FunctionDef) and node.name == function for node in nodes), c.surface
             continue
         file, sep, heading = c.surface.partition(" § ")
         assert sep and file.startswith("commands/"), f"{c.id}: surface {c.surface!r} has no known form"

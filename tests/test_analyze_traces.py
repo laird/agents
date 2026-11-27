@@ -98,12 +98,54 @@ def load_analyst():
 
 
 def test_every_classifier_has_a_row():
-    assert sorted(c.id for c in load_analyst().classifiers()) == sorted({**EXPECTED, **TICK_EXPECTED})
+    assert sorted(c.id for c in load_analyst().classifiers()) == sorted({*EXPECTED, *TICK_EXPECTED, "plan-dropped"})
 
 
 @pytest.mark.parametrize("classifier_id", sorted(EXPECTED))
 def test_classifier_fires_on_exactly_its_scenarios(full, classifier_id):
     assert fired(full, classifier_id) == sorted(EXPECTED[classifier_id], key=str)
+
+
+def test_plan_dropped_findings_group_by_state_and_prioritize_unread_streak(tmp_path):
+    traces = build_corpus(tmp_path, "--issue-events", str(FIXTURES / "plan-dropped.jsonl"))
+    rep = report(tmp_path, traces)
+    findings = {f["key"]: f for f in rep["findings"] if f["id"] == "plan-dropped"}
+    assert findings.keys() == {"unread", "unlisted", "held"}
+    unread = findings["unread"]
+    assert rep["findings"][0] == unread
+    assert (unread["id"], unread["rules"], unread["surface"], unread["priority"]) == (
+        "plan-dropped", ["B18"], "train_lib.py:plan_queue", "high")
+    assert unread["traces"] == [f"{A}:460:1", f"{A}:462:1"]
+    assert [e["streak"] for e in unread["evidence"]] == [3, 1]
+    assert findings["held"]["evidence"][0]["reason"] == "held fixture"
+    assert "priority" not in findings["unlisted"]
+
+
+def test_analyst_bounds_plan_drops_by_event_time(tmp_path):
+    fixture = FIXTURES / "plan-dropped.jsonl"
+    claim = {"v": 1, "ts": "2026-11-20T09:00:00Z", "repo": A, "issue": 460, "event": "claimed"}
+    ledger = tmp_path / "events.jsonl"
+    ledger.write_text(json.dumps(claim) + "\n" + fixture.read_text())
+    traces = build_corpus(tmp_path, "--issue-events", str(ledger))
+    rep = report(tmp_path, traces, "--since", "2026-11-20T10:11:00Z", "--until", "2026-11-20T10:13:00Z")
+    assert rep["corpus"] == 1
+    assert len(rep["findings"]) == 1
+    assert rep["findings"][0]["evidence"][0]["cycle"] == "cycle-3"
+    early = report(tmp_path, traces, "--since", "2026-11-20T09:00:00Z", "--until", "2026-11-20T10:12:00Z")
+    assert early["findings"][0]["evidence"][0]["streak"] == 2
+    assert "priority" not in early["findings"][0]
+
+
+def test_a_drop_before_the_first_claim_is_not_an_abandoned_attempt(tmp_path):
+    claim = {"v": 1, "ts": "2026-11-20T10:20:00Z", "repo": A, "issue": 460, "event": "claimed"}
+    ledger = tmp_path / "events.jsonl"
+    ledger.write_text((FIXTURES / "plan-dropped.jsonl").read_text() + json.dumps(claim) + "\n")
+    traces = build_corpus(tmp_path, "--issue-events", str(ledger))
+    entries = {t["trace_id"]: t for t in map(json.loads, traces.read_text().splitlines())}
+    assert entries[f"{A}:460:1"]["plan_only"] is True
+    assert entries[f"{A}:460:2"]["outcome"] == "open"
+    rep = report(tmp_path, traces)
+    assert 460 not in fired(rep, "reclaimed")
 
 
 def test_reclaimed_names_only_the_attempt_that_was_reclaimed(full):

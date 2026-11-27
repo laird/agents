@@ -802,3 +802,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The tests still detect excessive matcher work and reject incorrect overlap results.
 
+
+---
+
+## 2026-11-26 21:30:44 - Report repeated train plan drops (#446)
+
+**What Changed**: Link plan-drop events to cycle IDs and classify them by state in attempt and weekly reports.
+
+**Why Changed**: Dropped launchable candidates need same-cycle evidence, especially when unread READY data delays landing.
+
+**Impact**: The self-improvement loop can now flag three consecutive unread cycles as high priority.
+

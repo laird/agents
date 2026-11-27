@@ -63,6 +63,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import train_lib as T
 import train_depbot as D  # the dependency-bot pass (the daemon's tick) and its landing close-out
@@ -478,7 +479,7 @@ class Cycle:
         self.state.save_cycle(self.record)
 
     # ----- the cycle -----
-    def plan_dropped_event(self, issue, state, reason):
+    def plan_dropped_event(self, issue, state, reason, cycle, previous_cycle):
         """A `plan-dropped` row in the lifecycle ledger for a candidate the plan could not judge (its READY unread,
         its listing lost, or launchable at the tick and not in this plan), with the state and the reason, so the trace
         loop sees a dropped candidate as a step and can classify it. Best effort."""
@@ -487,22 +488,22 @@ class Cycle:
             return
         env = {**os.environ, "AUTOCODER_WORKER": self.rc.swarm}
         try:
-            subprocess.run(["bash", "-c", 'source "$1" && { [ ! -f "$2" ] || source "$2"; } && cd "$3" && issue_event plan-dropped "$4" state="$5" reason="$6"',
-                            "_", str(lib), str(SCRIPTS / "repo-id-fns.sh"), str(self.cfg.repo), str(issue), str(state), str(reason)[:300]],
+            subprocess.run(["bash", "-c", 'source "$1" && { [ ! -f "$2" ] || source "$2"; } && cd "$3" && issue_event plan-dropped "$4" state="$5" reason="$6" cycle="$7" previous_cycle="$8"',
+                            "_", str(lib), str(SCRIPTS / "repo-id-fns.sh"), str(self.cfg.repo), str(issue), str(state), str(reason)[:300], cycle, previous_cycle or ""],
                            capture_output=True, text=True, env=env)
         except OSError:
             pass
 
-    def compare_launchable(self, rows, launchable):
+    def compare_launchable(self, rows, launchable, planned, cycle, previous_cycle):
         """The plan's rows against the tick's launchable list: every difference is logged (launchable then and not in
         this plan, with the row's state; in this plan and not launchable then), and every candidate the plan could
-        not judge (`unread`, `unlisted`, or launchable then and absent now) gets a `plan-dropped` ledger row. Returns
+        not judge or hold back gets a `plan-dropped` ledger row unless the train actually takes it. Returns
         the dropped issues."""
         by = {int(r["issue"]): r for r in rows}
         dropped = []
         if launchable is not None:
             tick = {int(x) for x in launchable}
-            plan = {i for i, r in by.items() if r["state"] == "queue"}
+            plan = {i for i, r in by.items() if r["state"] == "queue"} | planned
             gone, new = sorted(tick - plan), sorted(plan - tick)
             if gone:
                 self.log("launchable at the tick but not launchable in this plan: "
@@ -511,11 +512,11 @@ class Cycle:
                 self.log("launchable in this plan but not at the tick: " + " ".join(f"#{i} ({by[i]['note'][:80]})" for i in new))
             for i in gone:
                 r = by.get(i)
-                self.plan_dropped_event(i, r["state"] if r else "missing", r["note"] if r else "not in the plan's listing and no row")
+                self.plan_dropped_event(i, r["state"] if r else "missing", r["note"] if r else "not in the plan's listing and no row", cycle, previous_cycle)
                 dropped.append(i)
         for i, r in by.items():
-            if r["state"] in ("unread", "unlisted") and i not in dropped:
-                self.plan_dropped_event(i, r["state"], r["note"])
+            if r["state"] in (*T.SKIP_ROW_STATES, "held") and i not in dropped:
+                self.plan_dropped_event(i, r["state"], r["note"], cycle, previous_cycle)
                 dropped.append(i)
         return dropped
 
@@ -568,7 +569,8 @@ class Cycle:
             line = _lift_pending_line(c, sha)
             if line:
                 self.log(line)
-        self.compare_launchable(rows, launchable)
+        cycle = uuid4().hex
+        previous_cycle = self.state.plan().get("cycle")
         self.note_readys(rows)
         self.tell_queue_verdicts(rows)
         # One `plan` timing row per candidate judged (seconds, verdict): the planning time of a cycle is their
@@ -581,8 +583,30 @@ class Cycle:
         skips = [dict(zip(("issue", "branch", "reason"), ln.split("\t", 3)[1:])) for ln in out if ln.startswith("skip\t")]
         for sk in skips:
             self.log(f"plan skip: #{sk['issue']} {sk['branch']}: {sk['reason']}")
-        self.state.save_plan({"ts": now_iso(), "limit": limit, "launchable_at_tick": [int(x) for x in launchable] if launchable is not None else None,
+        # Persist the link before emitting any drop. A process killed mid-write
+        # leaves a gap in the ledger instead of joining across a partial cycle.
+        self.state.save_plan({"ts": now_iso(), "cycle": cycle, "limit": limit, "launchable_at_tick": [int(x) for x in launchable] if launchable is not None else None,
                               "rows": [{k: r.get(k) for k in ("issue", "state", "branch", "tip", "note")} for r in rows], "skips": skips})
+        decisions = {int(parts[1]): parts for ln in out if (parts := ln.split("\t", 4))[0] in ("train", "skip", "drop")}
+        planned = {issue for issue, decision in decisions.items() if decision[0] == "train" and not fault}
+        dropped = self.compare_launchable(rows, launchable, planned, cycle, previous_cycle)
+        for row in rows:
+            issue = int(row["issue"])
+            if row["state"] != "queue" or issue in dropped:
+                continue
+            decision = decisions.get(issue)
+            if decision and decision[0] == "skip":
+                reason = "\t".join(decision[3:])
+            elif decision and decision[0] == "drop":
+                reason = decision[4]
+            elif fault:
+                reason = f"planner stopped: {fault}"
+            elif issue in planned:
+                continue
+            else:
+                reason = f"batch limit ({limit}) reached"
+            self.log(f"plan not taking #{issue}: {reason}")
+            self.plan_dropped_event(issue, "skip", reason, cycle, previous_cycle)
         for ln in out:
             if ln.startswith("drop\t"):
                 _, issue, branch, tip, reason = ln.split("\t", 4)

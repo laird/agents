@@ -776,11 +776,29 @@ def test_the_limit_starts_at_eight_grows_after_green_halves_after_red_and_keeps_
 
 
 def test_the_plan_is_cut_at_the_limit(fx):
-    fx.members(6)
+    issues = fx.members(6)
     fx.train.update(batchStart=3)
     fx.write_config()
     fx.run()
     assert [len(g) for g in fx.gates()] == [3]
+    dropped = {row["issue"]: row["detail"] for row in events_of("plan-dropped")}
+    assert set(dropped) == set(issues[3:])
+    assert {(d["state"], d["reason"]) for d in dropped.values()} == {("skip", "batch limit (3) reached")}
+
+
+def test_planner_fault_records_provisional_and_unjudged_candidates(fx, monkeypatch):
+    issues = fx.members(2)
+
+    def partial_plan(cfg, rows, limit, on_candidate):
+        row = rows[0]
+        return [f"train\t{row['issue']}\t{row['branch']}\t{row['tip']}\tprovisional"], "test fault"
+
+    monkeypatch.setattr(T, "plan_train", partial_plan)
+    code, _ = fx.run()
+    assert code == 2 and fx.gates() == []
+    dropped = {row["issue"]: row["detail"] for row in events_of("plan-dropped")}
+    assert set(dropped) == set(issues)
+    assert {(d["state"], d["reason"]) for d in dropped.values()} == {("skip", "planner stopped: test fault")}
 
 
 # ── lease, preflight, regeneration, timings ─────────────────────────────────────────────
@@ -1574,6 +1592,7 @@ def test_a_cycle_gives_a_short_read_an_unread_row_logs_the_ticks_differences_and
     dropped = {e["issue"]: e["detail"] for e in events_of("plan-dropped")}
     assert dropped[issues[0]]["state"] == "unread" and "issue_get exited 0 with 0 comment(s) read" in dropped[issues[0]]["reason"]
     assert dropped[9999]["state"] == "unlisted" and "absent from the plan's own listing" in dropped[9999]["reason"]
+    assert all(event["cycle"] == plan["cycle"] and event["previous_cycle"] is None for event in dropped.values())
     assert set(dropped) == {issues[0], 9999}                        # the planned members are not dropped candidates
 
 

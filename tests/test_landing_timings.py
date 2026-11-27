@@ -368,6 +368,18 @@ def test_week_page_findings_are_the_analysts_over_the_weeks_traces(tmp_path):
                                 "top": [{"id": f["id"], "key": f["key"], "count": f["count"]} for f in findings[:3]]}
 
 
+def test_week_page_counts_drops_on_attempts_started_before_the_week(tmp_path):
+    events = TRACE_FIXTURES / "plan-dropped.jsonl"
+    old_claim = {"v": 1, "ts": "2026-11-13T10:00:00Z", "repo": "repo-a-1234abcd",
+                 "issue": 460, "event": "claimed", "worker": "fixture worker"}
+    ledger = tmp_path / "issue-events.jsonl"
+    ledger.write_text(json.dumps(old_claim) + "\n" + events.read_text())
+    r = report(*LOOP_LEDGERS, "--issue-events", str(ledger), "--json", env=loop_env(tmp_path))
+    assert r.returncode == 0, r.stderr
+    top = json.loads(r.stdout)["loop"]["findings"]["top"]
+    assert top[0] == {"id": "plan-dropped", "key": "unread", "count": 2}
+
+
 def test_week_page_counts_the_weeks_eval_runs_and_decisions_and_nothing_outside_it(tmp_path):
     results = jsonl(tmp_path / "results.jsonl", [
         result("2026-11-17T10:00:00Z", "dev", "c1", True), result("2026-11-17T11:00:00Z", "dev", "c1", False),

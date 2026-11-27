@@ -206,9 +206,36 @@ class Attempt:
     last: datetime
     transcript: Path | None = None
 
+    def work_rows(self) -> list[Timed]:
+        return [p for p in self.events if p[1].get("event") != "plan-dropped"] + self.merges + self.landings
+
+
+def count_plan_streaks(events: list[Timed]) -> list[Timed]:
+    """Count linked cycles for each train and state of one issue."""
+    previous: dict[tuple, dict] = {}
+    out = []
+    for ts, row in events:
+        detail = row.get("detail")
+        if row.get("event") == "plan-dropped" and isinstance(detail, dict) and isinstance(detail.get("state"), str):
+            group = (row.get("worker"), detail["state"])
+            last = previous.get(group)
+            cycle = detail.get("cycle")
+            if cycle and last and cycle == last["cycle"]:
+                continue
+            streak = 1
+            if last and last["cycle"] and last["cycle"] == detail.get("previous_cycle"):
+                streak += last["streak"]
+            plan = {"ts": row["ts"], "cycle": cycle, "state": detail["state"],
+                    "reason": detail.get("reason"), "streak": streak}
+            previous[group] = plan
+            row = {**row, "plan": plan}
+        out.append((ts, row))
+    return out
+
 
 def attempts_of(key: Key, events: list[Timed], merges: list[Timed], landings: list[Timed]) -> list[Attempt]:
     """Split one (repo, issue)'s rows into attempts: [claim that opens one, the next such claim)."""
+    events = count_plan_streaks(events)
     ends = [ts for ts, row in events if row.get("event") in ATTEMPT_ENDS]
     ends += [ts for ts, row in landings if row.get("event") == "landed"]
     claims = [(ts, row) for ts, row in events if row.get("event") == "claimed"]
@@ -227,6 +254,14 @@ def attempts_of(key: Key, events: list[Timed], merges: list[Timed], landings: li
                 continue
         starts.append((ts, row["ts"], row))
     first = events[0] if events else min(merges + landings, key=lambda p: p[0])
+    if first[1].get("event") == "plan-dropped":
+        work = [p for p in events if p[1].get("event") != "plan-dropped"] + merges + landings
+        if work:
+            first_work = min(work, key=lambda p: p[0])
+            if first_work[0] <= first[0]:
+                first = first_work
+            elif not starts or first_work[0] < starts[0][0]:
+                starts.insert(0, (first_work[0], first_work[1]["ts"], None))
     if not starts or first[0] < starts[0][0]:
         starts.insert(0, (first[0], first[1]["ts"], None))
     attempts = []
@@ -237,7 +272,7 @@ def attempts_of(key: Key, events: list[Timed], merges: list[Timed], landings: li
             return [p for p in rows if p[0] >= start and (nxt is None or p[0] < nxt[0])]
 
         ev, me, la = inside(events), inside(merges), inside(landings)
-        last = max([start] + [p[0] for p in ev + me + la])
+        last = max([start] + [p[0] for p in ev + me + la if p[1].get("event") != "plan-dropped"])
         attempts.append(Attempt(key[0], key[1], i + 1, start, started, claim,
                                 nxt[1] if nxt else None, ev, me, la, last))
     return attempts
@@ -392,7 +427,7 @@ def outcome_of(steps: list[dict], gates: list[dict], a: Attempt, session: dict |
     release, gate_end = last("released"), last("gate-end")
     if release is not None and gate_end is not None and release < gate_end:
         release = None
-    last_seen = max([(a.start, a.started)] + [(ts, row["ts"]) for ts, row in a.events + a.merges + a.landings],
+    last_seen = max([(a.start, a.started)] + [(ts, row["ts"]) for ts, row in a.work_rows()],
                     key=lambda p: p[0])[1]
     ended = steps[release]["ts"] if release is not None else (last_seen if a.next_attempt else None)
     if gates and gates[-1]["outcome"] not in GATE_OUTCOMES_NOT_RETURNED and ended:
@@ -413,7 +448,7 @@ def review_of(issue: int, comments_dir: Path | None) -> dict | None:
     return {k: rv[k] for k in ("status", "rounds", "verdict", "findings", "resolutions")}
 
 
-def trace_of(a: Attempt, gate_ticks: list[Timed], comments_dir: Path | None) -> dict:
+def trace_of(a: Attempt, gate_ticks: list[Timed], comments_dir: Path | None, plan: list[dict]) -> dict:
     steps = steps_of(a)
     gates = gates_of(a.events, a.merges)
     session = session_of(a.transcript) if a.transcript else None
@@ -427,6 +462,7 @@ def trace_of(a: Attempt, gate_ticks: list[Timed], comments_dir: Path | None) -> 
         "started": a.started, "ended": ended, "next_attempt": a.next_attempt,
         "outcome": outcome,
         "steps": steps,
+        "plan": plan,
         "gates": gates,
         "returned": [{"ts": row["ts"], "cause": row.get("cause")}
                      for _, row in a.landings if row.get("event") == "returned"],
@@ -480,7 +516,7 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
         attempts += attempts_of(key, events.get(key, []), merges.get(key, []), landings.get(key, []))
 
     for issue, paths in index_transcripts(log_dir).items():
-        assign_transcripts([a for a in attempts if a.issue == issue], paths, slack)
+        assign_transcripts([a for a in attempts if a.issue == issue and a.work_rows()], paths, slack)
 
     def in_window(t: datetime) -> bool:
         return (since is None or t >= since) and (until is None or t < until)
@@ -488,7 +524,16 @@ def build_traces(ledgers: dict[str, list[dict]], *, log_dir: Path | None = None,
     ticks = sorted((t for t in map(tick_trace, ledgers["ticks"]) if t is not None
                     and (not repo_id or t["repo"] == repo_id) and in_window(parse_ts(t["started"]))),
                    key=lambda t: (t["repo"] or "", t["loop"], parse_ts(t["started"]), t["trace_id"]))
-    return [trace_of(a, gate_ticks.get(a.issue, []), comments_dir) for a in attempts if in_window(a.start)] + ticks
+    traces = []
+    for a in attempts:
+        plan = [row["plan"] for ts, row in a.events if in_window(ts) and "plan" in row]
+        if a.work_rows() and in_window(a.start):
+            traces.append(trace_of(a, gate_ticks.get(a.issue, []), comments_dir, plan))
+        elif plan:
+            traces.append({"v": 1, "kind": "attempt", "trace_id": f"{a.repo}:{a.issue}:{a.n}",
+                           "repo": a.repo, "issue": a.issue, "attempt": a.n,
+                           "started": a.started, "plan": plan, "plan_only": True})
+    return traces + ticks
 
 
 def autocoder_config(directory) -> dict:
@@ -533,8 +578,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--comments-dir", type=Path,
                    help="<issue>.json documents as issue_get prints them; without it, review is null")
     p.add_argument("--out", default=str(state_path("AUTOCODER_TRACES", "traces.jsonl")), help="`-` for stdout")
-    p.add_argument("--since", type=parse_bound, help="keep attempts and ticks started at or after (YYYY-MM-DD or ISO)")
-    p.add_argument("--until", type=parse_bound, help="keep attempts and ticks started before (YYYY-MM-DD or ISO)")
+    p.add_argument("--since", type=parse_bound, help="keep attempts/ticks starting and plan drops occurring at or after")
+    p.add_argument("--until", type=parse_bound, help="keep attempts/ticks starting and plan drops occurring before")
     p.add_argument("--repo-id", help="only this repository (default: every repository)")
     p.add_argument("--slack", type=float, default=60.0, help="transcript join slack in minutes")
     p.add_argument("--repo", default=os.getcwd(),

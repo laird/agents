@@ -419,3 +419,25 @@ def test_default_ticks_ledger_is_beside_the_others_and_overridable(tmp_path):
     assert ticks_of(build(tmp_path, ledgers=FIXTURE_ARGS + ["--ticks", str(tmp_path / "none")])) == {}
     r = run(tmp_path, "--out", "-", env={"AUTOCODER_TICKS": str(tmp_path / "none")})
     assert '"kind":"tick"' not in r.stdout
+
+
+def test_plan_subrecords_count_only_linked_cycles(tmp_path):
+    traces = build(tmp_path, "--issue-events", str(FIXTURES / "plan-dropped.jsonl"))
+    plan = traces[a(460)]["plan"]
+    assert [(p["cycle"], p["state"], p["streak"]) for p in plan] == [
+        ("cycle-1", "unread", 1), ("cycle-2", "unread", 2), ("cycle-3", "unread", 3),
+        ("cycle-4", "held", 1), ("cycle-5", "unread", 1)]
+    assert [p["streak"] for p in traces[a(461)]["plan"]] == [1, 1]
+    assert [p["streak"] for p in traces[a(462)]["plan"]] == [1, 1]
+
+
+def test_plan_prefix_does_not_move_an_implicit_attempt_before_the_window(tmp_path):
+    drop = {"v": 1, "ts": "2026-11-13T10:00:00Z", "repo": REPO_A, "issue": 460,
+            "event": "plan-dropped", "detail": {"state": "unread"}}
+    release = {"v": 1, "ts": "2026-11-20T10:00:00Z", "repo": REPO_A, "issue": 460, "event": "released"}
+    ledger = tmp_path / "events.jsonl"
+    ledger.write_text("".join(json.dumps(row) + "\n" for row in (drop, release)))
+    traces = build(tmp_path, "--issue-events", str(ledger), "--since", "2026-11-19")
+    assert traces[a(460, 2)]["outcome"] == "released"
+    assert traces[a(460, 2)]["started"] == release["ts"]
+    assert a(460) not in traces

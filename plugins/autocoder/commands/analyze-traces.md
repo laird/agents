@@ -70,6 +70,11 @@ Each trace's steps include the landing-timings rows: `ready` (the worker's hand-
 `launched`, `batched`, `returned` and `landed`. A train landing appears only there, and it counts
 as the attempt's landing.
 
+A `plan-dropped` event adds a record to its attempt's `plan` field. Findings group
+by drop state. Three or more consecutive `unread` cycles for one issue are high
+priority. Date bounds select drops by event time even when the attempt started
+before the reporting window.
+
 Each line of the loop-ticks ledger is a trace of its own, `kind: "tick"`: one run of an
 operational loop that recorded itself with `tick-fns.sh` or `tick-log.py`. The four `tick-*`
 classifiers read them a loop at a time (an error streak, a slow run, a day of noops, a lapsed

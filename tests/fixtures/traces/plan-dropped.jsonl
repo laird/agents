@@ -1,0 +1,10 @@
+{"v":1,"ts":"2026-11-20T10:10:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-1","previous_cycle":null}}
+{"v":1,"ts":"2026-11-20T10:11:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-2","previous_cycle":"cycle-1"}}
+{"v":1,"ts":"2026-11-20T10:12:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-3","previous_cycle":"cycle-2"}}
+{"v":1,"ts":"2026-11-20T10:12:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-3","previous_cycle":"cycle-2"}}
+{"v":1,"ts":"2026-11-20T10:13:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"held","reason":"held fixture","cycle":"cycle-4","previous_cycle":"cycle-3"}}
+{"v":1,"ts":"2026-11-20T10:14:00Z","repo":"repo-a-1234abcd","issue":460,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-5","previous_cycle":"cycle-4"}}
+{"v":1,"ts":"2026-11-20T10:15:00Z","repo":"repo-a-1234abcd","issue":461,"worker":"train","event":"plan-dropped","detail":{"state":"unlisted","reason":"unlisted fixture"}}
+{"v":1,"ts":"2026-11-20T10:16:00Z","repo":"repo-a-1234abcd","issue":461,"worker":"train","event":"plan-dropped","detail":{"state":"unlisted","reason":"unlisted fixture"}}
+{"v":1,"ts":"2026-11-20T10:17:00Z","repo":"repo-a-1234abcd","issue":462,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-8","previous_cycle":"cycle-7"}}
+{"v":1,"ts":"2026-11-20T10:19:00Z","repo":"repo-a-1234abcd","issue":462,"worker":"train","event":"plan-dropped","detail":{"state":"unread","reason":"unread fixture","cycle":"cycle-10","previous_cycle":"cycle-9"}}

@@ -672,7 +672,7 @@ This is a contract. Field set **version 1**:
 | `gate-queued` | `merge-launch.sh` | `attempt`, `sha` (the commit sent to the gate) |
 | `gate-start` | `merge-to-integration.sh`, once it holds the landing queue | `attempt` |
 | `gate-end` | `merge-to-integration.sh`, on every exit | `outcome` (as `merge-events.jsonl`), `attempt`, `duration_s`, `exit`, `reason` |
-| `plan-dropped` | `merge-train-run.py`, per candidate a plan could not judge | `state` (`unread`, `unlisted`, or the row's state of an item launchable at the tick and not in the plan; `missing` for one with no row), `reason` (the row's note) |
+| `plan-dropped` | `merge-train-run.py`, per candidate a plan passed over | `state`, `reason`, `cycle` (plan ID), `previous_cycle` (previous plan ID, if known) |
 | `landed` | `merge-to-integration.sh` | `sha`, `integration` |
 | `escalated` | `issue_escalate`, or `issue_update --add-label` of a blocking label (`add-blocking-label.sh`) | `label`, `reason` (first 200 characters) |
 | `decomposed` | `issue_update --add-label decomposed` | `children` (from `AUTOCODER_EVENT_CHILDREN`) |
@@ -802,7 +802,7 @@ daemon log, `# queue:` lines on stderr from `merge-train.py queue|plan`), the cy
 (`plan skip: #N <branch>: <state>: <note>`) and keeps them in `plan.json` beside `cycle.json` (and in the cycle's own
 record), and compares the tick's launchable list with its own (`launchable at the tick but not launchable in this plan:
 #A (unread) #G (unlisted)`, `launchable in this plan but not at the tick: #J`). Each candidate the plan could not judge
-gets a `plan-dropped` row in the lifecycle ledger (`state`, `reason`), so the trace loop sees the drop as a step.
+gets a `plan-dropped` row in the lifecycle ledger (`state`, `reason`, `cycle`, `previous_cycle`), so the trace loop can count consecutive drops.
 
 **The planner** (`plan`) takes the next `size` launchable items, each merged for real into a scratch
 worktree onto the integration branch plus the train so far, so the output is a train that assembles:

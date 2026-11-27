@@ -25,7 +25,7 @@ JUDGE (off by default): --judge CMD runs CMD once per trace no classifier matche
 USAGE
   analyze-traces.py [--traces PATH] [--json] [--since DATE] [--until DATE] [--tool-error-share F]
                     [--judge CMD [--judge-all] [--spec PATH] [--judge-prompt PATH]]
-  --since/--until keep traces (attempts and ticks) that started in [since, until).
+  --since/--until keep attempts and ticks that started and plan drops that occurred in [since, until).
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ MIN_TOOL_CALLS = 10
 EXAMPLES = 3
 JUDGE_TIMEOUT_S = 600
 BOUNCE_S = 120
+UNREAD_PLAN_STREAK = 3
 TICK_STREAK = 3
 TICK_MIN = 10
 TICK_SLOW_FACTOR = 5
@@ -75,6 +76,7 @@ class Classifier(NamedTuple):
     weight: float = 1.0
     key_rules: Mapping[str, tuple[str, ...]] = MappingProxyType({})  # group key -> the rules its finding cites
     kind: str = "attempt"  # "tick": match takes a Loop and returns {trace id: evidence}
+    group_evidence: Callable[[dict, str], dict] | None = None
 
 
 class Loop(NamedTuple):
@@ -200,6 +202,23 @@ def tool_errors(share: float) -> Callable[[dict], dict | None]:
     return match
 
 
+def plan_dropped(trace: dict) -> dict | None:
+    """Use the longest (latest on ties) run in this attempt for each drop state."""
+    by_state = {}
+    for record in trace.get("plan") or []:
+        state, streak = record["state"], record["streak"]
+        if state not in by_state or streak >= by_state[state]["streak"]:
+            by_state[state] = record
+    return by_state or None
+
+
+def plan_evidence(by_state: dict, state: str) -> dict:
+    record = by_state[state]
+    if state == "unread" and record["streak"] >= UNREAD_PLAN_STREAK:
+        return {**record, "priority": "high"}
+    return record
+
+
 def tick_duration(trace: dict) -> float | None:
     return (trace.get("tick") or {}).get("duration_s")
 
@@ -278,6 +297,8 @@ def classifiers(tool_error_share: float = DEFAULT_TOOL_ERROR_SHARE) -> tuple[Cla
         Classifier("red-base", ("B09",), "integration branch", red_base),
         Classifier("tool-errors", ("B10",), "tool", tool_errors(tool_error_share), lambda ev: (ev["tool"],)),
         Classifier("session-without-gate", ("B11",), RELEASE, session_without_gate),
+        Classifier("plan-dropped", ("B18",), "train_lib.py:plan_queue", plan_dropped, tuple,
+                   group_evidence=plan_evidence),
         Classifier("tick-error-streak", ("B14",), "loop", tick_error_streak, by_loop, kind="tick"),
         Classifier("tick-slow", ("B15",), "loop", tick_slow, by_loop, kind="tick"),
         Classifier("tick-noop-only", ("B16",), "loop", tick_noop_only, by_loop, kind="tick"),
@@ -296,7 +317,8 @@ def classify(traces: list[dict], registry: tuple[Classifier, ...]) -> tuple[dict
         if c.kind == "tick":
             found = [pair for loop in loops for pair in c.match(loop).items()]
         else:
-            found = [(t["trace_id"], c.match(t)) for t in attempts]
+            found = [(t["trace_id"], c.match(t)) for t in attempts
+                     if not t.get("plan_only") or c.match is plan_dropped]
         for trace_id, evidence in found:
             if evidence is None:
                 continue
@@ -304,8 +326,13 @@ def classify(traces: list[dict], registry: tuple[Classifier, ...]) -> tuple[dict
             for key in c.group(evidence):
                 hit = hits.setdefault((c.id, key), {"classifier": c, "traces": [], "evidence": []})
                 hit["traces"].append(trace_id)
-                if len(hit["evidence"]) < EXAMPLES:
-                    hit["evidence"].append({"trace_id": trace_id, **evidence})
+                example = c.group_evidence(evidence, key) if c.group_evidence else evidence
+                if example.get("priority") == "high" and not hit.get("priority"):
+                    hit["priority"] = "high"
+                    hit["evidence"].insert(0, {"trace_id": trace_id, **example})
+                    del hit["evidence"][EXAMPLES:]
+                elif len(hit["evidence"]) < EXAMPLES:
+                    hit["evidence"].append({"trace_id": trace_id, **example})
     return hits, matched
 
 
@@ -347,8 +374,9 @@ def group_findings(hits: dict, judged: list[dict], sizes: dict[str, int], judge_
         findings.append({"id": cid, "key": key, "kind": c.kind,
                          "rules": list(c.key_rules.get(key, ()) if c.key_rules else c.rules),
                          "surface": c.surface, "count": count, "traces": hit["traces"],
-                         "share": round(count / sizes[c.kind], 3), "evidence": hit["evidence"],
-                         "severity": count * c.weight, "judged": False})
+                         "share": round(count / sizes.get(cid, sizes[c.kind]), 3), "evidence": hit["evidence"],
+                         "severity": count * c.weight, "judged": False,
+                         **({"priority": hit["priority"]} if "priority" in hit else {})})
     by_rule: dict[str, list[dict]] = defaultdict(list)
     for item in judged:
         by_rule[item["rule"]].append(item)
@@ -358,7 +386,7 @@ def group_findings(hits: dict, judged: list[dict], sizes: dict[str, int], judge_
                          "count": len(ids), "traces": ids, "share": round(len(ids) / sizes["attempt"], 3),
                          "evidence": items[:EXAMPLES], "severity": float(len(ids)), "judged": True,
                          "judge_prompt": judge_prompt})
-    findings.sort(key=lambda f: (-f["severity"], -f["count"], f["judged"], f["id"], f["key"] or ""))
+    findings.sort(key=lambda f: (f.get("priority") != "high", -f["severity"], -f["count"], f["judged"], f["id"], f["key"] or ""))
     return findings
 
 
@@ -375,6 +403,8 @@ def markdown(report: dict) -> str:
                   f"- Rules: {', '.join(f['rules']) or 'none'}",
                   f"- Surface: {f['surface'] or 'none (judged)'}",
                   f"- Count: {f['count']} ({f['share']:.0%} of the {f['kind']}s)"]
+        if f.get("priority"):
+            lines.append(f'- Priority: {f["priority"]}')
         if f["judged"]:
             lines.append(f"- Judge prompt: {f['judge_prompt']}")
         lines += [f"- `{e['trace_id']}`: {json.dumps({k: v for k, v in e.items() if k != 'trace_id'})}"
@@ -444,15 +474,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--judge-prompt", type=Path, default=PLUGIN_ROOT / "prompts" / "trace-judge.v1.md")
     args = p.parse_args(argv)
 
-    def in_window(trace: dict) -> bool:
-        started = parse_ts(trace.get("started"))
-        if started is None:
+    def in_window(value) -> bool:
+        stamp = parse_ts(value)
+        if stamp is None:
             return not (args.since or args.until)
-        return (args.since is None or started >= args.since) and (args.until is None or started < args.until)
+        return (args.since is None or stamp >= args.since) and (args.until is None or stamp < args.until)
 
-    traces = [t for t in read_traces(args.traces) if in_window(t)]
+    traces = []
+    for trace in read_traces(args.traces):
+        plan = [record for record in trace.get("plan") or [] if in_window(record.get("ts"))]
+        if not trace.get("plan_only") and in_window(trace.get("started")):
+            traces.append({**trace, "plan": plan} if "plan" in trace else trace)
+        elif plan:
+            traces.append({**trace, "plan": plan, "plan_only": True})
     hits, matched = classify(traces, classifiers(args.tool_error_share))
     ticks = sum(t.get("kind") == "tick" for t in traces)
+    plan_only = sum(bool(t.get("plan_only")) for t in traces)
 
     judged, judge = [], None
     if args.judge:
@@ -460,7 +497,8 @@ def main(argv: list[str] | None = None) -> int:
             preamble = args.judge_prompt.read_text() + "\n\n" + args.spec.read_text() + "\n\n"
         except OSError as e:
             p.error(f"--judge needs the judge prompt and the spec (--judge-prompt, --spec): {e}")
-        to_judge = [t for t in traces if t.get("kind") != "tick" and (args.judge_all or t["trace_id"] not in matched)]
+        to_judge = [t for t in traces if t.get("kind") != "tick" and not t.get("plan_only")
+                    and (args.judge_all or t["trace_id"] not in matched)]
         judged, errors = run_judge(to_judge, args.judge, preamble)
         judge = {"prompt": args.judge_prompt.name, "traces": len(to_judge), "errors": errors}
 
@@ -471,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                    "until": args.until.isoformat() if args.until else None},
         "unmatched": len(traces) - len(matched),
         "judge": judge,
-        "findings": group_findings(hits, judged, {"attempt": len(traces) - ticks, "tick": ticks},
+        "findings": group_findings(hits, judged, {"attempt": len(traces) - ticks - plan_only, "plan-dropped": len(traces) - ticks, "tick": ticks},
                                    judge and judge["prompt"]),
     }
     print(json.dumps(report, indent=2) if args.json else markdown(report))
