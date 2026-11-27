@@ -10,6 +10,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 REPO="$TMP/repo"
 mkdir -p "$REPO/plugins/autocoder/scripts" "$REPO/scripts" "$TMP/bin"
+git -C "$REPO" init -q
 touch "$REPO/plugins/autocoder/scripts/codex-fix-loop.sh"
 touch "$REPO/plugins/autocoder/scripts/codex-manage-workers-loop.sh"
 touch "$REPO/plugins/autocoder/scripts/droid-fix-loop.sh"
@@ -126,7 +127,8 @@ rm -f /tmp/codex-goals-probe-codex-cli-0.0.0-test-goals
 PATH="$TMP/bin:$PATH" resolve_worker_launch codex "$REPO"
 assert_eq "$WORKER_LAUNCH_MODE" "interactive" "Codex with goal support launches interactively"
 assert_eq "$WORKER_COMMAND_MODE" "agent-input" "Codex with goal support receives agent input"
-assert_eq "$AGENT_LAUNCH_CMD" "codex --ask-for-approval never --add-dir /home/laird/src/agents/.git" "Codex launch asks for approval never and can write the agents git dir"
+git_common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
+assert_eq "$AGENT_LAUNCH_CMD" "codex --ask-for-approval never --add-dir $git_common" "Codex launch asks for approval never and can write this repo's git dir"
 case "$WORKER_CMD$MANAGER_CMD" in
   *'gh pr create'*|*'close or PR'*) echo "FAIL: Codex goal tells the swarm to open a PR" >&2; exit 1 ;;
 esac
