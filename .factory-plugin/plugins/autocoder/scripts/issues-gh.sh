@@ -59,14 +59,57 @@ BLOCKED_LABELS_JSON='["needs-design","needs-clarification","needs-feedback","nee
 # GitHub's index-backed /search/issues endpoint. That index lags real-time label
 # writes (seconds, more under concurrent-swarm label churn), so the gate repeatedly
 # handed out issues that a fresh direct read showed already `working`. The predicate
-# is pure label boolean logic, so fetch open issues directly from the REST list
-# endpoint (no index in between) and filter labels client-side with jq.
-# `closed`/`all` below were already direct and are unchanged. Reserve `--search`
-# for text queries the REST list endpoint cannot express.
+# is pure label boolean logic, so fetch open issues directly and filter labels
+# client-side with jq. Reserve --search for text queries.
 IGH_LIST_FETCH_LIMIT="${IGH_LIST_FETCH_LIMIT:-1000}"
 
+_igh_fetch_list() {
+  local state="$1" limit="$2" label="$3" errors result
+  local args=(--state "$state" --limit "$limit" --json number,title,body,labels,state)
+  [ -n "$label" ] && args+=(--label "$label")
+
+  errors=$(mktemp) || return 3
+  if result=$(gh issue list "${args[@]}" 2>"$errors"); then
+    cat "$errors" >&2
+    rm -f "$errors"
+    printf '%s\n' "$result"
+    return
+  fi
+  if ! grep -Eqi 'GraphQL:.*(rate limit|rate-limit)' "$errors"; then
+    cat "$errors" >&2
+    rm -f "$errors"
+    return 3
+  fi
+  rm -f "$errors"
+
+  # REST's issue endpoint also returns pull requests. Exclude them before
+  # applying the caller's limit and normalize to the gh issue list schema.
+  local rest_args=(--method GET 'repos/{owner}/{repo}/issues'
+    -f "state=$state" -f per_page=100)
+  [ -n "$label" ] && rest_args+=(-f "labels=$label")
+  local page=1 rows=0 issues='[]'
+  while (( rows < limit )); do
+    result=$(gh api "${rest_args[@]}" -f "page=$page") || return 3
+    issues=$(printf '%s\n' "$issues" "$result" | jq -esc '
+      if length != 2 or (.[1] | type) != "array" then
+        error("Expected a GitHub issue list")
+      else
+        .[0] + [ .[1][] | select(has("pull_request") | not)
+          | {number, title, body: (.body // ""), labels, state: (.state | ascii_upcase)}
+        ]
+      end
+    ') || return 3
+    rows=$(jq 'length' <<<"$issues") || return 3
+    if (( $(jq 'length' <<<"$result") < 100 )); then
+      break
+    fi
+    page=$((page + 1))
+  done
+  jq --argjson limit "$limit" '.[: $limit]' <<<"$issues"
+}
+
 _igh_fetch_open_raw() {
-  gh issue list --state open --json number,title,body,labels,state --limit "$IGH_LIST_FETCH_LIMIT"
+  _igh_fetch_list open "$IGH_LIST_FETCH_LIMIT" ""
 }
 
 # $1: raw JSON array from _igh_fetch_open_raw. $2: jq boolean expression over
@@ -79,7 +122,7 @@ _igh_filter_open_raw() {
 
 # ── list ───────────────────────────────────────────────────────────────────
 cmd_list() {
-  local args=() label="" state="open" limit=""
+  local label="" state="open" limit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --label) label="$2"; shift 2 ;;
@@ -116,20 +159,10 @@ cmd_list() {
       printf '%s\n' "$filtered"
       return
       ;;
-    closed)  args+=(--state closed) ;;
-    all)     args+=(--state all) ;;
-    *)       echo "Unknown state: $state" >&2; exit 2 ;;
+    closed|all) ;;
+    *) echo "Unknown state: $state" >&2; exit 2 ;;
   esac
-  [ -n "$label" ] && args+=(--label "$label")
-  # Default the page size well above gh's own default of 30. With --search in
-  # play gh goes through the search API, whose ordering is "best match" over a
-  # purely negative query — so a 30-issue page is an arbitrary slice, not the
-  # newest or the highest priority. Callers rank P0>P1>P2>P3 *after* this call,
-  # which only ever reorders whatever the slice happened to contain: an
-  # unblocked P0 outside the page is invisible, not deprioritised, and the
-  # swarm reports IDLE_NO_WORK_AVAILABLE with real work outstanding.
-  args+=(--limit "${limit:-200}")
-  gh issue list "${args[@]}" --json number,title,body,labels,state || exit 3
+  _igh_fetch_list "$state" "${limit:-200}" "$label" || exit 3
 }
 
 # ── get ────────────────────────────────────────────────────────────────────

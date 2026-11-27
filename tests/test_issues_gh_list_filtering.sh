@@ -81,6 +81,10 @@ EOF
 cat > "$TMP/bin/gh" <<STUB
 #!/bin/bash
 if [ "\$1" = "issue" ] && [ "\$2" = "list" ]; then
+  if [ -n "\${GH_LIST_ERROR:-}" ]; then
+    echo "\$GH_LIST_ERROR" >&2
+    exit 1
+  fi
   # GH_TRUNCATE=1 models real gh paging: return only the first --limit issues,
   # 30 when no --limit is passed (gh's own default). See #140.
   if [ -n "\${GH_TRUNCATE:-}" ]; then
@@ -90,6 +94,16 @@ if [ "\$1" = "issue" ] && [ "\$2" = "list" ]; then
     exit 0
   fi
   cat "\${GH_FIXTURE:-$TMP/issues.json}"
+  exit 0
+fi
+if [ "\$1" = "api" ] && [ -n "\${GH_REST_FIXTURE:-}" ]; then
+  case "\$*" in
+    "api --method GET repos/{owner}/{repo}/issues -f state=all -f per_page=100 -f labels=awaiting-integration -f page=1")
+      jq -n '[range(100) | {number: ., pull_request: {}, state: "open"}]' ;;
+    "api --method GET repos/{owner}/{repo}/issues -f state=all -f per_page=100 -f labels=awaiting-integration -f page=2")
+      cat "\$GH_REST_FIXTURE" ;;
+    *) exit 1 ;;
+  esac
   exit 0
 fi
 echo "MOCK: unhandled gh call: \$*" >&2
@@ -157,5 +171,22 @@ for st in closed all; do
 done
 
 echo ""
+cat > "$TMP/rest.json" <<'EOF'
+[{"number":21,"title":"landed","body":"proof","state":"closed","labels":[{"name":"awaiting-integration"}]},
+ {"number":22,"title":"another issue","body":null,"state":"open","labels":[{"name":"awaiting-integration"}]}]
+EOF
+jq '[.[0], range(99) | if type == "number" then {number: ., pull_request: {}} else . end]' \
+  "$TMP/rest.json" > "$TMP/rest-full.json"
+OUT=$(GH_LIST_ERROR="GraphQL: API rate limit already exceeded for user ID 123" \
+  GH_REST_FIXTURE="$TMP/rest-full.json" run_backend list --state all --label awaiting-integration --limit 1)
+assert_numbers "rate-limited list keeps its filters and limit after excluding pull requests" "[21]" "$OUT"
+if [ "$(jq -r '.[0].state' <<<"$OUT")" = CLOSED ]; then
+  echo "PASS: REST state is normalized"; PASS=$((PASS + 1))
+else
+  echo "FAIL: REST state is normalized"; FAIL=$((FAIL + 1))
+fi
+GH_LIST_ERROR="GraphQL: authentication failed" GH_REST_FIXTURE="$TMP/rest.json" \
+  assert_exit "unrelated GraphQL errors remain backend failures" 3 run_backend list --state all --label awaiting-integration
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

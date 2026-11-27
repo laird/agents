@@ -784,6 +784,16 @@ This file tracks all significant changes, migrations, and decisions.
 
 ---
 
+## 2026-11-26 20:53:53 - Handle GitHub GraphQL list rate limits (#381)
+
+**What Changed**: Retry list reads over paginated REST when GraphQL reports a rate limit.
+
+**Why Changed**: The idle sentinel escalated rate limits as backend errors.
+
+**Impact**: Awaiting-integration probes can continue when REST remains available.
+
+---
+
 ## 2026-11-26 20:53:54 - Stabilize claim overlap tests (#442)
 
 **What Changed**: Bound pathological overlap checks by CPU time and verify their exit status.
