@@ -18,7 +18,9 @@ THE RULE, per split (dev, heldout), on pass rates:
   inconclusive  a split has no rows on either sha, or a case has fewer than --min-runs rows on
                 either sha (a case run on one sha only has 0 on the other); or the two sides
                 disagree on settings (case manifest, grader, worker, planned repeats); or a
-                case's repeat counts do not match. Never accept on that.
+                case's repeat counts do not match, or both sides have mixed outcomes for a case.
+                Never accept on that.
+  reject        an individual held-out case regresses, even when aggregate rates improve.
   accept        the dev pass rate rose, and the held-out pass rate did not fall (and rose, when
                 it was below 1); or both pass rates are unchanged and the mean tool_calls of the
                 rows that carry it fell.
@@ -262,6 +264,25 @@ def repeat_counts(tallies: dict) -> dict:
     return {split: {case: pair[1] for case, pair in sorted(cases.items())} for split, cases in tallies.items()}
 
 
+def compare_cases(before, after, min_runs):
+    """Keep the counts and direction even when the repeats leave the comparison uncertain."""
+    cases = {split: {} for split in SPLITS}
+    for split in SPLITS:
+        for case in sorted(before[split].keys() | after[split].keys()):
+            b = before[split].get(case, [0, 0])
+            a = after[split].get(case, [0, 0])
+            status = "insufficient"
+            conflicting = False
+            if b[1] == a[1] and b[1] >= min_runs:
+                status = "improved" if a[0] > b[0] else "regressed" if a[0] < b[0] else "unchanged"
+                conflicting = 0 < b[0] < b[1] and 0 < a[0] < a[1]
+            evidence = {"before": b, "after": a, "status": status}
+            if conflicting:
+                evidence["conflicting"] = True
+            cases[split][case] = evidence
+    return cases
+
+
 def append_row(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
@@ -298,6 +319,15 @@ def main(argv: list[str] | None = None) -> int:
             planned = plan_problem(rows, args.before, args.after, args.comparison, before, after)
             if planned:
                 decision, reason = "inconclusive", planned
+    cases = compare_cases(before, after, args.min_runs)
+    protected = [case for case, item in cases["heldout"].items() if item["status"] == "regressed"]
+    conflicting = [f"{split}/{case}" for split in SPLITS for case, item in cases[split].items()
+                   if item.get("conflicting")]
+    if decision != "inconclusive":
+        if conflicting:
+            decision, reason = "inconclusive", "conflicting repeat outcomes: " + ", ".join(conflicting)
+        elif protected and decision == "accept":
+            decision, reason = "reject", "protected heldout case(s) regressed: " + ", ".join(protected)
     row = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "finding": args.finding, "comparison": args.comparison,
@@ -312,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         "settings": {side: {split: side_field(rows, sha, args.comparison, "settings", split) for split in SPLITS}
                      for side, sha in (("before", args.before), ("after", args.after))},
         "repeats": {"before": repeat_counts(before), "after": repeat_counts(after)},
+        "cases": cases, "protected_regressions": protected,
         "tool_calls": calls,
         "decision": decision, "accepted": decision == "accept", "reason": reason,
     }

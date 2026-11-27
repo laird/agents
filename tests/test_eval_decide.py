@@ -47,16 +47,16 @@ def baseline(dev_before=(1, 2), dev_after=(2, 2), ho_before=(1, 2), ho_after=(2,
 @pytest.mark.parametrize("name,rows,code,verdict", [
     ("dev and held-out both rise", baseline(), 0, "accept"),
     ("held-out already perfect and stays so", baseline(ho_before=(2, 2), ho_after=(2, 2)), 0, "accept"),
-    ("dev does not rise", baseline(dev_before=(1, 2), dev_after=(1, 2)), 1, "reject dev pass rate did not rise (1/2 -> 1/2)"),
+    ("dev does not rise", baseline(dev_before=(2, 2), dev_after=(2, 2)), 1, "reject dev pass rate did not rise (2/2 -> 2/2)"),
     ("dev falls", baseline(dev_before=(2, 2), dev_after=(1, 2)), 1, "reject dev pass rate did not rise (2/2 -> 1/2)"),
     ("held-out falls", baseline(ho_before=(2, 2), ho_after=(1, 2)), 1, "reject heldout pass rate fell (2/2 -> 1/2)"),
-    ("held-out below 1 stays put", baseline(ho_before=(1, 2), ho_after=(1, 2)), 1,
-     "reject heldout pass rate did not rise from below 1 (1/2 -> 1/2)"),
-    ("equal rates, fewer tool calls", baseline(dev_after=(1, 2), ho_after=(1, 2), calls_before=40, calls_after=25), 0, "accept"),
-    ("equal rates, more tool calls", baseline(dev_after=(1, 2), ho_after=(1, 2), calls_before=25, calls_after=40), 1,
+    ("held-out below 1 stays put", baseline(ho_before=(0, 2), ho_after=(0, 2)), 1,
+     "reject heldout pass rate did not rise from below 1 (0/2 -> 0/2)"),
+    ("equal rates, fewer tool calls", baseline(dev_before=(2, 2), dev_after=(2, 2), ho_before=(2, 2), ho_after=(2, 2), calls_before=40, calls_after=25), 0, "accept"),
+    ("equal rates, more tool calls", baseline(dev_before=(2, 2), dev_after=(2, 2), ho_before=(2, 2), ho_after=(2, 2), calls_before=25, calls_after=40), 1,
      "reject pass rates unchanged and mean tool calls did not fall (25.0 -> 40.0)"),
-    ("equal rates, no tool calls recorded", baseline(dev_after=(1, 2), ho_after=(1, 2)), 1,
-     "reject pass rates unchanged (dev 1/2 -> 1/2, heldout 1/2 -> 1/2) and tool calls not recorded"),
+    ("equal rates, no tool calls recorded", baseline(dev_before=(2, 2), dev_after=(2, 2), ho_before=(2, 2), ho_after=(2, 2)), 1,
+     "reject pass rates unchanged (dev 2/2 -> 2/2, heldout 2/2 -> 2/2) and tool calls not recorded"),
     ("one run per case", baseline(dev_before=(0, 1), dev_after=(1, 1)), 3,
      "inconclusive dev case(s) with fewer than 2 runs before: dev-1"),
     ("no held-out case", runs(BEFORE, "dev", "dev-1", 0, 2) + runs(AFTER, "dev", "dev-1", 2, 2), 3,
@@ -84,6 +84,11 @@ def test_the_decision_row_is_appended_with_the_tallies_per_split(tmp_path):
         "settings": {"before": {"dev": None, "heldout": None}, "after": {"dev": None, "heldout": None}},
         "repeats": {"before": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}},
                     "after": {"dev": {"dev-1": 2}, "heldout": {"ho-1": 2}}},
+        "cases": {
+            "dev": {"dev-1": {"before": [1, 2], "after": [2, 2], "status": "improved"}},
+            "heldout": {"ho-1": {"before": [1, 2], "after": [2, 2], "status": "improved"}},
+        },
+        "protected_regressions": [],
         "tool_calls": {"before": 30.0, "after": 20.0},
         "decision": "accept", "accepted": True, "reason": "dev 1/2 -> 2/2, heldout 1/2 -> 2/2"}
     assert first["ts"].endswith("Z")
@@ -219,3 +224,38 @@ def test_a_missing_results_file_is_inconclusive_not_an_error(tmp_path):
                        capture_output=True, text=True, env=env)
     assert (r.returncode, r.stdout.strip()) == (3, "inconclusive no dev case was run")
     assert decisions(tmp_path)[0]["dev"] == {"before": [0, 0], "after": [0, 0]}
+
+
+def test_heldout_case_regression_blocks_an_aggregate_gain(tmp_path):
+    rows = baseline(ho_before=(0, 2))
+    rows += runs(BEFORE, "heldout", "protected", 2, 2) + runs(AFTER, "heldout", "protected", 1, 2)
+    rows += runs(BEFORE, "dev", "stable", 2, 2) + runs(AFTER, "dev", "stable", 2, 2)
+    result = decide(tmp_path, rows)
+    assert result.returncode == 1
+    record, = decisions(tmp_path)
+    assert record["heldout"] == {"before": [2, 4], "after": [3, 4]}
+    assert record["protected_regressions"] == ["protected"]
+    assert record["cases"]["heldout"]["protected"] == {"before": [2, 2], "after": [1, 2], "status": "regressed"}
+    assert record["cases"]["dev"]["stable"]["status"] == "unchanged"
+
+
+@pytest.mark.parametrize("after_order", [(False, True), (True, False)])
+def test_mixed_repeat_outcomes_are_inconclusive_regardless_of_order(tmp_path, after_order):
+    rows = baseline()
+    for sha, outcomes in ((BEFORE, (True, False)), (AFTER, after_order)):
+        for repeat, passed in enumerate(outcomes, start=1):
+            rows.append({**row(sha, "dev", "unstable", passed), "repeat": repeat})
+    result = decide(tmp_path, rows)
+    assert result.returncode == 3
+    assert "conflicting repeat outcomes: dev/unstable" in result.stdout
+    record, = decisions(tmp_path)
+    assert record["cases"]["dev"]["unstable"] == {"before": [1, 2], "after": [1, 2], "status": "unchanged", "conflicting": True}
+
+
+def test_uncertain_heldout_decline_remains_visible(tmp_path):
+    rows = baseline() + runs(BEFORE, "heldout", "unstable", 2, 3) + runs(AFTER, "heldout", "unstable", 1, 3)
+    assert decide(tmp_path, rows).returncode == 3
+    record, = decisions(tmp_path)
+    assert record["protected_regressions"] == ["unstable"]
+    assert record["cases"]["heldout"]["unstable"]["status"] == "regressed"
+    assert record["cases"]["heldout"]["unstable"]["conflicting"] is True

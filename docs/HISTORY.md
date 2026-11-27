@@ -801,6 +801,13 @@ This file tracks all significant changes, migrations, and decisions.
 **Why Changed**: Wall-clock checks can fail when the matcher is delayed by scheduling during a merge gate.
 
 **Impact**: The tests still detect excessive matcher work and reject incorrect overlap results.
+## 2026-11-26 21:23:25 - Report per-case eval decisions (#435)
+
+**What Changed**: Recorded before and after case counts and surfaced protected regressions and conflicting repeats in the weekly report.
+
+**Why Changed**: Aggregate gains can conceal held-out case regressions or contradictory repeat evidence.
+
+**Impact**: The eval decision rejects protected regressions on otherwise acceptable changes and leaves conflicting comparisons inconclusive.
 
 
 ---

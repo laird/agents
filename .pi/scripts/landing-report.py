@@ -1176,6 +1176,23 @@ def loop_evals(path, since, until):
     return out
 
 
+def decision_cases(value):
+    """Read optional case evidence without invalidating a decision with a partial record."""
+    if not isinstance(value, dict):
+        return {}
+    cases = {}
+    for split, items in value.items():
+        if not isinstance(items, dict):
+            continue
+        for case, item in items.items():
+            if not isinstance(item, dict) or item.get("status") not in ("improved", "regressed", "unchanged", "insufficient"):
+                continue
+            counts = (item.get("before"), item.get("after"))
+            if all(isinstance(pair, list) and len(pair) == 2 and all(type(n) is int for n in pair) for pair in counts):
+                cases.setdefault(split, {})[case] = item
+    return cases
+
+
 def loop_changes(path, since, until):
     """The week's harness-change decisions: {accept|reject|inconclusive: {n, findings}}, or {na: reason}."""
     rows = week_rows(path, since, until)
@@ -1185,6 +1202,16 @@ def loop_changes(path, since, until):
     for r in rows:
         d = r.get("decision") if r.get("decision") in DECISIONS else ("accept" if r.get("accepted") is True else "reject")
         out[d]["n"] += 1
+        cases = decision_cases(r.get("cases"))
+        if cases:
+            items = [item for split in cases.values() for item in split.values()]
+            counts = Counter(item["status"] for item in items)
+            counts["conflicting"] = sum(item.get("conflicting") is True for item in items)
+            protected = r.get("protected_regressions")
+            out[d].setdefault("case_outcomes", []).append({
+                "finding": r.get("finding"), "counts": dict(counts), "cases": cases,
+                "protected_regressions": [case for case in protected if isinstance(case, str)] if isinstance(protected, list) else [], "reason": r.get("reason"),
+            })
         if r.get("finding") and r["finding"] not in out[d]["findings"]:
             out[d]["findings"].append(r["finding"])
     return out
@@ -1207,8 +1234,24 @@ def evals_text(e):
 def changes_text(c):
     if "na" in c:
         return f"n/a ({c['na']})"
-    return "; ".join(f"{label} {c[d]['n']}" + (f" ({', '.join(c[d]['findings'])})" if c[d]["findings"] else "")
-                     for d, label in zip(DECISIONS, ("accepted", "rejected", "inconclusive")))
+    summary = "; ".join(f"{label} {c[d]['n']}" + (f" ({', '.join(c[d]['findings'])})" if c[d]["findings"] else "")
+                        for d, label in zip(DECISIONS, ("accepted", "rejected", "inconclusive")))
+    lines = [summary]
+    for d in DECISIONS:
+        for evidence in c[d].get("case_outcomes", []):
+            counts = evidence["counts"]
+            outcomes = ", ".join(f"{counts.get(k, 0)} {k}" for k in ("improved", "regressed", "unchanged", "insufficient", "conflicting"))
+            lines.append(f"    - {evidence['finding'] or 'Unnamed finding'} ({d}): {outcomes}")
+            if evidence["protected_regressions"]:
+                lines.append("      - Protected regressions: " + ", ".join(evidence["protected_regressions"]))
+            if d == "inconclusive" and evidence["reason"]:
+                lines.append(f"      - {evidence['reason']}")
+            for split, cases in evidence["cases"].items():
+                for case, item in cases.items():
+                    b, a = item["before"], item["after"]
+                    status = item["status"] + (", conflicting repeats" if item.get("conflicting") is True else "")
+                    lines.append(f"      - {split}/{case}: {b[0]}/{b[1]} → {a[0]}/{a[1]} ({status})")
+    return "\n".join(lines)
 
 
 # ── markdown ───────────────────────────────────────────────────────────────

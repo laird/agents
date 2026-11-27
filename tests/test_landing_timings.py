@@ -1244,3 +1244,22 @@ def test_hotfix_measure_uses_the_tracker_label_and_the_ready_naming_the_landed_b
     # the tracker unreachable (labels None) and no hotfix/ branch: nothing is a hotfix, nothing is measured as one
     h2 = mod.hotfix_ready_to_landed(ev, lifecycle, None, None, label="hotfix", labels_of=lambda n: None, readies_of=None)
     assert h2["hotfixes"] == 0 and h2["ready_to_landed_s"]["n"] == 0
+
+
+def test_week_page_shows_per_case_decision_evidence(tmp_path):
+    row = decision("2026-11-19T13:00:00Z", "reclaimed", "reject")
+    row["cases"] = {"heldout": {"claim": {"before": [2, 2], "after": [1, 2], "status": "regressed"}}}
+    row["protected_regressions"] = ["claim"]
+    old = decision("2026-11-19T14:00:00Z", "older", "accept")
+    old["cases"] = {"dev": None, "heldout": {"bad": {"status": "unchanged", "before": [1]}}}
+    ledger = jsonl(tmp_path / "decisions.jsonl", [row, old])
+    args = (*LOOP_LEDGERS, "--eval-decisions", str(ledger))
+    result = report(*args, env=loop_env(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "reclaimed (reject): 0 improved, 1 regressed, 0 unchanged" in result.stdout
+    assert "Protected regressions: claim" in result.stdout
+    assert "accepted 1 (older)" in result.stdout
+    assert "heldout/claim: 2/2 → 1/2 (regressed)" in result.stdout
+    result = report(*args, "--json", env=loop_env(tmp_path))
+    evidence, = json.loads(result.stdout)["loop"]["changes"]["reject"]["case_outcomes"]
+    assert evidence["cases"] == row["cases"]
