@@ -14,7 +14,9 @@ once (Version Management in `docs/maintaining.md`).
   (`ci-job:` or ``job `<name>```; every run on the tip when it names none)
   puts the queue back on the hold and the log and status line say
   `hold back: CI red on <sha>`. A completed red counts even while another run
-  is still in progress, and every ``job `<name>``` the red names is judged.
+  is still in progress. A skipped or cancelled sibling does not hide a green
+  run. Every ``job `<name>``` the red names is judged, and a green job still
+  closes its own issue when a sibling red on the same commit named a red job.
   A green verdict closes every tracking issue that commit cites, naming the
   run, only when `train.redHold.closeOnGreenCi` is true (default false, so
   the repository's own closer still owns the issue). Once that verdict is

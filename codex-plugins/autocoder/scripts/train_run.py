@@ -1205,8 +1205,9 @@ def query_ci(repo, integration, sha, jobs=()) -> dict | None:
     those jobs, so a different red job does not put the hold back (#429).
 
     A completed red wins even when another run is still in progress: waiting out that run would leave
-    the queue launching onto a tip CI has already failed. Green requires every named job (or, when none
-    are named, every run) to have finished successfully.
+    the queue launching onto a tip CI has already failed. Green requires every named job to have
+    finished successfully. With no named job, every run must have finished and at least one be a
+    success; a skipped or cancelled sibling is not a red.
 
     Returns {conclusion, run_id, run_name, job}. `conclusion` is `success` or a member of
     `RED_CI_CONCLUSIONS`. Cancelled-only runs are not a verdict. `run_name` and `job` are cleaned."""
@@ -1234,14 +1235,17 @@ def query_ci(repo, integration, sha, jobs=()) -> dict | None:
 
 
 def _judge_runs(runs):
-    """Commit-level verdict. A completed red is a verdict even if a sibling run has not finished."""
+    """Commit-level verdict. A completed red is a verdict even if a sibling run has not finished.
+
+    Green is one completed success and no red, once every run has finished. A skipped or cancelled
+    sibling judged nothing (ci-watch.sh, landing-report.judge_runs). All skipped or cancelled is no verdict."""
     red = [r for r in runs if (r.get("status") or "") == "completed" and (r.get("conclusion") or "") in T.RED_CI_CONCLUSIONS]
     if red:
         return _ci_record(red[0], red[0].get("conclusion"), "")
     if any((r.get("status") or "") != "completed" for r in runs):
         return None
     green = [r for r in runs if (r.get("conclusion") or "") == "success"]
-    if green and len(green) == len(runs):
+    if green:
         return _ci_record(green[-1], "success", "")
     return None
 
@@ -1487,12 +1491,12 @@ class Daemon:
             co.setdefault(sha, []).append(issue)
         for issue, sha in landed.items():
             rec = state.get(sha) if isinstance(state.get(sha), dict) else {}
-            # A red on this tip puts the hold back for every red that commit lifted. Closing another
-            # one, or treating the sha as judged, would drop that hold while a red it cites stays open.
-            if rec.get("conclusion") in T.RED_CI_CONCLUSIONS:
-                continue
             per_all = rec.get("issues") if isinstance(rec.get("issues"), dict) else {}
             per = per_all.get(str(issue)) if isinstance(per_all.get(str(issue)), dict) else {}
+            # Each red is judged on the jobs it named. A sibling's red record keeps the hold, and
+            # must not skip a green close or leave that close unretried (#429).
+            if per.get("conclusion") in T.RED_CI_CONCLUSIONS:
+                continue
             if per.get("conclusion") == "success" and (not self.cfg.close_on_green_ci or per.get("closed")):
                 continue
             if per.get("conclusion") == "success":

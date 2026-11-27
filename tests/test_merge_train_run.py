@@ -549,15 +549,15 @@ def test_a_green_ci_verdict_closes_the_tracking_issue_when_close_on_green_ci_is_
     assert any(f"closed #{red}" in ln for ln in logs)
 
 
-def _two_reds_one_hotfix(fx, *, close_on_green=True):
+def _two_reds_one_hotfix(fx, *, close_on_green=True, bodies=("", "")):
     """Two open reds whose hotfix commit cites both, so they share one lifted sha."""
     fx.train["redMaster"] = {"label": "P0", "titlePrefix": "Red master:"}
     fx.train["redHold"] = {"releaseOn": "landed", "closeOnGreenCi": close_on_green}
     fx.write_config()
     reds = []
-    for name in ("a", "b"):
+    for name, body in zip(("a", "b"), bodies):
         r = sh(sys.executable, str(ISSUES_FILE), "create", "--title", f"Red master: tests/{name}.test.ts fails at abcdef12",
-               "--body", "", "--label", "P0", "--label", "bug", cwd=fx.work)
+               "--body", body, "--label", "P0", "--label", "bug", cwd=fx.work)
         reds.append(json.loads(r.stdout)["number"])
     ordinary = fx.member(0)
     fx.member(1, labels=("hotfix",), message=f"hotfix/m1: fix #{reds[0]} #{reds[1]}")
@@ -597,6 +597,32 @@ def test_a_failed_close_is_retried_for_the_red_a_sibling_already_recorded(fx, mo
     assert verdict == "idle"  # the ordinary member already landed; the retry is the watch, not a new cycle
     assert fx.state_of(red_a) == "CLOSED" and "run 77" in fx.comments(red_a)
     assert any(f"closed #{red_a}" in ln for ln in logs)
+
+
+def test_a_skipped_or_cancelled_sibling_run_does_not_hide_a_green_verdict(fx):
+    """A completed success plus a skipped or cancelled run is green (ci-watch.sh). It must close."""
+    red, _ordinary = _lifted_red(fx, close_on_green=True)
+    runs = [
+        {"databaseId": 77, "conclusion": "success", "name": "CI", "status": "completed", "headBranch": "master"},
+        {"databaseId": 78, "conclusion": "skipped", "name": "deploy", "status": "completed", "headBranch": "master"},
+        {"databaseId": 79, "conclusion": "cancelled", "name": "again", "status": "completed", "headBranch": "master"},
+    ]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "cycle:0:planned" and fx.state_of(red) == "CLOSED"
+    assert "run 77" in fx.comments(red) and any(f"closed #{red}" in ln for ln in logs)
+
+
+def test_a_green_named_job_closes_that_red_while_its_siblings_job_stays_red(fx):
+    """Two reds, one sha. The red job re-holds; the green job still closes and does not lift the other."""
+    red_unit, red_lint, ordinary = _two_reds_one_hotfix(fx, bodies=("ci-job: unit\n", "ci-job: lint\n"))
+    runs = [{"databaseId": 11, "conclusion": "failure", "name": "CI", "status": "completed", "headBranch": "master",
+             "jobs": [{"name": "unit", "status": "completed", "conclusion": "failure"},
+                      {"name": "lint", "status": "completed", "conclusion": "success"}]}]
+    verdict, logs = _tick(fx, runs)
+    assert verdict == "idle" and not fx.on_master(0) and fx.state_of(ordinary) == "OPEN"
+    assert fx.state_of(red_unit) == "OPEN" and fx.state_of(red_lint) == "CLOSED"
+    assert "run 11" in fx.comments(red_lint) and "run 11" not in fx.comments(red_unit)
+    assert any("job `unit`" in ln for ln in logs) and any(f"closed #{red_lint}" in ln for ln in logs)
 
 
 def test_close_on_green_ci_must_be_a_bool(fx):
