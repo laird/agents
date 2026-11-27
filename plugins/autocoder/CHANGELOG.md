@@ -6,6 +6,8 @@ once (Version Management in `docs/maintaining.md`).
 
 ## [Unreleased]
 
+## [4.72.0] - 2026-11-27
+
 ### Fixed
 
 - Self-improvement decisions stay inside one comparison (#434). `eval-run.py
