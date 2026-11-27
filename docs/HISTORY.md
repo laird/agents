@@ -792,3 +792,14 @@ This file tracks all significant changes, migrations, and decisions.
 
 **Impact**: The tests still detect excessive matcher work and reject incorrect overlap results.
 
+
+---
+
+## 2026-11-26 20:55:11 - Report weekly train idle minutes (#430)
+
+**What Changed**: Journal daemon tick notes and report observed idle minutes by hold reason.
+
+**Why Changed**: The daemon status overwrites its previous tick, so weekly hold durations could not be recovered.
+
+**Impact**: Weekly reports show red hold, no launchable item and paused minutes using local state.
+

@@ -8,7 +8,7 @@ merge-events.jsonl, so a project can reproduce its baseline.
 
   landing-report.py [--since DATE | --week [DATE|last]] [--until DATE] [--bucket day|week] [--batches]
                     [--log PATH] [--json] [--repo DIR] [--repo-id ID | --all-repos] [--train-gate-issue N]
-                    [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
+                    [--train-ticks PATH] [--ci auto|off] [--ci-runs-cmd CMD] [--ci-workflow NAME ...] [--integration BRANCH]
                     [--issue-events PATH] [--merge-events PATH] [--loop on|off] [--eval-results PATH] [--eval-decisions PATH]
                     [--history [--integration BRANCH]
                                [--batch-subject-regex RE] [--skip-subject-regex RE] [--ready-regex RE] [--claim-regex RE]
@@ -42,6 +42,9 @@ last COMPLETED week, so a Monday run reports the week that just ended. It adds, 
 above, "Week in numbers" (batches and members, changes landed, returned by cause and dropped at
 planning, gate-minutes wasted by cause, median READY-to-landed, planning time, re-gates by reason)
 and a table of every batch with each member's outcome (`--batches` adds that table to any window).
+Train idle minutes use consecutive observations in the daemon tick journal. Each gap contributes at
+most one polling interval, clipped to the reporting week, and gaps across daemon restarts are omitted.
+The numbers describe daemon observations. A manually started batch between ticks may go unobserved.
 A RE-GATE is a batch that gates again a change an earlier, non-green batch of the window already
 gated (the same members after an infrastructure red, the halves of a bisection after a red): its
 reason is that earlier batch's verdict and cause, so the gate-minutes a red costs beyond its own
@@ -1258,6 +1261,38 @@ def hotfix_text(a):
     return f"median {human(d['p50'])}, {worst} (n={d['n']}; {finding}){tail}"
 
 
+def train_idle_minutes(path, since, until):
+    """Count time between observed daemon ticks, capped at the polling interval."""
+    seconds = dict.fromkeys(("red_hold", "no_launchable_item", "paused"), 0.0)
+    previous = None
+    try:
+        with Path(path or os.devnull).open(encoding="utf-8", errors="replace") as journal:
+            for line in journal:
+                try:
+                    row = json.loads(line)
+                    ts = parse_ts(row["ts"])
+                    pid, interval = row["pid"], row["interval"]
+                    if ts is None or type(pid) is not int or type(interval) is not int or interval < 0:
+                        raise ValueError("invalid tick")
+                    reason = None
+                    if row["verdict"] == "paused":
+                        reason = "paused"
+                    elif row["verdict"] == "idle":
+                        reason = "red_hold" if "held: red master" in row.get("note", "") else "no_launchable_item"
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    previous = None
+                    continue
+                if previous:
+                    start, prior_pid, prior_interval, prior_reason = previous
+                    if prior_reason and pid == prior_pid:
+                        end = min(ts, until, start + timedelta(seconds=prior_interval))
+                        seconds[prior_reason] += max(0, (end - max(start, since)).total_seconds())
+                previous = ts, pid, interval, reason
+    except FileNotFoundError:
+        pass
+    return {reason: value / 60 for reason, value in seconds.items()}
+
+
 def render_week(a):
     """The weekly summary: one bullet per figure the week is judged by; n/a where the rows carry none."""
     w, t, b, p, rg = a["waste"], a["timings"], a["batches"], a["planning"], a["regates"]
@@ -1275,6 +1310,9 @@ def render_week(a):
     else:
         out.append(f"- Gate-minutes: {human(w['gate_s_total'])} in {w['batches_measured']} measured batches; wasted {human(w['gate_s_wasted'])} "
                    f"({w['share'] * 100:.0f}%)" + ("; by cause " + ", ".join(f"{k} {human(v)}" for k, v in sorted(w["by"].items(), key=lambda kv: -kv[1])) if w["by"] else ""))
+    idle = a["train_idle_minutes"]
+    out.append(f"- Train idle minutes: red hold {idle['red_hold']:.2f}, "
+               f"no launchable item {idle['no_launchable_item']:.2f}, paused {idle['paused']:.2f}")
     c = t["cycle_s"]
     out.append("- Median READY to landed: " + ("n/a" if not c["n"] else f"{human(c['p50'])} (p90 {human(c['p90'])}, n={c['n']})"))
     out.append("- READY to launch (a cycle took it): " + ready_to_launch_text(t))
@@ -1564,6 +1602,7 @@ def main(argv=None):
     p.add_argument("--all-repos", action="store_true", help="keep the rows of every repository in the file")
     p.add_argument("--train-gate-issue", type=int, help="the issue a train's gate runs under (default: train.gateIssue of the repository's .autocoder.json); its solo batches are the trains' own gate passes and are dropped; 0 keeps them")
     p.add_argument("--integration", default="master", help="the integration branch: --history reads its log; the CI verdict is its runs on the landed commit")
+    p.add_argument("--train-ticks", help="daemon tick journal (default: daemon-ticks.jsonl in the train state directory)")
     p.add_argument("--ci", choices=("auto", "off"), default="auto", help="auto: ask the forge once per landed commit with no cached verdict; off: read the cache only")
     p.add_argument("--ci-runs-cmd", default=os.environ.get("AUTOCODER_CI_RUNS_CMD") or None,
                    help="a command given SHA and BRANCH that prints the commit's CI runs as a JSON array (default: gh api in --repo)")
@@ -1670,6 +1709,15 @@ def main(argv=None):
     res = analyze(rows, since, until, a.bucket, ci=(landings, unrecorded, verdicts, meta, every_landing(rows)), claims=claims, verdicts=watchdog, hotfix=hotfix)
     if week:
         res["week"] = week
+        tick_path = a.train_ticks
+        if (not tick_path and not a.all_repos and (not a.repo_id or a.repo_id == repo_id_of(repo_dir))
+                and (HERE / "train_lib.py").is_file()):
+            from train_lib import load_config
+            try:
+                tick_path = load_config(repo_dir).state_dir / "daemon-ticks.jsonl"
+            except SystemExit as error:
+                print(f"landing-report: could not locate the daemon tick journal ({error})", file=sys.stderr)
+        res["train_idle_minutes"] = train_idle_minutes(tick_path, since, until)
         if a.loop == "on":
             ledgers = {"landing-timings": a.log or default_log(), "issue-events": a.issue_events,
                        "merge-events": a.merge_events or state_file("AUTOCODER_MERGE_EVENTS", "merge-events.jsonl")}

@@ -1407,6 +1407,8 @@ def test_the_daemon_idles_and_sleeps_when_nothing_is_launchable(fx):
     assert d.loop() == 0
     assert fx.gates() == []
     assert slept == [7]   # a sleep between the two ticks, none after the last
+    ticks = [json.loads(line) for line in (d.state.dir / "daemon-ticks.jsonl").read_text().splitlines()]
+    assert [(tick["verdict"], tick["note"], tick["interval"]) for tick in ticks] == [("idle", "", 7)] * 2
     assert json.loads((fx.rc().cfg.state_dir / "daemon.json").read_text())["verdict"] == "idle"
 
 

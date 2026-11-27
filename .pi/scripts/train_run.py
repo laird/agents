@@ -1462,7 +1462,14 @@ class Daemon:
             self.log(f"dependency-bot pass failed ({type(e).__name__}: {str(e)[:300]}); next pass in {st.every}s")
 
     def _record(self, verdict, launchable, note=""):
-        _write_json(self.record_path, {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note})
+        record = {"ts": now_iso(), "pid": os.getpid(), "verdict": verdict, "launchable": launchable, "note": note}
+        _write_json(self.record_path, record)
+        # Keep the tick notes for the weekly report. Journal I/O must not affect a launch.
+        try:
+            with (self.state.dir / "daemon-ticks.jsonl").open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps({**record, "interval": self.interval}) + "\n")
+        except OSError as e:
+            self.log(f"could not journal daemon tick: {e}")
 
     def watch_lifted_ci(self, _rows) -> bool:
         """Ask CI about tips whose fix has landed (#429). A red verdict is recorded so the next plan puts the
